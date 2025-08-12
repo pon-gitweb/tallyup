@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function hasVenueAccess(venueId) {
+      return isSignedIn() &&
+        exists(/databases/$(db)/documents/venues/$(venueId)/roles/$(request.auth.uid));
+    }
+    function isManagerOrAbove(venueId) {
+      return hasVenueAccess(venueId) &&
+        get(/databases/$(db)/documents/venues/$(venueId)/roles/$(request.auth.uid)).data.role
+          in ['VENUE_ADMIN','MANAGER'];
+    }
+
+    // Users can read/update their own user profile doc
+    match /users/{uid} {
+      allow read, create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // Venue tree
+    match /venues/{venueId} {
+      // Reading the venue doc itself requires venue access
+      allow read: if hasVenueAccess(venueId);
+      // Writing the venue doc itself is restricted to admins/managers
+      allow write: if isManagerOrAbove(venueId);
+
+      // Roles
+      match /roles/{uid} {
+        allow read: if (isSignedIn() && request.auth.uid == uid) || isManagerOrAbove(venueId);
+        allow write: if isManagerOrAbove(venueId);
+      }
+
+      // Legacy/static setup (kept for completeness)
+      match /departments/{deptId} {
+        allow read, write: if hasVenueAccess(venueId);
+        match /areas/{areaId} {
+          allow read, write: if hasVenueAccess(venueId);
+        }
+      }
+
+      // NEW: meta (active stock take pointer)
+      match /meta/{docId} {
+        allow read: if hasVenueAccess(venueId);
+        // For MVP we allow any venue member to update the pointer; tighten later if needed
+        allow create, update: if hasVenueAccess(venueId);
+        allow delete: if isManagerOrAbove(venueId);
+      }
+
+      // NEW: stock take sessions and nested structure
+      match /stockTakes/{stockTakeId} {
+        allow read: if hasVenueAccess(venueId);
+        // Start/resume/update a stock take
+        allow create, update: if hasVenueAccess(venueId);
+        // Only managers/admins can delete a whole session
+        allow delete: if isManagerOrAbove(venueId);
+
+        match /departments/{deptId} {
+          allow read, write: if hasVenueAccess(venueId);
+
+          match /areas/{areaId} {
+            allow read, write: if hasVenueAccess(venueId);
+
+            match /items/{itemId} {
+              // Counting items during a stock take
+              allow read, write: if hasVenueAccess(venueId);
+            }
+          }
+        }
+      }
+    }
+  }
+}
