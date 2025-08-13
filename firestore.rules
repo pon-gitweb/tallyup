@@ -1,74 +1,98 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{db}/documents {
+  match /databases/{database}/documents {
 
-    function isSignedIn() { return request.auth != null; }
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // Venue doc: venues/{venueId}
+    function venueRef(venueId) {
+      return /databases/$(database)/documents/venues/$(venueId);
+    }
+
+    // Member doc: venues/{venueId}/members/{uid}
+    function memberRef(venueId) {
+      return /databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid);
+    }
+
     function hasVenueAccess(venueId) {
-      return isSignedIn() &&
-        exists(/databases/$(db)/documents/venues/$(venueId)/roles/$(request.auth.uid));
-    }
-    function isManagerOrAbove(venueId) {
-      return hasVenueAccess(venueId) &&
-        get(/databases/$(db)/documents/venues/$(venueId)/roles/$(request.auth.uid)).data.role
-          in ['VENUE_ADMIN','MANAGER'];
+      return isSignedIn() && exists(memberRef(venueId));
     }
 
-    // Users can read/update their own user profile doc
+    // Admin/Manager roles (optional for future CRUD limits)
+    function roleOf(venueId) {
+      return hasVenueAccess(venueId) ? get(memberRef(venueId)).data.role : null;
+    }
+    function isAdmin(venueId) { return roleOf(venueId) == 'admin'; }
+    function isManagerOrAdmin(venueId) { return roleOf(venueId) in ['admin','manager']; }
+
+    // DEV: allow self-enrollment if venue.config.openSignup == true
+    function openSignup(venueId) {
+      return get(venueRef(venueId)).data.config.openSignup == true;
+    }
+
     match /users/{uid} {
-      allow read, create, update: if isSignedIn() && request.auth.uid == uid;
-      allow delete: if false;
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // Venue tree
     match /venues/{venueId} {
-      // Reading the venue doc itself requires venue access
-      allow read: if hasVenueAccess(venueId);
-      // Writing the venue doc itself is restricted to admins/managers
-      allow write: if isManagerOrAbove(venueId);
+      // DEV: allow creating the venue doc only if it declares config.openSignup=true
+      allow create: if isSignedIn() && request.resource.data.config.openSignup == true;
 
-      // Roles
-      match /roles/{uid} {
-        allow read: if (isSignedIn() && request.auth.uid == uid) || isManagerOrAbove(venueId);
-        allow write: if isManagerOrAbove(venueId);
+      // Read venue if you are a member OR the venue is open for signup (so client can see it to enroll)
+      allow read: if hasVenueAccess(venueId) || (isSignedIn() && openSignup(venueId));
+
+      // Update venue config/status by managers/admins
+      allow update, delete: if isManagerOrAdmin(venueId);
+
+      match /members/{uid} {
+        // Read roster if you have access OR venue is openSignup (let client check their own status)
+        allow read: if hasVenueAccess(venueId) || (isSignedIn() && openSignup(venueId));
+
+        // DEV: allow a signed-in user to create their own membership when venue is openSignup
+        allow create: if isSignedIn()
+                      && request.auth.uid == uid
+                      && openSignup(venueId);
+
+        // Members can update only their non-privileged fields; admin can do anything
+        allow update, delete: if isAdmin(venueId);
       }
 
-      // Legacy/static setup (kept for completeness)
-      match /departments/{deptId} {
-        allow read, write: if hasVenueAccess(venueId);
+      match /departments/{departmentId} {
+        allow read: if hasVenueAccess(venueId);
+        allow create, update, delete: if isManagerOrAdmin(venueId);
+
         match /areas/{areaId} {
-          allow read, write: if hasVenueAccess(venueId);
-        }
-      }
+          allow read: if hasVenueAccess(venueId);
+          allow create, update, delete: if isManagerOrAdmin(venueId);
 
-      // NEW: meta (active stock take pointer)
-      match /meta/{docId} {
-        allow read: if hasVenueAccess(venueId);
-        // For MVP we allow any venue member to update the pointer; tighten later if needed
-        allow create, update: if hasVenueAccess(venueId);
-        allow delete: if isManagerOrAbove(venueId);
-      }
+          match /items/{itemId} {
+            allow read: if hasVenueAccess(venueId);
+            allow create, update, delete: if isManagerOrAdmin(venueId);
 
-      // NEW: stock take sessions and nested structure
-      match /stockTakes/{stockTakeId} {
-        allow read: if hasVenueAccess(venueId);
-        // Start/resume/update a stock take
-        allow create, update: if hasVenueAccess(venueId);
-        // Only managers/admins can delete a whole session
-        allow delete: if isManagerOrAbove(venueId);
+            // Count fields can be updated by any member
+            allow update: if hasVenueAccess(venueId)
+                          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt']);
+          }
 
-        match /departments/{deptId} {
-          allow read, write: if hasVenueAccess(venueId);
-
-          match /areas/{areaId} {
+          match /status/{docId} {
             allow read, write: if hasVenueAccess(venueId);
-
-            match /items/{itemId} {
-              // Counting items during a stock take
-              allow read, write: if hasVenueAccess(venueId);
-            }
           }
         }
       }
+
+      match /sessions/{sessionId} {
+        allow read, write: if hasVenueAccess(venueId);
+      }
+
+      match /submissions/{submissionId} {
+        allow read: if hasVenueAccess(venueId);
+        allow create, update: if hasVenueAccess(venueId);
+        allow delete: if isManagerOrAdmin(venueId);
+      }
     }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }

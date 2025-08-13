@@ -1,76 +1,108 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, FlatList, Alert, RefreshControl } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { listAreas } from '../services/stockTakeService';
+import { View, Text, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { db } from '../services/firebase';
+import { collection, onSnapshot, query } from 'firebase/firestore';
+import { ensureDeptInProgress } from '../services/stockTakeStatus';
 
-export default function AreaSelectionScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
-  const { venueId, stockTakeId, deptId } = route.params;
+export default function AreaSelectionScreen({ navigation, route }) {
+  const venueId = route?.params?.venueId;
+  const departmentId = route?.params?.departmentId;
+  const departmentName = route?.params?.departmentName || 'Department';
 
   const [areas, setAreas] = useState([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    try {
-      const rows = await listAreas(venueId, stockTakeId, deptId);
-      // Keep completed at bottom, then in-progress, then not-started at top
-      const order = { 'not_started': 0, 'in_progress': 1, 'completed': 2 };
-      rows.sort((a, b) => {
-        const c = order[a.status] - order[b.status];
-        return c !== 0 ? c : a.name.localeCompare(b.name);
-      });
-      setAreas(rows);
-    } catch (err) {
-      console.error('[AreaSelection] load error', err);
-      Alert.alert('Error', 'Could not load areas.');
-    }
-  };
+  // Ensure department shows as in_progress when user enters Areas
+  useEffect(() => {
+    (async () => {
+      try {
+        if (venueId && departmentId) {
+          await ensureDeptInProgress(venueId, departmentId, departmentName);
+        }
+      } catch (e) {
+        console.log('[AreaSelection] ensureDeptInProgress error', e?.message || e);
+      }
+    })();
+  }, [venueId, departmentId]);
 
   useEffect(() => {
-    const unsub = navigation.addListener('focus', load);
-    return unsub;
-  }, [navigation]);
+    if (!venueId || !departmentId) {
+      setLoading(false);
+      return;
+    }
+    const areasCol = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+    const unsub = onSnapshot(
+      query(areasCol),
+      snap => {
+        const rows = [];
+        snap.forEach(d => {
+          const data = d.data() || {};
+          rows.push({
+            id: d.id,
+            name: data.name || 'Unnamed Area',
+            status: data.status || 'active',  // your seeded areas were 'active'
+          });
+        });
+        setAreas(rows);
+        setLoading(false);
+      },
+      err => {
+        console.error('[AreaSelection] load error', err);
+        Alert.alert('Areas', err?.message || 'Failed to load areas');
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [venueId, departmentId]);
 
-  const getColor = (status) => {
-    if (status === 'completed') return '#4CAF50';
-    if (status === 'in_progress') return '#FF9800';
-    return '#e0e0e0';
-    };
-
-  const statusLabel = (status) => {
-    if (status === 'completed') return '✓ Completed';
-    if (status === 'in_progress') return 'In Progress';
-    return 'Not Started';
+  const openArea = (area) => {
+    navigation.navigate('StockTakeAreaInventory', {
+      venueId,
+      departmentId,
+      areaId: area.id,
+      areaName: area.name,
+    });
   };
 
+  if (loading) {
+    return (
+      <View style={{ flex:1, justifyContent:'center', alignItems:'center' }}>
+        <ActivityIndicator />
+        <Text style={{ marginTop: 8 }}>Loading areas…</Text>
+      </View>
+    );
+  }
+
+  if (areas.length === 0) {
+    return (
+      <View style={{ flex:1, justifyContent:'center', alignItems:'center', padding:24 }}>
+        <Text>No areas found in “{departmentName}”.</Text>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Select Area</Text>
-      <FlatList
-        data={areas}
-        keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
-        renderItem={({ item }) => (
+    <View style={{ flex:1, padding:16 }}>
+      <Text style={{ fontSize:18, fontWeight:'700', marginBottom:12 }}>
+        {departmentName}: Choose Area
+      </Text>
+      {areas.map(area => {
+        const st = area.status || 'active';
+        const bg =
+          st === 'completed' ? '#d1fae5' :
+          st === 'in_progress' ? '#fde68a' :
+          '#e5e7eb';
+        return (
           <TouchableOpacity
-            style={[styles.areaButton, { backgroundColor: getColor(item.status) }]}
-            onPress={() => navigation.navigate('StockTakeAreaInventory', {
-              venueId, stockTakeId, deptId, areaId: item.id
-            })}
+            key={area.id}
+            onPress={() => openArea(area)}
+            style={{ padding:14, backgroundColor:bg, borderRadius:10, marginBottom:10 }}
           >
-            <Text style={styles.areaText}>{item.name}</Text>
-            <Text style={styles.statusText}>{statusLabel(item.status)}</Text>
+            <Text style={{ fontSize:16, fontWeight:'600' }}>{area.name}</Text>
+            <Text style={{ marginTop:4, opacity:0.7 }}>Status: {st}</Text>
           </TouchableOpacity>
-        )}
-      />
+        );
+      })}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  title: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
-  areaButton: { padding: 16, borderRadius: 8, marginBottom: 12 },
-  areaText: { fontSize: 18, color: '#000', fontWeight: '600' },
-  statusText: { fontSize: 14, color: '#222', opacity: 0.9, marginTop: 4 },
-});
