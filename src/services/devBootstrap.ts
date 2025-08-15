@@ -1,74 +1,85 @@
 import { auth, db } from './firebase';
-import { DEV_VENUE_ID, DEV_AUTO_SIGNUP } from '../config/dev';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { DEV_VENUE_ID, DEV_AUTO_SIGNUP } from '../config/dev';
 
-export async function ensureDevMembership(): Promise<{ venueId: string; uid: string; email: string | null; }> {
+/**
+ * Ensure the signed-in user has membership under the dev venue.
+ * Safe with current rules: user can update /users/{uid}, then membership becomes allowed.
+ */
+export async function ensureDevMembership() {
   const user = auth.currentUser;
-  if (!user) throw new Error('No authenticated user; please log in first.');
+  if (!user) throw new Error('No user signed in');
 
-  const venueRef = doc(db, 'venues', DEV_VENUE_ID);
-  const venueSnap = await getDoc(venueRef);
-  if (!venueSnap.exists()) throw new Error(`Pinned venue ${DEV_VENUE_ID} does not exist.`);
-
-  const cfg = (venueSnap.data() as any)?.config ?? {};
-  const openSignup = !!cfg.openSignup;
-
-  const memberRef = doc(db, 'venues', DEV_VENUE_ID, 'members', user.uid);
-  const memberSnap = await getDoc(memberRef);
-
-  if (!memberSnap.exists()) {
-    if (openSignup && DEV_AUTO_SIGNUP) {
-      await setDoc(memberRef, {
-        email: user.email ?? null,
-        role: 'owner',
-        joinedAt: serverTimestamp(),
-        source: 'tallyup-dev-bootstrap',
-      }, { merge: true });
-      console.log('[TallyUp DevBootstrap]', 'Membership CREATED', { uid: user.uid, venueId: DEV_VENUE_ID });
-    } else {
-      throw new Error('Not a member and openSignup is disabled. Ask an admin to add you.');
-    }
-  } else {
-    console.log('[TallyUp DevBootstrap]', 'Membership OK', { uid: user.uid, venueId: DEV_VENUE_ID });
+  const uid = user.uid;
+  // 1) ensure /users/{uid}.venueId points at DEV_VENUE_ID (dev only)
+  if (DEV_AUTO_SIGNUP) {
+    await setDoc(doc(db, 'users', uid), { venueId: DEV_VENUE_ID, email: user.email ?? null }, { merge: true });
   }
 
-  return { venueId: DEV_VENUE_ID, uid: user.uid, email: user.email ?? null };
+  // 2) write membership doc for this user (allowed because user.venueId == venueId now)
+  await setDoc(doc(db, 'venues', DEV_VENUE_ID, 'members', uid), {
+    uid,
+    role: 'member',
+    attachedAt: serverTimestamp(),
+  }, { merge: true });
+
+  console.log('[TallyUp DevBootstrap] Membership OK', { uid, venueId: DEV_VENUE_ID });
+  return { uid, venueId: DEV_VENUE_ID };
 }
 
-export async function ensureActiveSession(venueId: string): Promise<string> {
-  const user = auth.currentUser;
-  if (!user) throw new Error('No authenticated user.');
-
-  const sessionId = 'current';
-  const sessionRef = doc(db, 'venues', venueId, 'sessions', sessionId);
-  const snap = await getDoc(sessionRef);
-
+/**
+ * Ensure venue session doc exists and is 'active'. Returns sessionId ("current").
+ */
+export async function ensureActiveSession(venueId: string) {
+  const ref = doc(db, 'venues', venueId, 'sessions', 'current');
+  const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(sessionRef, {
-      status: 'active',
-      startedAt: serverTimestamp(),
-      createdBy: user.uid,
-      createdByEmail: user.email ?? null
-    }, { merge: true });
-    console.log('[TallyUp Session] Created active session:', sessionRef.path);
+    await setDoc(ref, { status: 'active', startedAt: serverTimestamp() }, { merge: true });
+    console.log('[TallyUp Session] Created active session:', ref.path);
   } else {
-    const data = snap.data() as any;
-    if (data?.status !== 'active') {
-      await setDoc(sessionRef, { status: 'active', resumedAt: serverTimestamp() }, { merge: true });
-      console.log('[TallyUp Session] Resumed session:', sessionRef.path);
+    const st = (snap.data() as any)?.status;
+    if (st !== 'active') {
+      await setDoc(ref, { status: 'active', resumedAt: serverTimestamp() }, { merge: true });
+      console.log('[TallyUp Session] Resumed session:', ref.path);
     } else {
-      console.log('[TallyUp Session] Active session present:', sessionRef.path);
+      console.log('[TallyUp Session] Active session present:', ref.path);
     }
   }
-
-  return sessionId;
+  return 'current';
 }
 
-export async function runDevBootstrapSilently() {
-  try {
-    if (!__DEV__) return;
-    await ensureDevMembership();
-  } catch (e) {
-    console.log('[TallyUp DevBootstrap] Skipped:', (e as Error).message);
-  }
+/**
+ * DEV-ONLY: Attach the current user to any venue by ID.
+ * Implementation mirrors ensureDevMembership but for an arbitrary venueId.
+ */
+export async function attachSelfToVenue(venueId: string) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('No user signed in');
+  const uid = user.uid;
+
+  // Set user profile venueId (allowed by rules)
+  await setDoc(doc(db, 'users', uid), { venueId, email: user.email ?? null }, { merge: true });
+
+  // Create/merge membership under venue (now allowed because user.venueId == venueId)
+  await setDoc(doc(db, 'venues', venueId, 'members', uid), {
+    uid,
+    role: 'member',
+    attachedAt: serverTimestamp(),
+  }, { merge: true });
+
+  console.log('[TallyUp DevBootstrap] Attached self to venue', { uid, venueId });
+  return { uid, venueId };
+}
+
+/**
+ * Read the user's current venue from their /users/{uid} profile (if set).
+ */
+export async function getCurrentVenueForUser(): Promise<{ uid: string; venueId: string | null; email?: string | null }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('No user signed in');
+  const uid = user.uid;
+  const u = await getDoc(doc(db, 'users', uid));
+  const email = user.email ?? null;
+  const venueId = u.exists() ? (u.data() as any)?.venueId ?? null : null;
+  return { uid, venueId, email };
 }
