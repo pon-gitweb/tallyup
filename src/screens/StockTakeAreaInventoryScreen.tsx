@@ -13,7 +13,7 @@ type Params = {
 
 type ItemRow = {
   id: string;
-  name: string;
+  name: string;               // UI name; may be derived from ID when rules disallow 'name' write
   expectedQuantity?: number;
   unit?: string;
 };
@@ -55,9 +55,11 @@ export default function StockTakeAreaInventoryScreen() {
         const itemsSnap = await getDocs(areaItemsCol(venueId, departmentId, areaName));
         const items: ItemRow[] = itemsSnap.docs.map(d => {
           const data = d.data() as any;
+          // We may not have a 'name' field (rules). Use ID as fallback and reveal expected/unit if present.
+          const uiName = data?.name ?? d.id;
           return {
             id: d.id,
-            name: data?.name ?? d.id,
+            name: uiName,
             expectedQuantity: data?.expectedQuantity,
             unit: data?.unit,
           };
@@ -123,6 +125,7 @@ export default function StockTakeAreaInventoryScreen() {
 
       const batch = writeBatchCompat();
 
+      // PER RULES: only lastCount + lastCountAt on items
       filtered.forEach(i => {
         const raw = counts[i.id] ?? (fillZeros ? '0' : '0');
         const qty = Number.isFinite(parseFloat(raw)) ? parseFloat(raw) : 0;
@@ -133,6 +136,7 @@ export default function StockTakeAreaInventoryScreen() {
         );
       });
 
+      // Only set completedAt if not set yet
       batch.set(aRef, { completedAt: serverTimestamp() }, { merge: true });
 
       console.log('[TallyUp Inventory] commit', {
@@ -156,6 +160,54 @@ export default function StockTakeAreaInventoryScreen() {
     return writeBatch(db);
   }
 
+  // ---------- MVP #7: Search Across Venue (stub) + Quick Add ----------
+  const slugify = (s: string) =>
+    s.toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'item';
+
+  const onSearchAcrossVenue = () => {
+    Alert.alert(
+      'Search across venue',
+      'This is a stub in the MVP. In the full release, you’ll be able to search all departments and add items directly from the venue catalogue.'
+    );
+  };
+
+  const onQuickAdd = async () => {
+    if (readOnly) {
+      Alert.alert('Read-only', 'This department is complete. Start a new cycle to add items.');
+      return;
+    }
+    const q = query.trim();
+    if (!q) {
+      Alert.alert('Nothing to add', 'Type a name first, then tap Quick add.');
+      return;
+    }
+    const newId = slugify(q);
+    try {
+      // Rules let us write ONLY lastCount/lastCountAt to create a placeholder item.
+      await setDoc(
+        areaItemDoc(venueId, departmentId, areaName, newId),
+        { lastCount: 0, lastCountAt: serverTimestamp() },
+        { merge: true }
+      );
+      // Update UI locally with the user-friendly name (not persisted due to rules).
+      setAllItems(prev => {
+        if (prev.some(p => p.id === newId)) return prev;
+        return [{ id: newId, name: q }, ...prev];
+      });
+      setCounts(prev => ({ ...prev, [newId]: '' }));
+      setQuery('');
+      Alert.alert('Added', `Placeholder item “${q}” added to this area.`);
+      console.log('[TallyUp QuickAdd] placeholder created', { venueId, departmentId, areaName, id: newId });
+    } catch (e: any) {
+      Alert.alert('Quick add failed', e?.message ?? 'Unknown error');
+    }
+  };
+  // -------------------------------------------------------------------
+
   const renderRow = ({ item }: { item: ItemRow }) => {
     const placeholder = item.expectedQuantity != null
       ? `Expected: ${item.expectedQuantity}${item.unit ? ' ' + item.unit : ''}`
@@ -177,6 +229,8 @@ export default function StockTakeAreaInventoryScreen() {
 
   if (loading) return <View style={S.center}><ActivityIndicator /></View>;
 
+  const noMatches = filtered.length === 0 && query.trim().length > 0;
+
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <Text style={S.chipRow}>
@@ -193,9 +247,16 @@ export default function StockTakeAreaInventoryScreen() {
         editable={!readOnly}
       />
 
-      {filtered.length === 0 ? (
-        <View style={{ marginTop: 16 }}>
-          <Text>No matches. (Stub) Search across venue • Quick add “{query}”.</Text>
+      {noMatches ? (
+        <View style={{ marginTop: 8 }}>
+          <Text style={{ marginBottom: 8 }}>No matches in this area.</Text>
+          <TouchableOpacity style={[S.actionBtn, readOnly && S.disabled]} onPress={onSearchAcrossVenue} disabled={readOnly}>
+            <Text style={S.actionText}>Search across venue (stub)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[S.actionBtn, readOnly && S.disabled]} onPress={onQuickAdd} disabled={readOnly}>
+            <Text style={S.actionText}>Quick add “{query.trim()}” to this area</Text>
+          </TouchableOpacity>
+          {readOnly && <Text style={{ color: '#666', marginTop: 6 }}>Area is complete — start a new cycle to add items.</Text>}
         </View>
       ) : (
         <FlatList
@@ -206,7 +267,7 @@ export default function StockTakeAreaInventoryScreen() {
         />
       )}
 
-      {!readOnly && (
+      {!readOnly && filtered.length > 0 && (
         <TouchableOpacity style={[S.submitBtn, submitting && { opacity: 0.6 }]} onPress={onSubmit} disabled={submitting}>
           <Text style={S.submitText}>{submitting ? 'Submitting…' : 'Submit Area'}</Text>
         </TouchableOpacity>
@@ -228,6 +289,9 @@ const S = StyleSheet.create({
   chipInProgress: { backgroundColor: '#FFE8C2' },
   chipComplete: { backgroundColor: '#D9FBE4' },
   search: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 12 },
+  actionBtn: { backgroundColor: '#F3F4F6', padding: 12, borderRadius: 10, marginTop: 8, alignItems: 'center' },
+  actionText: { color: '#111', fontWeight: '600' },
+  disabled: { opacity: 0.5 },
   row: { paddingVertical: 10, borderBottomColor: '#eee', borderBottomWidth: 1 },
   name: { fontSize: 16, marginBottom: 6, fontWeight: '600' },
   input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 },
