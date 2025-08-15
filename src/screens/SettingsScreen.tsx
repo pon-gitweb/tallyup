@@ -1,16 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { signOutAll } from '../services/auth';
-import { useNavigation } from '@react-navigation/native';
 import { DEV_VENUE_ID, DEV_EMAIL } from '../config/dev';
 
 export default function SettingsScreen() {
-  const nav = useNavigation<any>();
-
   const onSignOut = async () => {
     try {
-      await signOutAll();
-      nav.reset({ index: 0, routes: [{ name: 'AuthEntry' }] });
+      await signOutAll(); // auth observer will route to AuthEntry
     } catch (e: any) {
       Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
     }

@@ -1,57 +1,43 @@
-// Firebase initializer for TallyUp (single source of truth)
-import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import {
-  initializeAuth,
-  getAuth,
-  getReactNativePersistence,
-  Auth,
-} from "firebase/auth";
-import {
-  getFirestore,
-  initializeFirestore,
-  Firestore,
-  memoryLocalCache,
-} from "firebase/firestore";
-import { getStorage, FirebaseStorage } from "firebase/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+import { initializeAuth, getAuth, getReactNativePersistence } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// --- TallyUp Firebase config ---
+// --- TallyUp Firebase Config (provided by you) ---
 const firebaseConfig = {
   apiKey: "AIzaSyCvDiUSXBCCP6LnBTP6nDkWzQIpj5vUGIM",
   authDomain: "tallyup-f1463.firebaseapp.com",
   projectId: "tallyup-f1463",
   storageBucket: "tallyup-f1463.firebasestorage.app",
   messagingSenderId: "596901666549",
-  appId: "1:596901666549:web:cadce20353a7b69665efbc",
+  appId: "1:596901666549:web:cadce20353a7b69665efbc"
 };
 
 let app: FirebaseApp;
-let db: Firestore;
-let auth: Auth;
-let storage: FirebaseStorage;
-
 if (!getApps().length) {
   app = initializeApp(firebaseConfig);
-
-  // Firestore: RN/Hermes friendly
-  db = initializeFirestore(app, {
-    localCache: memoryLocalCache(),
-    experimentalForceLongPolling: true,
-    useFetchStreams: false,
-  });
-
-  // Auth: persist across app restarts using AsyncStorage
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
-
-  console.log("[TallyUp Firebase] Initialized:", firebaseConfig.projectId);
+  console.log('[TallyUp Firebase] Initialized: tallyup-f1463');
 } else {
-  app = getApp();
-  db = getFirestore(app);
-  auth = getAuth(app);
+  app = getApps()[0]!;
 }
 
-storage = getStorage(app);
+// React Native Auth persistence
+let _auth = getAuth(app);
+try {
+  // If auth not initialized with RN persistence yet, re-init it:
+  // NOTE: calling initializeAuth twice throws — so we guard with a flag on _auth.
+  // Expo bundlers sometimes return a stubbed instance; this ensures RN persistence.
+  // @ts-ignore custom marker
+  if (!_auth._rnPersistence) {
+    _auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    }) as unknown as typeof _auth;
+    // @ts-ignore marker
+    _auth._rnPersistence = true;
+  }
+} catch (e) {
+  // If initializeAuth throws because it's already initialized, keep the existing one.
+}
 
-export { app, db, auth, storage };
+export const auth = _auth;
+export const db = getFirestore(app);

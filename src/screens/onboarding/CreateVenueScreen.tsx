@@ -1,22 +1,15 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { signOutAll } from '../../services/auth';
 
 export default function CreateVenueScreen() {
-  const nav = useNavigation<any>();
-
   const onCreateVenue = () => {
-    Alert.alert(
-      'Onboarding (stub)',
-      'Venue creation flow is not part of MVP. Ask an admin to add you to an existing venue.'
-    );
+    Alert.alert('Onboarding (stub)', 'Venue creation is not in MVP. Ask an admin to add you to a venue.');
   };
 
   const onBackToLogin = async () => {
     try {
-      await signOutAll(); // ensure auth state is signed out
-      nav.reset({ index: 0, routes: [{ name: 'AuthEntry' }] });
+      await signOutAll(); // auth observer will route to AuthEntry
     } catch (e: any) {
       Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
     }
