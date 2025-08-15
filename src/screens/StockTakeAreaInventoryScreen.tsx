@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { getDoc, onSnapshot, serverTimestamp, setDoc, writeBatch, getDocs, query, orderBy, limit, startAfter, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { areaDoc, areaItemsCol, areaItemDoc } from '../services/paths';
+import useDebouncedValue from '../hooks/useDebouncedValue';
 
 type Params = {
   venueId: string;
@@ -13,10 +14,12 @@ type Params = {
 
 type ItemRow = {
   id: string;
-  name: string;               // UI name; may be derived from ID when rules disallow 'name' write
+  name: string;
   expectedQuantity?: number;
   unit?: string;
 };
+
+const PAGE_SIZE = 50;
 
 export default function StockTakeAreaInventoryScreen() {
   const nav = useNavigation<any>();
@@ -24,9 +27,14 @@ export default function StockTakeAreaInventoryScreen() {
   const { venueId, sessionId, departmentId, areaName } = params as Params;
 
   const [loading, setLoading] = useState(true);
+  const [paging, setPaging] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [pageCursor, setPageCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
   const [allItems, setAllItems] = useState<ItemRow[]>([]);
-  const [query, setQuery] = useState('');
+  const [queryText, setQueryText] = useState('');
+  const debouncedQuery = useDebouncedValue(queryText, 200);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [areaStarted, setAreaStarted] = useState<boolean>(false);
   const [areaCompleted, setAreaCompleted] = useState<boolean>(false);
@@ -34,6 +42,7 @@ export default function StockTakeAreaInventoryScreen() {
 
   const readOnly = areaCompleted;
 
+  // Prime + live area state
   useEffect(() => {
     const aRef = areaDoc(venueId, departmentId, areaName);
     (async () => {
@@ -52,19 +61,8 @@ export default function StockTakeAreaInventoryScreen() {
           console.log('[TallyUp Inventory] startedAt set', { venueId, departmentId, areaName });
         }
 
-        const itemsSnap = await getDocs(areaItemsCol(venueId, departmentId, areaName));
-        const items: ItemRow[] = itemsSnap.docs.map(d => {
-          const data = d.data() as any;
-          // We may not have a 'name' field (rules). Use ID as fallback and reveal expected/unit if present.
-          const uiName = data?.name ?? d.id;
-          return {
-            id: d.id,
-            name: uiName,
-            expectedQuantity: data?.expectedQuantity,
-            unit: data?.unit,
-          };
-        });
-        setAllItems(items);
+        // Load first page of items
+        await loadFirstPage();
       } catch (e: any) {
         Alert.alert('Load error', e?.message ?? 'Unknown error');
       } finally {
@@ -79,13 +77,65 @@ export default function StockTakeAreaInventoryScreen() {
     });
     unsubRef.current = unsub;
     return () => { if (unsubRef.current) unsubRef.current(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueId, departmentId, areaName]);
 
+  const loadFirstPage = useCallback(async () => {
+    setPaging(true);
+    try {
+      const baseQ = query(areaItemsCol(venueId, departmentId, areaName), orderBy('__name__'), limit(PAGE_SIZE));
+      const snap = await getDocs(baseQ);
+      const items: ItemRow[] = snap.docs.map(d => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: data?.name ?? d.id, // UI-only: may not exist due to rules
+          expectedQuantity: data?.expectedQuantity,
+          unit: data?.unit,
+        };
+      });
+      setAllItems(items);
+      setPageCursor(snap.docs[snap.docs.length - 1] ?? null);
+      setHasMore(snap.size === PAGE_SIZE);
+    } finally {
+      setPaging(false);
+    }
+  }, [venueId, departmentId, areaName]);
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || paging || !pageCursor) return;
+    setPaging(true);
+    try {
+      const moreQ = query(
+        areaItemsCol(venueId, departmentId, areaName),
+        orderBy('__name__'),
+        startAfter(pageCursor),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(moreQ);
+      const items: ItemRow[] = snap.docs.map(d => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: data?.name ?? d.id,
+          expectedQuantity: data?.expectedQuantity,
+          unit: data?.unit,
+        };
+      });
+      setAllItems(prev => [...prev, ...items]);
+      setPageCursor(snap.docs[snap.docs.length - 1] ?? null);
+      setHasMore(snap.size === PAGE_SIZE);
+    } finally {
+      setPaging(false);
+    }
+  }, [venueId, departmentId, areaName, hasMore, paging, pageCursor]);
+
+  // Debounced search (client-side over loaded page(s))
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (!q) return allItems;
-    return allItems.filter(i => (i.name ?? '').toLowerCase().includes(q));
-  }, [query, allItems]);
+    return allItems.filter(i => (i.name ?? '').toLowerCase().includes(q) || i.id.toLowerCase().includes(q));
+  }, [debouncedQuery, allItems]);
 
   const onChangeCount = (id: string, v: string) => setCounts((p) => ({ ...p, [id]: v }));
 
@@ -125,7 +175,6 @@ export default function StockTakeAreaInventoryScreen() {
 
       const batch = writeBatchCompat();
 
-      // PER RULES: only lastCount + lastCountAt on items
       filtered.forEach(i => {
         const raw = counts[i.id] ?? (fillZeros ? '0' : '0');
         const qty = Number.isFinite(parseFloat(raw)) ? parseFloat(raw) : 0;
@@ -136,7 +185,6 @@ export default function StockTakeAreaInventoryScreen() {
         );
       });
 
-      // Only set completedAt if not set yet
       batch.set(aRef, { completedAt: serverTimestamp() }, { merge: true });
 
       console.log('[TallyUp Inventory] commit', {
@@ -160,53 +208,35 @@ export default function StockTakeAreaInventoryScreen() {
     return writeBatch(db);
   }
 
-  // ---------- MVP #7: Search Across Venue (stub) + Quick Add ----------
+  // Quick Add (unchanged) — safe with rules
   const slugify = (s: string) =>
-    s.toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 64) || 'item';
-
-  const onSearchAcrossVenue = () => {
-    Alert.alert(
-      'Search across venue',
-      'This is a stub in the MVP. In the full release, you’ll be able to search all departments and add items directly from the venue catalogue.'
-    );
-  };
-
+    s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'item';
   const onQuickAdd = async () => {
     if (readOnly) {
       Alert.alert('Read-only', 'This department is complete. Start a new cycle to add items.');
       return;
     }
-    const q = query.trim();
+    const q = queryText.trim();
     if (!q) {
       Alert.alert('Nothing to add', 'Type a name first, then tap Quick add.');
       return;
     }
     const newId = slugify(q);
     try {
-      // Rules let us write ONLY lastCount/lastCountAt to create a placeholder item.
       await setDoc(
         areaItemDoc(venueId, departmentId, areaName, newId),
         { lastCount: 0, lastCountAt: serverTimestamp() },
         { merge: true }
       );
-      // Update UI locally with the user-friendly name (not persisted due to rules).
-      setAllItems(prev => {
-        if (prev.some(p => p.id === newId)) return prev;
-        return [{ id: newId, name: q }, ...prev];
-      });
+      setAllItems(prev => prev.some(p => p.id === newId) ? prev : [{ id: newId, name: q }, ...prev]);
       setCounts(prev => ({ ...prev, [newId]: '' }));
-      setQuery('');
+      setQueryText('');
       Alert.alert('Added', `Placeholder item “${q}” added to this area.`);
       console.log('[TallyUp QuickAdd] placeholder created', { venueId, departmentId, areaName, id: newId });
     } catch (e: any) {
       Alert.alert('Quick add failed', e?.message ?? 'Unknown error');
     }
   };
-  // -------------------------------------------------------------------
 
   const renderRow = ({ item }: { item: ItemRow }) => {
     const placeholder = item.expectedQuantity != null
@@ -229,7 +259,7 @@ export default function StockTakeAreaInventoryScreen() {
 
   if (loading) return <View style={S.center}><ActivityIndicator /></View>;
 
-  const noMatches = filtered.length === 0 && query.trim().length > 0;
+  const noMatches = filtered.length === 0 && debouncedQuery.trim().length > 0;
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
@@ -242,29 +272,40 @@ export default function StockTakeAreaInventoryScreen() {
       <TextInput
         style={S.search}
         placeholder="Search items in this area…"
-        value={query}
-        onChangeText={setQuery}
+        value={queryText}
+        onChangeText={setQueryText}
         editable={!readOnly}
       />
 
       {noMatches ? (
         <View style={{ marginTop: 8 }}>
-          <Text style={{ marginBottom: 8 }}>No matches in this area.</Text>
-          <TouchableOpacity style={[S.actionBtn, readOnly && S.disabled]} onPress={onSearchAcrossVenue} disabled={readOnly}>
+          <Text style={{ marginBottom: 8 }}>No matches in loaded items.</Text>
+          <TouchableOpacity style={[S.actionBtn, readOnly && S.disabled]} onPress={() => Alert.alert('Search across venue', 'Stub — coming post-MVP.')} disabled={readOnly}>
             <Text style={S.actionText}>Search across venue (stub)</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[S.actionBtn, readOnly && S.disabled]} onPress={onQuickAdd} disabled={readOnly}>
-            <Text style={S.actionText}>Quick add “{query.trim()}” to this area</Text>
+            <Text style={S.actionText}>Quick add “{queryText.trim()}” to this area</Text>
           </TouchableOpacity>
           {readOnly && <Text style={{ color: '#666', marginTop: 6 }}>Area is complete — start a new cycle to add items.</Text>}
         </View>
       ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(it) => it.id}
-          renderItem={renderRow}
-          contentContainerStyle={{ paddingBottom: 24 }}
-        />
+        <>
+          <FlatList
+            data={filtered}
+            keyExtractor={(it) => it.id}
+            renderItem={renderRow}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            onEndReachedThreshold={0.4}
+            onEndReached={() => { if (!debouncedQuery) void loadMore(); }}
+            ListFooterComponent={
+              (!debouncedQuery && hasMore) ? (
+                <TouchableOpacity style={[S.loadMore, paging && { opacity: 0.6 }]} onPress={loadMore} disabled={paging}>
+                  <Text style={S.loadMoreText}>{paging ? 'Loading…' : 'Load more'}</Text>
+                </TouchableOpacity>
+              ) : null
+            }
+          />
+        </>
       )}
 
       {!readOnly && filtered.length > 0 && (
@@ -274,7 +315,7 @@ export default function StockTakeAreaInventoryScreen() {
       )}
       {readOnly && (
         <View style={{ marginTop: 8 }}>
-          <Text style={{ color: '#444' }}>This area is complete (read‑only).</Text>
+          <Text style={{ color: '#444' }}>This area is complete (read-only).</Text>
         </View>
       )}
     </View>
@@ -298,4 +339,6 @@ const S = StyleSheet.create({
   inputDisabled: { backgroundColor: '#f5f5f5' },
   submitBtn: { backgroundColor: '#0A84FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   submitText: { color: '#fff', fontWeight: '700' },
+  loadMore: { padding: 12, alignItems: 'center' },
+  loadMoreText: { color: '#0A84FF', fontWeight: '700' },
 });
