@@ -4,6 +4,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { getDocs, onSnapshot, serverTimestamp, setDoc, Unsubscribe, writeBatch } from 'firebase/firestore';
 import { departmentsCol, areasCol, areaDoc, sessionDoc } from '../services/paths';
 import { db } from '../services/firebase';
+import PeriodBanner from '../components/PeriodBanner';
 
 type Params = { venueId: string; sessionId: string };
 
@@ -156,7 +157,6 @@ export default function DepartmentSelectionScreen() {
       nav.navigate('AreaSelection', { venueId, sessionId, departmentId: dept.id });
       return;
     }
-    // Completed: offer view/read-only and reset via confirm
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         { options: ['Cancel', 'View Areas (read-only)', 'Start New Stock Take'], cancelButtonIndex: 0, destructiveButtonIndex: 2, title: dept.name },
@@ -222,6 +222,7 @@ export default function DepartmentSelectionScreen() {
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
+      <PeriodBanner />
       <FlatList
         data={rows}
         keyExtractor={(it) => it.id}

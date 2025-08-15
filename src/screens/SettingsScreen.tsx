@@ -1,63 +1,44 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { signOutAll } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
+import { DEV_VENUE_ID, DEV_EMAIL } from '../config/dev';
 
 export default function SettingsScreen() {
-  const nav = useNavigation();
+  const nav = useNavigation<any>();
 
-  const Card = ({ title, desc, onPress }: { title: string; desc: string; onPress?: () => void }) => (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={onPress}
-      style={{
-        backgroundColor: '#fff',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#eaeaea',
-        padding: 14,
-        marginBottom: 12,
-      }}
-    >
-      <Text style={{ fontWeight: '700', marginBottom: 4 }}>{title}</Text>
-      <Text style={{ color: '#666' }}>{desc}</Text>
-    </TouchableOpacity>
-  );
+  const onSignOut = async () => {
+    try {
+      await signOutAll();
+      nav.reset({ index: 0, routes: [{ name: 'AuthEntry' }] });
+    } catch (e: any) {
+      Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
+    }
+  };
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: '#f8f9fa' }}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        <Text style={{ fontSize: 22, fontWeight: '800', marginBottom: 12 }}>Settings</Text>
+    <View style={S.c}>
+      <Text style={S.h1}>Settings</Text>
 
-        <Card
-          title="Branding"
-          desc="Upload logo, choose a color theme (light, dark, brand)."
-          onPress={() => Alert.alert('Branding', 'Branding stub — will be implemented in native stage.')}
-        />
+      <View style={S.card}>
+        <Text style={S.cardTitle}>About this build</Text>
+        <Text style={S.p}>Dev account: {DEV_EMAIL}</Text>
+        <Text style={S.p}>Pinned venue: {DEV_VENUE_ID}</Text>
+      </View>
 
-        <Card
-          title="Venue Profile"
-          desc="Set venue name, address, contact. (Defaults to '<email> Venue' until set.)"
-          onPress={() => Alert.alert('Venue Profile', 'Venue profile stub — will connect to venues/{venueId}.')}
-        />
-
-        <Card
-          title="Departments"
-          desc="Enable/disable Bar, Kitchen, etc. Only ACTIVE departments count toward venue completion."
-          onPress={() => Alert.alert('Departments', 'Departments stub — will toggle departments.active.')}
-        />
-
-        <Card
-          title="Permissions"
-          desc="Manage members and roles. (Admins can reopen cycles and change structure.)"
-          onPress={() => Alert.alert('Permissions', 'Permissions stub — will manage venues/{venueId}/members.')}
-        />
-
-        <Card
-          title="Data & Export"
-          desc="Export latest counts and historical sessions for your accountant."
-          onPress={() => Alert.alert('Data & Export', 'Export stub — will generate CSV/PDF in native stage.')}
-        />
-      </ScrollView>
+      <TouchableOpacity style={S.btn} onPress={onSignOut}>
+        <Text style={S.btnText}>Sign out</Text>
+      </TouchableOpacity>
     </View>
   );
 }
+
+const S = StyleSheet.create({
+  c:{ flex:1, padding:16, backgroundColor:'#fff' },
+  h1:{ fontSize:22, fontWeight:'700', marginBottom:12 },
+  card:{ padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginBottom:12 },
+  cardTitle:{ fontWeight:'700', marginBottom:6 },
+  p:{ color:'#333' },
+  btn:{ backgroundColor:'#EF4444', padding:14, borderRadius:10, alignItems:'center', marginTop:16 },
+  btnText:{ color:'#fff', fontWeight:'700' },
+});
