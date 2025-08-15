@@ -9,7 +9,6 @@ type Params = {
   sessionId: string;
   departmentId: string;
   areaName: string;
-  readOnly?: boolean;
 };
 
 type ItemRow = {
@@ -35,10 +34,8 @@ export default function StockTakeAreaInventoryScreen() {
 
   const readOnly = areaCompleted;
 
-  // Live area state: flip UI to read-only if another device completes it
   useEffect(() => {
     const aRef = areaDoc(venueId, departmentId, areaName);
-    // Prime once, then live
     (async () => {
       setLoading(true);
       try {
@@ -49,14 +46,12 @@ export default function StockTakeAreaInventoryScreen() {
         setAreaStarted(started);
         setAreaCompleted(completed);
 
-        // Only set startedAt if not started AND not completed
         if (!completed && !started) {
           await setDoc(aRef, { startedAt: serverTimestamp() }, { merge: true });
           setAreaStarted(true);
           console.log('[TallyUp Inventory] startedAt set', { venueId, departmentId, areaName });
         }
 
-        // Load items
         const itemsSnap = await getDocs(areaItemsCol(venueId, departmentId, areaName));
         const items: ItemRow[] = itemsSnap.docs.map(d => {
           const data = d.data() as any;
@@ -75,13 +70,11 @@ export default function StockTakeAreaInventoryScreen() {
       }
     })();
 
-    // Live subscription
     const unsub = onSnapshot(aRef, (snap) => {
       const d = snap.exists() ? (snap.data() as any) : {};
       setAreaStarted(!!d?.startedAt);
       setAreaCompleted(!!d?.completedAt);
     });
-    // store for cleanup
     unsubRef.current = unsub;
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [venueId, departmentId, areaName]);
@@ -121,7 +114,6 @@ export default function StockTakeAreaInventoryScreen() {
       setSubmitting(true);
 
       const aRef = areaDoc(venueId, departmentId, areaName);
-      // recheck completion just before commit; bail if already complete
       const latest = await getDoc(aRef);
       if (latest.exists() && !!(latest.data() as any)?.completedAt) {
         Alert.alert('Already complete', 'This area has already been completed.');
@@ -131,9 +123,9 @@ export default function StockTakeAreaInventoryScreen() {
 
       const batch = writeBatchCompat();
 
-      // PER RULES: only lastCount + lastCountAt on items
       filtered.forEach(i => {
-        const qty = parseFloat(counts[i.id] ?? (fillZeros ? '0' : '0')) || 0;
+        const raw = counts[i.id] ?? (fillZeros ? '0' : '0');
+        const qty = Number.isFinite(parseFloat(raw)) ? parseFloat(raw) : 0;
         batch.set(
           areaItemDoc(venueId, departmentId, areaName, i.id),
           { lastCount: qty, lastCountAt: serverTimestamp() },
@@ -141,7 +133,6 @@ export default function StockTakeAreaInventoryScreen() {
         );
       });
 
-      // Only set completedAt if not set yet
       batch.set(aRef, { completedAt: serverTimestamp() }, { merge: true });
 
       console.log('[TallyUp Inventory] commit', {
