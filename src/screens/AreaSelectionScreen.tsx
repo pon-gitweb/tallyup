@@ -20,8 +20,8 @@ export default function AreaSelectionScreen() {
   const compute = useCallback(async () => {
     setLoading(true);
     try {
-      const aSnap = await getDocs(areasCol(venueId, departmentId));
-      const list: AreaRow[] = aSnap.docs.map(d => {
+      const snap = await getDocs(areasCol(venueId, departmentId));
+      const list: AreaRow[] = snap.docs.map(d => {
         const data = d.data() as any;
         const status: AreaStatus = data?.completedAt ? 'complete' : data?.startedAt ? 'in_progress' : 'not_started';
         return { id: d.id, name: data?.name ?? d.id, status };
@@ -46,7 +46,7 @@ export default function AreaSelectionScreen() {
   useFocusEffect(useCallback(() => { void compute(); return () => {}; }, [compute]));
 
   const onPress = (item: AreaRow) => {
-    // Optimistic: immediately reflect as in_progress (UI only); snapshot will confirm after startedAt write.
+    // Optimistic UI: if not started, show as in_progress immediately
     if (item.status === 'not_started') {
       setRows(prev => prev.map(r => r.id === item.id ? { ...r, status: 'in_progress' } : r));
     }

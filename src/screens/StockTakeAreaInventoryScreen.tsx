@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { getDocs, setDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { areaDoc, areaItemsCol, areaItemDoc } from '../services/paths';
-import { auth } from '../services/firebase';
 
 type Params = {
   venueId: string;
@@ -23,33 +22,41 @@ type ItemRow = {
 export default function StockTakeAreaInventoryScreen() {
   const nav = useNavigation<any>();
   const { params } = useRoute<any>();
-  const { venueId, sessionId, departmentId, areaName, readOnly } = params as Params;
+  const { venueId, sessionId, departmentId, areaName } = params as Params;
 
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [allItems, setAllItems] = useState<ItemRow[]>([]);
   const [query, setQuery] = useState('');
   const [counts, setCounts] = useState<Record<string, string>>({});
+  const [areaStarted, setAreaStarted] = useState<boolean>(false);
+  const [areaCompleted, setAreaCompleted] = useState<boolean>(false);
+  const unsubRef = useRef<ReturnType<typeof onSnapshot> | null>(null);
 
-  // Mark area started when entering (allowed by rules) — but DO NOT change if already completed.
-  useEffect(() => {
-    (async () => {
-      if (readOnly) return;
-      try {
-        await setDoc(
-          areaDoc(venueId, departmentId, areaName),
-          { startedAt: serverTimestamp() },
-          { merge: true }
-        );
-      } catch {
-        // If rules require startedAt null first time only, it's fine—merge won't clear completedAt.
-      }
-    })();
-  }, [venueId, departmentId, areaName, readOnly]);
+  const readOnly = areaCompleted;
 
+  // Live area state: flip UI to read-only if another device completes it
   useEffect(() => {
+    const aRef = areaDoc(venueId, departmentId, areaName);
+    // Prime once, then live
     (async () => {
       setLoading(true);
       try {
+        const aSnap = await getDoc(aRef);
+        const aData = aSnap.exists() ? (aSnap.data() as any) : {};
+        const started = !!aData?.startedAt;
+        const completed = !!aData?.completedAt;
+        setAreaStarted(started);
+        setAreaCompleted(completed);
+
+        // Only set startedAt if not started AND not completed
+        if (!completed && !started) {
+          await setDoc(aRef, { startedAt: serverTimestamp() }, { merge: true });
+          setAreaStarted(true);
+          console.log('[TallyUp Inventory] startedAt set', { venueId, departmentId, areaName });
+        }
+
+        // Load items
         const itemsSnap = await getDocs(areaItemsCol(venueId, departmentId, areaName));
         const items: ItemRow[] = itemsSnap.docs.map(d => {
           const data = d.data() as any;
@@ -61,10 +68,22 @@ export default function StockTakeAreaInventoryScreen() {
           };
         });
         setAllItems(items);
+      } catch (e: any) {
+        Alert.alert('Load error', e?.message ?? 'Unknown error');
       } finally {
         setLoading(false);
       }
     })();
+
+    // Live subscription
+    const unsub = onSnapshot(aRef, (snap) => {
+      const d = snap.exists() ? (snap.data() as any) : {};
+      setAreaStarted(!!d?.startedAt);
+      setAreaCompleted(!!d?.completedAt);
+    });
+    // store for cleanup
+    unsubRef.current = unsub;
+    return () => { if (unsubRef.current) unsubRef.current(); };
   }, [venueId, departmentId, areaName]);
 
   const filtered = useMemo(() => {
@@ -80,6 +99,8 @@ export default function StockTakeAreaInventoryScreen() {
       Alert.alert('Read-only', 'This area is complete and cannot be edited.');
       return;
     }
+    if (submitting) return;
+
     const unfilled = filtered.filter(i => counts[i.id] === undefined || counts[i.id] === '');
     if (unfilled.length > 0) {
       Alert.alert(
@@ -97,30 +118,47 @@ export default function StockTakeAreaInventoryScreen() {
 
   const doCommit = async (fillZeros: boolean) => {
     try {
+      setSubmitting(true);
+
+      const aRef = areaDoc(venueId, departmentId, areaName);
+      // recheck completion just before commit; bail if already complete
+      const latest = await getDoc(aRef);
+      if (latest.exists() && !!(latest.data() as any)?.completedAt) {
+        Alert.alert('Already complete', 'This area has already been completed.');
+        setSubmitting(false);
+        return;
+      }
+
       const batch = writeBatchCompat();
 
-      // Write counts to MASTER items with ONLY lastCount & lastCountAt (per rules)
+      // PER RULES: only lastCount + lastCountAt on items
       filtered.forEach(i => {
         const qty = parseFloat(counts[i.id] ?? (fillZeros ? '0' : '0')) || 0;
-        batch.set(areaItemDoc(venueId, departmentId, areaName, i.id), {
-          lastCount: qty,
-          lastCountAt: serverTimestamp(),
-        }, { merge: true });
+        batch.set(
+          areaItemDoc(venueId, departmentId, areaName, i.id),
+          { lastCount: qty, lastCountAt: serverTimestamp() },
+          { merge: true }
+        );
       });
 
-      // Mark area complete
-      batch.set(areaDoc(venueId, departmentId, areaName), {
-        completedAt: serverTimestamp(),
-      }, { merge: true });
+      // Only set completedAt if not set yet
+      batch.set(aRef, { completedAt: serverTimestamp() }, { merge: true });
+
+      console.log('[TallyUp Inventory] commit', {
+        venueId, departmentId, areaName, items: filtered.length, fields: ['lastCount','lastCountAt','completedAt']
+      });
 
       await batch.commit();
+      setAreaCompleted(true);
       nav.goBack();
     } catch (e: any) {
+      console.log('[TallyUp Inventory] commit error', e);
       Alert.alert('Submit error', e?.message ?? 'Unknown error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  // small wrapper to get a writeBatch without importing db here
   function writeBatchCompat() {
     const { writeBatch } = require('firebase/firestore');
     const { db } = require('../services/firebase');
@@ -150,18 +188,42 @@ export default function StockTakeAreaInventoryScreen() {
 
   return (
     <View style={{ flex: 1, padding: 16 }}>
-      <TextInput style={S.search} placeholder="Search items in this area…" value={query} onChangeText={setQuery} />
+      <Text style={S.chipRow}>
+        <Text style={[S.chip, areaCompleted ? S.chipComplete : areaStarted ? S.chipInProgress : S.chipIdle]}>
+          {areaCompleted ? 'Complete' : areaStarted ? 'In Progress' : 'Not started'}
+        </Text>
+      </Text>
+
+      <TextInput
+        style={S.search}
+        placeholder="Search items in this area…"
+        value={query}
+        onChangeText={setQuery}
+        editable={!readOnly}
+      />
+
       {filtered.length === 0 ? (
         <View style={{ marginTop: 16 }}>
           <Text>No matches. (Stub) Search across venue • Quick add “{query}”.</Text>
         </View>
       ) : (
-        <FlatList data={filtered} keyExtractor={(it) => it.id} renderItem={renderRow} contentContainerStyle={{ paddingBottom: 24 }} />
+        <FlatList
+          data={filtered}
+          keyExtractor={(it) => it.id}
+          renderItem={renderRow}
+          contentContainerStyle={{ paddingBottom: 24 }}
+        />
       )}
+
       {!readOnly && (
-        <TouchableOpacity style={S.submitBtn} onPress={onSubmit}>
-          <Text style={S.submitText}>Submit Area</Text>
+        <TouchableOpacity style={[S.submitBtn, submitting && { opacity: 0.6 }]} onPress={onSubmit} disabled={submitting}>
+          <Text style={S.submitText}>{submitting ? 'Submitting…' : 'Submit Area'}</Text>
         </TouchableOpacity>
+      )}
+      {readOnly && (
+        <View style={{ marginTop: 8 }}>
+          <Text style={{ color: '#444' }}>This area is complete (read‑only).</Text>
+        </View>
       )}
     </View>
   );
@@ -169,6 +231,11 @@ export default function StockTakeAreaInventoryScreen() {
 
 const S = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  chipRow: { marginBottom: 8 },
+  chip: { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, overflow: 'hidden', color: '#111' },
+  chipIdle: { backgroundColor: '#E5E7EB' },
+  chipInProgress: { backgroundColor: '#FFE8C2' },
+  chipComplete: { backgroundColor: '#D9FBE4' },
   search: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 12 },
   row: { paddingVertical: 10, borderBottomColor: '#eee', borderBottomWidth: 1 },
   name: { fontSize: 16, marginBottom: 6, fontWeight: '600' },
