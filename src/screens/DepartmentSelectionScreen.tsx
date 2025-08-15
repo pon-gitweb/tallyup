@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, Platform, ActionSheetIOS } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, Platform, ActionSheetIOS, RefreshControl } from 'react-native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { getDocs, onSnapshot, serverTimestamp, setDoc, Unsubscribe, writeBatch } from 'firebase/firestore';
 import { departmentsCol, areasCol, areaDoc, sessionDoc } from '../services/paths';
 import { db } from '../services/firebase';
 
@@ -22,62 +22,94 @@ export default function DepartmentSelectionScreen() {
   const { venueId, sessionId } = params as Params;
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<DeptComputed[]>([]);
   const [finalizeEnabled, setFinalizeEnabled] = useState(false);
+  const unsubRefs = useRef<Unsubscribe[]>([]);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const dSnap = await getDocs(departmentsCol(venueId));
-        const results: DeptComputed[] = [];
-        let allComplete = true;
+  const clearSubs = () => {
+    unsubRefs.current.forEach(u => { try { u(); } catch {} });
+    unsubRefs.current = [];
+  };
 
-        for (const d of dSnap.docs) {
-          const deptId = d.id;
-          const name = (d.data() as any)?.name ?? deptId;
+  const computeOnce = useCallback(async () => {
+    setLoading(true);
+    try {
+      const dSnap = await getDocs(departmentsCol(venueId));
+      const results: DeptComputed[] = [];
+      let allComplete = true;
 
-          const aSnap = await getDocs(areasCol(venueId, deptId));
-          const total = aSnap.size;
-          let complete = 0;
-          let inProgress = 0;
+      for (const d of dSnap.docs) {
+        const deptId = d.id;
+        const name = (d.data() as any)?.name ?? deptId;
 
-          aSnap.forEach(a => {
-            const data = a.data() as any;
-            if (data?.completedAt) complete += 1;
-            else if (data?.startedAt) inProgress += 1;
-          });
+        const aSnap = await getDocs(areasCol(venueId, deptId));
+        const total = aSnap.size;
+        let complete = 0;
+        let inProgress = 0;
 
-          const status: DeptComputed['status'] =
-            complete === total && total > 0
-              ? 'complete'
-              : inProgress > 0
-              ? 'in_progress'
-              : 'not_started';
-
-          if (!(complete === total && total > 0)) allComplete = false;
-
-          results.push({ id: deptId, name, total, complete, inProgress, status });
-        }
-
-        results.sort((a, b) => {
-          const order = { in_progress: 0, not_started: 1, complete: 2 } as any;
-          if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
-          return a.name.localeCompare(b.name);
+        aSnap.forEach(a => {
+          const data = a.data() as any;
+          if (data?.completedAt) complete += 1;
+          else if (data?.startedAt) inProgress += 1;
         });
 
-        setRows(results);
-        setFinalizeEnabled(allComplete && results.length > 0);
-      } catch (e: any) {
-        Alert.alert('Load error', e?.message ?? 'Unknown error');
-      } finally {
-        setLoading(false);
+        const status: DeptComputed['status'] =
+          complete === total && total > 0
+            ? 'complete'
+            : inProgress > 0
+            ? 'in_progress'
+            : 'not_started';
+
+        if (!(complete === total && total > 0)) allComplete = false;
+
+        results.push({ id: deptId, name, total, complete, inProgress, status });
       }
-    })();
-  }, [venueId, sessionId]);
+
+      results.sort((a, b) => {
+        const order = { in_progress: 0, not_started: 1, complete: 2 } as any;
+        if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+        return a.name.localeCompare(b.name);
+      });
+
+      setRows(results);
+      setFinalizeEnabled(allComplete && results.length > 0);
+    } finally {
+      setLoading(false);
+    }
+  }, [venueId]);
+
+  const wireLive = useCallback(async () => {
+    clearSubs();
+    const dSnap = await getDocs(departmentsCol(venueId));
+    if (dSnap.empty) { setRows([]); setFinalizeEnabled(false); return; }
+
+    // For each department, subscribe to its areas; recompute for that dept on change
+    const computeFromLive = async () => {
+      // reuse computeOnce for simplicity
+      await computeOnce();
+    };
+
+    dSnap.docs.forEach(d => {
+      const u = onSnapshot(areasCol(venueId, d.id), () => { void computeFromLive(); });
+      unsubRefs.current.push(u);
+    });
+  }, [venueId, computeOnce]);
+
+  useEffect(() => {
+    void computeOnce();
+    void wireLive();
+    return clearSubs;
+  }, [venueId]);
+
+  useFocusEffect(useCallback(() => {
+    void computeOnce();
+    return () => {};
+  }, [computeOnce]));
 
   const onDeptPress = (dept: DeptComputed) => {
     if (dept.status !== 'complete') {
+      // Optimistic hint: user is starting/continuing this dept
       nav.navigate('AreaSelection', { venueId, sessionId, departmentId: dept.id });
       return;
     }
@@ -128,16 +160,19 @@ export default function DepartmentSelectionScreen() {
   const onFinalizeVenue = async () => {
     try {
       setLoading(true);
-      // Allowed: write to sessions/current
-      await import('firebase/firestore').then(async ({ setDoc }) => {
-        await setDoc(sessionDoc(venueId, 'current'), { status: 'idle', finalizedAt: new Date() }, { merge: true });
-      });
+      await setDoc(sessionDoc(venueId, 'current'), { status: 'idle', finalizedAt: new Date() }, { merge: true });
       Alert.alert('Stock Take Completed', 'Venue stock take finalized. You can start a new cycle anytime.');
     } catch (e: any) {
       Alert.alert('Finalize error', e?.message ?? 'Unknown error');
     } finally {
       setLoading(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await computeOnce();
+    setRefreshing(false);
   };
 
   if (loading) return <View style={S.center}><ActivityIndicator /></View>;
@@ -163,7 +198,13 @@ export default function DepartmentSelectionScreen() {
   return (
     <View style={{ flex: 1, padding: 16 }}>
       <View style={S.banner}><Text style={S.bannerText}>EOM Tip: Finish all areas, then tap “Complete Venue Stock Take”.</Text></View>
-      <FlatList data={rows} keyExtractor={(it) => it.id} renderItem={renderDept} contentContainerStyle={{ paddingBottom: 24 }} />
+      <FlatList
+        data={rows}
+        keyExtractor={(it) => it.id}
+        renderItem={renderDept}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      />
       <TouchableOpacity disabled={!finalizeEnabled} style={[S.finalizeBtn, { opacity: finalizeEnabled ? 1 : 0.4 }]} onPress={onFinalizeVenue}>
         <Text style={S.finalizeText}>Complete Venue Stock Take</Text>
       </TouchableOpacity>

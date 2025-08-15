@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../../services/firebase';
 import { ensureDevMembership, ensureActiveSession } from '../../services/devBootstrap';
-import { getDocs, getDoc } from 'firebase/firestore';
+import { getDocs, getDoc, onSnapshot, Unsubscribe } from 'firebase/firestore';
 import { departmentsCol, areasCol, sessionDoc } from '../../services/paths';
 
 type SessionStatus = 'idle' | 'active';
@@ -16,9 +16,45 @@ export default function ExistingVenueDashboard() {
   const [venueId, setVenueId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
   const [hasProgress, setHasProgress] = useState(false);
+  const unsubRefs = useRef<Unsubscribe[]>([]);
+
+  // Tear down any prior listeners
+  const clearSubs = () => {
+    unsubRefs.current.forEach(u => { try { u(); } catch {} });
+    unsubRefs.current = [];
+  };
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
+  const wireLiveProgress = useCallback(async (v: string) => {
+    clearSubs();
+    // Live session status
+    const u1 = onSnapshot(sessionDoc(v, 'current'), (snap) => {
+      const st = (snap.exists() ? (snap.data() as any)?.status : 'idle') as SessionStatus;
+      setSessionStatus(st || 'idle');
+    });
+    unsubRefs.current.push(u1);
+
+    // Live department/area progress: subscribe to each dept's areas
+    const dSnap = await getDocs(departmentsCol(v));
+    if (dSnap.empty) { setHasProgress(false); return; }
+
+    const updateProgress = (areasData: Array<Record<string, any>>) => {
+      const anyProgress = areasData.some(a => a?.startedAt || a?.completedAt);
+      setHasProgress(anyProgress);
+    };
+
+    // For each dept, attach a snapshot to its areas
+    dSnap.docs.forEach(d => {
+      const u = onSnapshot(areasCol(v, d.id), (aSnap) => {
+        const arr = aSnap.docs.map(a => a.data() as any);
+        updateProgress(arr);
+      });
+      unsubRefs.current.push(u);
+    });
+  }, []);
+
+  // Initial load + listeners
   useEffect(() => {
     (async () => {
       if (!user) { setBusy(false); return; }
@@ -26,34 +62,27 @@ export default function ExistingVenueDashboard() {
         setBusy(true);
         const { venueId: v } = await ensureDevMembership();
         setVenueId(v);
-
-        // session status
-        const sSnap = await getDoc(sessionDoc(v, 'current'));
-        setSessionStatus((sSnap.exists() ? (sSnap.data() as any)?.status : 'idle') || 'idle');
-
-        // real progress: any area with startedAt or completedAt
-        const dSnap = await getDocs(departmentsCol(v));
-        let progress = false;
-        for (const d of dSnap.docs) {
-          const aSnap = await getDocs(areasCol(v, d.id));
-          for (const a of aSnap.docs) {
-            const data = a.data() as any;
-            if (data?.startedAt || data?.completedAt) { progress = true; break; }
-          }
-          if (progress) break;
-        }
-        setHasProgress(progress);
+        await wireLiveProgress(v);
+        console.log('[TallyUp Dashboard]', { venueId: v });
       } catch (e: any) {
         Alert.alert('Setup error', e?.message ?? 'Unknown error');
       } finally {
         setBusy(false);
       }
     })();
-  }, [user]);
+    return clearSubs;
+  }, [user, wireLiveProgress]);
+
+  // Also refresh listeners when returning to this screen
+  useFocusEffect(useCallback(() => {
+    if (venueId) { void wireLiveProgress(venueId); }
+    return () => {};
+  }, [venueId, wireLiveProgress]));
 
   const primaryLabel = useMemo(() => {
-    if (sessionStatus === 'active' && hasProgress) return 'Return to Active Stock Take';
-    return 'Start Stock Take';
+    return sessionStatus === 'active' && hasProgress
+      ? 'Return to Active Stock Take'
+      : 'Start Stock Take';
   }, [sessionStatus, hasProgress]);
 
   const onPrimary = async () => {
@@ -63,8 +92,8 @@ export default function ExistingVenueDashboard() {
     }
     try {
       setBusy(true);
-      const sessionId = await ensureActiveSession(venueId); // allowed by rules
-      // Do NOT write to sessions/current here; navigate only.
+      const sessionId = await ensureActiveSession(venueId);
+      console.log('[TallyUp Start/Return] Navigating → DepartmentSelection', { venueId, sessionId });
       nav.navigate('DepartmentSelection', { venueId, sessionId });
     } catch (e: any) {
       Alert.alert('Session error', e?.message ?? 'Unknown error');
