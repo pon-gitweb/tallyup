@@ -1,33 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  TextInput,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  TouchableOpacity,
-  SafeAreaView,
-} from 'react-native';
-import { useNavigation, useRoute, CommonActions } from '@react-navigation/native';
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { db } from 'src/services/firebase';
-import { setLastLocation } from 'src/services/activeTake';
-import { setDeptLastArea } from 'src/services/activeDeptTake';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { getDocs, setDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { areaDoc, areaItemsCol, areaItemDoc } from '../services/paths';
+import { auth } from '../services/firebase';
 
-type RouteParams = { venueId: string; departmentId: string; areaId: string };
+type Params = {
+  venueId: string;
+  sessionId: string;
+  departmentId: string;
+  areaName: string;
+  readOnly?: boolean;
+};
 
-type Item = {
+type ItemRow = {
   id: string;
   name: string;
   expectedQuantity?: number;
@@ -35,119 +21,73 @@ type Item = {
 };
 
 export default function StockTakeAreaInventoryScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
-  const { venueId, departmentId, areaId } = route.params as RouteParams;
+  const nav = useNavigation<any>();
+  const { params } = useRoute<any>();
+  const { venueId, sessionId, departmentId, areaName, readOnly } = params as Params;
 
   const [loading, setLoading] = useState(true);
-  const [areaReadonly, setAreaReadonly] = useState(false);
-  const [items, setItems] = useState<Item[]>([]);
+  const [allItems, setAllItems] = useState<ItemRow[]>([]);
+  const [query, setQuery] = useState('');
   const [counts, setCounts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
 
-  const listRef = useRef<FlatList>(null);
-
-  const itemsPath = (v: string, d: string, a: string) =>
-    `venues/${v}/departments/${d}/areas/${a}/items`;
-  const areaDocPath = (v: string, d: string, a: string) =>
-    `venues/${v}/departments/${d}/areas/${a}`;
-  const areasPath = (v: string, d: string) =>
-    `venues/${v}/departments/${d}/areas`;
-
-  // Check area readonly (completed)
+  // Mark area started when entering (allowed by rules) — but DO NOT change if already completed.
   useEffect(() => {
-    let alive = true;
     (async () => {
+      if (readOnly) return;
       try {
-        const a = await getDoc(doc(db, areaDocPath(venueId, departmentId, areaId)));
-        if (!alive) return;
-        const d = a.data() as any;
-        setAreaReadonly(!!d?.completedAt);
-      } catch (e) {
-        setAreaReadonly(false);
+        await setDoc(
+          areaDoc(venueId, departmentId, areaName),
+          { startedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch {
+        // If rules require startedAt null first time only, it's fine—merge won't clear completedAt.
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, [venueId, departmentId, areaId]);
+  }, [venueId, departmentId, areaName, readOnly]);
 
-  // Load items
   useEffect(() => {
-    setLoading(true);
-    const unsub = onSnapshot(
-      collection(db, itemsPath(venueId, departmentId, areaId)),
-      (snap) => {
-        const next: Item[] = [];
-        snap.forEach((d) => {
-          const data = (d.data() as any) || {};
-          next.push({
+    (async () => {
+      setLoading(true);
+      try {
+        const itemsSnap = await getDocs(areaItemsCol(venueId, departmentId, areaName));
+        const items: ItemRow[] = itemsSnap.docs.map(d => {
+          const data = d.data() as any;
+          return {
             id: d.id,
-            name: data.name ?? '(Unnamed item)',
-            expectedQuantity: typeof data.expectedQuantity === 'number' ? data.expectedQuantity : undefined,
-            unit: data.unit ?? '',
-          });
+            name: data?.name ?? d.id,
+            expectedQuantity: data?.expectedQuantity,
+            unit: data?.unit,
+          };
         });
-        setItems(next);
-        setLoading(false);
-      },
-      (err) => {
-        console.warn('[StockTakeAreaInventory] onSnapshot error', err);
-        Alert.alert('Load Error', 'Could not load items for this area. Check your access and try again.');
+        setAllItems(items);
+      } finally {
         setLoading(false);
       }
-    );
-    return () => unsub();
-  }, [venueId, departmentId, areaId]);
+    })();
+  }, [venueId, departmentId, areaName]);
 
-  const totalItems = items.length;
-  const counted = useMemo(
-    () => items.filter((i) => counts[i.id] != null && counts[i.id] !== '').length,
-    [items, counts]
-  );
-  const hasPartials = counted > 0 && counted < totalItems;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allItems;
+    return allItems.filter(i => (i.name ?? '').toLowerCase().includes(q));
+  }, [query, allItems]);
 
-  const onChangeCount = (itemId: string, val: string) => {
-    if (areaReadonly) return; // ignore edits on finalized areas
-    const trimmed = (val ?? '').trim();
-    const n = trimmed === '' ? '' : String(Number(trimmed));
-    if (n === 'NaN') {
-      setCounts((prev) => ({ ...prev, [itemId]: '' }));
-    } else {
-      setCounts((prev) => ({ ...prev, [itemId]: n }));
-    }
-  };
+  const onChangeCount = (id: string, v: string) => setCounts((p) => ({ ...p, [id]: v }));
 
-  const resetToAreas = () => {
-    navigation.dispatch(
-      CommonActions.reset({
-        index: 2,
-        routes: [
-          { name: 'ExistingVenueDashboard' as never },
-          { name: 'DepartmentSelection' as never, params: { venueId } as any },
-          { name: 'AreaSelection' as never, params: { venueId, departmentId } as any },
-        ],
-      }) as any
-    );
-  };
-
-  const commitArea = async () => {
-    if (areaReadonly) {
-      Alert.alert(
-        'Area is finalized',
-        'This area was completed in a previous stock take. Start a new stock take for this department from the Departments screen to enter new counts.',
-        [{ text: 'OK', onPress: resetToAreas }]
-      );
+  const onSubmit = async () => {
+    if (readOnly) {
+      Alert.alert('Read-only', 'This area is complete and cannot be edited.');
       return;
     }
-
-    if (totalItems > 0 && counted < totalItems) {
+    const unfilled = filtered.filter(i => counts[i.id] === undefined || counts[i.id] === '');
+    if (unfilled.length > 0) {
       Alert.alert(
-        'Incomplete Counts',
-        `You have ${totalItems - counted} uncounted item(s). Enter zero for the missing ones or skip to auto-fill zero.`,
+        'Uncounted items',
+        `You have ${unfilled.length} uncounted items.`,
         [
           { text: 'Go Back', style: 'cancel' },
-          { text: 'Skip & Fill Zeros', style: 'destructive', onPress: () => void doCommit(true) },
+          { text: 'Skip & Fill Zeros', style: 'destructive', onPress: () => void doCommit(true) }
         ]
       );
       return;
@@ -155,136 +95,85 @@ export default function StockTakeAreaInventoryScreen() {
     await doCommit(false);
   };
 
-  const doCommit = async (fillZerosForMissing: boolean) => {
+  const doCommit = async (fillZeros: boolean) => {
     try {
-      setSaving(true);
+      const batch = writeBatchCompat();
 
-      // 1) Save item counts; write zero when requested.
-      for (const it of items) {
-        const raw = counts[it.id];
-        const shouldWrite = raw != null && raw !== '' ? true : fillZerosForMissing;
-        if (!shouldWrite) continue;
+      // Write counts to MASTER items with ONLY lastCount & lastCountAt (per rules)
+      filtered.forEach(i => {
+        const qty = parseFloat(counts[i.id] ?? (fillZeros ? '0' : '0')) || 0;
+        batch.set(areaItemDoc(venueId, departmentId, areaName, i.id), {
+          lastCount: qty,
+          lastCountAt: serverTimestamp(),
+        }, { merge: true });
+      });
 
-        const qty = raw != null && raw !== '' ? Number(raw) : 0;
-        const itemRef = doc(db, `${itemsPath(venueId, departmentId, areaId)}/${it.id}`);
-        await setDoc(itemRef, { lastCount: qty, lastCountAt: serverTimestamp() }, { merge: true });
-      }
+      // Mark area complete
+      batch.set(areaDoc(venueId, departmentId, areaName), {
+        completedAt: serverTimestamp(),
+      }, { merge: true });
 
-      // 2) Mark area completed for this cycle
-      const areaRef = doc(db, areaDocPath(venueId, departmentId, areaId));
-      await setDoc(areaRef, { completedAt: serverTimestamp() }, { merge: true });
-
-      // 3) Update pointers
-      await setLastLocation(venueId, { lastDepartmentId: departmentId, lastAreaId: null });
-      await setDeptLastArea(venueId, departmentId, null);
-
-      // 4) Done → back to Areas
-      Alert.alert('Area Submitted', 'Counts saved. Thanks!', [{ text: 'OK', onPress: resetToAreas }]);
+      await batch.commit();
+      nav.goBack();
     } catch (e: any) {
-      console.warn('[commitArea] error', e);
-      Alert.alert('Commit Error', e?.message ?? 'Failed to submit area.');
-    } finally {
-      setSaving(false);
+      Alert.alert('Submit error', e?.message ?? 'Unknown error');
     }
   };
 
-  if (loading) {
-    return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Loading items…</Text>
-      </SafeAreaView>
-    );
+  // small wrapper to get a writeBatch without importing db here
+  function writeBatchCompat() {
+    const { writeBatch } = require('firebase/firestore');
+    const { db } = require('../services/firebase');
+    return writeBatch(db);
   }
 
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1, paddingBottom: 8 }}
-      >
-        <FlatList
-          ref={listRef}
-          data={items}
-          keyExtractor={(i) => i.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-          renderItem={({ item }) => (
-            <View
-              style={{
-                padding: 12,
-                marginBottom: 12,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: '#ddd',
-              }}
-            >
-              <Text style={{ fontWeight: '600', marginBottom: 8 }}>{item.name}</Text>
-              <TextInput
-                value={counts[item.id] ?? ''}
-                onChangeText={(t) => onChangeCount(item.id, t)}
-                editable={!areaReadonly}
-                selectTextOnFocus={!areaReadonly}
-                keyboardType="numeric"
-                placeholder={
-                  typeof item.expectedQuantity === 'number'
-                    ? `Expected: ${item.expectedQuantity}${item.unit ? ' ' + item.unit : ''}`
-                    : 'Enter quantity'
-                }
-                placeholderTextColor="#9CA3AF"
-                style={{
-                  borderWidth: 1,
-                  borderColor: areaReadonly ? '#eee' : '#ccc',
-                  backgroundColor: areaReadonly ? '#f7f7f7' : '#fff',
-                  borderRadius: 8,
-                  padding: 10,
-                }}
-              />
-            </View>
-          )}
-          ListFooterComponent={<View style={{ height: 80 }} />}
+  const renderRow = ({ item }: { item: ItemRow }) => {
+    const placeholder = item.expectedQuantity != null
+      ? `Expected: ${item.expectedQuantity}${item.unit ? ' ' + item.unit : ''}`
+      : 'Enter count';
+    return (
+      <View style={S.row}>
+        <Text style={S.name}>{item.name}</Text>
+        <TextInput
+          style={[S.input, readOnly && S.inputDisabled]}
+          placeholder={placeholder}
+          keyboardType="numeric"
+          editable={!readOnly}
+          value={counts[item.id] ?? ''}
+          onChangeText={(v) => onChangeCount(item.id, v)}
         />
+      </View>
+    );
+  };
 
-        <View
-          style={{
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderTopWidth: 1,
-            borderColor: '#eee',
-            backgroundColor: '#fff',
-          }}
-        >
-          <TouchableOpacity
-            onPress={commitArea}
-            disabled={saving}
-            style={{
-              padding: 14,
-              borderRadius: 10,
-              backgroundColor: areaReadonly ? '#b2bec3' : (hasPartials ? '#ff9f43' : '#2ecc71'),
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700' }}>
-              {areaReadonly
-                ? 'Area Finalized (Read-only)'
-                : saving
-                ? 'Submitting…'
-                : hasPartials
-                ? 'Submit (Partially Counted)'
-                : 'Submit Area'}
-            </Text>
-          </TouchableOpacity>
-          {areaReadonly && (
-            <Text style={{ marginTop: 8, textAlign: 'center', color: '#555' }}>
-              To enter new counts, go back to Departments and press “Start New Stock Take”.
-            </Text>
-          )}
-          {!areaReadonly && (
-            <Text style={{ marginTop: 8, textAlign: 'center', color: '#555' }}>
-              Counted {counted} of {totalItems} item(s)
-            </Text>
-          )}
+  if (loading) return <View style={S.center}><ActivityIndicator /></View>;
+
+  return (
+    <View style={{ flex: 1, padding: 16 }}>
+      <TextInput style={S.search} placeholder="Search items in this area…" value={query} onChangeText={setQuery} />
+      {filtered.length === 0 ? (
+        <View style={{ marginTop: 16 }}>
+          <Text>No matches. (Stub) Search across venue • Quick add “{query}”.</Text>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      ) : (
+        <FlatList data={filtered} keyExtractor={(it) => it.id} renderItem={renderRow} contentContainerStyle={{ paddingBottom: 24 }} />
+      )}
+      {!readOnly && (
+        <TouchableOpacity style={S.submitBtn} onPress={onSubmit}>
+          <Text style={S.submitText}>Submit Area</Text>
+        </TouchableOpacity>
+      )}
+    </View>
   );
 }
+
+const S = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  search: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 12 },
+  row: { paddingVertical: 10, borderBottomColor: '#eee', borderBottomWidth: 1 },
+  name: { fontSize: 16, marginBottom: 6, fontWeight: '600' },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 },
+  inputDisabled: { backgroundColor: '#f5f5f5' },
+  submitBtn: { backgroundColor: '#0A84FF', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
+  submitText: { color: '#fff', fontWeight: '700' },
+});
