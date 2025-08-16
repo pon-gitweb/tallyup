@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput } from 'reac
 import { signOutAll } from '../services/auth';
 import { DEV_VENUE_ID, DEV_EMAIL } from '../config/dev';
 import { attachSelfToVenue, ensureDevMembership, getCurrentVenueForUser } from '../services/devBootstrap';
+import { leaveCurrentVenue } from '../services/venues';
 
 export default function SettingsScreen() {
   const [uid, setUid] = useState<string>('');
@@ -53,6 +54,35 @@ export default function SettingsScreen() {
     }
   };
 
+  const onLeaveVenue = async () => {
+    if (!venueId) { Alert.alert('No venue', 'You are not currently attached to a venue.'); return; }
+    Alert.alert(
+      'Leave this venue?',
+      'You will lose access to all venue data. You can rejoin later with an invite or by reattaching.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setBusy(true);
+              const { venueId: left } = await leaveCurrentVenue();
+              setVenueId(null);
+              Alert.alert('Left venue', `You have left ${left}. You will be signed out now.`, [
+                { text: 'OK', onPress: async () => { await signOutAll(); } }
+              ]);
+            } catch (e: any) {
+              Alert.alert('Leave failed', e?.message ?? 'Unknown error');
+            } finally {
+              setBusy(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const onSignOut = async () => {
     try {
       setBusy(true);
@@ -98,8 +128,16 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        <TouchableOpacity
+          style={[S.btnWarning, (!venueId || busy) && S.btnDisabled]}
+          onPress={onLeaveVenue}
+          disabled={!venueId || busy}
+        >
+          <Text style={S.btnText}>Leave this venue</Text>
+        </TouchableOpacity>
+
         <Text style={S.note}>
-          Note: “Attach me” is a dev-only shortcut that updates your /users profile to the target venue and creates your membership there, matching current rules.
+          Note: “Attach me” updates your /users profile and membership to match rules. “Leave this venue” removes your membership and clears your profile venue.
         </Text>
       </View>
 
@@ -119,6 +157,7 @@ const S = StyleSheet.create({
   row:{ flexDirection:'row', alignItems:'center', marginTop:10 },
   input:{ flex:1, borderWidth:1, borderColor:'#ddd', borderRadius:10, padding:10, backgroundColor:'#fff' },
   btn:{ backgroundColor:'#0A84FF', padding:12, borderRadius:10, alignItems:'center', marginTop:10 },
+  btnWarning:{ backgroundColor:'#F59E0B', padding:12, borderRadius:10, alignItems:'center', marginTop:10 },
   btnDisabled:{ opacity:0.6 },
   btnText:{ color:'#fff', fontWeight:'700' },
   btnSmall:{ marginLeft:8, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:10, alignItems:'center' },
