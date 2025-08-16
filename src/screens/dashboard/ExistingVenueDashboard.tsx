@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } fr
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../../services/firebase';
-import { ensureDevMembership, ensureActiveSession } from '../../services/devBootstrap';
+import { ensureDevMembership, ensureActiveSession, getCurrentVenueForUser } from '../../services/devBootstrap';
 import { getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
 import { departmentsCol, areasCol, sessionDoc } from '../../services/paths';
 
@@ -19,7 +19,7 @@ export default function ExistingVenueDashboard() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
   const [hasActiveWork, setHasActiveWork] = useState(false);
   const [lastCompletedAt, setLastCompletedAt] = useState<Date | null>(null);
-  const [activityHint, setActivityHint] = useState<string | null>(null); // ✅ #11
+  const [activityHint, setActivityHint] = useState<string | null>(null);
 
   const unsubRefs = useRef<Unsubscribe[]>([]);
   const clearSubs = () => {
@@ -27,23 +27,42 @@ export default function ExistingVenueDashboard() {
     unsubRefs.current = [];
   };
 
-  // Safety: never spin forever
-  useEffect(() => {
-    const t = setTimeout(() => setBusy(false), 8000);
-    return () => clearTimeout(t);
-  }, []);
-
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  // Prefer the user's assigned venue; fallback to DEV only if none
+  useEffect(() => {
+    (async () => {
+      if (!user) { setBusy(false); return; }
+      try {
+        setBusy(true);
+        const prof = await getCurrentVenueForUser();
+        let v = prof.venueId;
+        if (!v) {
+          const dev = await ensureDevMembership();
+          v = dev.venueId;
+        }
+        setVenueId(v);
+        await wireLiveProgress(v);
+        console.log('[TallyUp Dashboard live]', { venueId: v });
+      } catch (e: any) {
+        Alert.alert('Setup error', e?.message ?? 'Unknown error');
+      } finally {
+        setBusy(false);
+      }
+    })();
+    return clearSubs;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const wireLiveProgress = useCallback(async (v: string) => {
     clearSubs();
 
-    // Fetch department names once so hints are friendly
+    // Fetch department names once
     const deptSnap = await getDocs(departmentsCol(v));
     const deptNameById: Record<string, string> = {};
     deptSnap.forEach(d => { deptNameById[d.id] = (d.data() as any)?.name ?? d.id; });
 
-    // Session status live
+    // Session live
     const u1 = onSnapshot(sessionDoc(v, 'current'), (snap) => {
       const st = (snap.exists() ? (snap.data() as any)?.status : 'idle') as SessionStatus;
       setSessionStatus(st || 'idle');
@@ -73,7 +92,6 @@ export default function ExistingVenueDashboard() {
       setActivityHint(hint);
     };
 
-    // Maintain rolling cache of all area docs across departments
     const cache: Record<string, Record<string, any>> = {};
     const recomputeFromCache = () => {
       const flat: Array<any> = [];
@@ -96,30 +114,6 @@ export default function ExistingVenueDashboard() {
       unsubRefs.current.push(u);
     });
   }, []);
-
-  // Initial load
-  useEffect(() => {
-    (async () => {
-      if (!user) { setBusy(false); return; }
-      try {
-        setBusy(true);
-        const { venueId: v } = await ensureDevMembership();
-        setVenueId(v);
-        await wireLiveProgress(v);
-        console.log('[TallyUp Dashboard live]', { venueId: v });
-      } catch (e: any) {
-        Alert.alert('Setup error', e?.message ?? 'Unknown error');
-      } finally {
-        setBusy(false);
-      }
-    })();
-    return clearSubs;
-  }, [user, wireLiveProgress]);
-
-  useFocusEffect(React.useCallback(() => {
-    if (venueId) { void wireLiveProgress(venueId); }
-    return () => {};
-  }, [venueId, wireLiveProgress]));
 
   const primaryLabel = useMemo(() => {
     return sessionStatus === 'active' && hasActiveWork
@@ -151,7 +145,6 @@ export default function ExistingVenueDashboard() {
         <Text style={S.buttonText}>{primaryLabel}</Text>
       </TouchableOpacity>
 
-      {/* Caption rules: show hint if active, else last completion */}
       {hasActiveWork && activityHint && (
         <Text style={S.caption}>{activityHint}</Text>
       )}

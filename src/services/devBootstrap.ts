@@ -3,33 +3,40 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { DEV_VENUE_ID, DEV_AUTO_SIGNUP } from '../config/dev';
 
 /**
- * Ensure the signed-in user has membership under the dev venue.
- * Safe with current rules: user can update /users/{uid}, then membership becomes allowed.
+ * If the user already has a venue in their /users profile, return it.
+ * Otherwise (dev only), attach them to DEV_VENUE_ID.
  */
 export async function ensureDevMembership() {
   const user = auth.currentUser;
   if (!user) throw new Error('No user signed in');
-
   const uid = user.uid;
-  // 1) ensure /users/{uid}.venueId points at DEV_VENUE_ID (dev only)
-  if (DEV_AUTO_SIGNUP) {
-    await setDoc(doc(db, 'users', uid), { venueId: DEV_VENUE_ID, email: user.email ?? null }, { merge: true });
+
+  const uRef = doc(db, 'users', uid);
+  const uSnap = await getDoc(uRef);
+  const existingVenue: string | null = uSnap.exists() ? (uSnap.data() as any)?.venueId ?? null : null;
+
+  if (existingVenue) {
+    // Soft-check membership; if missing, create it (allowed since venueId matches)
+    await setDoc(doc(db, 'venues', existingVenue, 'members', uid), {
+      uid, role: 'member', attachedAt: serverTimestamp(),
+    }, { merge: true });
+    console.log('[TallyUp DevBootstrap] Membership OK', { uid, venueId: existingVenue });
+    return { uid, venueId: existingVenue };
   }
 
-  // 2) write membership doc for this user (allowed because user.venueId == venueId now)
+  // DEV fallback only when user has no venue yet
+  if (DEV_AUTO_SIGNUP) {
+    await setDoc(uRef, { venueId: DEV_VENUE_ID, email: user.email ?? null }, { merge: true });
+  }
   await setDoc(doc(db, 'venues', DEV_VENUE_ID, 'members', uid), {
-    uid,
-    role: 'member',
-    attachedAt: serverTimestamp(),
+    uid, role: 'member', attachedAt: serverTimestamp(),
   }, { merge: true });
 
   console.log('[TallyUp DevBootstrap] Membership OK', { uid, venueId: DEV_VENUE_ID });
   return { uid, venueId: DEV_VENUE_ID };
 }
 
-/**
- * Ensure venue session doc exists and is 'active'. Returns sessionId ("current").
- */
+/** Ensure a venue session is 'active' (used by Start/Return) */
 export async function ensureActiveSession(venueId: string) {
   const ref = doc(db, 'venues', venueId, 'sessions', 'current');
   const snap = await getDoc(ref);
@@ -48,32 +55,7 @@ export async function ensureActiveSession(venueId: string) {
   return 'current';
 }
 
-/**
- * DEV-ONLY: Attach the current user to any venue by ID.
- * Implementation mirrors ensureDevMembership but for an arbitrary venueId.
- */
-export async function attachSelfToVenue(venueId: string) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('No user signed in');
-  const uid = user.uid;
-
-  // Set user profile venueId (allowed by rules)
-  await setDoc(doc(db, 'users', uid), { venueId, email: user.email ?? null }, { merge: true });
-
-  // Create/merge membership under venue (now allowed because user.venueId == venueId)
-  await setDoc(doc(db, 'venues', venueId, 'members', uid), {
-    uid,
-    role: 'member',
-    attachedAt: serverTimestamp(),
-  }, { merge: true });
-
-  console.log('[TallyUp DevBootstrap] Attached self to venue', { uid, venueId });
-  return { uid, venueId };
-}
-
-/**
- * Read the user's current venue from their /users/{uid} profile (if set).
- */
+/** Utility: current user's venue (from /users) */
 export async function getCurrentVenueForUser(): Promise<{ uid: string; venueId: string | null; email?: string | null }> {
   const user = auth.currentUser;
   if (!user) throw new Error('No user signed in');
