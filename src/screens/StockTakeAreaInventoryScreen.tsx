@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, TextInput, FlatList } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { collection, doc, getDocs, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase';
-import { retryWrite } from '../services/retry';
 
 type RouteParams = { venueId: string; departmentId: string; areaId: string };
 
@@ -32,9 +31,17 @@ export default function StockTakeAreaInventoryScreen() {
 
   const onSubmit = async () => {
     try {
-      const batch = writeBatch(db);
       const now = serverTimestamp();
       const uid = auth.currentUser?.uid ?? 'unknown';
+      const aRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId);
+      const aSnap = await getDoc(aRef);
+
+      const batch = writeBatch(db);
+
+      // If not started, mark startedAt now (first submission)
+      if (aSnap.exists() && !(aSnap.data() as any)?.startedAt) {
+        batch.set(aRef, { startedAt: now }, { merge: true });
+      }
 
       // Write count updates
       items.forEach((it) => {
@@ -45,14 +52,12 @@ export default function StockTakeAreaInventoryScreen() {
         }
       });
 
-      // Mark area complete + append audit log (append-only)
-      const aRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId);
+      // Mark area complete + append audit log
       batch.set(aRef, { completedAt: now }, { merge: true });
-
       const logRef = doc(collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'logs'));
       batch.set(logRef, { type: 'area_completed', by: uid, at: now });
 
-      await retryWrite(async () => { await batch.commit(); });
+      await batch.commit();
 
       Alert.alert('Saved', 'Area completed.');
       nav.goBack();

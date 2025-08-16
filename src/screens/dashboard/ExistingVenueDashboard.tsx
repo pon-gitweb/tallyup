@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
+import { auth, db } from '../../services/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth } from '../../services/firebase';
-import { ensureDevMembership, ensureActiveSession, getCurrentVenueForUser } from '../../services/devBootstrap';
-import { getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
-import { departmentsCol, areasCol, sessionDoc } from '../../services/paths';
+import { collection, doc, getDoc, getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { ensureDevMembership, getCurrentVenueForUser } from '../../services/devBootstrap';
+import { ensureActiveSession } from '../../services/finalization';
 
 type SessionStatus = 'idle' | 'active';
 
@@ -15,26 +15,22 @@ export default function ExistingVenueDashboard() {
   const [busy, setBusy] = useState(true);
   const [venueId, setVenueId] = useState<string | null>(null);
 
-  // Live derived state
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
-  const [hasActiveWork, setHasActiveWork] = useState(false);
   const [lastCompletedAt, setLastCompletedAt] = useState<Date | null>(null);
+  const [hasActiveWork, setHasActiveWork] = useState(false);
   const [activityHint, setActivityHint] = useState<string | null>(null);
 
-  const unsubRefs = useRef<Unsubscribe[]>([]);
-  const clearSubs = () => {
-    unsubRefs.current.forEach(u => { try { u(); } catch {} });
-    unsubRefs.current = [];
-  };
+  const unsubs = useRef<Unsubscribe[]>([]);
+  const clear = () => { unsubs.current.forEach(u => { try { u(); } catch {}; }); unsubs.current = []; };
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  // Prefer the user's assigned venue; fallback to DEV only if none
   useEffect(() => {
     (async () => {
       if (!user) { setBusy(false); return; }
       try {
         setBusy(true);
+        // Prefer user's venue; fallback to DEV if none
         const prof = await getCurrentVenueForUser();
         let v = prof.venueId;
         if (!v) {
@@ -42,83 +38,74 @@ export default function ExistingVenueDashboard() {
           v = dev.venueId;
         }
         setVenueId(v);
-        await wireLiveProgress(v);
-        console.log('[TallyUp Dashboard live]', { venueId: v });
+        wireLive(v);
       } catch (e: any) {
         Alert.alert('Setup error', e?.message ?? 'Unknown error');
       } finally {
         setBusy(false);
       }
     })();
-    return clearSubs;
+    return () => clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const wireLiveProgress = useCallback(async (v: string) => {
-    clearSubs();
+  const wireLive = async (v: string) => {
+    clear();
 
-    // Fetch department names once
-    const deptSnap = await getDocs(departmentsCol(v));
-    const deptNameById: Record<string, string> = {};
-    deptSnap.forEach(d => { deptNameById[d.id] = (d.data() as any)?.name ?? d.id; });
-
-    // Session live
-    const u1 = onSnapshot(sessionDoc(v, 'current'), (snap) => {
-      const st = (snap.exists() ? (snap.data() as any)?.status : 'idle') as SessionStatus;
-      setSessionStatus(st || 'idle');
-    });
-    unsubRefs.current.push(u1);
-
-    const recompute = (allAreas: Array<{deptId:string; areaId:string; startedAt?:any; completedAt?:any; name?:string;}>) => {
-      let active = false;
-      let latest: Date | null = null;
-      let hint: string | null = null;
-
-      for (const a of allAreas) {
-        const started = a?.startedAt?.toDate?.() || null;
-        const completed = a?.completedAt?.toDate?.() || null;
-        if (!hint && started && !completed) {
-          active = true;
-          const dn = deptNameById[a.deptId] ?? a.deptId;
-          const an = a.name ?? a.areaId;
-          hint = `${dn} • ${an} in progress`;
-        }
-        if (completed) {
-          if (!latest || completed > latest) latest = completed;
-        }
+    // 1) Session live
+    const sRef = doc(db, 'venues', v, 'sessions', 'current');
+    const u1 = onSnapshot(sRef, (snap) => {
+      if (!snap.exists()) {
+        setSessionStatus('idle');
+        setLastCompletedAt(null);
+        return;
       }
-      setHasActiveWork(!!active);
-      setLastCompletedAt(latest ?? null);
+      const data = snap.data() as any;
+      setSessionStatus((data?.status as SessionStatus) || 'idle');
+      const lc = data?.lastCompletedAt?.toDate?.() ?? null;
+      setLastCompletedAt(lc);
+    });
+    unsubs.current.push(u1);
+
+    // 2) Light live hint: first in-progress area (if any) across departments
+    const depts = await getDocs(collection(db, 'venues', v, 'departments'));
+    const nameMap: Record<string,string> = {};
+    depts.forEach(d => { nameMap[d.id] = (d.data() as any)?.name ?? d.id; });
+
+    const cache: Record<string, Record<string, any>> = {};
+    const recompute = () => {
+      let hint: string | null = null;
+      let active = false;
+      Object.entries(cache).forEach(([deptId, map]) => {
+        Object.entries(map).forEach(([areaId, a]: any) => {
+          const started = a?.startedAt?.toDate?.() ?? null;
+          const completed = a?.completedAt?.toDate?.() ?? null;
+          if (!hint && started && !completed) {
+            active = true;
+            const dn = nameMap[deptId] ?? deptId;
+            const an = a?.name ?? areaId;
+            hint = `${dn} • ${an} in progress`;
+          }
+        });
+      });
+      setHasActiveWork(active);
       setActivityHint(hint);
     };
 
-    const cache: Record<string, Record<string, any>> = {};
-    const recomputeFromCache = () => {
-      const flat: Array<any> = [];
-      Object.entries(cache).forEach(([deptId, map]) =>
-        Object.entries(map).forEach(([areaId, v]) => flat.push({ deptId, areaId, ...v }))
-      );
-      recompute(flat);
-    };
-
-    // Subscribe to each department's areas
-    deptSnap.docs.forEach(d => {
-      const deptId = d.id;
-      const u = onSnapshot(areasCol(v, deptId), (aSnap) => {
-        cache[deptId] = cache[deptId] || {};
-        aSnap.docs.forEach(a => { cache[deptId][a.id] = a.data(); });
-        recomputeFromCache();
-      }, (err) => {
-        console.log('[TallyUp Dashboard] area snapshot error', err);
-      });
-      unsubRefs.current.push(u);
+    depts.forEach(d => {
+      const u = onSnapshot(collection(db, 'venues', v, 'departments', d.id, 'areas'), (snap) => {
+        cache[d.id] = cache[d.id] || {};
+        snap.forEach(a => { cache[d.id][a.id] = a.data(); });
+        recompute();
+      }, (err) => console.log('[Dashboard] areas snap err', err));
+      unsubs.current.push(u);
     });
-  }, []);
+  };
 
   const primaryLabel = useMemo(() => {
-    return sessionStatus === 'active' && hasActiveWork
-      ? 'Return to Active Stock Take'
-      : 'Start Stock Take';
+    // If session is active OR any area is in progress → Return
+    if (sessionStatus === 'active' || hasActiveWork) return 'Return to Active Stock Take';
+    return 'Start Stock Take';
   }, [sessionStatus, hasActiveWork]);
 
   const onPrimary = async () => {
@@ -126,7 +113,6 @@ export default function ExistingVenueDashboard() {
     try {
       setBusy(true);
       const sessionId = await ensureActiveSession(venueId);
-      console.log('[TallyUp Start/Return] → DepartmentSelection', { venueId, sessionId });
       nav.navigate('DepartmentSelection', { venueId, sessionId });
     } catch (e: any) {
       Alert.alert('Session error', e?.message ?? 'Unknown error');
@@ -135,7 +121,7 @@ export default function ExistingVenueDashboard() {
     }
   };
 
-  if (busy) return (<View style={S.center}><ActivityIndicator /></View>);
+  if (busy) return <View style={S.center}><ActivityIndicator /></View>;
 
   return (
     <View style={S.container}>
@@ -145,10 +131,8 @@ export default function ExistingVenueDashboard() {
         <Text style={S.buttonText}>{primaryLabel}</Text>
       </TouchableOpacity>
 
-      {hasActiveWork && activityHint && (
-        <Text style={S.caption}>{activityHint}</Text>
-      )}
-      {!hasActiveWork && lastCompletedAt && (
+      {activityHint && <Text style={S.caption}>{activityHint}</Text>}
+      {!activityHint && lastCompletedAt && (
         <Text style={S.caption}>
           Last completed: {lastCompletedAt.toLocaleDateString()} {lastCompletedAt.toLocaleTimeString()}
         </Text>
