@@ -1,13 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import NetInfo from '@react-native-community/netinfo';
+
+// Optional require: app still bundles if the dep isn't installed yet
+let NetInfo: any = null;
+try {
+  NetInfo = require('@react-native-community/netinfo').default;
+} catch {
+  NetInfo = null;
+}
 
 export default function NetStatusBanner() {
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {
-    const sub = NetInfo.addEventListener(state => {
-      const isOnline = Boolean(state.isConnected) && Boolean(state.isInternetReachable ?? true);
+    if (!NetInfo) return; // silently no-op if module missing
+    const sub = NetInfo.addEventListener((state: any) => {
+      const isOnline = Boolean(state?.isConnected) && Boolean(state?.isInternetReachable ?? true);
       setOffline(!isOnline);
     });
     return () => sub && sub();
