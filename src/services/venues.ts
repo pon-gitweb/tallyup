@@ -1,5 +1,6 @@
 import { auth, db } from './firebase';
-import { doc, getDoc, serverTimestamp, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { seedVenueStructureIfEmpty } from './venueSeed';
 
 // Generate venueId like v_xxxxxxxxxxxx
 function genVenueId() {
@@ -21,7 +22,7 @@ export async function createVenueOwnedByCurrentUser(name: string) {
   const exists = await getDoc(vRef);
   if (exists.exists()) throw new Error('Generated venue ID collided; please retry.');
 
-  // 1) Create the venue doc (rules: allow create if ownerUid == uid)
+  // 1) Create the venue doc (rules allow first venue or group multi-venue)
   await setDoc(vRef, {
     name: name || venueId,
     ownerUid: uid,
@@ -36,6 +37,14 @@ export async function createVenueOwnedByCurrentUser(name: string) {
   // 3) Membership as owner
   const mRef = doc(db, 'venues', venueId, 'members', uid);
   await setDoc(mRef, { uid, role: 'owner', attachedAt: serverTimestamp() }, { merge: true });
+
+  // 3.5) Seed default structure if the venue is empty (idempotent)
+  try {
+    const seeded = await seedVenueStructureIfEmpty(venueId);
+    if (seeded.seeded) console.log('[TallyUp Seed] Default departments/areas created for', venueId);
+  } catch (e) {
+    console.log('[TallyUp Seed] Skipped or failed:', e);
+  }
 
   // 4) Seed an idle session
   const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
@@ -56,9 +65,11 @@ export async function leaveCurrentVenue() {
   if (!venueId) throw new Error('You are not attached to any venue.');
 
   const mRef = doc(db, 'venues', venueId, 'members', uid);
+
   const batch = writeBatch(db);
   batch.delete(mRef);
   batch.set(uRef, { venueId: null }, { merge: true });
   await batch.commit();
+
   return { venueId };
 }
