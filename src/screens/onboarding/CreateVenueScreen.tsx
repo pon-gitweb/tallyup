@@ -29,21 +29,13 @@ export default function CreateVenueScreen() {
   };
 
   const onJoinWithCode = () => {
-    Alert.alert(
-      'Join with invite code',
-      'This will let you join an existing venue using a code from an admin. (Coming soon in MVP++)'
-    );
+    Alert.alert('Join with invite code', 'Coming soon (MVP++). Ask your admin for an invite code.');
   };
 
   const onBackToLogin = async () => {
-    try {
-      setBusy(true);
-      await signOutAll(); // auth observer will route to AuthEntry
-    } catch (e: any) {
-      Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
-    } finally {
-      setBusy(false);
-    }
+    try { setBusy(true); await signOutAll(); }
+    catch (e: any) { Alert.alert('Sign out failed', e?.message ?? 'Unknown error'); }
+    finally { setBusy(false); }
   };
 
   return (

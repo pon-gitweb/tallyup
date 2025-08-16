@@ -1,7 +1,7 @@
 import { auth, db } from './firebase';
 import { doc, getDoc, serverTimestamp, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 
-// Simple venueId generator: v_{12 lowercase alnum}
+// Generate venueId like v_xxxxxxxxxxxx
 function genVenueId() {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let out = 'v_';
@@ -9,9 +9,7 @@ function genVenueId() {
   return out;
 }
 
-/**
- * Create a new venue owned by the current user.
- */
+/** Create a new venue owned by the current user (MVP) */
 export async function createVenueOwnedByCurrentUser(name: string) {
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in');
@@ -23,6 +21,7 @@ export async function createVenueOwnedByCurrentUser(name: string) {
   const exists = await getDoc(vRef);
   if (exists.exists()) throw new Error('Generated venue ID collided; please retry.');
 
+  // 1) Create the venue doc (rules: allow create if ownerUid == uid)
   await setDoc(vRef, {
     name: name || venueId,
     ownerUid: uid,
@@ -30,25 +29,22 @@ export async function createVenueOwnedByCurrentUser(name: string) {
     createdAt: serverTimestamp(),
   });
 
-  // Attach user to this venue (enables hasVenueAccess)
+  // 2) Attach the user to this venue (enables hasVenueAccess)
   const uRef = doc(db, 'users', uid);
   await setDoc(uRef, { venueId }, { merge: true });
 
-  // Create membership doc (now allowed)
+  // 3) Membership as owner
   const mRef = doc(db, 'venues', venueId, 'members', uid);
   await setDoc(mRef, { uid, role: 'owner', attachedAt: serverTimestamp() }, { merge: true });
 
-  // Seed session to idle
+  // 4) Seed an idle session
   const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
   await setDoc(sRef, { status: 'idle', createdAt: serverTimestamp() }, { merge: true });
 
   return { venueId };
 }
 
-/**
- * Leave the current venue: delete membership and clear users/{uid}.venueId.
- * Uses a single batch for atomicity.
- */
+/** Leave the current venue (batch: delete membership + clear users/{uid}.venueId) */
 export async function leaveCurrentVenue() {
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in');
@@ -60,12 +56,9 @@ export async function leaveCurrentVenue() {
   if (!venueId) throw new Error('You are not attached to any venue.');
 
   const mRef = doc(db, 'venues', venueId, 'members', uid);
-
   const batch = writeBatch(db);
-  batch.delete(mRef);                 // allowed while access still valid
-  batch.set(uRef, { venueId: null }, { merge: true }); // always allowed (own user doc)
-
+  batch.delete(mRef);
+  batch.set(uRef, { venueId: null }, { merge: true });
   await batch.commit();
-
   return { venueId };
 }
