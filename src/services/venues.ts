@@ -1,69 +1,48 @@
-import { collection, doc, getDoc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { auth, db } from './firebase';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
-function genId() {
-  return 'v_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+// Simple venueId generator: v_{12 lowercase alnum}
+function genVenueId() {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let out = 'v_';
+  for (let i = 0; i < 12; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return out;
 }
 
-export async function isMember(venueId: string, uid: string) {
-  if (!venueId || !uid) return false;
-  const mr = doc(db, `venues/${venueId}/members/${uid}`);
-  return (await getDoc(mr)).exists();
-}
+/**
+ * Create a new venue owned by the current user.
+ * IMPORTANT: Requires the rules addition provided in the instructions to allow creating /venues/{venueId}.
+ */
+export async function createVenueOwnedByCurrentUser(name: string) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
 
-export async function joinOpenSignup(venueId: string, uid: string) {
-  const mr = doc(db, `venues/${venueId}/members/${uid}`);
-  await setDoc(mr, { role: 'admin', createdAt: serverTimestamp() }, { merge: true });
-}
+  const uid = user.uid;
+  const venueId = genVenueId();
 
-export async function createJoinAndSeedDevVenue(uid: string): Promise<string> {
-  const venueId = genId();
+  // 1) Create the venue doc (rules: allow create if ownerUid == uid and doc doesn't exist)
+  const vRef = doc(db, 'venues', venueId);
+  const exists = await getDoc(vRef);
+  if (exists.exists()) throw new Error('Generated venue ID collided; please retry.');
 
-  // 1) Create venue with openSignup so rules allow joining
-  const vr = doc(db, `venues/${venueId}`);
-  await setDoc(vr, {
-    name: 'TallyUp Dev Venue',
+  await setDoc(vRef, {
+    name: name || venueId,
+    ownerUid: uid,
+    archived: false,
     createdAt: serverTimestamp(),
-    config: { openSignup: true },
-  }, { merge: true });
+  });
 
-  // 2) Join
-  await joinOpenSignup(venueId, uid);
+  // 2) Attach user to this venue (this satisfies hasVenueAccess for subsequent writes)
+  const uRef = doc(db, 'users', uid);
+  await setDoc(uRef, { venueId }, { merge: true });
 
-  // 3) Seed departments/areas/items if empty
-  const deptsSnap = await getDocs(collection(db, `venues/${venueId}/departments`));
-  if (deptsSnap.empty) {
-    const departments = [
-      { id: 'Bar', name: 'Bar' },
-      { id: 'Kitchen', name: 'Kitchen' },
-    ];
-    for (const d of departments) {
-      await setDoc(doc(db, `venues/${venueId}/departments/${d.id}`), {
-        name: d.name, createdAt: serverTimestamp()
-      }, { merge: true });
+  // 3) Create membership doc (now allowed)
+  const mRef = doc(db, 'venues', venueId, 'members', uid);
+  await setDoc(mRef, { uid, role: 'owner', attachedAt: serverTimestamp() }, { merge: true });
 
-      const areas = d.id === 'Bar'
-        ? [{ id: 'FrontBar', name: 'Front Bar' }, { id: 'BackBar', name: 'Back Bar' }]
-        : [{ id: 'Prep', name: 'Prep' }, { id: 'Pass', name: 'Pass' }];
+  // 4) Seed a session doc to idle
+  const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
+  await setDoc(sRef, { status: 'idle', createdAt: serverTimestamp() }, { merge: true });
 
-      for (const a of areas) {
-        await setDoc(doc(db, `venues/${venueId}/departments/${d.id}/areas/${a.id}`), {
-          name: a.name,
-          startedAt: null,
-          completedAt: null,
-          createdAt: serverTimestamp(),
-        }, { merge: true });
-
-        const defaultItems = [
-          { id: 'Coke330', name: 'Coke 330ml', expectedQuantity: 24, unit: 'bottles' },
-          { id: 'Lime', name: 'Lime', expectedQuantity: 30, unit: 'pcs' },
-        ];
-        for (const it of defaultItems) {
-          await setDoc(doc(db, `venues/${venueId}/departments/${d.id}/areas/${a.id}/items/${it.id}`), it, { merge: true });
-        }
-      }
-    }
-  }
-
-  return venueId;
+  return { venueId };
 }
