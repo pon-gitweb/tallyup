@@ -2,159 +2,156 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { auth, db } from '../../services/firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
-import { ensureDevMembership, getCurrentVenueForUser } from '../../services/devBootstrap';
-import { ensureActiveSession } from '../../services/finalization';
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { resetVenueCycle } from '../../services/session';
 
-type SessionStatus = 'idle' | 'active';
+type Totals = { total: number; started: number; complete: number };
 
 export default function ExistingVenueDashboard() {
   const nav = useNavigation<any>();
-  const [user, setUser] = useState<User | null>(null);
-  const [busy, setBusy] = useState(true);
   const [venueId, setVenueId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sessionActive, setSessionActive] = useState<boolean>(false);
+  const [totals, setTotals] = useState<Totals>({ total: 0, started: 0, complete: 0 });
 
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
-  const [lastCompletedAt, setLastCompletedAt] = useState<Date | null>(null);
-  const [hasActiveWork, setHasActiveWork] = useState(false);
-  const [activityHint, setActivityHint] = useState<string | null>(null);
+  const areaUnsubs = useRef<Array<() => void>>([]);
 
-  const unsubs = useRef<Unsubscribe[]>([]);
-  const clear = () => { unsubs.current.forEach(u => { try { u(); } catch {}; }); unsubs.current = []; };
-
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
-
+  // Load user's attached venue; if none -> CreateVenue (app)
   useEffect(() => {
     (async () => {
-      if (!user) { setBusy(false); return; }
-      try {
-        setBusy(true);
-        // Prefer user's venue; fallback to DEV if none
-        const prof = await getCurrentVenueForUser();
-        let v = prof.venueId;
-        if (!v) {
-          const dev = await ensureDevMembership();
-          v = dev.venueId;
-        }
-        setVenueId(v);
-        wireLive(v);
-      } catch (e: any) {
-        Alert.alert('Setup error', e?.message ?? 'Unknown error');
-      } finally {
-        setBusy(false);
-      }
-    })();
-    return () => clear();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const wireLive = async (v: string) => {
-    clear();
-
-    // 1) Session live
-    const sRef = doc(db, 'venues', v, 'sessions', 'current');
-    const u1 = onSnapshot(sRef, (snap) => {
-      if (!snap.exists()) {
-        setSessionStatus('idle');
-        setLastCompletedAt(null);
+      const uid = auth.currentUser?.uid;
+      if (!uid) { setLoading(false); return; }
+      const uSnap = await getDoc(doc(db, 'users', uid));
+      const vId = uSnap.exists() ? (uSnap.data() as any)?.venueId ?? null : null;
+      if (!vId) {
+        nav.reset({ index: 0, routes: [{ name: 'CreateVenue', params: { origin: 'app' } }] });
         return;
       }
-      const data = snap.data() as any;
-      setSessionStatus((data?.status as SessionStatus) || 'idle');
-      const lc = data?.lastCompletedAt?.toDate?.() ?? null;
-      setLastCompletedAt(lc);
-    });
-    unsubs.current.push(u1);
-
-    // 2) Light live hint: first in-progress area (if any) across departments
-    const depts = await getDocs(collection(db, 'venues', v, 'departments'));
-    const nameMap: Record<string,string> = {};
-    depts.forEach(d => { nameMap[d.id] = (d.data() as any)?.name ?? d.id; });
-
-    const cache: Record<string, Record<string, any>> = {};
-    const recompute = () => {
-      let hint: string | null = null;
-      let active = false;
-      Object.entries(cache).forEach(([deptId, map]) => {
-        Object.entries(map).forEach(([areaId, a]: any) => {
-          const started = a?.startedAt?.toDate?.() ?? null;
-          const completed = a?.completedAt?.toDate?.() ?? null;
-          if (!hint && started && !completed) {
-            active = true;
-            const dn = nameMap[deptId] ?? deptId;
-            const an = a?.name ?? areaId;
-            hint = `${dn} • ${an} in progress`;
-          }
-        });
-      });
-      setHasActiveWork(active);
-      setActivityHint(hint);
+      setVenueId(vId);
+      setLoading(false);
+    })();
+    return () => {
+      // Cleanup any area listeners on unmount
+      areaUnsubs.current.forEach(u => { try { u(); } catch {} });
+      areaUnsubs.current = [];
     };
+  }, []);
 
-    depts.forEach(d => {
-      const u = onSnapshot(collection(db, 'venues', v, 'departments', d.id, 'areas'), (snap) => {
-        cache[d.id] = cache[d.id] || {};
-        snap.forEach(a => { cache[d.id][a.id] = a.data(); });
-        recompute();
-      }, (err) => console.log('[Dashboard] areas snap err', err));
-      unsubs.current.push(u);
+  // Live session status + live area aggregates (across all departments)
+  useEffect(() => {
+    if (!venueId) return;
+
+    const unsubSession = onSnapshot(doc(db, 'venues', venueId, 'sessions', 'current'), (d) => {
+      const status = (d.exists() ? (d.data() as any)?.status : 'idle') ?? 'idle';
+      setSessionActive(status === 'active');
     });
-  };
+
+    const unsubDepts = onSnapshot(collection(db, 'venues', venueId, 'departments'), (ds) => {
+      // Clear previous area listeners
+      areaUnsubs.current.forEach(u => { try { u(); } catch {} });
+      areaUnsubs.current = [];
+
+      // Track per-dept counters and recompute global totals on every area snapshot update
+      const perDept: Record<string, Totals> = {};
+
+      ds.forEach((dept) => {
+        const u = onSnapshot(collection(db, 'venues', venueId, 'departments', dept.id, 'areas'), (as) => {
+          let t = 0, s = 0, c = 0;
+          as.forEach(a => {
+            t++;
+            const ad: any = a.data();
+            if (ad?.completedAt) c++; else if (ad?.startedAt) s++;
+          });
+          perDept[dept.id] = { total: t, started: s, complete: c };
+
+          // Recompute global
+          const g = Object.values(perDept).reduce((acc, x) => ({
+            total: acc.total + x.total,
+            started: acc.started + x.started,
+            complete: acc.complete + x.complete,
+          }), { total: 0, started: 0, complete: 0 });
+          setTotals(g);
+        });
+        areaUnsubs.current.push(u);
+      });
+    });
+
+    return () => {
+      unsubSession();
+      unsubDepts();
+      areaUnsubs.current.forEach(u => { try { u(); } catch {} });
+      areaUnsubs.current = [];
+    };
+  }, [venueId]);
+
+  const anyStarted = totals.started > 0;
+  const allComplete = totals.total > 0 && totals.complete === totals.total;
 
   const primaryLabel = useMemo(() => {
-    // If session is active OR any area is in progress → Return
-    if (sessionStatus === 'active' || hasActiveWork) return 'Return to Active Stock Take';
+    if (anyStarted) return 'Return to Active Stock Take';
+    if (allComplete) return 'Start New Stock Take';
     return 'Start Stock Take';
-  }, [sessionStatus, hasActiveWork]);
+  }, [anyStarted, allComplete]);
+
+  const caption = useMemo(() => {
+    if (anyStarted) return `Live • ${totals.started} area(s) in progress`;
+    if (allComplete) return 'All departments complete. Start a new cycle when ready.';
+    return 'No areas currently in progress';
+  }, [anyStarted, allComplete, totals.started]);
 
   const onPrimary = async () => {
-    if (!venueId) { Alert.alert('No Venue', 'Could not determine venue for this user.'); return; }
-    try {
-      setBusy(true);
-      const sessionId = await ensureActiveSession(venueId);
-      nav.navigate('DepartmentSelection', { venueId, sessionId });
-    } catch (e: any) {
-      Alert.alert('Session error', e?.message ?? 'Unknown error');
-    } finally {
-      setBusy(false);
+    if (!venueId) return;
+    if (allComplete) {
+      try {
+        await resetVenueCycle(venueId);
+        await setDoc(doc(db, 'venues', venueId, 'sessions', 'current'),
+          { status: 'active', startedAt: serverTimestamp() }, { merge: true });
+      } catch (e: any) {
+        Alert.alert('Reset failed', e?.message ?? 'Unknown error');
+        return;
+      }
+    } else {
+      // Ensure session is active before navigating
+      const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
+      const sSnap = await getDoc(sRef);
+      if (!sSnap.exists() || (sSnap.exists() && (sSnap.data() as any)?.status !== 'active')) {
+        await setDoc(sRef, { status: 'active', startedAt: serverTimestamp() }, { merge: true });
+      }
     }
+    nav.navigate('DepartmentSelection', { venueId, sessionId: 'current' });
   };
 
-  if (busy) return <View style={S.center}><ActivityIndicator /></View>;
+  if (loading) return <View style={S.center}><ActivityIndicator/></View>;
 
   return (
     <View style={S.container}>
-      <Text style={S.title}>TallyUp</Text>
-
-      <TouchableOpacity style={S.buttonPrimary} onPress={onPrimary}>
-        <Text style={S.buttonText}>{primaryLabel}</Text>
-      </TouchableOpacity>
-
-      {activityHint && <Text style={S.caption}>{activityHint}</Text>}
-      {!activityHint && lastCompletedAt && (
-        <Text style={S.caption}>
-          Last completed: {lastCompletedAt.toLocaleDateString()} {lastCompletedAt.toLocaleTimeString()}
-        </Text>
-      )}
-
-      <TouchableOpacity style={S.button} onPress={() => nav.navigate('Settings')}>
-        <Text style={S.buttonText}>Settings</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={S.button} onPress={() => nav.navigate('Reports')}>
-        <Text style={S.buttonText}>Reports</Text>
-      </TouchableOpacity>
+      <Text style={S.h1}>TallyUp</Text>
+      <View style={S.card}>
+        <Text style={S.caption}>{caption}</Text>
+        <TouchableOpacity style={S.primary} onPress={onPrimary}>
+          <Text style={S.primaryText}>{primaryLabel}</Text>
+        </TouchableOpacity>
+        <View style={{height:12}}/>
+        <TouchableOpacity style={S.dark} onPress={() => nav.navigate('Settings')}>
+          <Text style={S.darkText}>Settings</Text>
+        </TouchableOpacity>
+        <View style={{height:8}}/>
+        <TouchableOpacity style={S.dark} onPress={() => nav.navigate('Reports')}>
+          <Text style={S.darkText}>Reports</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const S = StyleSheet.create({
-  container: { flex: 1, padding: 24, justifyContent: 'center', backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 28, fontWeight: '700', marginBottom: 24, textAlign: 'center' },
-  button: { backgroundColor: '#222', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 12 },
-  buttonPrimary: { backgroundColor: '#0A84FF', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 6 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  caption: { color: '#666', marginTop: 6, marginBottom: 12, textAlign: 'center' },
+  container:{flex:1,backgroundColor:'#fff',padding:16},
+  center:{flex:1,alignItems:'center',justifyContent:'center'},
+  h1:{fontSize:24,fontWeight:'800',marginBottom:12},
+  card:{backgroundColor:'#F3F4F6',borderRadius:16,padding:16},
+  caption:{color:'#6B7280',marginBottom:12},
+  primary:{backgroundColor:'#0A84FF',padding:14,borderRadius:12,alignItems:'center'},
+  primaryText:{color:'#fff',fontWeight:'700'},
+  dark:{backgroundColor:'#111827',padding:12,borderRadius:10,alignItems:'center'},
+  darkText:{color:'#fff',fontWeight:'700'},
 });

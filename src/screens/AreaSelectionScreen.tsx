@@ -1,89 +1,72 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
-import { areasCol } from '../services/paths';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
-type Params = { venueId: string; sessionId: string; departmentId: string };
-type AreaStatus = 'not_started' | 'in_progress' | 'complete';
-type AreaRow = { id: string; name: string; status: AreaStatus };
+type RouteParams = { venueId: string; departmentId: string };
+type AreaRow = { id: string; name: string; started: boolean; complete: boolean };
 
 export default function AreaSelectionScreen() {
   const nav = useNavigation<any>();
-  const { params } = useRoute<any>();
-  const { venueId, sessionId, departmentId } = params as Params;
-
+  const route = useRoute<any>();
+  const { venueId, departmentId } = (route.params as RouteParams) ?? {};
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<AreaRow[]>([]);
-  const unsub = useRef<Unsubscribe | null>(null);
 
-  const compute = useCallback(async () => {
+  useEffect(() => {
+    if (!venueId || !departmentId) { Alert.alert('Missing department'); nav.goBack(); return; }
     setLoading(true);
-    try {
-      const snap = await getDocs(areasCol(venueId, departmentId));
-      const list: AreaRow[] = snap.docs.map(d => {
-        const data = d.data() as any;
-        const status: AreaStatus = data?.completedAt ? 'complete' : data?.startedAt ? 'in_progress' : 'not_started';
-        return { id: d.id, name: data?.name ?? d.id, status };
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'), (as) => {
+      const list: AreaRow[] = [];
+      as.forEach(a => {
+        const d:any = a.data();
+        list.push({ id:a.id, name:d?.name??a.id, started:!!d?.startedAt, complete:!!d?.completedAt });
       });
-      list.sort((a, b) => {
-        const order = { in_progress: 0, not_started: 1, complete: 2 } as any;
-        if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
-        return a.name.localeCompare(b.name);
-      });
+      list.sort((a,b)=>{ if(a.complete&&!b.complete) return 1; if(!a.complete&&b.complete) return -1; return a.name.localeCompare(b.name); });
       setRows(list);
-    } finally {
       setLoading(false);
-    }
+    }, (e)=>{ setLoading(false); Alert.alert('Load failed', e?.message??'Unknown'); });
+    return () => unsub();
   }, [venueId, departmentId]);
 
-  const wireLive = useCallback(() => {
-    if (unsub.current) { try { unsub.current(); } catch {} }
-    unsub.current = onSnapshot(areasCol(venueId, departmentId), () => void compute());
-  }, [venueId, departmentId, compute]);
+  const status = (r: AreaRow) => r.complete ? {t:'Complete', s:S.pillGreen}
+    : r.started ? {t:'In Progress', s:S.pillAmber} : {t:'Not Started', s:S.pillGray};
 
-  useEffect(() => { void compute(); wireLive(); return () => { if (unsub.current) unsub.current(); }; }, [venueId, departmentId]);
-  useFocusEffect(useCallback(() => { void compute(); return () => {}; }, [compute]));
-
-  const onPress = (item: AreaRow) => {
-    // Optimistic UI: if not started, show as in_progress immediately
-    if (item.status === 'not_started') {
-      setRows(prev => prev.map(r => r.id === item.id ? { ...r, status: 'in_progress' } : r));
-    }
-    nav.navigate('StockTakeAreaInventory', {
-      venueId, sessionId, departmentId, areaName: item.id, readOnly: item.status === 'complete'
-    });
+  const onArea = (r: AreaRow) => {
+    if (r.complete) { Alert.alert(r.name,'Completed (read-only).'); return; }
+    nav.navigate('StockTakeAreaInventory', { venueId, departmentId, areaId: r.id });
   };
 
-  const renderArea = ({ item }: { item: AreaRow }) => {
-    const color =
-      item.status === 'complete' ? '#D9FBE4' :
-      item.status === 'in_progress' ? '#FFE8C2' :
-      '#F0F0F0';
-
-    return (
-      <TouchableOpacity style={[S.card, { backgroundColor: color }]} onPress={() => onPress(item)}>
-        <Text style={S.cardTitle}>{item.name}</Text>
-        <Text style={S.cardStatus}>
-          {item.status === 'complete' ? 'Complete' :
-           item.status === 'in_progress' ? 'In Progress' : 'Not started'}
-        </Text>
-      </TouchableOpacity>
-    );
-  };
-
-  if (loading) return <View style={S.center}><ActivityIndicator /></View>;
-
+  if (loading) return <View style={S.center}><ActivityIndicator/></View>;
   return (
-    <View style={{ flex: 1, padding: 16 }}>
-      <FlatList data={rows} keyExtractor={(it) => it.id} renderItem={renderArea} ListEmptyComponent={<Text>No areas found.</Text>} />
+    <View style={S.container}>
+      <FlatList
+        data={rows}
+        keyExtractor={(r)=>r.id}
+        renderItem={({item})=>{
+          const st=status(item);
+          return (
+            <TouchableOpacity style={S.card} onPress={()=>onArea(item)}>
+              <Text style={S.name}>{item.name}</Text>
+              <View style={[S.pill,st.s]}><Text style={S.pillText}>{st.t}</Text></View>
+            </TouchableOpacity>
+          );
+        }}
+        ItemSeparatorComponent={()=> <View style={{height:10}}/>}
+      />
     </View>
   );
 }
 
 const S = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  card: { padding: 16, borderRadius: 12, marginBottom: 10 },
-  cardTitle: { fontSize: 16, fontWeight: '700', marginBottom: 6 },
-  cardStatus: { fontSize: 14, color: '#333' },
+  container:{flex:1,padding:16,backgroundColor:'#fff'},
+  center:{flex:1,alignItems:'center',justifyContent:'center'},
+  card:{backgroundColor:'#F3F4F6',padding:16,borderRadius:12,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
+  name:{fontSize:16,fontWeight:'700'},
+  pill:{paddingVertical:6,paddingHorizontal:10,borderRadius:999},
+  pillText:{color:'#111827',fontWeight:'700'},
+  pillGray:{backgroundColor:'#E5E7EB'},
+  pillAmber:{backgroundColor:'#FDE68A'},
+  pillGreen:{backgroundColor:'#BBF7D0'},
 });
