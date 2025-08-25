@@ -1,225 +1,172 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, Linking, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Switch, TextInput, Linking } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { Supplier } from '../../services/suppliers';
-import { OrderLine, buildSuggestedOrdersInMemory, createDraftOrderWithLines, submitOrder } from '../../services/orders';
-import { getAuth } from 'firebase/auth';
+import { buildSuggestedOrdersInMemory, createDraftOrderWithLines, OrderLine } from '../../services/orders';
+import { listSuppliers, Supplier } from '../../services/suppliers';
+import { listProducts } from '../../services/products';
 
-type SupplierBlock = {
-  supplier: Supplier;
-  lines: (OrderLine & { key: string })[];
-  notes?: string;
-  draftOrderId?: string;
-};
+type Group = { supplierId: string; supplier?: Supplier; lines: OrderLine[] };
 
 export default function SuggestedOrderScreen() {
   const venueId = useVenueId();
   const [loading, setLoading] = useState(true);
-  const [blocks, setBlocks] = useState<SupplierBlock[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [roundToPack, setRoundToPack] = useState(true);
+  const [deliveryDate, setDeliveryDate] = useState<string>(''); // e.g. 2025-09-01
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [productsCount, setProductsCount] = useState<number>(0);
 
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      if (!venueId) { setLoading(false); return; }
-      try {
-        const { suppliers, bySupplier } = await buildSuggestedOrdersInMemory(venueId);
-        const out: SupplierBlock[] = [];
-        Object.keys(bySupplier).forEach(sid => {
-          const sup = suppliers[sid];
-          if (!sup) return;
-          out.push({
-            supplier: sup,
-            lines: bySupplier[sid].map((l, idx) => ({ ...l, key: `${sid}:${l.productId}:${idx}` })),
-            notes: '',
-          });
-        });
-        out.sort((a, b) => (a.supplier.name || '').localeCompare(b.supplier.name || ''));
-        if (!cancel) setBlocks(out);
-      } catch (e: any) {
-        Alert.alert('Build Failed', e?.message || 'Unknown error');
-      } finally {
-        if (!cancel) setLoading(false);
-      }
-    })();
-    return () => { cancel = true; };
-  }, [venueId]);
-
-  const grandTotal = useMemo(() => {
-    let sum = 0;
-    blocks.forEach(b => {
-      b.lines.forEach(l => {
-        if (l.unitCost != null) sum += (Number(l.unitCost) || 0) * (Number(l.qty) || 0);
-      });
-    });
-    return sum;
-  }, [blocks]);
-
-  function updateQty(bi: number, li: number, v: string) {
-    const qty = Number(v.replace(/[^0-9.]/g, '')) || 0;
-    setBlocks(prev => {
-      const copy = [...prev];
-      copy[bi] = { ...copy[bi], lines: [...copy[bi].lines] };
-      copy[bi].lines[li] = { ...copy[bi].lines[li], qty };
-      return copy;
-    });
-  }
-
-  function updateNotes(bi: number, v: string) {
-    setBlocks(prev => {
-      const copy = [...prev];
-      copy[bi] = { ...copy[bi], notes: v };
-      return copy;
-    });
-  }
-
-  async function onCreateDrafts() {
-    if (!venueId) return;
-    if (!blocks.length) { Alert.alert('Nothing to order', 'All products are at or above par.'); return; }
-    const auth = getAuth();
-    if (!auth.currentUser?.uid) { Alert.alert('Not signed in', 'Sign in again.'); return; }
-
-    setCreating(true);
+  async function load() {
+    if (!venueId) { setGroups([]); setLoading(false); return; }
     try {
-      const next: SupplierBlock[] = [];
-      for (const b of blocks) {
-        const validLines = b.lines.filter(l => (Number(l.qty) || 0) > 0);
-        if (!validLines.length) { next.push(b); continue; }
+      setLoading(true);
+      const [suggested, suppliersArr, productsArr] = await Promise.all([
+        buildSuggestedOrdersInMemory(venueId),
+        listSuppliers(venueId),
+        listProducts(venueId),
+      ]);
+      setSuppliers(suppliersArr);
+      setProductsCount(productsArr.length);
 
-        const orderId = await createDraftOrderWithLines(venueId, b.supplier.id!, validLines, b.notes || '');
-        next.push({ ...b, draftOrderId: orderId });
+      const gs: Group[] = Object.keys(suggested.bySupplier).map(sid => ({
+        supplierId: sid,
+        supplier: suppliersArr.find(s => s.id === sid),
+        lines: suggested.bySupplier[sid],
+      }));
+      // Stable sort by supplier name
+      gs.sort((a, b) => (a.supplier?.name || '').localeCompare(b.supplier?.name || ''));
+      setGroups(gs);
+    } catch (e: any) {
+      console.log('[SuggestedOrders] load error', e?.message);
+      Alert.alert('Load Failed', e?.message || 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [venueId]);
+
+  const visibleGroups = useMemo(() => {
+    if (!roundToPack) return groups;
+    // apply client-side rounding for display & final write
+    return groups.map(g => ({
+      ...g,
+      lines: g.lines.map(l => {
+        if (!l.packSize || l.packSize <= 1) return l;
+        const q = Number(l.qty) || 0;
+        const ps = Number(l.packSize) || 1;
+        const r = Math.ceil(q / ps) * ps;
+        return { ...l, qty: r };
+      }),
+    }));
+  }, [groups, roundToPack]);
+
+  async function createDrafts() {
+    if (!venueId) return;
+    if (visibleGroups.length === 0) {
+      Alert.alert('No Suggestions', 'There are no suggested lines to create.');
+      return;
+    }
+    try {
+      for (const g of visibleGroups) {
+        if (!g.lines.length) continue;
+        await createDraftOrderWithLines(venueId, g.supplierId, g.lines, deliveryDate ? `Requested delivery: ${deliveryDate}` : null);
       }
-      setBlocks(next);
-      Alert.alert('Drafts Created', 'Draft orders were created by supplier.');
+      Alert.alert('Drafts Created', 'Suggested orders saved as drafts under Orders.');
     } catch (e: any) {
       Alert.alert('Create Failed', e?.message || 'Unknown error');
-    } finally {
-      setCreating(false);
     }
   }
 
-  async function onSubmit(bi: number) {
-    if (!venueId) return;
-    const b = blocks[bi];
-    if (!b.draftOrderId) { Alert.alert('No Draft', 'Create the draft first.'); return; }
-    try {
-      await submitOrder(venueId, b.draftOrderId);
-      Alert.alert('Order Submitted', `Order ${b.draftOrderId} submitted.`);
-    } catch (e: any) {
-      Alert.alert('Submit Failed', e?.message || 'Unknown error');
+  // Helpful empty-state reasoning
+  const emptyReason = useMemo(() => {
+    if (loading) return '';
+    if (!venueId) return 'You are not attached to a venue.';
+    if (suppliers.length === 0) return 'No suppliers found.\nAdd suppliers in Settings → Manage Suppliers.';
+    if (productsCount === 0) return 'No products found.\nAdd products (with par levels) in Settings → Manage Products.';
+    if (groups.length === 0) {
+      return 'No suggestions were generated.\nCheck that products have par levels set, and at least a default supplier or price list.';
     }
-  }
+    return '';
+  }, [loading, venueId, suppliers.length, productsCount, groups.length]);
 
-  function onEmail(bi: number) {
-    const b = blocks[bi];
-    const email = (b.supplier.email || '').trim();
-    if (!email) { Alert.alert('No Email', 'Supplier has no email configured.'); return; }
-    const subject = encodeURIComponent(`Order from TallyUp`);
-    const lines = b.lines
-      .filter(l => (Number(l.qty) || 0) > 0)
-      .map(l => {
-        const price = l.unitCost != null ? ` @ ${l.unitCost}` : '';
-        const pack = l.packSize ? ` (pack ${l.packSize})` : '';
-        return `- ${l.name}: ${l.qty}${pack}${price}`;
-      })
-      .join('%0D%0A');
-    const note = b.notes ? `%0D%0ANotes: ${encodeURIComponent(b.notes)}` : '';
-    const body = `${lines}${note}`;
-    const url = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
-    Linking.openURL(url).catch(() => Alert.alert('Email Failed', 'Could not open mail app.'));
-  }
-
-  if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Building suggested orders…</Text></View>);
+  if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Building suggestions…</Text></View>);
 
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
+    <View style={styles.wrap}>
       <Text style={styles.title}>Suggested Orders</Text>
-      <Text style={styles.sub}>One draft per supplier. Edit quantities before creating drafts.</Text>
 
-      {!blocks.length ? (
-        <Text>No suggestions: all products appear at par or above.</Text>
+      <View style={styles.row}>
+        <View style={styles.card}>
+          <Text style={styles.label}>Round to pack</Text>
+          <Switch value={roundToPack} onValueChange={setRoundToPack} />
+        </View>
+        <View style={[styles.card, { flex: 1 }]}>
+          <Text style={styles.label}>Requested delivery (YYYY-MM-DD)</Text>
+          <TextInput
+            placeholder="2025-09-01"
+            value={deliveryDate}
+            onChangeText={setDeliveryDate}
+            style={styles.input}
+            autoCapitalize="none"
+          />
+        </View>
+      </View>
+
+      {emptyReason ? (
+        <View style={[styles.card, styles.warn]}>
+          <Text style={styles.warnText}>{emptyReason}</Text>
+        </View>
       ) : null}
 
-      {blocks.map((b, bi) => (
-        <View key={b.supplier.id} style={styles.card}>
-          <Text style={styles.cardTitle}>{b.supplier.name}</Text>
-          {b.lines.map((l, li) => (
-            <View key={l.key} style={styles.line}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.lineName}>{l.name}</Text>
-                <Text style={styles.lineSub}>
-                  {(l.packSize ? `Pack ${l.packSize} · ` : '')}
-                  {(l.unitCost != null ? `Cost ${l.unitCost}` : '')}
-                </Text>
+      <FlatList
+        style={{ marginTop: 8 }}
+        data={visibleGroups}
+        keyExtractor={(g) => g.supplierId}
+        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        renderItem={({ item: g }) => (
+          <View style={styles.group}>
+            <Text style={styles.groupTitle}>{g.supplier?.name || g.supplierId}</Text>
+            {g.lines.map((l) => (
+              <View key={`${l.productId}`} style={styles.line}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.lineName}>{l.name}</Text>
+                  <Text style={styles.sub}>
+                    {l.unitCost != null ? `@ ${Number(l.unitCost).toFixed(2)}` : '@ —'}
+                    {l.packSize ? ` · pack ${l.packSize}` : ''}
+                  </Text>
+                </View>
+                <Text style={styles.qty}>{l.qty}</Text>
               </View>
-              <View style={styles.qtyBox}>
-                <Text style={styles.qtyLbl}>Qty</Text>
-                <TextInput
-                  style={styles.qtyInput}
-                  keyboardType="numeric"
-                  value={String(l.qty)}
-                  onChangeText={(v) => updateQty(bi, li, v)}
-                />
-              </View>
-            </View>
-          ))}
-          <Text style={styles.lbl}>Notes</Text>
-          <TextInput
-            value={b.notes}
-            onChangeText={(v) => updateNotes(bi, v)}
-            style={styles.note}
-            placeholder="Optional instructions for supplier"
-          />
-
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={[styles.btn, b.draftOrderId && styles.btnDisabled]}
-              onPress={onCreateDrafts}
-              disabled={b.draftOrderId != null || creating}
-            >
-              <Text style={styles.btnText}>{b.draftOrderId ? 'Draft Created' : 'Create Draft Orders'}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.btn} onPress={() => onEmail(bi)}>
-              <Text style={styles.btnText}>Email Order</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.btn} onPress={() => onSubmit(bi)} disabled={!b.draftOrderId}>
-              <Text style={styles.btnText}>Submit</Text>
-            </TouchableOpacity>
+            ))}
           </View>
+        )}
+        ListEmptyComponent={<Text>No suggestions available.</Text>}
+      />
 
-          {b.draftOrderId ? <Text style={styles.idNote}>Draft ID: {b.draftOrderId}</Text> : null}
-        </View>
-      ))}
-
-      <View style={styles.totCard}>
-        <Text style={styles.tot}>Total (priced lines): {grandTotal.toFixed(2)}</Text>
-      </View>
-    </ScrollView>
+      <TouchableOpacity style={styles.primary} onPress={createDrafts} disabled={visibleGroups.length === 0}>
+        <Text style={styles.primaryText}>Create Draft Orders</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 12 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16 },
+  wrap: { flex: 1, padding: 16, gap: 12 },
   title: { fontSize: 22, fontWeight: '800' },
-  sub: { opacity: 0.7, marginBottom: 6 },
-  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, marginBottom: 12, gap: 10 },
-  cardTitle: { fontWeight: '800', fontSize: 16 },
-  line: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  row: { flexDirection: 'row', gap: 10 },
+  card: { backgroundColor: '#F2F2F7', padding: 10, borderRadius: 12, gap: 6, alignItems: 'flex-start' },
+  label: { fontWeight: '700' },
+  input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, width: '100%' },
+  warn: { backgroundColor: '#FFF4E5' },
+  warnText: { color: '#8A5200' },
+  group: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12 },
+  groupTitle: { fontWeight: '800', marginBottom: 6 },
+  line: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
   lineName: { fontWeight: '700' },
-  lineSub: { opacity: 0.7 },
-  qtyBox: { width: 90, alignItems: 'center' },
-  qtyLbl: { fontSize: 12, opacity: 0.7 },
-  qtyInput: { width: 80, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6, textAlign: 'center' },
-  lbl: { fontWeight: '700', marginTop: 8 },
-  note: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
-  row: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
-  btnDisabled: { backgroundColor: '#9EC9FF' },
-  btnText: { color: 'white', fontWeight: '700' },
-  idNote: { opacity: 0.7, marginTop: 4 },
-  totCard: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, marginTop: 6 },
-  tot: { fontWeight: '800' },
+  sub: { opacity: 0.7 },
+  qty: { fontWeight: '900', width: 56, textAlign: 'right' },
+  primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  primaryText: { color: 'white', fontWeight: '800' },
 });

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Linking } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { calcTotal, cancelOrder, getOrderWithLines, markReceived, submitOrder } from '../../services/orders';
@@ -13,7 +13,7 @@ export default function OrderDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<any>(null);
   const [lines, setLines] = useState<any[]>([]);
-  const [supplierName, setSupplierName] = useState<string>('');
+  const [supplier, setSupplier] = useState<any>(null);
 
   async function load() {
     if (!venueId || !orderId) { setLoading(false); return; }
@@ -25,7 +25,7 @@ export default function OrderDetailScreen() {
       setOrder(order);
       setLines(lines);
       const s = suppliers.find(x => x.id === order.supplierId);
-      setSupplierName(s?.name || order.supplierId);
+      setSupplier(s || null);
     } catch (e: any) {
       Alert.alert('Load Failed', e?.message || 'Unknown error');
     } finally {
@@ -50,12 +50,35 @@ export default function OrderDetailScreen() {
     catch (e: any) { Alert.alert('Cancel Failed', e?.message || 'Unknown error'); }
   }
 
+  function emailSupplier() {
+    const email = supplier?.email || '';
+    const subject = encodeURIComponent(`Purchase Order ${orderId}`);
+    // Extract requested delivery date from notes if present:
+    const note: string = order?.notes || '';
+    const bodyLines = [
+      `Hello ${supplier?.name || 'Supplier'},`,
+      ``,
+      note ? note : 'Requested delivery: (please confirm date)',
+      ``,
+      `Order lines:`,
+      ...lines.map(l => `- ${l.name} x ${l.qty}${l.unitCost != null ? ` @ ${Number(l.unitCost).toFixed(2)}` : ''}`),
+      ``,
+      `Order total: ${total.toFixed(2)}`,
+      ``,
+      `Kind regards,`,
+      `TallyUp Venue`,
+    ];
+    const body = encodeURIComponent(bodyLines.join('\n'));
+    const url = `mailto:${email}?subject=${subject}&body=${body}`;
+    Linking.openURL(url).catch(() => Alert.alert('Open Mail Failed', 'Could not open email client.'));
+  }
+
   if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Loading order…</Text></View>);
   if (!order) return (<View style={styles.center}><Text>Order not found.</Text></View>);
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>{supplierName}</Text>
+      <Text style={styles.title}>{supplier?.name || order.supplierId}</Text>
       <Text style={styles.sub}>Status: {order.status.toUpperCase()}</Text>
       {order.notes ? <Text style={styles.sub}>Notes: {order.notes}</Text> : null}
 
@@ -68,7 +91,7 @@ export default function OrderDetailScreen() {
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.sub}>{item.qty} @ {item.unitCost ?? '—'}</Text>
+              <Text style={styles.sub}>{item.qty} @ {item.unitCost != null ? Number(item.unitCost).toFixed(2) : '—'}</Text>
             </View>
             <Text style={styles.totCell}>
               {item.unitCost != null ? (Number(item.unitCost) * Number(item.qty)).toFixed(2) : '—'}
@@ -100,6 +123,10 @@ export default function OrderDetailScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      <TouchableOpacity style={[styles.btn, styles.emailBtn]} onPress={emailSupplier}>
+        <Text style={styles.emailText}>Email Supplier</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -121,4 +148,6 @@ const styles = StyleSheet.create({
   primaryText: { color: 'white', fontWeight: '800' },
   danger: { backgroundColor: '#FF3B30' },
   dangerText: { color: 'white', fontWeight: '800' },
+  emailBtn: { backgroundColor: '#E5E7EB', marginTop: 8 },
+  emailText: { fontWeight: '800' },
 });
