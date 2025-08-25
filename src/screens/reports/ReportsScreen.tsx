@@ -1,33 +1,98 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
+const DEV_VENUE_ID = 'v_7ykrc92wuw58gbrgyicr7e';
+
 export default function ReportsScreen() {
-  const nav = useNavigation<any>();
+  const navigation = useNavigation();
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Reports</Text>
-      <View style={styles.grid}>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('VarianceSnapshot')}>
-          <Text style={styles.btnText}>Variance Snapshot</Text>
-          <Text style={styles.blurb}>Shortages / Excess vs par with value impact.</Text>
-        </TouchableOpacity>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.header}>Reports</Text>
+      <Text style={styles.caption}>Quick insights and variance views for your last completed cycles.</Text>
 
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('LastCycleSummary')}>
-          <Text style={styles.btnText}>Last Cycle Summary</Text>
-          <Text style={styles.blurb}>High‑level recap of the latest stock take.</Text>
-        </TouchableOpacity>
+      <View style={styles.grid}>
+        <ReportCard
+          title="Last Cycle Summary"
+          subtitle="Items counted, shortages/excess value, and top variances"
+          onPress={() =>
+            navigation.navigate('LastCycleSummary' as never, { venueId: DEV_VENUE_ID } as never)
+          }
+        />
+
+        <ReportCard
+          title="Variance Snapshot"
+          subtitle="Shortages/excess vs par with value impact"
+          onPress={() =>
+            navigation.navigate('VarianceSnapshot' as never, { venueId: DEV_VENUE_ID } as never)
+          }
+        />
       </View>
-    </View>
+    </ScrollView>
+  );
+}
+
+function ReportCard({
+  title,
+  subtitle,
+  onPress,
+}: {
+  title: string;
+  subtitle?: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={styles.card} activeOpacity={0.86} onPress={onPress}>
+      <View style={styles.cardBody}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.cardSub}>{subtitle}</Text> : null}
+      </View>
+      <Text style={styles.cardCta}>Open ›</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '800' },
-  grid: { gap: 10 },
-  btn: { backgroundColor: '#0A84FF', padding: 14, borderRadius: 12 },
-  btnText: { color: 'white', fontWeight: '800' },
-  blurb: { color: 'white', opacity: 0.9, marginTop: 4 },
+  container: {
+    padding: 16,
+    gap: 12,
+  },
+  header: {
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  caption: {
+    color: '#666',
+    marginBottom: 4,
+  },
+  grid: {
+    marginTop: 8,
+    gap: 12,
+  },
+  card: {
+    borderRadius: 14,
+    backgroundColor: '#f6f6f7',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#ececec',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardBody: {
+    flexShrink: 1,
+    paddingRight: 8,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  cardSub: {
+    color: '#666',
+  },
+  cardCta: {
+    fontWeight: '700',
+  },
 });

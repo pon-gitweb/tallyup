@@ -1,3 +1,4 @@
+import LastCycleSummaryScreen from '../screens/reports/LastCycleSummaryScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -33,6 +34,7 @@ export default function AppNavigator() {
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
         <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create Venue' }} />
+  <Stack.Screen name="LastCycleSummary" component={LastCycleSummaryScreen} options={{ title: 'Last Cycle Summary' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
