@@ -38,6 +38,19 @@ Expo + React Native + Firebase MVP
   - Last Cycle Summary screen
   - Variance / Movers / Waste / Supplier Performance = stubs
 
+## Dev Testing
+
+For quick access during development:
+
+- **Dev User**
+  - Email: `test@example.com`
+  - Password: `test1234`
+  - UID: `4aYhmfXgiOg22CUQts50sHMTabD3`
+- **Dev Venue**
+  - venueId: `v_7ykrc92wuw58gbrgyicr7e`
+  - Membership role: `staff` (or `owner` if changed in tests)
+- This account auto-attaches to the dev venue when using **Dev Login** from the login screen.
+
 ## Next Steps
 - Wire real on-hand counts into Suggested Orders
 - Extend reports (variance, profitability, shrinkage)
