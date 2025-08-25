@@ -7,6 +7,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Constants from 'expo-constants';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetVenueCycle } from '../../services/session';
+import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
 
 export default function SettingsScreen() {
   const nav = useNavigation<any>();
@@ -60,6 +61,17 @@ export default function SettingsScreen() {
     }
   }
 
+  async function doSeedDemo() {
+    try {
+      if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+      const res = await seedDemoSuppliersAndProducts(venueId);
+      Alert.alert('Seeded', `Supplier + ${res.count} products added. Try Suggested Orders.`);
+    } catch (e: any) {
+      console.log('[TallyUp Settings] seed error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Seed Failed', e?.message || 'Unknown error');
+    }
+  }
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Settings</Text>
@@ -106,6 +118,9 @@ export default function SettingsScreen() {
         <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
           <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.devBtn} onPress={doSeedDemo}>
+          <Text style={styles.devBtnText}>Seed Demo Suppliers & Products</Text>
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
@@ -123,7 +138,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   btnText: { color: 'white', fontWeight: '700' },
-  devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   devBtnText: { fontWeight: '700' },
   signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   signOutText: { color: 'white', fontWeight: '800' },

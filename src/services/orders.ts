@@ -5,6 +5,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import { listProducts } from './products';
 import { listSuppliers, Supplier } from './suppliers';
+import { getOnHandByProduct } from './inventory';
 
 export type Order = {
   id?: string;
@@ -26,11 +27,32 @@ export type OrderLine = {
   packSize?: number|null;
 };
 
-// ---------- Suggestion logic (MVP) ----------
+// ---------- Suggestion logic (on‑hand + cheapest supplier if price list exists) ----------
 
-async function getOnHandByProduct(_venueId: string): Promise<Record<string, number>> {
-  // TODO: wire into real inventory counts later.
-  return {};
+async function getCheapestSupplierForProduct(venueId: string, productId: string, fallback: {
+  defaultSupplierId?: string; cost?: any; packSize?: any;
+}): Promise<{ supplierId?: string; unitCost: number|null; packSize: number|null }> {
+  try {
+    const priceCol = collection(db, 'venues', venueId, 'products', productId, 'prices');
+    const snap = await getDocs(priceCol);
+    let best: { supplierId?: string; unitCost: number|null; packSize: number|null } | null = null;
+    snap.forEach(d => {
+      const data = d.data() as any;
+      const unitCost = data?.unitCost != null ? Number(data.unitCost) : null;
+      const packSize = data?.packSize != null ? Number(data.packSize) : null;
+      if (unitCost == null || isNaN(unitCost)) return;
+      if (!best || unitCost < (best.unitCost ?? Number.POSITIVE_INFINITY)) {
+        best = { supplierId: d.id, unitCost, packSize };
+      }
+    });
+    if (best) return best;
+  } catch {
+    // ignore and fall back
+  }
+  // Fallback to product fields
+  const c = fallback.cost != null ? Number(fallback.cost) : null;
+  const p = fallback.packSize != null ? Number(fallback.packSize) : null;
+  return { supplierId: fallback.defaultSupplierId, unitCost: c, packSize: p };
 }
 
 export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
@@ -42,28 +64,44 @@ export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
     listSuppliers(venueId),
     getOnHandByProduct(venueId),
   ]);
+
   const suppliers: Record<string, Supplier> = {};
   suppliersArr.forEach(s => { if (s.id) suppliers[s.id] = s; });
 
   const bySupplier: Record<string, OrderLine[]> = {};
 
   for (const p of products) {
-    if (!p.defaultSupplierId || p.parLevel == null) continue;
-    const onHand = onHandMap[p.id || ''] || 0;
-    const needed = Math.max(0, Number(p.parLevel) - Number(onHand));
+    const pid = (p as any).id as string | undefined;
+    if (!pid) continue;
+
+    const parLevelRaw = (p as any).parLevel;
+    const parLevel = typeof parLevelRaw === 'number' ? parLevelRaw : Number(parLevelRaw);
+    if (isNaN(parLevel)) continue;
+
+    const onHand = onHandMap[pid] || 0;
+    const needed = Math.max(0, parLevel - onHand);
     if (needed <= 0) continue;
 
-    const sId = p.defaultSupplierId;
-    if (!bySupplier[sId]) bySupplier[sId] = [];
-    bySupplier[sId].push({
-      productId: p.id!,
-      name: p.name,
+    // Find cheapest supplier (uses price list if present)
+    const best = await getCheapestSupplierForProduct(venueId, pid, {
+      defaultSupplierId: (p as any).defaultSupplierId,
+      cost: (p as any).cost,
+      packSize: (p as any).packSize,
+    });
+    const supplierId = best.supplierId;
+    if (!supplierId) continue;
+
+    if (!bySupplier[supplierId]) bySupplier[supplierId] = [];
+    bySupplier[supplierId].push({
+      productId: pid,
+      name: (p as any).name,
       qty: needed,
-      unitCost: p.cost ?? null,
-      packSize: p.packSize ?? null,
+      unitCost: best.unitCost,
+      packSize: best.packSize,
     });
   }
 
+  // Stable sort per supplier by product name
   Object.keys(bySupplier).forEach(sid => {
     bySupplier[sid].sort((a, b) => a.name.localeCompare(b.name));
   });
@@ -71,7 +109,7 @@ export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
   return { suppliers, bySupplier };
 }
 
-// ---------- Firestore writers & readers ----------
+// ---------- Firestore writers & readers (unchanged) ----------
 
 export async function createDraftOrderWithLines(
   venueId: string,
@@ -156,7 +194,6 @@ export async function listOrders(
 }
 
 // ---------- Utils ----------
-
 export function calcTotal(lines: Pick<OrderLine, 'qty'|'unitCost'>[]): number {
   return lines.reduce((sum, l) => {
     const price = l.unitCost != null ? Number(l.unitCost) : 0;
