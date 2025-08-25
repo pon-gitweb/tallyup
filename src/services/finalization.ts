@@ -1,94 +1,63 @@
 import { db } from './firebase';
-import {
-  collection, doc, getDocs, serverTimestamp, writeBatch, getDoc, setDoc,
-} from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
+import { resetVenueCycle } from './session';
 
-/** Compute venue progress across active departments. */
-export async function computeVenueProgress(venueId: string) {
-  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-  const departments = deptsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-
-  let totalAreas = 0;
-  let completeAreas = 0;
-  let anyInProgress = false;
-
-  for (const d of departments) {
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas'));
-    const areas = areasSnap.docs.map(a => ({ id: a.id, ...(a.data() as any) }));
-    totalAreas += areas.length;
-
-    for (const a of areas) {
-      const started = a?.startedAt ?? null;
-      const completed = a?.completedAt ?? null;
-      if (completed) completeAreas += 1;
-      if (started && !completed) anyInProgress = true;
-    }
-  }
-
-  const allComplete = totalAreas > 0 && completeAreas === totalAreas;
-  return { totalAreas, completeAreas, anyInProgress, allComplete, departments };
+function toMillis(val: any | undefined | null): number | null {
+  // Firestore Timestamp: { seconds, nanoseconds, toDate() }
+  if (!val) return null;
+  if (typeof val.toDate === 'function') return val.toDate().getTime();
+  // Allow passing JS Date or ms in rare cases
+  if (val instanceof Date) return val.getTime();
+  if (typeof val === 'number') return val;
+  return null;
 }
 
 /**
- * Finalize current stock take and immediately reset to a new idle cycle.
- * - Writes sessions/current.lastCompletedAt and status: 'idle'
- * - Resets ALL areas (cycleResetAt + clears startedAt/completedAt)
- * - Optionally stamps departments.completedAt (informational)
+ * Compute cycle window for a venue by scanning all areas across departments.
+ * Returns the earliest startedAt and latest completedAt that exist.
  */
-export async function finalizeVenueStockTake(venueId: string) {
-  // Validate eligibility
-  const prog = await computeVenueProgress(venueId);
-  if (!prog.allComplete) {
-    throw new Error('Cannot finalize: not all areas are complete.');
-  }
+export async function computeCycleWindow(venueId: string): Promise<{
+  firstStartMs: number | null;
+  lastCompleteMs: number | null;
+}> {
+  let firstStart: number | null = null;
+  let lastComplete: number | null = null;
 
-  const now = serverTimestamp();
-  const batch = writeBatch(db);
-
-  // 1) Mark departments completedAt (info only)
-  for (const d of prog.departments) {
-    const dRef = doc(db, 'venues', venueId, 'departments', d.id);
-    batch.set(dRef, { completedAt: now }, { merge: true });
-
-    // 2) Reset all areas in the department
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas'));
-    areasSnap.forEach(aDoc => {
-      const aRef = doc(db, 'venues', venueId, 'departments', d.id, 'areas', aDoc.id);
-      // Matches rules: isCycleReset() (cycleResetAt + started/completed null)
-      batch.set(aRef, {
-        cycleResetAt: now,
-        startedAt: null,
-        completedAt: null,
-      }, { merge: true });
+  const dcol = collection(db, 'venues', venueId, 'departments');
+  const deps = await getDocs(dcol);
+  for (const d of deps.docs) {
+    const areas = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas'));
+    areas.forEach(a => {
+      const data: any = a.data();
+      const s = toMillis(data?.startedAt);
+      const c = toMillis(data?.completedAt);
+      if (s != null) {
+        if (firstStart == null || s < firstStart) firstStart = s;
+      }
+      if (c != null) {
+        if (lastComplete == null || c > lastComplete) lastComplete = c;
+      }
     });
   }
-
-  // 3) sessions/current: stamp lastCompletedAt and set status back to 'idle'
-  const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) {
-    // If session somehow missing, create as idle with lastCompletedAt
-    batch.set(sRef, { status: 'idle', lastCompletedAt: now, createdAt: now }, { merge: true });
-  } else {
-    batch.set(sRef, { status: 'idle', lastCompletedAt: now }, { merge: true });
-  }
-
-  await batch.commit();
-  return { lastCompletedAt: new Date() };
+  return { firstStartMs: firstStart, lastCompleteMs: lastComplete };
 }
 
-/** Ensure 'active' session (used by Start/Return) — convenience if needed elsewhere. */
-export async function ensureActiveSession(venueId: string) {
-  const sRef = doc(db, 'venues', venueId, 'sessions', 'current');
-  const snap = await getDoc(sRef);
-  const now = serverTimestamp();
-  if (!snap.exists()) {
-    await setDoc(sRef, { status: 'active', startedAt: now, createdAt: now }, { merge: true });
-    return 'current';
-  }
-  const status = (snap.data() as any)?.status;
-  if (status !== 'active') {
-    await setDoc(sRef, { status: 'active', resumedAt: now }, { merge: true });
-  }
-  return 'current';
+/**
+ * Returns the cycle duration in hours if both endpoints exist; otherwise null.
+ */
+export async function getCycleDurationHours(venueId: string): Promise<number | null> {
+  const { firstStartMs, lastCompleteMs } = await computeCycleWindow(venueId);
+  if (firstStartMs == null || lastCompleteMs == null) return null;
+  const diffMs = Math.max(0, lastCompleteMs - firstStartMs);
+  return diffMs / (1000 * 60 * 60);
+}
+
+/**
+ * Mark venue lastCompletedAt and reset cycle flags, safely per rules.
+ */
+export async function finalizeVenueCycle(venueId: string): Promise<void> {
+  // lastCompletedAt server timestamp
+  await setDoc(doc(db, 'venues', venueId), { lastCompletedAt: serverTimestamp() }, { merge: true });
+  // reset cycle flags (uses your existing logic; Expo-safe)
+  await resetVenueCycle(venueId);
 }

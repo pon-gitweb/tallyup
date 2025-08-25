@@ -12,9 +12,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "ios": {
-      "supportsTablet": true
-    },
+    "ios": { "supportsTablet": true },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -22,8 +20,12 @@
       },
       "edgeToEdgeEnabled": true
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "web": { "favicon": "./assets/favicon.png" },
+
+    "extra": {
+      "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
+      "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
+      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e"
     }
   }
 }

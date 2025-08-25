@@ -1,130 +1,102 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Share, Alert } from 'react-native';
-import { useRoute } from '@react-navigation/native';
-import { getDocs } from 'firebase/firestore';
-import { departmentsCol, areasCol } from '../../services/paths';
+import React from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
 
-type Row = {
-  deptId: string;
-  deptName: string;
-  areasTotal: number;
-  areasComplete: number;
-  latestCompletion?: Date | null;
-};
+type AreaRow = { id: string; name?: string; startedAt?: any; completedAt?: any };
 
 export default function LastCycleSummaryScreen() {
-  const { params } = useRoute<any>();
-  const { venueId } = params as { venueId: string };
+  const venueId = useVenueId();
+  const [loading, setLoading] = React.useState(true);
+  const [summary, setSummary] = React.useState<{
+    departments: number;
+    areasTotal: number;
+    areasCompleted: number;
+    areasInProgress: number;
+    sessionStatus: string | null;
+  }>({ departments: 0, areasTotal: 0, areasCompleted: 0, areasInProgress: 0, sessionStatus: null });
 
-  const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState<Row[]>([]);
-
-  useEffect(() => {
+  React.useEffect(() => {
+    let cancelled = false;
     (async () => {
-      setLoading(true);
-      try {
-        const dSnap = await getDocs(departmentsCol(venueId));
-        const list: Row[] = [];
-        for (const d of dSnap.docs) {
-          const deptId = d.id;
-          const name = (d.data() as any)?.name ?? d.id;
-          const aSnap = await getDocs(areasCol(venueId, deptId));
-
-          let total = aSnap.size;
-          let complete = 0;
-          let latest: Date | null = null;
-          aSnap.forEach(a => {
-            const ad = a.data() as any;
-            if (ad?.completedAt) {
-              complete++;
-              const t = ad.completedAt?.toDate?.() || null;
-              if (t && (!latest || t > latest)) latest = t;
-            }
-          });
-
-          list.push({ deptId, deptName: name, areasTotal: total, areasComplete: complete, latestCompletion: latest });
-        }
-        // Sort by name
-        list.sort((a, b) => a.deptName.localeCompare(b.deptName));
-        setRows(list);
-      } catch (e: any) {
-        Alert.alert('Load failed', e?.message ?? 'Unknown error');
-      } finally {
+      if (!venueId) {
         setLoading(false);
+        Alert.alert('No Venue', 'You are not attached to a venue.');
+        return;
+      }
+      try {
+        const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const depIds = depsSnap.docs.map(d => d.id);
+        let areas: AreaRow[] = [];
+        for (const depId of depIds) {
+          const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', depId, 'areas'));
+          areas = areas.concat(areasSnap.docs.map(a => ({ id: a.id, ...(a.data() as any) })));
+        }
+        const areasTotal = areas.length;
+        const areasCompleted = areas.filter(a => !!a.completedAt).length;
+        const areasInProgress = areas.filter(a => !!a.startedAt && !a.completedAt).length;
+
+        // "current" session info (status only; expand later)
+        let sessionStatus: string | null = null;
+        try {
+          const cur = await getDoc(doc(db, 'venues', venueId, 'sessions', 'current'));
+          sessionStatus = cur.exists() ? ((cur.data() as any)?.status ?? null) : null;
+        } catch {}
+
+        if (!cancelled) {
+          setSummary({
+            departments: depIds.length,
+            areasTotal,
+            areasCompleted,
+            areasInProgress,
+            sessionStatus,
+          });
+          setLoading(false);
+        }
+        console.log('[TallyUp Reports] LastCycleSummary', JSON.stringify({ venueId, ...summary }));
+      } catch (e: any) {
+        console.log('[TallyUp Reports] last summary error', JSON.stringify({ code: e?.code, message: e?.message }));
+        if (!cancelled) setLoading(false);
+        Alert.alert('Load Failed', e?.message ?? 'Unknown error.');
       }
     })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueId]);
 
-  const venueLastCompletedAt = useMemo(() => {
-    // Define venue "last cycle end" as min of department latestCompletions if all depts have at least 1 completion,
-    // else use max across whatever exists; this is a pragmatic heuristic for MVP.
-    const completions = rows.map(r => r.latestCompletion).filter(Boolean) as Date[];
-    if (completions.length === 0) return null;
-    const allHave = rows.every(r => r.latestCompletion);
-    if (allHave) {
-      return new Date(Math.min(...completions.map(d => d.getTime())));
-    }
-    return new Date(Math.max(...completions.map(d => d.getTime())));
-  }, [rows]);
-
-  const onExportCSV = async () => {
-    const header = ['Department','Areas Complete','Areas Total','Latest Completion'].join(',');
-    const lines = rows.map(r => {
-      const when = r.latestCompletion ? r.latestCompletion.toISOString() : '';
-      return [csvEsc(r.deptName), r.areasComplete, r.areasTotal, when].join(',');
-    });
-    const csv = [header, ...lines].join('\n');
-    try {
-      await Share.share({ message: csv });
-    } catch (e: any) {
-      Alert.alert('Share failed', e?.message ?? 'Unknown error');
-    }
-  };
-
-  const csvEsc = (s: string) => {
-    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
-  if (loading) return <View style={S.center}><ActivityIndicator /></View>;
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+        <Text>Loading summary…</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={S.c}>
-      <Text style={S.h1}>Last Completed Cycle</Text>
-      {venueLastCompletedAt && (
-        <Text style={S.sub}>Venue completion (heuristic): {venueLastCompletedAt.toLocaleDateString()} {venueLastCompletedAt.toLocaleTimeString()}</Text>
-      )}
-      <FlatList
-        data={rows}
-        keyExtractor={(r) => r.deptId}
-        renderItem={({ item }) => (
-          <View style={S.card}>
-            <Text style={S.cardTitle}>{item.deptName}</Text>
-            <Text style={S.cardLine}>Areas: {item.areasComplete} / {item.areasTotal}</Text>
-            {item.latestCompletion && (
-              <Text style={S.cardLine}>Completed: {item.latestCompletion.toLocaleDateString()} {item.latestCompletion.toLocaleTimeString()}</Text>
-            )}
-          </View>
-        )}
-        ListEmptyComponent={<Text>No data available.</Text>}
-        contentContainerStyle={{ paddingBottom: 16 }}
-      />
+    <ScrollView style={styles.wrap} contentContainerStyle={{ paddingBottom: 24 }}>
+      <Text style={styles.title}>Last Cycle Summary</Text>
 
-      <TouchableOpacity style={S.btn} onPress={onExportCSV}>
-        <Text style={S.btnText}>Export CSV</Text>
-      </TouchableOpacity>
-    </View>
+      <View style={styles.card}>
+        <Text style={styles.metric}>Departments: <Text style={styles.bold}>{summary.departments}</Text></Text>
+        <Text style={styles.metric}>Areas: <Text style={styles.bold}>{summary.areasTotal}</Text></Text>
+        <Text style={styles.metric}>Completed: <Text style={styles.bold}>{summary.areasCompleted}</Text></Text>
+        <Text style={styles.metric}>In Progress: <Text style={styles.bold}>{summary.areasInProgress}</Text></Text>
+        <Text style={styles.metric}>Session Status: <Text style={styles.bold}>{summary.sessionStatus ?? '—'}</Text></Text>
+      </View>
+
+      <Text style={styles.note}>This report summarizes the latest stock-take “current” session and area completion state.</Text>
+    </ScrollView>
   );
 }
 
-const S = StyleSheet.create({
-  c:{ flex:1, padding:16, backgroundColor:'#fff' },
-  center:{ flex:1, alignItems:'center', justifyContent:'center' },
-  h1:{ fontSize:22, fontWeight:'700', marginBottom:6 },
-  sub:{ color:'#444', marginBottom:12 },
-  card:{ backgroundColor:'#F7F7F8', padding:12, borderRadius:10, marginBottom:10 },
-  cardTitle:{ fontWeight:'700', marginBottom:4 },
-  cardLine:{ color:'#333' },
-  btn:{ backgroundColor:'#0A84FF', padding:14, borderRadius:10, alignItems:'center', marginTop:6 },
-  btnText:{ color:'#fff', fontWeight:'700' },
+const styles = StyleSheet.create({
+  wrap: { flex: 1, padding: 16 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
+  card: { backgroundColor: '#F2F2F7', borderRadius: 12, padding: 14, gap: 8 },
+  metric: { fontSize: 16 },
+  bold: { fontWeight: '700' },
+  note: { opacity: 0.7, marginTop: 14 },
 });
