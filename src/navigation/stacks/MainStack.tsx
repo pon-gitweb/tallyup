@@ -15,6 +15,8 @@ import EditSupplierScreen from '../../screens/setup/EditSupplierScreen';
 import ProductsScreen from '../../screens/setup/ProductsScreen';
 import EditProductScreen from '../../screens/setup/EditProductScreen';
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
+import OrdersScreen from '../../screens/orders/OrdersScreen';
+import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
 export type MainStackParamList = {
   Dashboard: undefined;
@@ -33,6 +35,8 @@ export type MainStackParamList = {
   ProductEdit: { productId?: string | null; product?: any } | undefined;
 
   SuggestedOrder: undefined;
+  Orders: undefined;
+  OrderDetail: { orderId: string };
 
   // Back-compat aliases
   VenueSetup: undefined;
@@ -57,6 +61,8 @@ export default function MainStack() {
       <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
       <Stack.Screen name="ProductEdit" component={EditProductScreen} options={{ title: 'Product' }} />
       <Stack.Screen name="SuggestedOrder" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
+      <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
+      <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order Detail' }} />
       {/* Aliases */}
       <Stack.Screen name="VenueSetup" component={SetupWizard} options={{ headerShown: false }} />
       <Stack.Screen name="SetupVenue" component={SetupWizard} options={{ headerShown: false }} />

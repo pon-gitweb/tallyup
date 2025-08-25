@@ -1,9 +1,9 @@
 import { db } from './firebase';
 import {
-  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc,
+  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, query, orderBy, where,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { listProducts, Product } from './products';
+import { listProducts } from './products';
 import { listSuppliers, Supplier } from './suppliers';
 
 export type Order = {
@@ -26,9 +26,9 @@ export type OrderLine = {
   packSize?: number|null;
 };
 
-// ---------- Suggestion logic ----------
+// ---------- Suggestion logic (MVP) ----------
 
-async function getOnHandByProduct(venueId: string): Promise<Record<string, number>> {
+async function getOnHandByProduct(_venueId: string): Promise<Record<string, number>> {
   // TODO: wire into real inventory counts later.
   return {};
 }
@@ -71,7 +71,7 @@ export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
   return { suppliers, bySupplier };
 }
 
-// ---------- Firestore writers ----------
+// ---------- Firestore writers & readers ----------
 
 export async function createDraftOrderWithLines(
   venueId: string,
@@ -112,6 +112,19 @@ export async function submitOrder(venueId: string, orderId: string) {
   });
 }
 
+export async function markReceived(venueId: string, orderId: string) {
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'received',
+    receivedAt: serverTimestamp(),
+  });
+}
+
+export async function cancelOrder(venueId: string, orderId: string) {
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'cancelled',
+  });
+}
+
 export async function getOrderWithLines(
   venueId: string,
   orderId: string
@@ -126,4 +139,28 @@ export async function getOrderWithLines(
   const lines: (OrderLine & { id: string })[] = [];
   lsnap.forEach(d => lines.push({ id: d.id, ...(d.data() as any) }));
   return { order, lines };
+}
+
+export async function listOrders(
+  venueId: string,
+  status?: Order['status']
+): Promise<(Order & { id: string })[]> {
+  const col = collection(db, 'venues', venueId, 'orders');
+  const q = status
+    ? query(col, where('status', '==', status), orderBy('createdAt', 'desc'))
+    : query(col, orderBy('createdAt', 'desc'));
+  const snap = await getDocs(q);
+  const out: (Order & { id: string })[] = [];
+  snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+  return out;
+}
+
+// ---------- Utils ----------
+
+export function calcTotal(lines: Pick<OrderLine, 'qty'|'unitCost'>[]): number {
+  return lines.reduce((sum, l) => {
+    const price = l.unitCost != null ? Number(l.unitCost) : 0;
+    const qty = Number(l.qty) || 0;
+    return sum + price * qty;
+  }, 0);
 }
