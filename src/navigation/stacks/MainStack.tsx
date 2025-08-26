@@ -44,6 +44,11 @@ export default function MainStack() {
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
       <Stack.Screen name="LastCycleSummary" component={LastCycleSummaryScreen} options={{ title: 'Last Cycle Summary' }} />
       <Stack.Screen name="VarianceSnapshot" component={VarianceSnapshotScreen} options={{ title: 'Variance Snapshot' }} />
+      <Stack.Screen name="Suppliers" component={require('../../screens/setup/SuppliersScreen').default} options={{ title: 'Suppliers' }} />
+      <Stack.Screen name="Products" component={require('../../screens/setup/ProductsScreen').default} options={{ title: 'Products' }} />
+      <Stack.Screen name="DepartmentSelection" component={DepartmentSelectionScreen} options={{ title: 'Departments' }} />
+      <Stack.Screen name="AreaSelection" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
+      <Stack.Screen name="StockTakeAreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Inventory' }} />
     </Stack.Navigator>
   );
 }

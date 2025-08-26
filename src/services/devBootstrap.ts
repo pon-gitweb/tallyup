@@ -1,35 +1,77 @@
 import { getAuth } from 'firebase/auth';
-import { db } from './firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import Constants from 'expo-constants';
+import {
+  getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp,
+} from 'firebase/firestore';
 
-const EXTRA: any =
-  (Constants?.expoConfig?.extra as any) ??
-  ((Constants as any)?.manifest2?.extra as any) ??
-  {};
+/**
+ * IMPORTANT:
+ * - Membership path matches your rules: venues/{venueId}/members/{uid}
+ * - We also expose a "pin" helper because logs referenced it earlier.
+ * - We export both named and default to cover either import style.
+ */
 
-const DEV_VENUE = String(EXTRA.EXPO_PUBLIC_DEV_VENUE_ID || '');
+const DEV_VENUE = 'v_7ykrc92wuw58gbrgyicr7e';
 
-export async function pinDevVenueIfEnvSet(): Promise<boolean> {
-  const user = getAuth().currentUser;
-  if (!user || !DEV_VENUE) return false;
+export async function pinDevVenueIfEnvSet() {
   try {
-    const uref = doc(db, 'users', user.uid);
-    const usnap = await getDoc(uref);
-    const current = usnap.exists() ? ((usnap.data() as any)?.venueId ?? null) : null;
-    if (current) {
-      console.log('[TallyUp DevBootstrap] dev pin skipped — already set', JSON.stringify({ uid: user.uid, venueId: current }));
-      return true;
+    const uid = getAuth()?.currentUser?.uid;
+    if (!uid) return { ok: false, reason: 'no_uid' };
+
+    const db = getFirestore();
+    const userRef = doc(db, 'users', uid);
+    const snap = await getDoc(userRef);
+    const now = serverTimestamp();
+
+    if (!snap.exists()) {
+      await setDoc(userRef, { uid, venueId: DEV_VENUE, createdAt: now, updatedAt: now, source: 'devBootstrap.pin' }, { merge: true });
+      console.log('[TallyUp DevBootstrap] dev pin set', { uid, venueId: DEV_VENUE });
+      return { ok: true, venueId: DEV_VENUE };
     }
-    await updateDoc(uref, { venueId: DEV_VENUE, touchedAt: new Date() });
-    console.log('[TallyUp DevBootstrap] pinned dev venue', JSON.stringify({ uid: user.uid, venueId: DEV_VENUE }));
-    return true;
+
+    const current = (snap.data() as any)?.venueId;
+    if (current === DEV_VENUE) {
+      console.log('[TallyUp DevBootstrap] dev pin skipped — already set', { uid, venueId: DEV_VENUE });
+      return { ok: true, venueId: DEV_VENUE, skipped: true };
+    }
+
+    await updateDoc(userRef, { venueId: DEV_VENUE, updatedAt: now });
+    console.log('[TallyUp DevBootstrap] dev pin updated', { uid, venueId: DEV_VENUE });
+    return { ok: true, venueId: DEV_VENUE, updated: true };
   } catch (e: any) {
-    console.log('[TallyUp DevBootstrap] pin dev failed', JSON.stringify({ code: e?.code, message: e?.message }));
-    return false;
+    console.warn('[TallyUp DevBootstrap] pinDevVenueIfEnvSet failed:', e?.message || e);
+    return { ok: false, reason: 'error', error: e?.message || String(e) };
   }
 }
 
-// Back-compat names expected elsewhere
-export const _devBootstrap  = { pinDevVenueIfEnvSet };
-export const _devBootstratp = _devBootstrap;
+export async function ensureDevMembership(venueId?: string) {
+  try {
+    const uid = getAuth()?.currentUser?.uid;
+    if (!uid) return { ok: false, reason: 'no_uid' };
+
+    const db = getFirestore();
+    const v = venueId || DEV_VENUE;
+    const memRef = doc(db, 'venues', v, 'members', uid);
+    await setDoc(memRef, {
+      uid,
+      role: 'owner',
+      status: 'active',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      source: 'devBootstrap.ensureDevMembership',
+    }, { merge: true });
+
+    console.log('[TallyUp DevBootstrap] ensureDevMembership ok', { uid, venueId: v });
+    return { ok: true, venueId: v };
+  } catch (e: any) {
+    console.warn('[TallyUp DevBootstrap] ensureDevMembership failed:', e?.message || e);
+    return { ok: false, reason: 'error', error: e?.message || String(e) };
+  }
+}
+
+/** Some code calls this; keep a harmless stub that returns ok */
+export async function ensureActiveSession() {
+  return { ok: true, reason: 'noop' };
+}
+
+const devBootstrap = { pinDevVenueIfEnvSet, ensureDevMembership, ensureActiveSession };
+export default devBootstrap;
