@@ -1,50 +1,43 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import React, { useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { onAuthStateChanged, getAuth } from 'firebase/auth';
+import { View, ActivityIndicator, Text } from 'react-native';
 
+import { useVenue } from '../context/VenueProvider';
+
+// Stacks
 import AuthStack from './stacks/AuthStack';
 import MainStack from './stacks/MainStack';
-import SetupWizard from '../screens/setup/SetupWizard';
+import SetupStack from './stacks/SetupStack';
 
-type Phase = 'loading' | 'auth' | 'main';
-const Root = createNativeStackNavigator();
+type Phase = 'loading' | 'auth' | 'setup' | 'app';
 
 export default function RootNavigator() {
-  const [phase, setPhase] = useState<Phase>('loading');
+  const { loading, user, venueId } = useVenue();
 
-  useEffect(() => {
-    const auth = getAuth();
-    const unsub = onAuthStateChanged(auth, (u) => {
-      console.log('[TallyUp Nav] auth state', JSON.stringify({ uid: u?.uid ?? null }));
-      setPhase(u ? 'main' : 'auth');
-    });
-    return () => unsub();
-  }, []);
+  const phase: Phase = useMemo(() => {
+    if (loading) return 'loading';
+    if (!user) return 'auth';
+    if (!venueId) return 'setup';
+    return 'app';
+  }, [loading, user, venueId]);
+
+  console.log('[TallyUp RootNav] phase', JSON.stringify({ phase, uid: user?.uid ?? null, venueId: venueId ?? null }));
 
   if (phase === 'loading') {
     return (
-      <NavigationContainer>
-        <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
-          <ActivityIndicator />
-        </View>
-      </NavigationContainer>
+      <View style={{ flex: 1, backgroundColor: '#0F1115', alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator />
+        <Text style={{ color: '#9AA4B2', marginTop: 8 }}>Loading…</Text>
+      </View>
     );
   }
 
+  // Key the container by phase so the navigator remounts when we move auth -> setup -> app
   return (
-    <NavigationContainer>
-      <Root.Navigator>
-        {phase === 'auth' && (
-          <Root.Screen name="Auth" component={AuthStack} options={{ headerShown: false }} />
-        )}
-        {phase === 'main' && (
-          <Root.Screen name="Main" component={MainStack} options={{ headerShown: false }} />
-        )}
-        {/* Global fallback Setup route, always reachable */}
-        <Root.Screen name="GlobalSetup" component={SetupWizard} options={{ title: 'Venue Setup' }} />
-      </Root.Navigator>
+    <NavigationContainer key={phase}>
+      {phase === 'auth' && <AuthStack />}
+      {phase === 'setup' && <SetupStack onRefresh={() => { /* no-op; kept for compatibility */ }} />}
+      {phase === 'app' && <MainStack />}
     </NavigationContainer>
   );
 }

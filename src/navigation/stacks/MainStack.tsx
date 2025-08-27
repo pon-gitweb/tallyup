@@ -49,6 +49,9 @@ export default function MainStack() {
       <Stack.Screen name="DepartmentSelection" component={DepartmentSelectionScreen} options={{ title: 'Departments' }} />
       <Stack.Screen name="AreaSelection" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
       <Stack.Screen name="StockTakeAreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Inventory' }} />
+      <Stack.Screen name="SupplierEdit" component={require('../../screens/setup/EditSupplierScreen').default} options={{ title: 'Edit Supplier' }} />
+      <Stack.Screen name="ProductEdit" component={require('../../screens/setup/EditProductScreen').default} options={{ title: 'Edit Product' }} />
+      <Stack.Screen name="VenueSetup" component={require('../../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
     </Stack.Navigator>
   );
 }

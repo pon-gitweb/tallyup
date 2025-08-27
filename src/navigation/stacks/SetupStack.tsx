@@ -14,6 +14,7 @@ export default function SetupStack({ onRefresh }: { onRefresh: () => void }) {
         component={CreateVenueScreen}
         options={{ title: 'Create Venue' }}
       />
+      <Stack.Screen name="VenueSetup" component={require('../../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
     </Stack.Navigator>
   );
 }

@@ -1,162 +1,190 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { db } from '../../services/firebase';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
-import { useVenueId } from '../../context/VenueProvider';
-import { finalizeVenueCycle, getCycleDurationHours } from '../../services/finalization';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import {
+  getFirestore, collection, onSnapshot, Unsubscribe, QuerySnapshot, DocumentData
+} from 'firebase/firestore';
 
-type DeptRow = {
-  id: string;
-  name: string;
-  areasTotal: number;
-  areasCompleted: number;
-  areasInProgress: number;
+type Dept = { id: string; name?: string };
+
+type DeptStatus = {
+  total: number;
+  completed: number;
+  startedOnly: number; // startedAt set but not completed
+  statusText: 'Not started' | 'In progress' | 'Completed';
 };
 
 export default function DepartmentSelectionScreen() {
-  const nav = useNavigation<any>();
-  const venueId = useVenueId();
+  const route = useRoute() as any;
+  const navigation = useNavigation() as any;
+
+  const venueId: string | undefined = route?.params?.venueId;
+  const sessionId = route?.params?.sessionId; // kept for compatibility / future use
+
+  const db = getFirestore();
 
   const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState<DeptRow[]>([]);
-  const [sessionStatus, setSessionStatus] = useState<string>('idle');
+  const [departments, setDepartments] = useState<Dept[]>([]);
+  const [statusByDept, setStatusByDept] = useState<Record<string, DeptStatus>>({});
+
+  // Track child subscriptions so we can clean them up when departments list changes
+  const areaUnsubsRef = useRef<Record<string, Unsubscribe>>({});
 
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      if (!venueId) { setLoading(false); return; }
-      try {
-        // Session status (optional UI)
-        const sref = doc(db, 'venues', venueId, 'sessions', 'current');
-        const ssnap = await getDoc(sref);
-        setSessionStatus((ssnap.data() as any)?.status || 'idle');
-
-        const dcol = collection(db, 'venues', venueId, 'departments');
-        const deps = await getDocs(dcol);
-
-        const out: DeptRow[] = [];
-        for (const d of deps.docs) {
-          const depId = d.id;
-          const name = (d.data() as any)?.name || depId;
-
-          const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', depId, 'areas'));
-          let total = 0, completed = 0, inprog = 0;
-
-          areasSnap.forEach(a => {
-            total++;
-            const ad: any = a.data();
-            if (ad?.completedAt) completed++;
-            else if (ad?.startedAt) inprog++;
-          });
-
-          out.push({ id: depId, name, areasTotal: total, areasCompleted: completed, areasInProgress: inprog });
-        }
-        if (!cancel) setRows(out);
-      } catch (e: any) {
-        console.log('[TallyUp Dept] load error', JSON.stringify({ code: e?.code, message: e?.message }));
-      } finally {
-        if (!cancel) setLoading(false);
-      }
-    })();
-    return () => { cancel = true; };
-  }, [venueId]);
-
-  const allCompleted = useMemo(() => {
-    if (!rows.length) return false;
-    return rows.every(r => r.areasTotal > 0 && r.areasCompleted === r.areasTotal);
-  }, [rows]);
-
-  function statusFor(r: DeptRow) {
-    if (r.areasInProgress > 0) return 'In Progress';
-    if (r.areasTotal > 0 && r.areasCompleted === r.areasTotal) return 'Completed';
-    return 'Not Started';
-  }
-
-  async function onFinalize() {
     if (!venueId) return;
-    try {
-      const hours = await getCycleDurationHours(venueId);
-      if (hours != null && hours >= 24) {
-        let proceed = false;
-        await new Promise<void>((resolve) => {
-          Alert.alert(
-            'Long Cycle Warning',
-            `This stock take spanned about ${hours.toFixed(1)} hours.\n\nCounts may be less accurate. Finalize anyway?`,
-            [
-              { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-              { text: 'Finalize', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
-            ]
-          );
-        });
-        if (!proceed) return;
+    setLoading(true);
+
+    // Subscribe to departments for this venue
+    const unsub = onSnapshot(
+      collection(db, 'venues', venueId, 'departments'),
+      (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        setDepartments(list);
+        setLoading(false);
+      },
+      (err) => {
+        console.warn('[Departments subscribe error]', err?.message || err);
+        setLoading(false);
       }
-      await finalizeVenueCycle(venueId);
-      Alert.alert('Stock take complete', 'Cycle marked complete. You can start a new one.');
-    } catch (e: any) {
-      console.log('[TallyUp Dept] finalize error', JSON.stringify({ code: e?.code, message: e?.message }));
-      Alert.alert('Finalize failed', e?.message || 'Unknown error.');
+    );
+
+    return () => {
+      unsub();
+      // cleanup areas subs when screen unmounts
+      Object.values(areaUnsubsRef.current).forEach(fn => fn?.());
+      areaUnsubsRef.current = {};
+    };
+  }, [db, venueId]);
+
+  // For each department, subscribe to its areas to compute live status
+  useEffect(() => {
+    if (!venueId) return;
+    // Unsubscribe previous area listeners that no longer match current departments
+    const keepIds = new Set(departments.map(d => d.id));
+    for (const k of Object.keys(areaUnsubsRef.current)) {
+      if (!keepIds.has(k)) {
+        areaUnsubsRef.current[k]?.();
+        delete areaUnsubsRef.current[k];
+      }
     }
+
+    departments.forEach((dept) => {
+      if (areaUnsubsRef.current[dept.id]) return; // already subscribed
+
+      const areasCol = collection(db, 'venues', venueId, 'departments', dept.id, 'areas');
+      const unsub = onSnapshot(
+        areasCol,
+        (areasSnap: QuerySnapshot<DocumentData>) => {
+          const totals = computeDeptStatus(areasSnap);
+          setStatusByDept(prev => ({ ...prev, [dept.id]: totals }));
+        },
+        (err) => {
+          console.warn('[Dept areas subscribe error]', dept.id, err?.message || err);
+        }
+      );
+      areaUnsubsRef.current[dept.id] = unsub;
+    });
+
+    return () => {
+      // We keep listeners while the screen is active; cleaned in the outer cleanup and when deps change
+    };
+  }, [db, venueId, departments]);
+
+  const rows = useMemo(() => {
+    return departments.map(d => {
+      const s = statusByDept[d.id];
+      return {
+        id: d.id,
+        name: d.name || d.id,
+        status: s?.statusText ?? 'Not started',
+        meta:
+          s
+            ? `${s.completed}/${s.total} completed • ${s.startedOnly} in progress`
+            : '—',
+      };
+    });
+  }, [departments, statusByDept]);
+
+  if (!venueId) {
+    return (
+      <View style={styles.center}>
+        <Text>No venue selected.</Text>
+      </View>
+    );
   }
 
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator /><Text>Loading departments…</Text>
+        <ActivityIndicator />
+        <Text>Loading departments…</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Departments</Text>
-      <Text style={styles.sub}>Session: {sessionStatus}</Text>
-
-      {rows.map(r => {
-        const status = statusFor(r);
-        const badgeStyle =
-          status === 'In Progress' ? styles.badgeWarn :
-          status === 'Completed'  ? styles.badgeOk   :
-                                    styles.badgeDim;
-
-        return (
+    <View style={styles.container}>
+      <Text style={styles.heading}>Departments</Text>
+      {sessionId ? <Text style={styles.subtle}>Session active</Text> : <Text style={styles.subtle}>Start or continue stock take</Text>}
+      <FlatList
+        data={rows}
+        keyExtractor={(i) => i.id}
+        ItemSeparatorComponent={() => <View style={styles.sep} />}
+        renderItem={({ item }) => (
           <TouchableOpacity
-            key={r.id}
             style={styles.row}
-            onPress={() => nav.navigate('Areas', { departmentId: r.id, departmentName: r.name })}
+            onPress={() => navigation.navigate('Areas', { venueId, departmentId: item.id })}
           >
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>{r.name}</Text>
-              <Text style={styles.rowSub}>
-                Areas: {r.areasCompleted}/{r.areasTotal} complete · {r.areasInProgress} in progress
+              <Text style={styles.name}>{item.name}</Text>
+              <Text
+                style={[
+                  styles.status,
+                  item.status === 'Completed'
+                    ? styles.statusComplete
+                    : item.status === 'In progress'
+                    ? styles.statusInProgress
+                    : styles.statusIdle,
+                ]}
+              >
+                {item.status}
               </Text>
+              <Text style={styles.meta}>{item.meta}</Text>
             </View>
-            <Text style={[styles.badge, badgeStyle]}>{status}</Text>
+            <Text style={styles.chev}>›</Text>
           </TouchableOpacity>
-        );
-      })}
-
-      {allCompleted ? (
-        <TouchableOpacity style={styles.finalBtn} onPress={onFinalize}>
-          <Text style={styles.finalText}>Finalize Stock Take</Text>
-        </TouchableOpacity>
-      ) : null}
+        )}
+      />
     </View>
   );
 }
 
+function computeDeptStatus(areasSnap: QuerySnapshot<DocumentData>): DeptStatus {
+  const docs = areasSnap.docs.map(d => d.data() as any);
+  const total = docs.length;
+  const completed = docs.filter(a => !!a?.completedAt).length;
+  const startedOnly = docs.filter(a => !!a?.startedAt && !a?.completedAt).length;
+
+  let statusText: DeptStatus['statusText'] = 'Not started';
+  if (total > 0) {
+    if (completed === total) statusText = 'Completed';
+    else if (completed > 0 || startedOnly > 0) statusText = 'In progress';
+  }
+  return { total, completed, startedOnly, statusText };
+}
+
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
+  container: { flex: 1, padding: 16, gap: 8 },
+  heading: { fontSize: 18, fontWeight: '700' },
+  subtle: { color: '#666' },
+  row: { paddingVertical: 12, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center' },
+  name: { fontSize: 16, fontWeight: '600' },
+  status: { marginTop: 4, fontSize: 12 },
+  statusComplete: { color: '#0a7a0a' },
+  statusInProgress: { color: '#8a5a00' },
+  statusIdle: { color: '#666' },
+  meta: { marginTop: 2, color: '#888', fontSize: 12 },
+  sep: { height: 1, backgroundColor: '#eee' },
+  chev: { fontSize: 24, marginLeft: 8, color: '#999' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  title: { fontSize: 22, fontWeight: '800' },
-  sub: { opacity: 0.7, marginBottom: 6 },
-  row: { padding: 14, borderRadius: 12, backgroundColor: '#EFEFF4', flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  rowTitle: { fontWeight: '700', fontSize: 16 },
-  rowSub: { opacity: 0.7, marginTop: 2 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, color: 'white', fontWeight: '700' },
-  badgeOk: { backgroundColor: '#34C759' },
-  badgeWarn: { backgroundColor: '#FF9500' },
-  badgeDim: { backgroundColor: '#8E8E93' },
-  finalBtn: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
-  finalText: { color: 'white', fontWeight: '700' },
 });

@@ -18,6 +18,7 @@ export default function AuthNavigator() {
       <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ headerShown: true, title: 'Create Venue' }} />
+        <Stack.Screen name="VenueSetup" component={require('../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

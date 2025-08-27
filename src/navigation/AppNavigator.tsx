@@ -33,6 +33,7 @@ export default function AppNavigator() {
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
         <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create Venue' }} />
+        <Stack.Screen name="VenueSetup" component={require('../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

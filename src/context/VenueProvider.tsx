@@ -5,7 +5,7 @@ import {
   doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc,
   query, where, limit as qlimit, Unsubscribe,
 } from 'firebase/firestore';
-import Constants from 'expo-constants';
+import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
 
 type VenueCtx = {
   loading: boolean;
@@ -18,12 +18,6 @@ type VenueCtx = {
 const Ctx = createContext<VenueCtx>({
   loading: true, user: null, venueId: null, refresh: () => {}, attachVenueIfMissing: async () => {},
 });
-
-const EXTRA: any =
-  (Constants?.expoConfig?.extra as any) ??
-  ((Constants as any)?.manifest2?.extra as any) ??
-  {};
-const DEV_PIN = (EXTRA.EXPO_PUBLIC_DEV_VENUE_ID as string) || null;
 
 export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -75,7 +69,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
         if ((currentVenue === null || currentVenue === undefined) && triedAutoAttachForUid.current !== u.uid) {
           triedAutoAttachForUid.current = u.uid;
-          await attemptAutoAttach(u.uid);
+          await attemptAutoAttach(u);
         }
       }, (err) => {
         console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
@@ -95,41 +89,27 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     user,
     venueId,
     refresh: () => setNonce(n => n + 1),
-    attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user.uid, true); },
+    attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user); },
   }), [loading, user, venueId]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
   /** ---------- helpers ---------- */
 
-  async function attemptAutoAttach(uid: string, force = false) {
+  async function attemptAutoAttach(u: User) {
     try {
-      console.log('[TallyUp VenueProvider] auto-attach begin', JSON.stringify({ uid, force, DEV_PIN: !!DEV_PIN }));
+      const email = u.email ?? null;
+      const uid = u.uid;
+      const devAccount = IS_DEV_PIN_ENABLED && isDevEmail(email);
+      console.log('[TallyUp VenueProvider] auto-attach begin', JSON.stringify({ uid, email, devAccount, IS_DEV_PIN_ENABLED }));
 
-      // (0) DEV PIN shortcut — safest path in dev
-      if (DEV_PIN) {
-        const okDev = await trySetVenueId(uid, DEV_PIN);
+      // Only dev accounts may be auto-attached to DEV_VENUE_ID
+      if (devAccount && DEV_VENUE_ID) {
+        const okDev = await trySetVenueId(uid, DEV_VENUE_ID);
         if (okDev) return;
       }
 
-      // (A) Owned venue (may be blocked by rules — just try once)
-      try {
-        const ownQ = query(collection(db, 'venues'), where('ownerUid', '==', uid), qlimit(1));
-        const ownSnap = await getDocs(ownQ);
-        console.log('[TallyUp VenueProvider] owned query', JSON.stringify({ count: ownSnap.size }));
-        if (!ownSnap.empty) {
-          const ownedId = ownSnap.docs[0].id;
-          const ok = await trySetVenueId(uid, ownedId);
-          if (ok) return;
-        }
-      } catch (e: any) {
-        console.log('[TallyUp VenueProvider] owned query error', JSON.stringify({ code: e?.code, message: e?.message }));
-      }
-
-      // (B) Membership scan — intentionally skipped to avoid invalid-argument spam across SDKs.
-      console.log('[TallyUp VenueProvider] membership scan skipped (collectionGroup(documentId) not portable).');
-
-      // Fallback: do nothing — user can Create / Attach via Setup or Dashboard action.
+      // No other auto-attach (owned/membership scans are noisy under rules and not necessary).
       console.log('[TallyUp VenueProvider] auto-attach: no action taken', JSON.stringify({ uid }));
     } catch (e: any) {
       console.log('[TallyUp VenueProvider] auto-attach fatal', JSON.stringify({ code: e?.code, message: e?.message }));

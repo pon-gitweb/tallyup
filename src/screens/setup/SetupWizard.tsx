@@ -1,68 +1,58 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, Button, Alert } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-
-import ProductsStep from './steps/ProductsStep';
-import DepartmentsStep from './steps/DepartmentsStep';
-import AreasStep from './steps/AreasStep';
-import SuppliersStep from './steps/SuppliersStep';
-
-import { setSetupCompleted } from '../../services/venueSetupFlag';
-import { getCurrentVenueForUser } from '../../services/devBootstrap';
-
-const STEPS = ['Products', 'Departments', 'Areas', 'Suppliers'] as const;
-type StepKey = typeof STEPS[number];
+import { getAuth, signOut } from 'firebase/auth';
 
 export default function SetupWizard() {
-  const nav = useNavigation<any>();
-  const [idx, setIdx] = useState(0);
-  const stepKey: StepKey = STEPS[idx];
+  const navigation = useNavigation<any>();
 
-  const stepEl = useMemo(() => {
-    switch (stepKey) {
-      case 'Products': return <ProductsStep />;
-      case 'Departments': return <DepartmentsStep />;
-      case 'Areas': return <AreasStep />;
-      case 'Suppliers': return <SuppliersStep />;
-      default: return null;
-    }
-  }, [stepKey]);
+  const goCreate = () => {
+    // Go to the lightweight Create Venue screen (owner flow)
+    navigation.navigate('CreateVenue');
+  };
 
-  async function onDone() {
+  const backToLogin = async () => {
     try {
-      const venueId = await getCurrentVenueForUser();
-      if (!venueId) {
-        Alert.alert('No Venue', 'Please create a venue first.');
-        return;
-      }
-      await setSetupCompleted(venueId, true);
-      console.log('[TallyUp SetupWizard] setupCompleted true', JSON.stringify({ venueId }));
-      Alert.alert('Setup Complete', 'Your venue setup is saved.');
-
-      // Return to Dashboard
-      nav.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
-    } catch (e: any) {
-      console.log('[TallyUp SetupWizard] done error', JSON.stringify({ code: e?.code, message: e?.message }));
-      Alert.alert('Save Failed', e?.message ?? 'Unknown error.');
+      const auth = getAuth();
+      await signOut(auth);
+      console.log('[TallyUp CreateVenue] back-to-login signOut ok');
+    } catch (e:any) {
+      console.log('[TallyUp CreateVenue] back-to-login error', e?.message);
     }
-  }
+  };
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 22, fontWeight: '700' }}>Venue Setup</Text>
-      <Text style={{ opacity: 0.7 }}>Step {idx + 1} of {STEPS.length}: {stepKey}</Text>
+    <View style={styles.container}>
+      <Text style={styles.h1}>Let’s set up your venue</Text>
+      <Text style={styles.p}>
+        As the first user on this account you’ll create the venue you manage.
+        You can invite staff later from Settings.
+      </Text>
 
-      <View style={{ flex: 1 }}>
-        {stepEl}
-      </View>
+      <Pressable style={styles.primary} onPress={goCreate}>
+        <Text style={styles.primaryLabel}>Create Venue (Owner)</Text>
+      </Pressable>
 
-      <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'space-between' }}>
-        <Button title="Back" onPress={() => setIdx(Math.max(0, idx - 1))} disabled={idx === 0} />
-        {idx < STEPS.length - 1
-          ? <Button title="Next" onPress={() => setIdx(Math.min(STEPS.length - 1, idx + 1))} />
-          : <Button title="Done" onPress={onDone} />
-        }
-      </View>
+      <Pressable style={styles.secondary} onPress={backToLogin}>
+        <Text style={styles.secondaryLabel}>Back to Login</Text>
+      </Pressable>
+
+      <View style={{height:24}} />
+
+      <Text style={styles.small}>
+        Already part of a venue? Ask the owner to invite you, then sign in.
+      </Text>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex:1, padding:20, justifyContent:'center' },
+  h1: { fontSize:24, fontWeight:'700', marginBottom:8 },
+  p: { fontSize:16, opacity:0.8, marginBottom:24 },
+  primary: { backgroundColor:'#1f6feb', padding:14, borderRadius:10, alignItems:'center' },
+  primaryLabel: { color:'#fff', fontSize:16, fontWeight:'600' },
+  secondary: { padding:14, borderRadius:10, alignItems:'center', borderWidth:1, borderColor:'#ccc', marginTop:12 },
+  secondaryLabel: { fontSize:16, fontWeight:'600' },
+  small: { fontSize:13, opacity:0.7 },
+});
