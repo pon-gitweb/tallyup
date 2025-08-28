@@ -1,17 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Switch, TextInput, Linking } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Switch, TextInput } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { buildSuggestedOrdersInMemory, createDraftOrderWithLines, OrderLine } from '../../services/orders';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { listProducts } from '../../services/products';
+import SupplierDraftButton from '../../components/SupplierDraftButton';
+import { useNavigation } from '@react-navigation/native';
+import type { DraftLine } from '../../services/orderDrafts';
 
 type Group = { supplierId: string; supplier?: Supplier; lines: OrderLine[] };
 
 export default function SuggestedOrderScreen() {
+  const nav = useNavigation<any>();
   const venueId = useVenueId();
   const [loading, setLoading] = useState(true);
   const [roundToPack, setRoundToPack] = useState(true);
-  const [deliveryDate, setDeliveryDate] = useState<string>(''); // e.g. 2025-09-01
+  const [deliveryDate, setDeliveryDate] = useState<string>(''); // YYYY-MM-DD
   const [groups, setGroups] = useState<Group[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [productsCount, setProductsCount] = useState<number>(0);
@@ -33,7 +37,6 @@ export default function SuggestedOrderScreen() {
         supplier: suppliersArr.find(s => s.id === sid),
         lines: suggested.bySupplier[sid],
       }));
-      // Stable sort by supplier name
       gs.sort((a, b) => (a.supplier?.name || '').localeCompare(b.supplier?.name || ''));
       setGroups(gs);
     } catch (e: any) {
@@ -48,7 +51,6 @@ export default function SuggestedOrderScreen() {
 
   const visibleGroups = useMemo(() => {
     if (!roundToPack) return groups;
-    // apply client-side rounding for display & final write
     return groups.map(g => ({
       ...g,
       lines: g.lines.map(l => {
@@ -61,6 +63,15 @@ export default function SuggestedOrderScreen() {
     }));
   }, [groups, roundToPack]);
 
+  function parseDelivery(d: string): Date | null {
+    if (!d) return null;
+    // Simple YYYY-MM-DD check
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.trim());
+    if (!m) return null;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
   async function createDrafts() {
     if (!venueId) return;
     if (visibleGroups.length === 0) {
@@ -70,7 +81,12 @@ export default function SuggestedOrderScreen() {
     try {
       for (const g of visibleGroups) {
         if (!g.lines.length) continue;
-        await createDraftOrderWithLines(venueId, g.supplierId, g.lines, deliveryDate ? `Requested delivery: ${deliveryDate}` : null);
+        await createDraftOrderWithLines(
+          venueId,
+          g.supplierId,
+          g.lines,
+          deliveryDate ? `Requested delivery: ${deliveryDate}` : null
+        );
       }
       Alert.alert('Drafts Created', 'Suggested orders saved as drafts under Orders.');
     } catch (e: any) {
@@ -124,23 +140,47 @@ export default function SuggestedOrderScreen() {
         data={visibleGroups}
         keyExtractor={(g) => g.supplierId}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        renderItem={({ item: g }) => (
-          <View style={styles.group}>
-            <Text style={styles.groupTitle}>{g.supplier?.name || g.supplierId}</Text>
-            {g.lines.map((l) => (
-              <View key={`${l.productId}`} style={styles.line}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.lineName}>{l.name}</Text>
-                  <Text style={styles.sub}>
-                    {l.unitCost != null ? `@ ${Number(l.unitCost).toFixed(2)}` : '@ —'}
-                    {l.packSize ? ` · pack ${l.packSize}` : ''}
-                  </Text>
+        renderItem={({ item: g }) => {
+          // Map to DraftLine for the per-supplier draft button
+          const draftLines: DraftLine[] = g.lines.map(l => ({
+            productId: l.productId,
+            name: l.name,
+            sku: (l as any)?.sku ?? null,
+            qty: Number(l.qty) || 0,
+            unitCost: l.unitCost ?? null,
+            packSize: l.packSize ?? null,
+          }));
+          const delivery = parseDelivery(deliveryDate);
+
+          return (
+            <View style={styles.group}>
+              <Text style={styles.groupTitle}>{g.supplier?.name || g.supplierId}</Text>
+              {g.lines.map((l) => (
+                <View key={`${l.productId}`} style={styles.line}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.lineName}>{l.name}</Text>
+                    <Text style={styles.sub}>
+                      {l.unitCost != null ? `@ ${Number(l.unitCost).toFixed(2)}` : '@ —'}
+                      {l.packSize ? ` · pack ${l.packSize}` : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.qty}>{l.qty}</Text>
                 </View>
-                <Text style={styles.qty}>{l.qty}</Text>
+              ))}
+
+              <View style={{ marginTop: 8 }}>
+                <SupplierDraftButton
+                  venueId={venueId!}
+                  supplierId={g.supplierId}
+                  supplierName={g.supplier?.name || g.supplierId}
+                  lines={draftLines}
+                  deliveryDate={delivery}
+                  onDrafted={(orderId) => nav.navigate('OrderDetail', { orderId })}
+                />
               </View>
-            ))}
-          </View>
-        )}
+            </View>
+          );
+        }}
         ListEmptyComponent={<Text>No suggestions available.</Text>}
       />
 

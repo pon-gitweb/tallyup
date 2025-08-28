@@ -38,6 +38,7 @@ export default function MainStack() {
       {/* Orders */}
       <Stack.Screen name="SuggestedOrder" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
       <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
+      <Stack.Screen name="NewOrder" component={require('../../screens/orders/NewOrderScreen').default} options={{ title: 'New Order' }} />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order Detail' }} />
 
       {/* Reports */}
