@@ -1,203 +1,193 @@
 import { db } from './firebase';
 import {
-  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, query, orderBy, where,
+  collection,
+  addDoc,
+  writeBatch,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  updateDoc,
+  query,
+  orderBy,
+  where,
+  DocumentReference,
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
 import { listProducts } from './products';
-import { listSuppliers, Supplier } from './suppliers';
-import { getOnHandByProduct } from './inventory';
+
+/** ===== Types kept minimal & stable for existing screens ===== */
+export type OrderStatus = 'draft' | 'submitted' | 'received' | 'cancelled';
 
 export type Order = {
-  id?: string;
+  id: string;
+  venueId: string;
   supplierId: string;
-  status: 'draft'|'submitted'|'received'|'cancelled';
-  createdBy: string;
+  status: OrderStatus;
   createdAt?: any;
-  submittedAt?: any;
-  receivedAt?: any;
+  updatedAt?: any;
   notes?: string | null;
+  deliveryDate?: string | null;
+  total?: number | null;
 };
 
 export type OrderLine = {
-  id?: string;
   productId: string;
   name: string;
   qty: number;
-  unitCost: number|null;
-  packSize?: number|null;
+  unitCost?: number | null;
+  packSize?: number | null;
+  sku?: string | null;
+  unit?: string | null;
 };
 
-// ---------- Suggestion logic (on‑hand + cheapest supplier if price list exists) ----------
-
-async function getCheapestSupplierForProduct(venueId: string, productId: string, fallback: {
-  defaultSupplierId?: string; cost?: any; packSize?: any;
-}): Promise<{ supplierId?: string; unitCost: number|null; packSize: number|null }> {
-  try {
-    const priceCol = collection(db, 'venues', venueId, 'products', productId, 'prices');
-    const snap = await getDocs(priceCol);
-    let best: { supplierId?: string; unitCost: number|null; packSize: number|null } | null = null;
-    snap.forEach(d => {
-      const data = d.data() as any;
-      const unitCost = data?.unitCost != null ? Number(data.unitCost) : null;
-      const packSize = data?.packSize != null ? Number(data.packSize) : null;
-      if (unitCost == null || isNaN(unitCost)) return;
-      if (!best || unitCost < (best.unitCost ?? Number.POSITIVE_INFINITY)) {
-        best = { supplierId: d.id, unitCost, packSize };
-      }
-    });
-    if (best) return best;
-  } catch {
-    // ignore and fall back
-  }
-  // Fallback to product fields
-  const c = fallback.cost != null ? Number(fallback.cost) : null;
-  const p = fallback.packSize != null ? Number(fallback.packSize) : null;
-  return { supplierId: fallback.defaultSupplierId, unitCost: c, packSize: p };
-}
-
+/** ===== Suggested Orders (in-memory) =====
+ * Groups products by supplier and suggests qty = max(0, par - onHand).
+ * If product has no clear supplier, it is skipped.
+ * Prices are optional — shown when present.
+ */
 export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
-  suppliers: Record<string, Supplier>;
   bySupplier: Record<string, OrderLine[]>;
 }> {
-  const [products, suppliersArr, onHandMap] = await Promise.all([
-    listProducts(venueId),
-    listSuppliers(venueId),
-    getOnHandByProduct(venueId),
-  ]);
+  if (!venueId) return { bySupplier: {} };
 
-  const suppliers: Record<string, Supplier> = {};
-  suppliersArr.forEach(s => { if (s.id) suppliers[s.id] = s; });
-
+  const products = await listProducts(venueId);
   const bySupplier: Record<string, OrderLine[]> = {};
 
-  for (const p of products) {
-    const pid = (p as any).id as string | undefined;
-    if (!pid) continue;
+  for (const p of products as any[]) {
+    const par = numOr(p?.par, 0);
+    const onHand =
+      numOr(p?.onHand, null) ??
+      numOr(p?.stockOnHand, null) ??
+      0;
+    const needed = Math.max(0, par - onHand);
+    if (!needed) continue;
 
-    const parLevelRaw = (p as any).parLevel;
-    const parLevel = typeof parLevelRaw === 'number' ? parLevelRaw : Number(parLevelRaw);
-    if (isNaN(parLevel)) continue;
+    // Pick supplier: defaultSupplierId or cheapest from embedded prices map (if present)
+    let supplierId: string | null = p?.defaultSupplierId || null;
+    let priceUnitCost: number | null = null;
+    let pricePackSize: number | null = null;
 
-    const onHand = onHandMap[pid] || 0;
-    const needed = Math.max(0, parLevel - onHand);
-    if (needed <= 0) continue;
+    if (!supplierId && p?.prices && typeof p.prices === 'object') {
+      let cheapest: { supplierId: string; unitCost: number; packSize?: number | null } | null = null;
+      for (const sid of Object.keys(p.prices)) {
+        const pr = p.prices[sid];
+        const uc = numOr(pr?.unitCost, null);
+        if (uc == null) continue;
+        if (!cheapest || uc < cheapest.unitCost) {
+          cheapest = { supplierId: sid, unitCost: uc, packSize: numOr(pr?.packSize, null) };
+        }
+      }
+      if (cheapest) {
+        supplierId = cheapest.supplierId;
+        priceUnitCost = cheapest.unitCost;
+        pricePackSize = cheapest.packSize ?? null;
+      }
+    }
 
-    // Find cheapest supplier (uses price list if present)
-    const best = await getCheapestSupplierForProduct(venueId, pid, {
-      defaultSupplierId: (p as any).defaultSupplierId,
-      cost: (p as any).cost,
-      packSize: (p as any).packSize,
-    });
-    const supplierId = best.supplierId;
-    if (!supplierId) continue;
+    if (!supplierId) continue; // can’t suggest without a supplier
+
+    // If embedded price known for defaultSupplierId, pick it up
+    if (p?.prices && p.prices[supplierId]) {
+      priceUnitCost = numOr(p.prices[supplierId]?.unitCost, priceUnitCost);
+      pricePackSize = numOr(p.prices[supplierId]?.packSize, pricePackSize);
+    }
+
+    const line: OrderLine = {
+      productId: p.id || p.productId || p.sku || p.code || String(p.name || ''),
+      name: String(p.name || p.sku || 'Unknown'),
+      qty: needed,
+      unitCost: priceUnitCost,
+      packSize: pricePackSize,
+      sku: p.sku ?? null,
+      unit: p.unit ?? p.unitName ?? null,
+    };
 
     if (!bySupplier[supplierId]) bySupplier[supplierId] = [];
-    bySupplier[supplierId].push({
-      productId: pid,
-      name: (p as any).name,
-      qty: needed,
-      unitCost: best.unitCost,
-      packSize: best.packSize,
-    });
+    bySupplier[supplierId].push(line);
   }
 
-  // Stable sort per supplier by product name
-  Object.keys(bySupplier).forEach(sid => {
-    bySupplier[sid].sort((a, b) => a.name.localeCompare(b.name));
-  });
-
-  return { suppliers, bySupplier };
+  return { bySupplier };
 }
 
-// ---------- Firestore writers & readers (unchanged) ----------
-
+/** ===== Create a draft order with lines ===== */
 export async function createDraftOrderWithLines(
   venueId: string,
   supplierId: string,
   lines: OrderLine[],
-  notes?: string | null
-): Promise<string> {
-  const auth = getAuth();
-  const uid = auth.currentUser?.uid;
-  if (!uid) throw new Error('Not signed in');
+  notes: string | null = null,
+  deliveryDate?: string | null,
+): Promise<{ orderId: string }> {
+  if (!venueId) throw new Error('missing venueId');
+  if (!supplierId) throw new Error('missing supplierId');
 
-  const ordersCol = collection(db, 'venues', venueId, 'orders');
+  // Create order
+  const ordersCol = collection(doc(db, 'venues', venueId), 'orders');
   const orderRef = await addDoc(ordersCol, {
     supplierId,
-    status: 'draft',
-    createdBy: uid,
+    status: 'draft' as OrderStatus,
     createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
     notes: notes ?? null,
-  } as Order);
+    deliveryDate: deliveryDate ?? null,
+    total: null,
+  });
 
-  for (const line of lines) {
-    await addDoc(collection(db, 'venues', venueId, 'orders', orderRef.id, 'lines'), {
-      productId: line.productId,
-      name: line.name,
-      qty: Number(line.qty) || 0,
-      unitCost: line.unitCost ?? null,
-      packSize: line.packSize ?? null,
-    } as OrderLine);
+  // Write lines
+  const batch = writeBatch(db);
+  for (const l of lines) {
+    const lineRef = doc(collection(orderRef as DocumentReference, 'lines'));
+    batch.set(lineRef, {
+      productId: l.productId,
+      name: l.name,
+      qty: Number(l.qty) || 0,
+      unitCost: l.unitCost ?? null,
+      packSize: l.packSize ?? null,
+      sku: l.sku ?? null,
+      unit: l.unit ?? null,
+      createdAt: serverTimestamp(),
+    });
   }
+  batch.update(orderRef, { updatedAt: serverTimestamp() });
+  await batch.commit();
 
-  return orderRef.id;
+  return { orderId: orderRef.id };
 }
 
-export async function submitOrder(venueId: string, orderId: string) {
-  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
-    status: 'submitted',
-    submittedAt: serverTimestamp(),
-  });
-}
-
-export async function markReceived(venueId: string, orderId: string) {
-  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
-    status: 'received',
-    receivedAt: serverTimestamp(),
-  });
-}
-
-export async function cancelOrder(venueId: string, orderId: string) {
-  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
-    status: 'cancelled',
-  });
-}
-
-export async function getOrderWithLines(
-  venueId: string,
-  orderId: string
-): Promise<{ order: Order & { id: string }, lines: (OrderLine & { id: string })[] }> {
-  const oref = doc(db, 'venues', venueId, 'orders', orderId);
-  const osnap = await getDoc(oref);
-  if (!osnap.exists()) throw new Error('Order not found');
-  const order = { id: osnap.id, ...(osnap.data() as any) } as Order & { id: string };
-
-  const lcol = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
-  const lsnap = await getDocs(lcol);
-  const lines: (OrderLine & { id: string })[] = [];
-  lsnap.forEach(d => lines.push({ id: d.id, ...(d.data() as any) }));
-  return { order, lines };
-}
-
-export async function listOrders(
-  venueId: string,
-  status?: Order['status']
-): Promise<(Order & { id: string })[]> {
-  const col = collection(db, 'venues', venueId, 'orders');
-  const q = status
-    ? query(col, where('status', '==', status), orderBy('createdAt', 'desc'))
-    : query(col, orderBy('createdAt', 'desc'));
+/** ===== Orders list / detail helpers (used by Orders screens) ===== */
+export async function listOrders(venueId: string, status?: OrderStatus): Promise<Order[]> {
+  if (!venueId) return [];
+  let q = query(collection(doc(db, 'venues', venueId), 'orders'), orderBy('createdAt', 'desc'));
+  if (status) {
+    q = query(collection(doc(db, 'venues', venueId), 'orders'), where('status', '==', status), orderBy('createdAt', 'desc'));
+  }
   const snap = await getDocs(q);
-  const out: (Order & { id: string })[] = [];
-  snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
-  return out;
+  return snap.docs.map(d => ({ id: d.id, venueId, ...(d.data() as any) })) as Order[];
 }
 
-// ---------- Utils ----------
-export function calcTotal(lines: Pick<OrderLine, 'qty'|'unitCost'>[]): number {
-  return lines.reduce((sum, l) => {
-    const price = l.unitCost != null ? Number(l.unitCost) : 0;
-    const qty = Number(l.qty) || 0;
-    return sum + price * qty;
-  }, 0);
+export async function getOrder(venueId: string, orderId: string): Promise<Order | null> {
+  const ref = doc(db, 'venues', venueId, 'orders', orderId);
+  const s = await getDoc(ref);
+  return s.exists() ? ({ id: s.id, venueId, ...(s.data() as any) } as Order) : null;
+}
+
+export async function listOrderLines(venueId: string, orderId: string): Promise<OrderLine[]> {
+  const ref = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+  const snap = await getDocs(ref);
+  return snap.docs.map(d => d.data() as OrderLine);
+}
+
+export async function updateOrderStatus(venueId: string, orderId: string, status: OrderStatus) {
+  const ref = doc(db, 'venues', venueId, 'orders', orderId);
+  await updateDoc(ref, { status, updatedAt: serverTimestamp() });
+}
+
+export const submitOrder   = (v: string, o: string) => updateOrderStatus(v, o, 'submitted');
+export const cancelOrder   = (v: string, o: string) => updateOrderStatus(v, o, 'cancelled');
+export const markReceived  = (v: string, o: string) => updateOrderStatus(v, o, 'received');
+
+/** ===== Utility ===== */
+function numOr(v: any, fallback: number | null): number | null {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return Number.isFinite(n) ? (n as number) : fallback;
 }

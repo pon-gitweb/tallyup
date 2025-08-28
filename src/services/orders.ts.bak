@@ -1,0 +1,279 @@
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp, db } from './firebase';
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp,
+  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc, query, orderBy, where,
+} from 'firebase/firestore';
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp, getAuth } from 'firebase/auth';
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp, listProducts } from './products';
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp, listSuppliers, Supplier } from './suppliers';
+import { collection, addDoc, writeBatch, doc, setDoc, getDoc, serverTimestamp, getOnHandByProduct } from './inventory';
+
+export type Order = {
+  id?: string;
+  supplierId: string;
+  status: 'draft'|'submitted'|'received'|'cancelled';
+  createdBy: string;
+  createdAt?: any;
+  submittedAt?: any;
+  receivedAt?: any;
+  notes?: string | null;
+};
+
+export type OrderLine = {
+  id?: string;
+  productId: string;
+  name: string;
+  qty: number;
+  unitCost: number|null;
+  packSize?: number|null;
+};
+
+// ---------- Suggestion logic (on‑hand + cheapest supplier if price list exists) ----------
+
+async function getCheapestSupplierForProduct(venueId: string, productId: string, fallback: {
+  defaultSupplierId?: string; cost?: any; packSize?: any;
+}): Promise<{ supplierId?: string; unitCost: number|null; packSize: number|null }> {
+  try {
+    const priceCol = collection(db, 'venues', venueId, 'products', productId, 'prices');
+    const snap = await getDocs(priceCol);
+    let best: { supplierId?: string; unitCost: number|null; packSize: number|null } | null = null;
+    snap.forEach(d => {
+      const data = d.data() as any;
+      const unitCost = data?.unitCost != null ? Number(data.unitCost) : null;
+      const packSize = data?.packSize != null ? Number(data.packSize) : null;
+      if (unitCost == null || isNaN(unitCost)) return;
+      if (!best || unitCost < (best.unitCost ?? Number.POSITIVE_INFINITY)) {
+        best = { supplierId: d.id, unitCost, packSize };
+      }
+    });
+    if (best) return best;
+  } catch {
+    // ignore and fall back
+  }
+  // Fallback to product fields
+  const c = fallback.cost != null ? Number(fallback.cost) : null;
+  const p = fallback.packSize != null ? Number(fallback.packSize) : null;
+  return { supplierId: fallback.defaultSupplierId, unitCost: c, packSize: p };
+}
+
+export async function buildSuggestedOrdersInMemory(venueId: string): Promise<{
+  suppliers: Record<string, Supplier>;
+  bySupplier: Record<string, OrderLine[]>;
+}> {
+  const [products, suppliersArr, onHandMap] = await Promise.all([
+    listProducts(venueId),
+    listSuppliers(venueId),
+    getOnHandByProduct(venueId),
+  ]);
+
+  const suppliers: Record<string, Supplier> = {};
+  suppliersArr.forEach(s => { if (s.id) suppliers[s.id] = s; });
+
+  const bySupplier: Record<string, OrderLine[]> = {};
+
+  for (const p of products) {
+    const pid = (p as any).id as string | undefined;
+    if (!pid) continue;
+
+    const parLevelRaw = (p as any).parLevel;
+    const parLevel = typeof parLevelRaw === 'number' ? parLevelRaw : Number(parLevelRaw);
+    if (isNaN(parLevel)) continue;
+
+    const onHand = onHandMap[pid] || 0;
+    const needed = Math.max(0, parLevel - onHand);
+    if (needed <= 0) continue;
+
+    // Find cheapest supplier (uses price list if present)
+    const best = await getCheapestSupplierForProduct(venueId, pid, {
+      defaultSupplierId: (p as any).defaultSupplierId,
+      cost: (p as any).cost,
+      packSize: (p as any).packSize,
+    });
+    const supplierId = best.supplierId;
+    if (!supplierId) continue;
+
+    if (!bySupplier[supplierId]) bySupplier[supplierId] = [];
+    bySupplier[supplierId].push({
+      productId: pid,
+      name: (p as any).name,
+      qty: needed,
+      unitCost: best.unitCost,
+      packSize: best.packSize,
+    });
+  }
+
+  // Stable sort per supplier by product name
+  Object.keys(bySupplier).forEach(sid => {
+    bySupplier[sid].sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  return { suppliers, bySupplier };
+}
+
+// ---------- Firestore writers & readers (unchanged) ----------
+
+export async function createDraftOrderWithLines_OLD(
+  venueId: string,
+  supplierId: string,
+  lines: OrderLine[],
+  notes?: string | null
+): Promise<string> {
+  const auth = getAuth();
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error('Not signed in');
+
+  const ordersCol = collection(db, 'venues', venueId, 'orders');
+  const orderRef = await addDoc(ordersCol, {
+    supplierId,
+    status: 'draft',
+    createdBy: uid,
+    createdAt: serverTimestamp(),
+    notes: notes ?? null,
+  } as Order);
+
+  for (const line of lines) {
+    await addDoc(collection(db, 'venues', venueId, 'orders', orderRef.id, 'lines'), {
+      productId: line.productId,
+      name: line.name,
+      qty: Number(line.qty) || 0,
+      unitCost: line.unitCost ?? null,
+      packSize: line.packSize ?? null,
+    } as OrderLine);
+  }
+
+  return orderRef.id;
+}
+
+export async function submitOrder(venueId: string, orderId: string) {
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'submitted',
+    submittedAt: serverTimestamp(),
+  });
+}
+
+export async function markReceived(venueId: string, orderId: string) {
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'received',
+    receivedAt: serverTimestamp(),
+  });
+}
+
+export async function cancelOrder(venueId: string, orderId: string) {
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'cancelled',
+  });
+}
+
+export async function getOrderWithLines(
+  venueId: string,
+  orderId: string
+): Promise<{ order: Order & { id: string }, lines: (OrderLine & { id: string })[] }> {
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  const osnap = await getDoc(oref);
+  if (!osnap.exists()) throw new Error('Order not found');
+  const order = { id: osnap.id, ...(osnap.data() as any) } as Order & { id: string };
+
+  const lcol = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+  const lsnap = await getDocs(lcol);
+  const lines: (OrderLine & { id: string })[] = [];
+  lsnap.forEach(d => lines.push({ id: d.id, ...(d.data() as any) }));
+  return { order, lines };
+}
+
+export async function listOrders(
+  venueId: string,
+  status?: Order['status']
+): Promise<(Order & { id: string })[]> {
+  const col = collection(db, 'venues', venueId, 'orders');
+  const q = status
+    ? query(col, where('status', '==', status), orderBy('createdAt', 'desc'))
+    : query(col, orderBy('createdAt', 'desc'));
+  const snap = await getDocs(q);
+  const out: (Order & { id: string })[] = [];
+  snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+  return out;
+}
+
+// ---------- Utils ----------
+export function calcTotal(lines: Pick<OrderLine, 'qty'|'unitCost'>[]): number {
+  return lines.reduce((sum, l) => {
+    const price = l.unitCost != null ? Number(l.unitCost) : 0;
+    const qty = Number(l.qty) || 0;
+    return sum + price * qty;
+  }, 0);
+}
+
+// ---- robust draft writer (guarded paths, useful logging) ----
+export type OrderLine = {
+  productId: string | null;
+  name: string;
+  sku?: string | null;
+  qty: number;
+  unitCost?: number | null;
+  packSize?: number | null;
+  isCustom?: boolean | null;
+};
+
+export async function createDraftOrderWithLines(
+  venueId: string,
+  supplierId: string,
+  lines: OrderLine[],
+  note?: string | null
+): Promise<{ orderId: string }> {
+  // Input validation to avoid empty path segments
+  if (!venueId || typeof venueId !== 'string') {
+    console.log('[orders.createDraft] invalid venueId', { venueId });
+    throw new Error('Missing venueId');
+  }
+  if (!supplierId || typeof supplierId !== 'string') {
+    console.log('[orders.createDraft] invalid supplierId', { supplierId });
+    throw new Error('Missing supplierId');
+  }
+  const clean = (lines || []).filter(l => l && typeof l.qty === 'number' && l.qty > 0);
+  if (clean.length === 0) {
+    console.log('[orders.createDraft] no lines to save');
+    throw new Error('No lines to save');
+  }
+
+  try {
+    // orders header
+    const ordersCol = collection(db, 'venues', venueId, 'orders');
+    const header = {
+      supplierId,
+      status: 'draft',
+      note: note ?? null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    const orderRef = await addDoc(ordersCol, header);
+
+    // lines in a batch; deterministic ids to keep it simple
+    const batch = writeBatch(db);
+    clean.forEach((l, i) => {
+      const lineId = String(i).padStart(4, '0');
+      const lineRef = doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', lineId);
+      batch.set(lineRef, {
+        productId: l.productId ?? null,
+        name: l.name,
+        sku: l.sku ?? null,
+        qty: l.qty,
+        unitCost: l.unitCost ?? null,
+        packSize: l.packSize ?? null,
+        isCustom: !!l.isCustom,
+        createdAt: serverTimestamp(),
+      });
+    });
+    batch.update(doc(db, 'venues', venueId, 'orders', orderRef.id), {
+      lineCount: clean.length,
+      updatedAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    console.log('[orders.createDraft] ok', { venueId, supplierId, orderId: orderRef.id, lines: clean.length });
+    return { orderId: orderRef.id };
+  } catch (e: any) {
+    console.log('[orders.createDraft] fail', {
+      venueId, supplierId, lines: (lines || []).length, code: e?.code, message: e?.message,
+    });
+    throw e;
+  }
+}
