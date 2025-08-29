@@ -1,280 +1,253 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TextInput, TouchableOpacity, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { listProducts } from '../../services/products';
+import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
 
 type Product = {
   id: string;
   name: string;
-  sku?: string | null;
-  // We won't rely on prices structure here to avoid N+1; unitCost can be null for now.
+  // optional fields we don't rely on
+  sku?: string;
+  defaultSupplierId?: string | null;
 };
 
 export default function NewOrderScreen() {
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [supplierId, setSupplierId] = useState<string | null>(null);
 
-  const [search, setSearch] = useState('');
-  const [cart, setCart] = useState<OrderLine[]>([]);
-  const [note, setNote] = useState<string>('');
-  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
+  // supplier selection
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierQuery, setSupplierQuery] = useState('');
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+
+  // product picking
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productQuery, setProductQuery] = useState('');
+
+  // local cart
+  const [qtyByProduct, setQtyByProduct] = useState<Record<string, number>>({});
+  const [note, setNote] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       if (!venueId) { setLoading(false); return; }
       try {
         setLoading(true);
         const [sups, prods] = await Promise.all([
           listSuppliers(venueId),
-          listProducts(venueId) as unknown as Promise<Product[]>,
+          listProducts(venueId),
         ]);
+        if (cancelled) return;
+        // sort suppliers by name
+        sups.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        // sort products by name
+        (prods as any[]).sort?.((a, b) => (a.name || '').localeCompare(b.name || ''));
+
         setSuppliers(sups);
-        setProducts(prods);
+        setProducts(prods as Product[]);
       } catch (e: any) {
         Alert.alert('Load failed', e?.message || 'Unknown error');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [venueId]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter(p =>
-      (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q)
-    );
-  }, [products, search]);
+  const filteredSuppliers = useMemo(() => {
+    const q = supplierQuery.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter(s =>
+      (s.name || '').toLowerCase().includes(q) || (s.email || '').toLowerCase().includes(q));
+  }, [supplierQuery, suppliers]);
 
-  function addToCart(p: Product) {
-    // If already in cart, bump qty
-    setCart(prev => {
-      const i = prev.findIndex(l => l.productId === p.id && !l.isCustom);
-      if (i >= 0) {
-        const copy = prev.slice();
-        copy[i] = { ...copy[i], qty: (copy[i].qty || 0) + 1 };
-        return copy;
-      }
-      return prev.concat([{ productId: p.id, name: p.name, sku: p.sku ?? null, qty: 1, unitCost: null, isCustom: false }]);
-    });
-  }
-
-  function updateQty(idx: number, qty: number) {
-    if (qty <= 0) {
-      removeLine(idx);
-      return;
+  const filteredProducts = useMemo(() => {
+    const q = productQuery.trim().toLowerCase();
+    let arr = products;
+    if (selectedSupplier) {
+      // prefer products that have this supplier as default (if present in data)
+      const top = arr.filter(p => p.defaultSupplierId === selectedSupplier.id);
+      const rest = arr.filter(p => p.defaultSupplierId !== selectedSupplier.id);
+      arr = [...top, ...rest];
     }
-    setCart(prev => prev.map((l, i) => i === idx ? { ...l, qty } : l));
-  }
+    if (!q) return arr;
+    return arr.filter(p =>
+      (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q));
+  }, [productQuery, products, selectedSupplier]);
 
-  function removeLine(idx: number) {
-    setCart(prev => prev.filter((_, i) => i !== idx));
-  }
+  const totalLines = useMemo(
+    () => Object.values(qtyByProduct).filter(q => (q || 0) > 0).length,
+    [qtyByProduct]
+  );
 
-  function addCustomLine() {
-    // Minimal inline "form": add a blank row the user can fill
-    setCart(prev => prev.concat([{
-      productId: null,
-      name: 'Custom item',
-      sku: null,
-      qty: 1,
-      unitCost: null,
-      isCustom: true,
-    }]));
+  function inc(id: string, by = 1) {
+    setQtyByProduct(prev => ({ ...prev, [id]: Math.max(0, (prev[id] || 0) + by) }));
+  }
+  function setQty(id: string, v: string) {
+    const n = Math.max(0, Math.floor(Number(v) || 0));
+    setQtyByProduct(prev => ({ ...prev, [id]: n }));
   }
 
   async function saveDraft() {
     try {
-      if (!venueId) { Alert.alert('Missing venue', 'Attach a venue first.'); return; }
-      if (!supplierId) { Alert.alert('Pick a supplier', 'Please choose a supplier for this order.'); return; }
-      const clean = cart.filter(l => l.qty && l.qty > 0);
-      if (clean.length === 0) { Alert.alert('Empty cart', 'Add at least one line.'); return; }
+      if (!venueId) return;
+      if (!selectedSupplier) {
+        Alert.alert('Missing supplier', 'Please choose a supplier first.');
+        return;
+      }
+      const lines: OrderLine[] = Object.keys(qtyByProduct)
+        .filter(pid => (qtyByProduct[pid] || 0) > 0)
+        .map(pid => {
+          const p = products.find(x => x.id === pid)!;
+          return {
+            productId: p.id,
+            name: p.name,
+            qty: qtyByProduct[pid],
+            // unitCost is optional here; Order detail can show "—" if unknown
+          } as OrderLine;
+        });
 
-      const res = await createDraftOrderWithLines(venueId, supplierId, clean, note || null);
-      Alert.alert('Draft saved', `Order ${res.orderId} created under Orders.`);
+      if (!lines.length) {
+        Alert.alert('No items', 'Add at least one product with quantity > 0.');
+        return;
+      }
+
+      await createDraftOrderWithLines(venueId, selectedSupplier.id, lines, note || null);
+      Alert.alert('Draft created', 'You can review and submit it from Orders.', [{ text: 'OK' }]);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Unknown error');
     }
   }
 
   if (loading) {
-    return <View style={s.center}><ActivityIndicator /><Text>Loading…</Text></View>;
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+        <Text>Loading suppliers & products…</Text>
+      </View>
+    );
   }
 
   return (
-    <View style={s.wrap}>
-      <Text style={s.title}>New Order</Text>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.select({ ios: 'padding', android: undefined })}>
+      <View style={styles.wrap}>
+        <Text style={styles.title}>New Order</Text>
 
-      {/* Supplier chooser */}
-      <Pressable style={[s.card, s.rowBetween]} onPress={() => setSupplierPickerOpen(true)}>
-        <View>
-          <Text style={s.label}>Supplier</Text>
-          <Text style={s.value}>{suppliers.find(s => s.id === supplierId)?.name || 'Choose supplier'}</Text>
-        </View>
-        <Text style={s.pick}>Pick</Text>
-      </Pressable>
-
-      <Modal transparent visible={supplierPickerOpen} animationType="fade" onRequestClose={() => setSupplierPickerOpen(false)}>
-        <View style={s.modalBackdrop}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Select Supplier</Text>
-            <FlatList
-              data={suppliers}
-              keyExtractor={(it) => it.id}
-              style={{ maxHeight: 360 }}
-              ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[s.card, { padding: 12 }]}
-                  onPress={() => { setSupplierId(item.id); setSupplierPickerOpen(false); }}
-                >
-                  <Text style={s.value}>{item.name}</Text>
+        {/* Supplier chooser */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Supplier</Text>
+          <TextInput
+            placeholder="Search supplier…"
+            value={supplierQuery}
+            onChangeText={setSupplierQuery}
+            style={styles.input}
+            autoCapitalize="none"
+          />
+          <FlatList
+            data={filteredSuppliers}
+            keyExtractor={s => s.id}
+            style={{ maxHeight: 160, marginTop: 6 }}
+            ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+            renderItem={({ item }) => {
+              const selected = selectedSupplier?.id === item.id;
+              return (
+                <TouchableOpacity style={[styles.rowItem, selected && styles.rowItemSelected]} onPress={() => setSelectedSupplier(item)}>
+                  <Text style={[styles.rowTitle, selected && styles.bold]}>{item.name || '(no name)'}</Text>
+                  {item.email ? <Text style={styles.sub}>{item.email}</Text> : null}
                 </TouchableOpacity>
-              )}
-            />
-            <TouchableOpacity style={[s.btn, { marginTop: 12 }]} onPress={() => setSupplierPickerOpen(false)}>
-              <Text style={s.btnText}>Close</Text>
-            </TouchableOpacity>
-          </View>
+              );
+            }}
+            ListEmptyComponent={<Text>No suppliers</Text>}
+          />
+          {selectedSupplier ? <Text style={styles.selectedPill}>Selected: {selectedSupplier.name}</Text> : null}
         </View>
-      </Modal>
 
-      {/* Add lines */}
-      <View style={[s.card, { gap: 8 }]}>
-        <Text style={s.label}>Search Products</Text>
-        <TextInput
-          placeholder="Name or SKU"
-          value={search}
-          onChangeText={setSearch}
-          style={s.input}
-          autoCapitalize="none"
-        />
-        <FlatList
-          data={filtered}
-          keyExtractor={(p) => p.id}
-          style={{ maxHeight: 220 }}
-          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-          renderItem={({ item }) => (
-            <View style={[s.rowBetween, { paddingVertical: 6 }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.value}>{item.name}</Text>
-                {!!item.sku && <Text style={s.sub}>SKU: {item.sku}</Text>}
-              </View>
-              <TouchableOpacity style={[s.btnLite]} onPress={() => addToCart(item)}>
-                <Text style={s.btnLiteText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          ListEmptyComponent={<Text style={s.sub}>No products match your search.</Text>}
-        />
-        <TouchableOpacity onPress={addCustomLine} style={[s.btnGhost]}>
-          <Text style={s.btnGhostText}>+ Add custom item</Text>
+        {/* Product picker */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Products</Text>
+          <TextInput
+            placeholder="Search product…"
+            value={productQuery}
+            onChangeText={setProductQuery}
+            style={styles.input}
+            autoCapitalize="none"
+          />
+          <FlatList
+            data={filteredProducts}
+            keyExtractor={p => p.id}
+            style={{ maxHeight: 260, marginTop: 6 }}
+            ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+            renderItem={({ item }) => {
+              const q = qtyByProduct[item.id] || 0;
+              return (
+                <View style={styles.prodRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowTitle}>{item.name}</Text>
+                    {!!item.sku && <Text style={styles.sub}>SKU {item.sku}</Text>}
+                  </View>
+                  <TouchableOpacity style={styles.qtyBtn} onPress={() => inc(item.id, -1)}><Text style={styles.qtyBtnText}>-</Text></TouchableOpacity>
+                  <TextInput
+                    style={styles.qtyInput}
+                    keyboardType="number-pad"
+                    value={String(q)}
+                    onChangeText={(v) => setQty(item.id, v)}
+                  />
+                  <TouchableOpacity style={styles.qtyBtn} onPress={() => inc(item.id, +1)}><Text style={styles.qtyBtnText}>+</Text></TouchableOpacity>
+                </View>
+              );
+            }}
+            ListEmptyComponent={<Text>No products</Text>}
+          />
+        </View>
+
+        {/* Note & Submit */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Note (optional)</Text>
+          <TextInput
+            placeholder="e.g., Requested delivery Thursday"
+            value={note}
+            onChangeText={setNote}
+            style={styles.input}
+            autoCapitalize="sentences"
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[styles.primary, (!selectedSupplier || totalLines === 0) && styles.primaryDisabled]}
+          onPress={saveDraft}
+          disabled={!selectedSupplier || totalLines === 0}
+        >
+          <Text style={styles.primaryText}>Save Draft ({totalLines} item{totalLines === 1 ? '' : 's'})</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Cart */}
-      <View style={[s.card, { gap: 8 }]}>
-        <Text style={s.label}>Cart</Text>
-        {cart.length === 0 ? (
-          <Text style={s.sub}>No lines yet.</Text>
-        ) : (
-          <FlatList
-            data={cart}
-            keyExtractor={(_, i) => String(i)}
-            ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-            renderItem={({ item, index }) => (
-              <View style={[s.rowBetween, { alignItems: 'center' }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.value}>{item.name}{item.isCustom ? ' (custom)' : ''}</Text>
-                  {!!item.sku && <Text style={s.sub}>SKU: {item.sku}</Text>}
-                </View>
-                <View style={s.qtyRow}>
-                  <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(index, (item.qty || 0) - 1)}>
-                    <Text style={s.qtyBtnText}>-</Text>
-                  </TouchableOpacity>
-                  <TextInput
-                    value={String(item.qty || 0)}
-                    onChangeText={(t) => updateQty(index, Math.max(0, parseInt(t || '0', 10) || 0))}
-                    keyboardType="numeric"
-                    style={s.qtyInput}
-                  />
-                  <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(index, (item.qty || 0) + 1)}>
-                    <Text style={s.qtyBtnText}>+</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.btnLite, { marginLeft: 8 }]} onPress={() => removeLine(index)}>
-                    <Text style={s.btnLiteText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          />
-        )}
-      </View>
-
-      {/* Note + Save */}
-      <View style={[s.card, { gap: 8 }]}>
-        <Text style={s.label}>Note (optional)</Text>
-        <TextInput
-          placeholder="e.g. Deliver Friday AM"
-          value={note}
-          onChangeText={setNote}
-          style={s.input}
-        />
-      </View>
-
-      <TouchableOpacity
-        style={[s.btnPrimary, (!venueId || !supplierId || cart.length === 0) && s.btnDisabled]}
-        onPress={saveDraft}
-        disabled={!venueId || !supplierId || cart.length === 0}
-      >
-        <Text style={s.btnPrimaryText}>Save as Draft</Text>
-      </TouchableOpacity>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
-const s = StyleSheet.create({
+const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, gap: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  title: { fontSize: 22, fontWeight: '800' },
-
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-
-  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12 },
-
+  title: { fontSize: 22, fontWeight: '800', marginBottom: 4 },
+  card: { backgroundColor: '#F2F2F7', padding: 10, borderRadius: 12, gap: 6 },
   label: { fontWeight: '700' },
-  value: { fontWeight: '600' },
-  sub: { opacity: 0.7 },
-
   input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  rowItem: { backgroundColor: 'white', borderRadius: 10, padding: 10 },
+  rowItemSelected: { borderWidth: 2, borderColor: '#0A84FF' },
+  rowTitle: { fontWeight: '700' },
+  sub: { opacity: 0.7 },
+  selectedPill: { marginTop: 6, fontWeight: '700', color: '#0A84FF' },
 
-  btn: { backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
-  btnText: { color: 'white', fontWeight: '800' },
+  prodRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'white', borderRadius: 10, padding: 10, gap: 6 },
+  qtyBtn: { backgroundColor: '#E5E7EB', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  qtyBtnText: { fontWeight: '900' },
+  qtyInput: { width: 56, textAlign: 'center', borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 8, paddingVertical: 6 },
 
-  btnLite: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
-  btnLiteText: { fontWeight: '700' },
-
-  btnGhost: { paddingVertical: 8, alignItems: 'center' },
-  btnGhostText: { color: '#0A84FF', fontWeight: '700' },
-
-  btnPrimary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 4 },
-  btnPrimaryText: { color: 'white', fontWeight: '800' },
-  btnDisabled: { opacity: 0.5 },
-
-  qtyRow: { flexDirection: 'row', alignItems: 'center' },
-  qtyBtn: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E5E7EB' },
-  qtyBtnText: { fontSize: 18, fontWeight: '900' },
-  qtyInput: { width: 56, textAlign: 'center', borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 8, marginHorizontal: 6, paddingVertical: 6 },
-
-  pick: { color: '#0A84FF', fontWeight: '700' },
-
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  modalCard: { backgroundColor: 'white', borderRadius: 14, padding: 16, width: '100%', maxWidth: 520 },
-  modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 10 },
+  primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  primaryDisabled: { opacity: 0.5 },
+  primaryText: { color: 'white', fontWeight: '800' },
+  bold: { fontWeight: '800' },
 });
