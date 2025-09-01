@@ -191,3 +191,81 @@ function numOr(v: any, fallback: number | null): number | null {
   const n = typeof v === 'string' ? Number(v) : v;
   return Number.isFinite(n) ? (n as number) : fallback;
 }
+
+/**
+ * Compute the total from an array of order lines.
+ * Safe against missing/NaN values.
+ */
+export function calcTotal(
+  lines: Array<{ unitCost?: number | null; qty?: number | null }>
+): number {
+  if (!Array.isArray(lines)) return 0;
+  return lines.reduce((sum, l) => {
+    const price = Number(l?.unitCost ?? 0);
+    const qty = Number(l?.qty ?? 0);
+    if (!isFinite(price) || !isFinite(qty)) return sum;
+    return sum + price * qty;
+  }, 0);
+}
+
+/**
+ * Fetch an order plus its lines for display in OrderDetailScreen.
+ * Returns: { order: {...}, lines: Array<...> }
+ */
+export async function getOrderWithLines(venueId: string, orderId: string) {
+  if (!venueId) throw new Error('Missing venueId');
+  if (!orderId) throw new Error('Missing orderId');
+
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  const osnap = await getDoc(oref);
+  if (!osnap.exists()) throw new Error('Order not found');
+
+  const order = { id: osnap.id, ...(osnap.data() as any) };
+
+  const lref = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+  // Sort by name for a stable UI; change if you prefer createdAt
+  const lq = query(lref, orderBy('name'));
+  const lsnap = await getDocs(lq);
+  const lines = lsnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+  return { order, lines };
+}
+
+/** Update a single line's quantity (draft orders). */
+export async function updateOrderLineQty(venueId: string, orderId: string, lineId: string, qty: number) {
+  if (!venueId || !orderId || !lineId) throw new Error('Missing ids');
+  const lref = doc(db, 'venues', venueId, 'orders', orderId, 'lines', lineId);
+  await updateDoc(lref, { qty: Number(qty) || 0, updatedAt: serverTimestamp() });
+}
+
+/** Delete a line from a draft order. */
+export async function deleteOrderLine(venueId: string, orderId: string, lineId: string) {
+  if (!venueId || !orderId || !lineId) throw new Error('Missing ids');
+  const lref = doc(db, 'venues', venueId, 'orders', orderId, 'lines', lineId);
+  await deleteDoc(lref);
+}
+
+/** Update order note(s) on a draft order. */
+export async function updateOrderNotes(venueId: string, orderId: string, notes: string) {
+  if (!venueId || !orderId) throw new Error('Missing ids');
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  await updateDoc(oref, { notes: notes ?? '', updatedAt: serverTimestamp() });
+}
+
+/** Submit a draft order (status -> submitted). */
+async function submitOrder_DUPLICATE_DO_NOT_USE(venueId: string, orderId: string) {
+  if (!venueId || !orderId) throw new Error('Missing ids');
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  await updateDoc(oref, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+}
+
+// --- receive: mark submitted -> received (does not alter stock levels yet) ---
+export async function receiveOrder(venueId: string, orderId: string) {
+  if (!venueId || !orderId) throw new Error('Missing ids');
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  await updateDoc(oref, {
+    status: 'received',
+    receivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}

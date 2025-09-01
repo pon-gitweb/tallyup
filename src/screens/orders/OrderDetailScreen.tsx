@@ -1,32 +1,65 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Linking } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TouchableOpacity } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
-import { calcTotal, cancelOrder, getOrderWithLines, markReceived, submitOrder } from '../../services/orders';
-import { listSuppliers } from '../../services/suppliers';
+import { db } from '../../services/firebase';
+import {
+  doc, getDoc, collection, getDocs, updateDoc, serverTimestamp,
+} from 'firebase/firestore';
+
+type Order = {
+  id: string;
+  supplierId: string;
+  status: 'draft' | 'submitted' | 'received' | string;
+  notes?: string | null;
+  createdAt?: any;
+  submittedAt?: any;
+  receivedAt?: any;
+};
+
+type Line = {
+  id: string;
+  productId: string;
+  name?: string;
+  unitCost?: number;
+  qty?: number;
+  packSize?: number | null;
+};
 
 export default function OrderDetailScreen() {
   const venueId = useVenueId();
   const route = useRoute<any>();
+  const nav = useNavigation<any>();
   const orderId: string = route.params?.orderId;
 
   const [loading, setLoading] = useState(true);
-  const [order, setOrder] = useState<any>(null);
-  const [lines, setLines] = useState<any[]>([]);
-  const [supplier, setSupplier] = useState<any>(null);
+  const [order, setOrder] = useState<Order | null>(null);
+  const [lines, setLines] = useState<Line[]>([]);
 
   async function load() {
-    if (!venueId || !orderId) { setLoading(false); return; }
+    if (!venueId || !orderId) {
+      setOrder(null); setLines([]); setLoading(false);
+      return;
+    }
     try {
-      const [{ order, lines }, suppliers] = await Promise.all([
-        getOrderWithLines(venueId, orderId),
-        listSuppliers(venueId),
-      ]);
-      setOrder(order);
-      setLines(lines);
-      const s = suppliers.find(x => x.id === order.supplierId);
-      setSupplier(s || null);
+      setLoading(true);
+      const oref = doc(db, 'venues', venueId, 'orders', orderId);
+      const osnap = await getDoc(oref);
+      if (!osnap.exists()) {
+        Alert.alert('Not found', 'This order no longer exists.');
+        setOrder(null); setLines([]); return;
+      }
+      const odata = osnap.data() as any;
+      const orderObj: Order = { id: osnap.id, ...odata };
+
+      const lsnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
+      const larr: Line[] = [];
+      lsnap.forEach(d => larr.push({ id: d.id, ...(d.data() as any) }));
+
+      setOrder(orderObj);
+      setLines(larr);
     } catch (e: any) {
+      console.log('[OrderDetail] load error', e?.message);
       Alert.alert('Load Failed', e?.message || 'Unknown error');
     } finally {
       setLoading(false);
@@ -35,119 +68,133 @@ export default function OrderDetailScreen() {
 
   useEffect(() => { load(); }, [venueId, orderId]);
 
-  const total = useMemo(() => calcTotal(lines), [lines]);
+  const total = useMemo(() => {
+    return lines.reduce((sum, l) => sum + (Number(l.qty) || 0) * (Number(l.unitCost) || 0), 0);
+  }, [lines]);
 
-  async function doSubmit() {
-    try { await submitOrder(venueId!, orderId); Alert.alert('Submitted', 'Order submitted.'); load(); }
-    catch (e: any) { Alert.alert('Submit Failed', e?.message || 'Unknown error'); }
-  }
-  async function doReceive() {
-    try { await markReceived(venueId!, orderId); Alert.alert('Received', 'Order marked received.'); load(); }
-    catch (e: any) { Alert.alert('Receive Failed', e?.message || 'Unknown error'); }
-  }
-  async function doCancel() {
-    try { await cancelOrder(venueId!, orderId); Alert.alert('Cancelled', 'Order cancelled.'); load(); }
-    catch (e: any) { Alert.alert('Cancel Failed', e?.message || 'Unknown error'); }
-  }
-
-  function emailSupplier() {
-    const email = supplier?.email || '';
-    const subject = encodeURIComponent(`Purchase Order ${orderId}`);
-    // Extract requested delivery date from notes if present:
-    const note: string = order?.notes || '';
-    const bodyLines = [
-      `Hello ${supplier?.name || 'Supplier'},`,
-      ``,
-      note ? note : 'Requested delivery: (please confirm date)',
-      ``,
-      `Order lines:`,
-      ...lines.map(l => `- ${l.name} x ${l.qty}${l.unitCost != null ? ` @ ${Number(l.unitCost).toFixed(2)}` : ''}`),
-      ``,
-      `Order total: ${total.toFixed(2)}`,
-      ``,
-      `Kind regards,`,
-      `TallyUp Venue`,
-    ];
-    const body = encodeURIComponent(bodyLines.join('\n'));
-    const url = `mailto:${email}?subject=${subject}&body=${body}`;
-    Linking.openURL(url).catch(() => Alert.alert('Open Mail Failed', 'Could not open email client.'));
+  async function onSubmit() {
+    if (!venueId || !orderId) return;
+    try {
+      const oref = doc(db, 'venues', venueId, 'orders', orderId);
+      await updateDoc(oref, {
+        status: 'submitted',
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      Alert.alert('Submitted', 'Order has been submitted.');
+      await load();
+    } catch (e: any) {
+      Alert.alert('Submit Failed', e?.message || 'Unknown error');
+    }
   }
 
-  if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Loading order…</Text></View>);
-  if (!order) return (<View style={styles.center}><Text>Order not found.</Text></View>);
+  async function onReceive() {
+    if (!venueId || !orderId) return;
+    try {
+      // Minimal receive: mark order as received and stamp the time.
+      // (If you also create an invoice doc, rules below already allow it.)
+      const oref = doc(db, 'venues', venueId, 'orders', orderId);
+      await updateDoc(oref, {
+        status: 'received',
+        receivedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      Alert.alert('Received', 'Order marked as received.');
+      // Optionally go back to Orders list; for now, just refresh in place:
+      await load();
+    } catch (e: any) {
+      Alert.alert('Receive Failed', e?.message || 'Unknown error');
+    }
+  }
+
+  if (!venueId) {
+    return (
+      <View style={styles.center}>
+        <Text>You are not attached to a venue.</Text>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+        <Text>Loading order…</Text>
+      </View>
+    );
+  }
+
+  if (!order) {
+    return (
+      <View style={styles.center}>
+        <Text>Order not found.</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>{supplier?.name || order.supplierId}</Text>
-      <Text style={styles.sub}>Status: {order.status.toUpperCase()}</Text>
-      {order.notes ? <Text style={styles.sub}>Notes: {order.notes}</Text> : null}
+      <Text style={styles.title}>Order Detail</Text>
+      <Text style={styles.sub}>Order: {order.id}</Text>
+      <Text style={styles.sub}>Status: {order.status}</Text>
 
       <FlatList
         style={{ marginTop: 10 }}
         data={lines}
         keyExtractor={(l) => l.id}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        renderItem={({ item: l }) => (
+          <View style={styles.line}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.sub}>{item.qty} @ {item.unitCost != null ? Number(item.unitCost).toFixed(2) : '—'}</Text>
+              <Text style={styles.name}>{l.name || l.productId}</Text>
+              <Text style={styles.muted}>
+                {l.qty ?? 0} × {l.unitCost != null ? Number(l.unitCost).toFixed(2) : '—'}
+                {l.packSize ? ` · pack ${l.packSize}` : ''}
+              </Text>
             </View>
-            <Text style={styles.totCell}>
-              {item.unitCost != null ? (Number(item.unitCost) * Number(item.qty)).toFixed(2) : '—'}
+            <Text style={styles.price}>
+              {((Number(l.qty) || 0) * (Number(l.unitCost) || 0)).toFixed(2)}
             </Text>
           </View>
         )}
-        ListFooterComponent={
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLbl}>Total</Text>
-            <Text style={styles.totalVal}>{total.toFixed(2)}</Text>
-          </View>
-        }
+        ListEmptyComponent={<Text>No lines.</Text>}
       />
 
-      <View style={styles.rowBtns}>
-        {order.status === 'draft' && (
-          <TouchableOpacity style={[styles.btn, styles.primary]} onPress={doSubmit}>
-            <Text style={styles.primaryText}>Submit</Text>
-          </TouchableOpacity>
-        )}
-        {order.status === 'submitted' && (
-          <TouchableOpacity style={[styles.btn, styles.primary]} onPress={doReceive}>
-            <Text style={styles.primaryText}>Mark Received</Text>
-          </TouchableOpacity>
-        )}
-        {order.status !== 'cancelled' && order.status !== 'received' && (
-          <TouchableOpacity style={[styles.btn, styles.danger]} onPress={doCancel}>
-            <Text style={styles.dangerText}>Cancel</Text>
-          </TouchableOpacity>
-        )}
+      <View style={styles.totalRow}>
+        <Text style={styles.totalLabel}>Total</Text>
+        <Text style={styles.totalValue}>{total.toFixed(2)}</Text>
       </View>
 
-      <TouchableOpacity style={[styles.btn, styles.emailBtn]} onPress={emailSupplier}>
-        <Text style={styles.emailText}>Email Supplier</Text>
-      </TouchableOpacity>
+      {/* Footer actions by status */}
+      {order.status === 'draft' ? (
+        <TouchableOpacity style={styles.primary} onPress={onSubmit}>
+          <Text style={styles.primaryText}>Submit Order</Text>
+        </TouchableOpacity>
+      ) : order.status === 'submitted' ? (
+        <TouchableOpacity style={styles.primary} onPress={onReceive}>
+          <Text style={styles.primaryText}>Receive & Mark Complete</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.pill}><Text style={styles.pillText}>Received ✓</Text></View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 8 },
+  wrap: { flex: 1, padding: 16, gap: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   title: { fontSize: 22, fontWeight: '800' },
   sub: { opacity: 0.7 },
-  row: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
+  line: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, backgroundColor: '#F2F2F7', borderRadius: 12 },
   name: { fontWeight: '700' },
-  totCell: { fontWeight: '700' },
-  totalRow: { marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: '#EFEFF4', flexDirection: 'row', justifyContent: 'space-between' },
-  totalLbl: { fontWeight: '800' },
-  totalVal: { fontWeight: '800' },
-  rowBtns: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  btn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 12 },
-  primary: { backgroundColor: '#0A84FF' },
+  muted: { opacity: 0.7 },
+  price: { fontWeight: '900', width: 80, textAlign: 'right' },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: '#D0D3D7' },
+  totalLabel: { fontWeight: '800' },
+  totalValue: { fontWeight: '900' },
+  primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   primaryText: { color: 'white', fontWeight: '800' },
-  danger: { backgroundColor: '#FF3B30' },
-  dangerText: { color: 'white', fontWeight: '800' },
-  emailBtn: { backgroundColor: '#E5E7EB', marginTop: 8 },
-  emailText: { fontWeight: '800' },
+  pill: { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#E7F8EC', borderRadius: 999, alignSelf: 'flex-start', marginTop: 8 },
+  pillText: { color: '#0A7D37', fontWeight: '800' },
 });
