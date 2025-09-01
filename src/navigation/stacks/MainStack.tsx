@@ -41,6 +41,7 @@ export default function MainStack() {
       <Stack.Screen name="Orders" component={OrdersScreen} options={({ navigation }) => ({ title: 'Orders', headerRight: () => (<Button title="New" onPress={() => navigation.navigate('NewOrder')} />) })} />
       <Stack.Screen name="NewOrder" component={require('../../screens/orders/NewOrderScreen').default} options={{ title: 'New Order' }} />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order Detail' }} />
+      <Stack.Screen name="ReceiveOrder" component={require('../../screens/orders/ReceiveOrderScreen').default} options={{ title: 'Receive Order' }} />
 
       {/* Reports */}
       <Stack.Screen name="Reports" component={ReportsScreen} options={({navigation}) => ({ title: 'Reports', headerRight: () => (<Text onPress={() => navigation.navigate('Budgets')} style={{color:'#0A84FF',fontWeight:'800'}}>Budgets</Text>) })} />

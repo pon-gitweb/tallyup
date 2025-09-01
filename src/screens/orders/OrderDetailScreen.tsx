@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TouchableOpacity } from 'react-native';
+import React, { useEffect, useMemo, useState, useLayoutEffect } from 'react';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TouchableOpacity } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { db } from '../../services/firebase';
 import {
@@ -29,8 +29,15 @@ type Line = {
 export default function OrderDetailScreen() {
   const venueId = useVenueId();
   const route = useRoute<any>();
-  const nav = useNavigation<any>();
+  const navigation = useNavigation<any>();
   const orderId: string = route.params?.orderId;
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Text onPress={() => navigation.navigate('ReceiveOrder', { orderId })} style={{color:'#0A84FF',fontWeight:'800'}}>Receive</Text>
+      ),
+    });
+  }, [navigation, orderId]);
 
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<Order | null>(null);

@@ -1,35 +1,34 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, TextInput, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
-import { getOrderWithLines, receiveOrder } from '../../services/orders.safe';
-import { createInvoiceFromOrder } from '../../services/invoices';
-import { notifyError } from '../../utils/errors';
+import { getOrderWithLines, calcTotal, markOrderReceived } from '../../services/orders';
 
 export default function ReceiveOrderScreen() {
   const venueId = useVenueId();
   const route = useRoute<any>();
-  const nav = useNavigation<any>();
+  const navigation = useNavigation<any>();
   const orderId: string = route.params?.orderId;
-  const supplierId: string = route.params?.supplierId;
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [order, setOrder] = useState<any>(null);
   const [lines, setLines] = useState<any[]>([]);
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(''); // yyyy-mm-dd
-  const [notes, setNotes] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState<string>('');
+  const [invoiceDate, setInvoiceDate] = useState<string>(''); // YYYY-MM-DD
+  const [notes, setNotes] = useState<string>('');
 
   async function load() {
-    if (!venueId || !orderId) return;
+    if (!venueId || !orderId) { setError('Missing venue or order'); setLoading(false); return; }
     try {
       setLoading(true);
-      const d = await getOrderWithLines(venueId, orderId);
-      // default "received qty" equals ordered qty
-      const withRecv = d.lines.map((l: any) => ({ ...l, recvQty: l.qty ?? 0 }));
-      setLines(withRecv);
-    } catch (e) {
-      notifyError(e);
-      nav.goBack();
+      const data = await getOrderWithLines(venueId, orderId);
+      setOrder(data.order);
+      // default receivedQty to ordered qty
+      setLines((data.lines || []).map((l: any) => ({ ...l, receivedQty: Number(l.qty || 0) })));
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || 'Load failed');
     } finally {
       setLoading(false);
     }
@@ -37,132 +36,108 @@ export default function ReceiveOrderScreen() {
 
   useEffect(() => { load(); }, [venueId, orderId]);
 
-  const total = useMemo(() => (
-    lines.reduce((s, l) => s + (Number(l.recvQty || 0) * Number(l.unitCost ?? 0)), 0)
-  ), [lines]);
+  const total = useMemo(() => calcTotal(lines), [lines]);
 
   async function onConfirm() {
-    if (!venueId || !orderId || !supplierId) return;
     try {
-      setLoading(true);
-      // Build invoice lines from received qty (>0)
-      const invLines = lines
-        .filter(l => Number(l.recvQty) > 0)
-        .map(l => ({
-          productId: l.productId, name: l.name,
-          qty: Number(l.recvQty), unitCost: l.unitCost ?? null, packSize: l.packSize ?? null,
-        }));
-
-      const { invoiceId } = await createInvoiceFromOrder({
-        venueId,
-        orderId,
-        supplierId,
-        lines: invLines,
-        invoiceNumber: invoiceNumber || null,
-        invoiceDate: invoiceDate || null,
-        notes: notes || null,
+      if (!venueId || !orderId) throw new Error('Missing ids');
+      await markOrderReceived(venueId, orderId, {
+        invoiceNumber: invoiceNumber?.trim() || null,
+        invoiceDate: invoiceDate?.trim() || null,
+        notes: notes?.trim() || null,
+        lines: lines.map(l => ({ lineId: l.id, receivedQty: Number(l.receivedQty || 0) })),
       });
-
-      await receiveOrder(venueId, orderId);
-
-      Alert.alert('Order Received', `Saved invoice ${invoiceNumber || invoiceId}.`);
-      nav.navigate('Orders');
-    } catch (e) {
-      notifyError(e);
-    } finally {
-      setLoading(false);
+      Alert.alert('Order Received', 'Order marked as received.');
+      navigation.goBack();
+    } catch (e: any) {
+      Alert.alert('Receive Failed', e?.message || 'Unknown error');
     }
   }
 
-  if (loading) return (
-    <View style={styles.center}>
-      <ActivityIndicator />
-      <Text>Loading…</Text>
-    </View>
-  );
+  if (loading) return (<View style={s.center}><ActivityIndicator/><Text>Loading…</Text></View>);
+  if (error) return (<View style={s.center}><Text style={{color:'#B00020'}}>{error}</Text></View>);
 
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
-      <Text style={styles.title}>Receive Order</Text>
+    <View style={s.wrap}>
+      <Text style={s.title}>Receive Order</Text>
+      <Text style={s.sub}>Order: {orderId}</Text>
+      <Text style={s.sub}>Supplier: {order?.supplierName || order?.supplierId}</Text>
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Invoice number</Text>
-        <TextInput
-          value={invoiceNumber}
-          onChangeText={setInvoiceNumber}
-          placeholder="e.g. INV-12345"
-          style={styles.input}
-          autoCapitalize="characters"
-        />
+      <View style={s.row}>
+        <View style={[s.card, {flex:1}]}>
+          <Text style={s.label}>Invoice #</Text>
+          <TextInput style={s.input} value={invoiceNumber} onChangeText={setInvoiceNumber} placeholder="INV-12345" />
+        </View>
+        <View style={[s.card, {flex:1}]}>
+          <Text style={s.label}>Invoice date</Text>
+          <TextInput style={s.input} value={invoiceDate} onChangeText={setInvoiceDate} placeholder="YYYY-MM-DD" />
+        </View>
+      </View>
 
-        <Text style={styles.label}>Invoice date (YYYY-MM-DD)</Text>
-        <TextInput
-          value={invoiceDate}
-          onChangeText={setInvoiceDate}
-          placeholder="2025-09-01"
-          style={styles.input}
-          autoCapitalize="none"
-        />
+      <FlatList
+        style={{marginTop:8}}
+        data={lines}
+        keyExtractor={(l:any) => l.id}
+        ItemSeparatorComponent={() => <View style={{height:8}}/>}
+        renderItem={({item, index}) => (
+          <View style={s.line}>
+            <View style={{flex:1}}>
+              <Text style={s.lineName}>{item.name || item.productId}</Text>
+              <Text style={s.sub}>{item.packSize ? `pack ${item.packSize}` : 'each'} · @{item.unitCost != null ? Number(item.unitCost).toFixed(2) : '—'}</Text>
+            </View>
+            <View style={{alignItems:'flex-end'}}>
+              <Text style={s.mute}>Received</Text>
+              <TextInput
+                style={s.qty}
+                keyboardType="numeric"
+                value={String(item.receivedQty ?? 0)}
+                onChangeText={(v) => {
+                  const n = Number(v.replace(/[^0-9.]/g,'')) || 0;
+                  setLines(prev => prev.map((p, i) => i === index ? {...p, receivedQty:n} : p));
+                }}
+              />
+            </View>
+          </View>
+        )}
+      />
 
-        <Text style={styles.label}>Notes</Text>
+      <View style={[s.card,{marginTop:8}]}>
+        <Text style={s.label}>Notes</Text>
         <TextInput
+          style={[s.input,{height:80,textAlignVertical:'top'}]}
           value={notes}
           onChangeText={setNotes}
-          placeholder="Optional notes…"
-          style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+          placeholder="Optional: delivery notes, discrepancies…"
           multiline
         />
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.section}>Quantities received</Text>
-        {lines.map((l, idx) => (
-          <View key={l.productId} style={styles.line}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.lineName}>{l.name}</Text>
-              <Text style={styles.sub}>Ordered: {l.qty} @ {l.unitCost != null ? Number(l.unitCost).toFixed(2) : '—'}</Text>
-            </View>
-            <TextInput
-              keyboardType="numeric"
-              value={String(l.recvQty ?? 0)}
-              onChangeText={(t) => {
-                const v = Math.max(0, Number(t || 0));
-                const copy = [...lines];
-                copy[idx] = { ...copy[idx], recvQty: v };
-                setLines(copy);
-              }}
-              style={styles.qty}
-            />
-          </View>
-        ))}
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Invoice total (calc)</Text>
-          <Text style={styles.totalValue}>{total.toFixed(2)}</Text>
+      <View style={{flexDirection:'row', gap:10}}>
+        <View style={[s.card,{flex:1, alignItems:'center'}]}>
+          <Text style={s.mute}>Total (@ ordered price)</Text>
+          <Text style={{fontWeight:'800'}}>{total.toFixed(2)}</Text>
         </View>
+        <TouchableOpacity style={[s.primary,{flex:1}]} onPress={onConfirm}>
+          <Text style={s.primaryText}>Mark Received</Text>
+        </TouchableOpacity>
       </View>
-
-      <TouchableOpacity style={styles.primary} onPress={onConfirm}>
-        <Text style={styles.primaryText}>Confirm Received & Save Invoice</Text>
-      </TouchableOpacity>
-    </ScrollView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  wrap: { padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '800' },
-  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 8 },
-  label: { fontWeight: '700' },
-  input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
-  section: { fontWeight: '800', marginBottom: 4 },
-  line: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
-  lineName: { fontWeight: '700' },
-  sub: { opacity: 0.7 },
-  qty: { width: 64, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, textAlign: 'right' },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#E2E5E9', paddingTop: 8, marginTop: 8 },
-  totalLabel: { fontWeight: '800' },
-  totalValue: { fontWeight: '900' },
-  primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  primaryText: { color: 'white', fontWeight: '800' },
+const s = StyleSheet.create({
+  wrap:{flex:1,padding:16,gap:8},
+  center:{flex:1,alignItems:'center',justifyContent:'center',gap:8},
+  title:{fontSize:22,fontWeight:'800'},
+  sub:{opacity:0.7},
+  row:{flexDirection:'row',gap:10},
+  card:{backgroundColor:'#F2F2F7',padding:10,borderRadius:12,gap:6},
+  label:{fontWeight:'700'},
+  input:{borderWidth:1,borderColor:'#D0D3D7',borderRadius:10,paddingHorizontal:10,paddingVertical:8},
+  line:{flexDirection:'row',alignItems:'center',gap:10,backgroundColor:'#EFEFF4',padding:10,borderRadius:12},
+  lineName:{fontWeight:'700'},
+  mute:{opacity:0.6},
+  qty:{borderWidth:1,borderColor:'#D0D3D7',borderRadius:10,paddingHorizontal:10,paddingVertical:6,minWidth:64,textAlign:'right'},
+  primary:{backgroundColor:'#0A84FF',paddingVertical:14,borderRadius:12,alignItems:'center'},
+  primaryText:{color:'#fff',fontWeight:'800'},
 });

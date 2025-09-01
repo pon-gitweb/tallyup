@@ -269,3 +269,30 @@ export async function receiveOrder(venueId: string, orderId: string) {
     updatedAt: serverTimestamp(),
   });
 }
+
+/** Mark a submitted order as received; persist invoice metadata and per-line receivedQty. */
+export async function markOrderReceived(
+  venueId: string,
+  orderId: string,
+  opts: { invoiceNumber?: string | null; invoiceDate?: string | null; notes?: string | null; lines?: { lineId: string; receivedQty: number }[] }
+) {
+  if (!venueId || !orderId) throw new Error('Missing ids');
+  const { invoiceNumber = null, invoiceDate = null, notes = null, lines = [] } = opts || {};
+
+  const oref = doc(db, 'venues', venueId, 'orders', orderId);
+  await updateDoc(oref, {
+    status: 'received',
+    receivedAt: serverTimestamp(),
+    invoiceNumber,
+    invoiceDate,
+    receivedNotes: notes ?? null,
+    updatedAt: serverTimestamp(),
+  });
+
+  // update per-line receivedQty (ignore lines not passed)
+  for (const l of lines) {
+    if (!l?.lineId) continue;
+    const lref = doc(db, 'venues', venueId, 'orders', orderId, 'lines', l.lineId);
+    await updateDoc(lref, { receivedQty: Number(l.receivedQty || 0) });
+  }
+}
