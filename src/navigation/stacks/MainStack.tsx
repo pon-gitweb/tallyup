@@ -40,7 +40,13 @@ export default function MainStack() {
       <Stack.Screen name="SuggestedOrder" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
       <Stack.Screen name="Orders" component={OrdersScreen} options={({ navigation }) => ({ title: 'Orders', headerRight: () => (<Button title="New" onPress={() => navigation.navigate('NewOrder')} />) })} />
       <Stack.Screen name="NewOrder" component={require('../../screens/orders/NewOrderScreen').default} options={{ title: 'New Order' }} />
-      <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order Detail' }} />
+      <Stack.Screen name="OrderDetail" component={require('../../screens/orders/OrderDetailScreen.withHeader').default} options={{ title: 'Order Detail' }} options={({ route, navigation }) => ({
+  headerRight: () => (
+    <TouchableOpacity onPress={() => navigation.navigate("InvoiceEdit" as never, { orderId: (route.params as any)?.orderId, status: (route.params as any)?.status } as never)} style={{ paddingHorizontal: 12 }}>
+      <Text style={{ fontSize: 16, fontWeight: "600" }}>{((route.params as any)?.status === "received") ? "Log Invoice" : "Invoice"}</Text>
+    </TouchableOpacity>
+  ),
+})} />
       <Stack.Screen name="Invoice" component={require('../../screens/orders/InvoiceScreen').default} options={{ title: 'Invoice' }} />
       <Stack.Screen name="ReceiveOrder" component={require('../../screens/orders/ReceiveOrderScreen').default} options={{ title: 'Receive Order' }} />
 
@@ -57,6 +63,8 @@ export default function MainStack() {
       <Stack.Screen name="SupplierEdit" component={require('../../screens/setup/EditSupplierScreen').default} options={{ title: 'Edit Supplier' }} />
       <Stack.Screen name="ProductEdit" component={require('../../screens/setup/EditProductScreen').default} options={{ title: 'Edit Product' }} />
       <Stack.Screen name="VenueSetup" component={require('../../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
-    </Stack.Navigator>
+      <Stack.Screen name="InvoiceEdit" component={require("../../screens/invoices/InvoiceEditScreen").default} options={{ title: "Invoice" }} />
+  <Stack.Screen name="Receive" component={require("../../screens/orders/ReceiveAlias").default} options={{ title: "Receive" }} />
+</Stack.Navigator>
   );
 }
