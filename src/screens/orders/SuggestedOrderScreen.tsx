@@ -1,212 +1,223 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, FlatList, Switch, TextInput } from 'react-native';
-import { useVenueId } from '../../context/VenueProvider';
-import { buildSuggestedOrdersInMemory, createDraftOrderWithLines, OrderLine } from '../../services/orders';
-import { listSuppliers, Supplier } from '../../services/suppliers';
-import { listProducts } from '../../services/products';
-import SupplierDraftButton from '../../components/SupplierDraftButton';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Alert, ActivityIndicator, ScrollView, View, Text, TouchableOpacity, Switch } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { DraftLine } from '../../services/orderDrafts';
+import { useVenueId } from '../../context/VenueProvider';
+import * as orders from '../../services/orders';
 
-type Group = { supplierId: string; supplier?: Supplier; lines: OrderLine[] };
+// ---------- UI compat helpers (normalize buckets & dedupe aliases) ----------
+type SuggestedLine = {
+  productId: string;
+  qty: number;
+  productName?: string | null;
+  cost?: number;
+  needsPar?: boolean;
+  needsSupplier?: boolean;
+  reason?: string | null;
+};
+
+type CompatBucket = {
+  items: Record<string, SuggestedLine>;
+  lines: SuggestedLine[];
+};
+
+const ALIAS_KEYS = new Set(['__no_supplier__', 'no_supplier', 'none', 'null', 'undefined', '']);
+
+const isLine = (v: any): v is SuggestedLine =>
+  v && typeof v === 'object' && 'productId' in v && ('qty' in v || 'quantity' in v);
+
+/** Accepts any bucket-ish shape and returns a {items, lines} compat bucket. */
+function toCompatBucket(bucket: any): CompatBucket {
+  const b = bucket ?? {};
+
+  // Already normalized
+  if (Array.isArray(b.lines)) {
+    const items = b.items && typeof b.items === 'object' ? (b.items as Record<string, SuggestedLine>) : {};
+    return { items, lines: b.lines as SuggestedLine[] };
+  }
+
+  // Derive from items map
+  if (b.items && typeof b.items === 'object') {
+    const items = b.items as Record<string, SuggestedLine>;
+    const lines = Object.values(items).filter(isLine);
+    return { items, lines };
+  }
+
+  // Legacy: plain object of productId -> line
+  const obj = b as Record<string, any>;
+  const items: Record<string, SuggestedLine> = {};
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (isLine(v)) items[k] = v;
+  }
+  return { items, lines: Object.values(items) };
+}
+
+/** Turn raw suggestions object into unique supplier entries, de-duping by object identity. */
+function uniqueSupplierEntries(suggestions: Record<string, any> | null | undefined) {
+  const out: Array<[string, CompatBucket]> = [];
+  const seen = new Set<any>();
+  if (!suggestions || typeof suggestions !== 'object') return out;
+
+  for (const sid of Object.keys(suggestions)) {
+    const raw = (suggestions as any)[sid];
+    if (!raw || typeof raw !== 'object') continue;
+    if (seen.has(raw)) continue;       // alias keys often point to the same object
+    seen.add(raw);
+    out.push([sid, toCompatBucket(raw)]);
+  }
+  return out;
+}
+
+function supplierLabel(sid: string) {
+  if (sid === 'unassigned' || ALIAS_KEYS.has(sid)) return 'Unassigned (no supplier)';
+  return `Supplier: ${sid}`;
+}
+// ---------------------------------------------------------------------------
 
 export default function SuggestedOrderScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const [loading, setLoading] = useState(true);
   const [roundToPack, setRoundToPack] = useState(true);
-  const [deliveryDate, setDeliveryDate] = useState<string>(''); // YYYY-MM-DD
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [productsCount, setProductsCount] = useState<number>(0);
+  const [defaultParIfMissing, setDefaultParIfMissing] = useState(6);
+  const [suggestions, setSuggestions] = useState<Record<string, any> | null>(null);
 
   async function load() {
-    if (!venueId) { setGroups([]); setLoading(false); return; }
     try {
       setLoading(true);
-      const [suggested, suppliersArr, productsArr] = await Promise.all([
-        buildSuggestedOrdersInMemory(venueId),
-        listSuppliers(venueId),
-        listProducts(venueId),
-      ]);
-      setSuppliers(suppliersArr);
-      setProductsCount(productsArr.length);
-
-      const gs: Group[] = Object.keys(suggested.bySupplier).map(sid => ({
-        supplierId: sid,
-        supplier: suppliersArr.find(s => s.id === sid),
-        lines: suggested.bySupplier[sid],
-      }));
-      gs.sort((a, b) => (a.supplier?.name || '').localeCompare(b.supplier?.name || ''));
-      setGroups(gs);
+      console.log('[SuggestedOrders UI] load', { venueId, roundToPack, defaultParIfMissing });
+      const res = await (orders as any).buildSuggestedOrdersInMemory?.(venueId, {
+        roundToPack,
+        defaultParIfMissing,
+      });
+      setSuggestions(res || {});
     } catch (e: any) {
-      console.log('[SuggestedOrders] load error', e?.message);
-      Alert.alert('Load Failed', e?.message || 'Unknown error');
+      console.warn('[SuggestedOrders UI] load error', e?.message || e);
+      Alert.alert('Suggested Orders', e?.message || String(e));
+      setSuggestions({});
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, [venueId]);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueId]);
 
-  const visibleGroups = useMemo(() => {
-    if (!roundToPack) return groups;
-    return groups.map(g => ({
-      ...g,
-      lines: g.lines.map(l => {
-        if (!l.packSize || l.packSize <= 1) return l;
-        const q = Number(l.qty) || 0;
-        const ps = Number(l.packSize) || 1;
-        const r = Math.ceil(q / ps) * ps;
-        return { ...l, qty: r };
-      }),
-    }));
-  }, [groups, roundToPack]);
+  const entries = useMemo(() => uniqueSupplierEntries(suggestions), [suggestions]);
+  const totalLines = useMemo(
+    () => entries.reduce((sum, [, b]) => sum + (Array.isArray(b.lines) ? b.lines.length : 0), 0),
+    [entries]
+  );
 
-  function parseDelivery(d: string): Date | null {
-    if (!d) return null;
-    // Simple YYYY-MM-DD check
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.trim());
-    if (!m) return null;
-    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
-    return isNaN(dt.getTime()) ? null : dt;
-  }
+  useLayoutEffect(() => {
+    nav.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={async () => {
+            try {
+              if (!suggestions) return;
+              if (totalLines === 0) {
+                Alert.alert('Suggested Orders', 'No suggestions to create.');
+                return;
+              }
+              // Sanitize a legacy-friendly payload: supplierKey -> { productId: line }
+              const payload: Record<string, Record<string, SuggestedLine>> = {};
+              const seen = new Set<any>();
+              for (const [sid, bucket] of entries) {
+                // map alias keys to canonical "unassigned"
+                const key = (sid === 'unassigned' || ALIAS_KEYS.has(sid)) ? 'unassigned' : sid;
+                // if this underlying bucket is same as a prior alias, skip (we already added it)
+                if (seen.has(bucket)) continue;
+                seen.add(bucket);
 
-  async function createDrafts() {
-    if (!venueId) return;
-    if (visibleGroups.length === 0) {
-      Alert.alert('No Suggestions', 'There are no suggested lines to create.');
-      return;
-    }
-    try {
-      for (const g of visibleGroups) {
-        if (!g.lines.length) continue;
-        await createDraftOrderWithLines(
-          venueId,
-          g.supplierId,
-          g.lines,
-          deliveryDate ? `Requested delivery: ${deliveryDate}` : null
-        );
-      }
-      Alert.alert('Drafts Created', 'Suggested orders saved as drafts under Orders.');
-    } catch (e: any) {
-      Alert.alert('Create Failed', e?.message || 'Unknown error');
-    }
-  }
+                const out: Record<string, SuggestedLine> = {};
+                for (const line of bucket.lines) {
+                  out[line.productId] = line;
+                }
+                if (Object.keys(out).length > 0) payload[key] = out;
+              }
 
-  // Helpful empty-state reasoning
-  const emptyReason = useMemo(() => {
-    if (loading) return '';
-    if (!venueId) return 'You are not attached to a venue.';
-    if (suppliers.length === 0) return 'No suppliers found.\nAdd suppliers in Settings → Manage Suppliers.';
-    if (productsCount === 0) return 'No products found.\nAdd products (with par levels) in Settings → Manage Products.';
-    if (groups.length === 0) {
-      return 'No suggestions were generated.\nCheck that products have par levels set, and at least a default supplier or price list.';
-    }
-    return '';
-  }, [loading, venueId, suppliers.length, productsCount, groups.length]);
-
-  if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Building suggestions…</Text></View>);
+              const res = await (orders as any).createDraftsFromSuggestions?.(venueId, payload, {
+                createdBy: null,
+              });
+              console.log('[SuggestedOrders UI] created drafts', res);
+              Alert.alert('Suggested Orders', 'Draft orders created.');
+              // navigate or refresh
+              nav.goBack();
+            } catch (e: any) {
+              console.warn('[SuggestedOrders UI] create drafts error', e?.message || e);
+              Alert.alert('Create Drafts', e?.message || String(e));
+            }
+          }}
+          disabled={loading || totalLines === 0}
+          style={{ paddingHorizontal: 12 }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '600', opacity: loading || totalLines === 0 ? 0.4 : 1 }}>
+            Create Drafts
+          </Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [nav, loading, totalLines, entries, suggestions, venueId]);
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Suggested Orders</Text>
+    <View style={{ flex: 1 }}>
+      <View style={{ padding: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', marginRight: 12 }}>Suggested Orders</Text>
+          {loading ? <ActivityIndicator /> : null}
+        </View>
 
-      <View style={styles.row}>
-        <View style={styles.card}>
-          <Text style={styles.label}>Round to pack</Text>
-          <Switch value={roundToPack} onValueChange={setRoundToPack} />
-        </View>
-        <View style={[styles.card, { flex: 1 }]}>
-          <Text style={styles.label}>Requested delivery (YYYY-MM-DD)</Text>
-          <TextInput
-            placeholder="2025-09-01"
-            value={deliveryDate}
-            onChangeText={setDeliveryDate}
-            style={styles.input}
-            autoCapitalize="none"
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+          <Text style={{ marginRight: 8 }}>Round to pack</Text>
+          <Switch
+            value={roundToPack}
+            onValueChange={(v) => {
+              setRoundToPack(v);
+              // reload with new param
+              setTimeout(load, 0);
+            }}
           />
+          <View style={{ width: 16 }} />
+          <Text>Fallback par if missing: {defaultParIfMissing}</Text>
         </View>
+
+        <Text style={{ marginTop: 6, color: '#666' }}>
+          {totalLines > 0
+            ? `Ready to create ${totalLines} suggested lines across ${entries.length} supplier group(s).`
+            : 'No suggestions made — check par levels or link products to suppliers.'}
+        </Text>
       </View>
 
-      {emptyReason ? (
-        <View style={[styles.card, styles.warn]}>
-          <Text style={styles.warnText}>{emptyReason}</Text>
-        </View>
-      ) : null}
-
-      <FlatList
-        style={{ marginTop: 8 }}
-        data={visibleGroups}
-        keyExtractor={(g) => g.supplierId}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        renderItem={({ item: g }) => {
-          // Map to DraftLine for the per-supplier draft button
-          const draftLines: DraftLine[] = g.lines.map(l => ({
-            productId: l.productId,
-            name: l.name,
-            sku: (l as any)?.sku ?? null,
-            qty: Number(l.qty) || 0,
-            unitCost: l.unitCost ?? null,
-            packSize: l.packSize ?? null,
-          }));
-          const delivery = parseDelivery(deliveryDate);
+      <ScrollView style={{ flex: 1 }}>
+        {entries.map(([sid, bucket]) => {
+          const lines = bucket.lines ?? [];
+          if (lines.length === 0) return null;
 
           return (
-            <View style={styles.group}>
-              <Text style={styles.groupTitle}>{g.supplier?.name || g.supplierId}</Text>
-              {g.lines.map((l) => (
-                <View key={`${l.productId}`} style={styles.line}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.lineName}>{l.name}</Text>
-                    <Text style={styles.sub}>
-                      {l.unitCost != null ? `@ ${Number(l.unitCost).toFixed(2)}` : '@ —'}
-                      {l.packSize ? ` · pack ${l.packSize}` : ''}
-                    </Text>
+            <View key={sid} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#f1f1f1' }}>
+              <Text style={{ fontWeight: '700', marginBottom: 6 }}>{supplierLabel(sid)}</Text>
+              {lines.map((ln) => (
+                <View key={ln.productId} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                  <View style={{ flexShrink: 1, paddingRight: 12 }}>
+                    <Text style={{ fontSize: 15 }}>{ln.productName || ln.productId}</Text>
+                    {ln.needsPar || ln.needsSupplier ? (
+                      <Text style={{ color: '#b26b00', fontSize: 12 }}>
+                        {ln.needsPar ? 'No par (defaulted)' : ''}{ln.needsPar && ln.needsSupplier ? ' · ' : ''}
+                        {ln.needsSupplier ? 'No supplier' : ''}
+                      </Text>
+                    ) : null}
                   </View>
-                  <Text style={styles.qty}>{l.qty}</Text>
+                  <Text style={{ fontWeight: '600' }}>× {ln.qty}</Text>
                 </View>
               ))}
-
-              <View style={{ marginTop: 8 }}>
-                <SupplierDraftButton
-                  venueId={venueId!}
-                  supplierId={g.supplierId}
-                  supplierName={g.supplier?.name || g.supplierId}
-                  lines={draftLines}
-                  deliveryDate={delivery}
-                  onDrafted={(orderId) => nav.navigate('OrderDetail', { orderId })}
-                />
-              </View>
             </View>
           );
-        }}
-        ListEmptyComponent={<Text>No suggestions available.</Text>}
-      />
-
-      <TouchableOpacity style={styles.primary} onPress={createDrafts} disabled={visibleGroups.length === 0}>
-        <Text style={styles.primaryText}>Create Draft Orders</Text>
-      </TouchableOpacity>
+        })}
+        <View style={{ height: 32 }} />
+      </ScrollView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '800' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  row: { flexDirection: 'row', gap: 10 },
-  card: { backgroundColor: '#F2F2F7', padding: 10, borderRadius: 12, gap: 6, alignItems: 'flex-start' },
-  label: { fontWeight: '700' },
-  input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, width: '100%' },
-  warn: { backgroundColor: '#FFF4E5' },
-  warnText: { color: '#8A5200' },
-  group: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12 },
-  groupTitle: { fontWeight: '800', marginBottom: 6 },
-  line: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
-  lineName: { fontWeight: '700' },
-  sub: { opacity: 0.7 },
-  qty: { fontWeight: '900', width: 56, textAlign: 'right' },
-  primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
-  primaryText: { color: 'white', fontWeight: '800' },
-});
