@@ -1,63 +1,86 @@
 import { getApp } from 'firebase/app';
-import { getFirestore, collection, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import {
+  getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc
+} from 'firebase/firestore';
+import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
+import { findSuggestionsDraftAfter, getLastStocktakeTimeOrWindowStart } from './queries';
 
-export type DraftOrderLineInput = {
-  productId: string;
-  productName?: string | null;
-  qty?: number;     // safe defaulting
-  cost?: number;    // safe defaulting
+type CreateOpts = {
+  createdBy?: string | null;
+  guard?: boolean;               // default true
+  guardWindowHours?: number;     // used only if no stocktake timestamp exists; default 6
 };
 
-export type CreateDraftOrderInput = {
-  supplierId?: string | null;   // may be null for new drafts
-  supplierName?: string | null;
-  notes?: string | null;
-  lines?: DraftOrderLineInput[]; // optional to avoid reduce-of-undefined
+export type CreateDraftsResult = {
+  created: string[];
+  skippedByGuard?: boolean;
 };
 
-export async function createDraftOrderWithLines(
+export async function createDraftsFromSuggestions(
   venueId: string,
-  uid: string | undefined,
-  input: CreateDraftOrderInput
-): Promise<{ orderId: string }> {
+  suggestions: SuggestedLegacyMap,
+  opts: CreateOpts = {}
+): Promise<CreateDraftsResult> {
   const db = getFirestore(getApp());
+  const created: string[] = [];
 
-  const ordersCol = collection(db, 'venues', venueId, 'orders');
-  const orderRef = doc(ordersCol);
-  const linesCol = collection(db, 'venues', venueId, 'orders', orderRef.id, 'lines');
-
-  const batch = writeBatch(db);
-
-  const safeLines = Array.isArray(input.lines) ? input.lines : [];
-  const subtotal = safeLines.reduce((s, l) => s + Number(l.qty ?? 0) * Number(l.cost ?? 0), 0);
-
-  // NEVER write undefined — coerce to null or sensible defaults
-  batch.set(orderRef, {
-    supplierId: input.supplierId ?? null,
-    supplierName: input.supplierName ?? null,
-    notes: input.notes ?? null,
-    status: 'draft',
-    suggested: false,
-    archived: false,
-    totals: { subtotal },
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    createdBy: uid ?? null,
-    updatedBy: uid ?? null,
-  });
-
-  for (const l of safeLines) {
-    const lineRef = doc(linesCol);
-    batch.set(lineRef, {
-      productId: l.productId,                         // required by us
-      productName: l.productName ?? null,
-      qty: Number(l.qty ?? 0),
-      cost: Number(l.cost ?? 0),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+  const guard = opts.guard !== false;
+  if (guard) {
+    const since = await getLastStocktakeTimeOrWindowStart(venueId, opts.guardWindowHours ?? 6);
+    const exists = await findSuggestionsDraftAfter(venueId, since);
+    if (exists) {
+      return { created: [], skippedByGuard: true };
+    }
   }
 
-  await batch.commit();
-  return { orderId: orderRef.id };
+  const keys = Object.keys(suggestions);
+  for (const supplierKey of keys) {
+    const bucket: any = (suggestions as any)[supplierKey] || {};
+    // Most-safe way to collect lines across {items},{lines},legacy-root
+    const entries: Array<[string, SuggestedLine]> = [];
+    if (bucket.items && typeof bucket.items === 'object') {
+      for (const [k, v] of Object.entries(bucket.items)) {
+        if (v && typeof v === 'object') entries.push([k, v as SuggestedLine]);
+      }
+    } else {
+      for (const [k, v] of Object.entries(bucket)) {
+        if (k === 'items' || k === 'lines') continue;
+        if (v && typeof v === 'object' && 'productId' in (v as any)) entries.push([k, v as SuggestedLine]);
+      }
+    }
+    if (entries.length === 0) continue;
+
+    const isUnassigned = supplierKey === 'unassigned' || supplierKey === '__no_supplier__' || supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'no_supplier' || supplierKey === 'none';
+    const supplierId = isUnassigned ? null : supplierKey;
+
+    // Create order
+    const orderRef = await addDoc(collection(db, 'venues', venueId, 'orders'), {
+      status: 'draft',
+      supplierId: supplierId ?? null,
+      createdAt: serverTimestamp(),
+      createdBy: opts.createdBy ?? null,
+      source: 'suggestions',
+      needsSupplierReview: isUnassigned ? true : false,
+    });
+
+    // Lines
+    const batch = writeBatch(db);
+    for (const [productId, line] of entries) {
+      const l = line as SuggestedLine;
+      const unitCost = Number.isFinite(l.cost as any) ? Number(l.cost) : 0;
+      batch.set(doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', productId), {
+        productId,
+        name: l.productName ?? null,
+        qty: Number(l.qty) || 0,
+        unitCost,
+        needsPar: !!l.needsPar,
+        needsSupplier: !!l.needsSupplier,
+        reason: l.reason ?? null,
+      });
+    }
+    await batch.commit();
+    created.push(orderRef.id);
+  }
+
+  return { created };
 }

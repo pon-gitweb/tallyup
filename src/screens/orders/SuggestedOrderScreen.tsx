@@ -1,223 +1,293 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, ActivityIndicator, ScrollView, View, Text, TouchableOpacity, Switch } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert, FlatList, Modal, Text, TextInput, TouchableOpacity, View, SafeAreaView, ActivityIndicator,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
+
+import {
+  buildSuggestedOrdersInMemory,
+  createDraftsFromSuggestions,
+  type SuggestedLegacyMap,
+  type SuggestedLine,
+  listSuppliers,
+  setParSmart,
+  setSupplierSmart,
+  type Supplier,
+  type CreateDraftsResult,
+} from '../../services/orders';
 import { useVenueId } from '../../context/VenueProvider';
-import * as orders from '../../services/orders';
 
-// ---------- UI compat helpers (normalize buckets & dedupe aliases) ----------
-type SuggestedLine = {
-  productId: string;
-  qty: number;
-  productName?: string | null;
-  cost?: number;
-  needsPar?: boolean;
-  needsSupplier?: boolean;
-  reason?: string | null;
-};
+const aliasKeys = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
 
-type CompatBucket = {
-  items: Record<string, SuggestedLine>;
-  lines: SuggestedLine[];
-};
+type UIGroup = { key: string; title: string; lines: SuggestedLine[]; isUnassigned: boolean; };
 
-const ALIAS_KEYS = new Set(['__no_supplier__', 'no_supplier', 'none', 'null', 'undefined', '']);
-
-const isLine = (v: any): v is SuggestedLine =>
-  v && typeof v === 'object' && 'productId' in v && ('qty' in v || 'quantity' in v);
-
-/** Accepts any bucket-ish shape and returns a {items, lines} compat bucket. */
-function toCompatBucket(bucket: any): CompatBucket {
-  const b = bucket ?? {};
-
-  // Already normalized
-  if (Array.isArray(b.lines)) {
-    const items = b.items && typeof b.items === 'object' ? (b.items as Record<string, SuggestedLine>) : {};
-    return { items, lines: b.lines as SuggestedLine[] };
-  }
-
-  // Derive from items map
-  if (b.items && typeof b.items === 'object') {
-    const items = b.items as Record<string, SuggestedLine>;
-    const lines = Object.values(items).filter(isLine);
-    return { items, lines };
-  }
-
-  // Legacy: plain object of productId -> line
-  const obj = b as Record<string, any>;
-  const items: Record<string, SuggestedLine> = {};
-  for (const k of Object.keys(obj)) {
-    const v = obj[k];
-    if (isLine(v)) items[k] = v;
-  }
-  return { items, lines: Object.values(items) };
+function coerceLines(bucket: any): SuggestedLine[] {
+  if (!bucket || typeof bucket !== 'object') return [];
+  if (Array.isArray(bucket.lines)) return bucket.lines as SuggestedLine[];
+  if (bucket.items && typeof bucket.items === 'object') return Object.values(bucket.items) as SuggestedLine[];
+  return Object.values(bucket).filter((v: any) => v && typeof v === 'object' && 'productId' in v) as SuggestedLine[];
 }
 
-/** Turn raw suggestions object into unique supplier entries, de-duping by object identity. */
-function uniqueSupplierEntries(suggestions: Record<string, any> | null | undefined) {
-  const out: Array<[string, CompatBucket]> = [];
-  const seen = new Set<any>();
-  if (!suggestions || typeof suggestions !== 'object') return out;
-
-  for (const sid of Object.keys(suggestions)) {
-    const raw = (suggestions as any)[sid];
-    if (!raw || typeof raw !== 'object') continue;
-    if (seen.has(raw)) continue;       // alias keys often point to the same object
-    seen.add(raw);
-    out.push([sid, toCompatBucket(raw)]);
+function hasRouteNamed(state: any, name: string): boolean {
+  if (!state) return false;
+  if (Array.isArray((state as any).routeNames) && (state as any).routeNames.includes(name)) return true;
+  if (Array.isArray(state.routes)) {
+    return state.routes.some((r: any) => r.name === name || hasRouteNamed(r.state, name));
   }
-  return out;
+  return false;
 }
-
-function supplierLabel(sid: string) {
-  if (sid === 'unassigned' || ALIAS_KEYS.has(sid)) return 'Unassigned (no supplier)';
-  return `Supplier: ${sid}`;
-}
-// ---------------------------------------------------------------------------
 
 export default function SuggestedOrderScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const uid = getAuth().currentUser?.uid ?? null;
+
   const [loading, setLoading] = useState(true);
   const [roundToPack, setRoundToPack] = useState(true);
-  const [defaultParIfMissing, setDefaultParIfMissing] = useState(6);
-  const [suggestions, setSuggestions] = useState<Record<string, any> | null>(null);
+  const [data, setData] = useState<SuggestedLegacyMap | null>(null);
 
-  async function load() {
+  const [supplierModalOpen, setSupplierModalOpen] = useState(false);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierPickTarget, setSupplierPickTarget] = useState<{ productId: string; productName?: string | null } | null>(null);
+
+  const [parModalOpen, setParModalOpen] = useState(false);
+  const [parTarget, setParTarget] = useState<{ productId: string; productName?: string | null } | null>(null);
+  const [parInput, setParInput] = useState<string>('');
+
+  const [guardBanner, setGuardBanner] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
     try {
       setLoading(true);
-      console.log('[SuggestedOrders UI] load', { venueId, roundToPack, defaultParIfMissing });
-      const res = await (orders as any).buildSuggestedOrdersInMemory?.(venueId, {
-        roundToPack,
-        defaultParIfMissing,
-      });
-      setSuggestions(res || {});
+      const s = await buildSuggestedOrdersInMemory(venueId!, { roundToPack, defaultParIfMissing: 6 });
+      setData(s);
     } catch (e: any) {
-      console.warn('[SuggestedOrders UI] load error', e?.message || e);
-      Alert.alert('Suggested Orders', e?.message || String(e));
-      setSuggestions({});
+      console.log('[SuggestedOrders] load error', e?.message || e);
+      Alert.alert('Suggestions', e?.message ?? String(e));
     } finally {
       setLoading(false);
     }
-  }
+  }, [venueId, roundToPack]);
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+
+  const groups: UIGroup[] = useMemo(() => {
+    if (!data) return [];
+    const seen = new Set<any>();
+    const uniq: Array<{ key: string; bucket: any }> = [];
+    for (const key of Object.keys(data)) {
+      const bucket = (data as any)[key];
+      if (!bucket) continue;
+      if (seen.has(bucket)) continue;
+      seen.add(bucket);
+      uniq.push({ key, bucket });
+    }
+    const out: UIGroup[] = [];
+    uniq.forEach(({ key, bucket }) => {
+      const lines = coerceLines(bucket);
+      if (!lines.length) return;
+      const isUnassigned = aliasKeys.has(key);
+      out.push({ key: isUnassigned ? 'unassigned' : key, title: isUnassigned ? 'Unassigned' : key, lines, isUnassigned });
+    });
+    out.sort((a, b) => (a.isUnassigned === b.isUnassigned ? a.title.localeCompare(b.title) : (a.isUnassigned ? -1 : 1)));
+    return out;
+  }, [data]);
+
+  const openSupplierPicker = useCallback(async (productId: string, productName?: string | null) => {
+    try {
+      const rows = await listSuppliers(venueId!);
+      setSuppliers(rows);
+      setSupplierPickTarget({ productId, productName });
+      setSupplierModalOpen(true);
+    } catch (e: any) {
+      Alert.alert('Failed to load suppliers', e?.message ?? String(e));
+    }
   }, [venueId]);
 
-  const entries = useMemo(() => uniqueSupplierEntries(suggestions), [suggestions]);
-  const totalLines = useMemo(
-    () => entries.reduce((sum, [, b]) => sum + (Array.isArray(b.lines) ? b.lines.length : 0), 0),
-    [entries]
-  );
+  const pickSupplier = useCallback(async (supplier: Supplier) => {
+    if (!venueId || !supplierPickTarget) return;
+    try {
+      await setSupplierSmart(venueId, supplierPickTarget.productId, supplier.id, supplier.name ?? undefined);
+      setSupplierModalOpen(false);
+      setSupplierPickTarget(null);
+      await load();
+      Alert.alert('Supplier set', `Linked ${supplierPickTarget.productName ?? 'item'} to ${supplier.name ?? supplier.id}.`);
+    } catch (e: any) {
+      Alert.alert('Update failed', e?.message ?? String(e));
+    }
+  }, [venueId, supplierPickTarget, load]);
 
-  useLayoutEffect(() => {
-    nav.setOptions({
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={async () => {
-            try {
-              if (!suggestions) return;
-              if (totalLines === 0) {
-                Alert.alert('Suggested Orders', 'No suggestions to create.');
-                return;
-              }
-              // Sanitize a legacy-friendly payload: supplierKey -> { productId: line }
-              const payload: Record<string, Record<string, SuggestedLine>> = {};
-              const seen = new Set<any>();
-              for (const [sid, bucket] of entries) {
-                // map alias keys to canonical "unassigned"
-                const key = (sid === 'unassigned' || ALIAS_KEYS.has(sid)) ? 'unassigned' : sid;
-                // if this underlying bucket is same as a prior alias, skip (we already added it)
-                if (seen.has(bucket)) continue;
-                seen.add(bucket);
+  const openParEditor = useCallback((productId: string, suggestedQty: number, productName?: string | null) => {
+    setParTarget({ productId, productName });
+    setParInput(String(Math.max(1, Math.floor(suggestedQty))));
+    setParModalOpen(true);
+  }, []);
 
-                const out: Record<string, SuggestedLine> = {};
-                for (const line of bucket.lines) {
-                  out[line.productId] = line;
-                }
-                if (Object.keys(out).length > 0) payload[key] = out;
-              }
+  const savePar = useCallback(async () => {
+    if (!venueId || !parTarget) return;
+    const n = Number(parInput);
+    if (!Number.isFinite(n) || n <= 0) return Alert.alert('Invalid PAR', 'Enter a positive number.');
+    try {
+      await setParSmart(venueId, parTarget.productId, Math.floor(n));
+      setParModalOpen(false);
+      setParTarget(null);
+      await load();
+      Alert.alert('PAR saved', `PAR set to ${Math.floor(n)} for ${parTarget.productName ?? parTarget.productId}.`);
+    } catch (e: any) {
+      Alert.alert('Update failed', e?.message ?? String(e));
+    }
+  }, [venueId, parTarget, parInput, load]);
 
-              const res = await (orders as any).createDraftsFromSuggestions?.(venueId, payload, {
-                createdBy: null,
-              });
-              console.log('[SuggestedOrders UI] created drafts', res);
-              Alert.alert('Suggested Orders', 'Draft orders created.');
-              // navigate or refresh
-              nav.goBack();
-            } catch (e: any) {
-              console.warn('[SuggestedOrders UI] create drafts error', e?.message || e);
-              Alert.alert('Create Drafts', e?.message || String(e));
-            }
-          }}
-          disabled={loading || totalLines === 0}
-          style={{ paddingHorizontal: 12 }}
-        >
-          <Text style={{ fontSize: 16, fontWeight: '600', opacity: loading || totalLines === 0 ? 0.4 : 1 }}>
-            Create Drafts
-          </Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [nav, loading, totalLines, entries, suggestions, venueId]);
+  const goToOrders = useCallback(() => {
+    const state = (nav as any).getState?.();
+    const candidates: Array<{ name: string; params?: any }> = [
+      { name: 'Orders' },
+      { name: 'OrdersScreen' },
+      { name: 'Main', params: { screen: 'Orders' } },
+      { name: 'OrdersTab' },
+      { name: 'OrdersList' },
+    ];
+
+    for (const p of candidates) {
+      if (!state || hasRouteNamed(state, p.name)) {
+        // @ts-ignore
+        nav.navigate(p.name as never, (p.params ?? undefined) as never);
+        return;
+      }
+    }
+    Alert.alert('Navigate', 'Could not find Orders screen in navigator.');
+  }, [nav]);
+
+  const createDrafts = useCallback(async () => {
+    try {
+      setGuardBanner(null);
+      if (!data) return;
+      const res: CreateDraftsResult = await createDraftsFromSuggestions(venueId!, data, { createdBy: uid });
+      if (res.skippedByGuard) {
+        setGuardBanner('Drafts already created recently for this cycle. No new drafts were made.');
+        return;
+      }
+      if (res.created.length === 0) {
+        Alert.alert('No drafts created', 'No suggestion lines were available.');
+      } else {
+        Alert.alert('Drafts created', `Created ${res.created.length} draft order(s).`, [
+          { text: 'View Orders', onPress: () => goToOrders() },
+          { text: 'OK' },
+        ]);
+      }
+    } catch (e: any) {
+      Alert.alert('Create drafts failed', e?.message ?? String(e));
+    }
+  }, [venueId, data, uid, goToOrders]);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" />
+        <Text style={{ marginTop: 8 }}>Building suggestions…</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={{ padding: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600', marginRight: 12 }}>Suggested Orders</Text>
-          {loading ? <ActivityIndicator /> : null}
+    <SafeAreaView style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
+        <Text style={{ fontSize: 18, fontWeight: '600' }}>Suggested Orders</Text>
+        {guardBanner ? <Text style={{ color: '#a60', marginTop: 6 }}>{guardBanner}</Text> : null}
+        <View style={{ flexDirection: 'row', marginTop: 8 }}>
+          <TouchableOpacity onPress={load} style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginRight: 8 }}>
+            <Text>Refresh</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setRoundToPack(x => !x)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8 }}>
+            <Text>{roundToPack ? 'Round to pack: ON' : 'Round to pack: OFF'}</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-          <Text style={{ marginRight: 8 }}>Round to pack</Text>
-          <Switch
-            value={roundToPack}
-            onValueChange={(v) => {
-              setRoundToPack(v);
-              // reload with new param
-              setTimeout(load, 0);
-            }}
-          />
-          <View style={{ width: 16 }} />
-          <Text>Fallback par if missing: {defaultParIfMissing}</Text>
-        </View>
-
-        <Text style={{ marginTop: 6, color: '#666' }}>
-          {totalLines > 0
-            ? `Ready to create ${totalLines} suggested lines across ${entries.length} supplier group(s).`
-            : 'No suggestions made — check par levels or link products to suppliers.'}
-        </Text>
       </View>
 
-      <ScrollView style={{ flex: 1 }}>
-        {entries.map(([sid, bucket]) => {
-          const lines = bucket.lines ?? [];
-          if (lines.length === 0) return null;
-
-          return (
-            <View key={sid} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#f1f1f1' }}>
-              <Text style={{ fontWeight: '700', marginBottom: 6 }}>{supplierLabel(sid)}</Text>
-              {lines.map((ln) => (
-                <View key={ln.productId} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
-                  <View style={{ flexShrink: 1, paddingRight: 12 }}>
-                    <Text style={{ fontSize: 15 }}>{ln.productName || ln.productId}</Text>
-                    {ln.needsPar || ln.needsSupplier ? (
-                      <Text style={{ color: '#b26b00', fontSize: 12 }}>
-                        {ln.needsPar ? 'No par (defaulted)' : ''}{ln.needsPar && ln.needsSupplier ? ' · ' : ''}
-                        {ln.needsSupplier ? 'No supplier' : ''}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Text style={{ fontWeight: '600' }}>× {ln.qty}</Text>
-                </View>
-              ))}
+      <FlatList
+        data={groups}
+        keyExtractor={(g) => g.key}
+        contentContainerStyle={{ paddingBottom: 96 }}
+        renderItem={({ item: g }) => (
+          <View style={{ marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: '#eee', borderRadius: 12, overflow: 'hidden' }}>
+            <View style={{ padding: 12, backgroundColor: '#fafafa', borderBottomWidth: 1, borderColor: '#eee' }}>
+              <Text style={{ fontWeight: '600' }}>{g.title}</Text>
+              {g.isUnassigned ? <Text style={{ color: '#c00', marginTop: 2 }}>Some items need a supplier</Text> : null}
             </View>
-          );
-        })}
-        <View style={{ height: 32 }} />
-      </ScrollView>
-    </View>
+            {g.lines.map((ln) => (
+              <View key={ln.productId} style={{ padding: 12, borderTopWidth: 1, borderColor: '#f2f2f2' }}>
+                <Text style={{ fontWeight: '500' }}>{ln.productName ?? ln.productId}</Text>
+                <Text style={{ marginTop: 2 }}>Qty: {ln.qty}</Text>
+                {ln.needsPar ? <Text style={{ color: '#d47a00' }}>Needs PAR</Text> : null}
+                {ln.needsSupplier ? <Text style={{ color: '#d47a00' }}>Needs supplier</Text> : null}
+                <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                  <TouchableOpacity onPress={() => openParEditor(ln.productId, ln.qty, ln.productName)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginRight: 8 }}>
+                    <Text>Set PAR</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => openSupplierPicker(ln.productId, ln.productName)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8 }}>
+                    <Text>Set supplier</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+        ListEmptyComponent={<View style={{ padding: 24 }}><Text>No suggestions yet. Try taking a stock count, then Refresh.</Text></View>}
+      />
+
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#eee' }}>
+        <TouchableOpacity onPress={createDrafts} style={{ backgroundColor: '#0a7', paddingVertical: 14, borderRadius: 10, alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Create drafts</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Supplier modal */}
+      <Modal visible={supplierModalOpen} transparent animationType="fade" onRequestClose={() => setSupplierModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, maxHeight: '70%' }}>
+            <Text style={{ fontWeight: '700', fontSize: 16 }}>Pick supplier</Text>
+            <FlatList
+              style={{ marginTop: 8 }}
+              data={suppliers}
+              keyExtractor={(s) => s.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity onPress={() => pickSupplier(item)} style={{ paddingVertical: 10 }}>
+                  <Text>{item.name ?? item.id}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={<Text style={{ paddingVertical: 8 }}>No suppliers yet.</Text>}
+            />
+            <TouchableOpacity onPress={() => setSupplierModalOpen(false)} style={{ alignSelf: 'flex-end', paddingVertical: 10 }}>
+              <Text>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PAR modal */}
+      <Modal visible={parModalOpen} transparent animationType="fade" onRequestClose={() => setParModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16 }}>
+            <Text style={{ fontWeight: '700', fontSize: 16 }}>Set PAR</Text>
+            <TextInput
+              style={{ marginTop: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, height: 40 }}
+              keyboardType="number-pad"
+              value={parInput}
+              onChangeText={setParInput}
+              placeholder="Enter PAR"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+              <TouchableOpacity onPress={() => setParModalOpen(false)} style={{ padding: 10, marginRight: 8 }}>
+                <Text>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={savePar} style={{ padding: 10 }}>
+                <Text style={{ color: '#0a7', fontWeight: '600' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }

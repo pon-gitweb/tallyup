@@ -1,16 +1,21 @@
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, collection, getDocs, getDoc, setDoc, doc,
+  getFirestore,
+  collection,
+  getDocs,
+  getDoc,
+  setDoc,
+  doc,
 } from 'firebase/firestore';
 
 export type SuggestedLine = {
   productId: string;
   productName?: string | null;
-  qty: number;            // suggested units
-  cost: number;           // unit cost (ex GST)
-  needsPar?: boolean;     // suggested 1 pack due to no par & zero stock
-  needsSupplier?: boolean;// missing supplier
-  reason?: string | null; // 'no_par_zero_stock' | 'no_supplier'
+  qty: number;
+  cost: number;
+  needsPar?: boolean;
+  needsSupplier?: boolean;
+  reason?: string | null;
 };
 
 export type ItemsMap = Record<string, SuggestedLine>;
@@ -19,7 +24,7 @@ export type SuggestedLegacyMap = Record<string, CompatBucket>;
 
 export type SuggestOpts = {
   roundToPack?: boolean;
-  defaultParIfMissing?: number; // fallback when no par/pack
+  defaultParIfMissing?: number;
 };
 
 type ProductDoc = {
@@ -36,14 +41,14 @@ type ProductDoc = {
 
 type AreaItemDoc = {
   id: string;
-  productLinkId?: string | null;  // item.productId OR productRef.id
+  productLinkId?: string | null;
   name?: string | null;
   supplierId?: string | null;
   supplierName?: string | null;
   packSize?: number | null;
   price?: number | null;
   cost?: number | null;
-  value?: number | null;          // last counted qty (on-hand)
+  value?: number | null;
 };
 
 const toNumOrNull = (v: any): number | null => {
@@ -58,18 +63,22 @@ function newCompatBucket(): CompatBucket {
   return base as CompatBucket;
 }
 
-// Normalize any bucket-ish object into a CompatBucket with {items, lines}
-function finalizeBucket(anyBucket: any): CompatBucket {
+// Create a compat view (root map + items + lines) for one bucket object.
+function compatFrom(anyBucket: any): CompatBucket {
   if (!anyBucket || typeof anyBucket !== 'object') return newCompatBucket();
 
+  // Prefer an existing items map if present.
   let items: ItemsMap | null =
-    anyBucket.items && typeof anyBucket.items === 'object' ? (anyBucket.items as ItemsMap) : null;
+    anyBucket.items && typeof anyBucket.items === 'object'
+      ? (anyBucket.items as ItemsMap)
+      : null;
 
+  // Otherwise derive items by scanning object keys that look like product lines.
   if (!items) {
     const derived: ItemsMap = {};
     for (const k of Object.keys(anyBucket)) {
       if (k === 'items' || k === 'lines') continue;
-      const v = (anyBucket as any)[k];
+      const v = anyBucket[k];
       if (v && typeof v === 'object' && 'productId' in v) {
         derived[k] = v as SuggestedLine;
       }
@@ -77,6 +86,7 @@ function finalizeBucket(anyBucket: any): CompatBucket {
     items = derived;
   }
 
+  // Build a fresh compat bucket: copy items to root + attach helpers.
   const out: any = {};
   for (const pid of Object.keys(items)) out[pid] = items[pid];
   out.items = items;
@@ -84,10 +94,25 @@ function finalizeBucket(anyBucket: any): CompatBucket {
   return out as CompatBucket;
 }
 
+// IMPORTANT: finalize with identity memoization so alias keys share one instance.
 function finalizeStore(store: Record<string, any>): SuggestedLegacyMap {
   const out: SuggestedLegacyMap = {} as any;
+  const memo = new WeakMap<object, CompatBucket>();
+
+  const finalizeRef = (ref: any): CompatBucket => {
+    if (ref && typeof ref === 'object') {
+      const hit = memo.get(ref as object);
+      if (hit) return hit;
+      const compat = compatFrom(ref);
+      memo.set(ref as object, compat);
+      return compat;
+    }
+    // null/primitive → empty compat
+    return compatFrom(ref);
+  };
+
   for (const k of Object.keys(store)) {
-    out[k] = finalizeBucket(store[k]);
+    out[k] = finalizeRef(store[k]);
   }
   return out;
 }
@@ -96,12 +121,16 @@ async function ensureUnassignedSupplierDoc(db: ReturnType<typeof getFirestore>, 
   const ref = doc(db, 'venues', venueId, 'suppliers', 'unassigned');
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(ref, {
-      name: 'Unassigned',
-      createdAt: new Date(),
-      system: true,
-      note: 'Auto-created to host lines with missing supplier.',
-    }, { merge: true });
+    await setDoc(
+      ref,
+      {
+        name: 'Unassigned',
+        createdAt: new Date(),
+        system: true,
+        note: 'Auto-created to host lines with missing supplier.',
+      },
+      { merge: true }
+    );
   }
 }
 
@@ -157,19 +186,6 @@ function ensureBucket(store: Record<string, any>, key: string): any {
   return store[key];
 }
 
-/** Return a Proxy map so suggestions["any-missing-key"] safely yields an empty compat bucket. */
-function withDefaultBucket(map: SuggestedLegacyMap): SuggestedLegacyMap {
-  return new Proxy(map as any, {
-    get(target: any, prop: string | symbol, receiver: any) {
-      if (typeof prop !== 'string') return Reflect.get(target, prop, receiver);
-      if (!(prop in target)) {
-        target[prop] = finalizeBucket(newCompatBucket());
-      }
-      return target[prop];
-    }
-  }) as any;
-}
-
 export async function buildSuggestedOrdersInMemory(
   venueId: string,
   opts: SuggestOpts = {}
@@ -178,17 +194,16 @@ export async function buildSuggestedOrdersInMemory(
   const roundToPack = !!opts.roundToPack;
   const defaultPar = Number.isFinite(opts.defaultParIfMissing) ? Number(opts.defaultParIfMissing) : 6;
 
-  // Buckets keyed by supplierId.
   const store: Record<string, any> = {};
   await ensureUnassignedSupplierDoc(db, venueId);
   const unassigned = ensureBucket(store, 'unassigned');
 
-  // Legacy alias keys → point to the same bucket
+  // Make alias keys point to the *same object*.
   for (const alias of ['__no_supplier__', 'no_supplier', 'none', 'null', 'undefined', '']) {
     store[alias] = unassigned;
   }
 
-  // Seed real suppliers (so UI can iterate safely)
+  // Seed supplier keys (so UI sees buckets even before lines exist)
   try {
     const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
     suppliersSnap.forEach(s => ensureBucket(store, s.id));
@@ -196,13 +211,11 @@ export async function buildSuggestedOrdersInMemory(
     console.warn('[SuggestedOrders] suppliers seed error', e);
   }
 
-  // Load data
   const [products, areaItems] = await Promise.all([
     loadProducts(db, venueId),
     loadAreaItems(db, venueId),
   ]);
 
-  // Inventory-first on-hand from area-items
   const onHandByProductId: Record<string, number> = {};
   const orphanAreaItems: AreaItemDoc[] = [];
   for (const it of areaItems) {
@@ -214,15 +227,12 @@ export async function buildSuggestedOrdersInMemory(
       orphanAreaItems.push(it);
     }
   }
-  const countedIds = new Set(Object.keys(onHandByProductId));
-  console.log('[SuggestedOrders] countedProductIds', { count: countedIds.size });
+  console.log('[SuggestedOrders] countedProductIds', { count: Object.keys(onHandByProductId).length });
 
-  // Index products
   const productById: Record<string, ProductDoc> = {};
   for (const p of products) productById[p.id] = p;
 
-  // Counted products → suggestions
-  for (const pid of countedIds) {
+  for (const pid of Object.keys(onHandByProductId)) {
     const p = productById[pid] || null;
     const onHand = onHandByProductId[pid] ?? 0;
 
@@ -254,7 +264,7 @@ export async function buildSuggestedOrdersInMemory(
     }
 
     if (!supplierId) {
-      const line = (bucket as any)[pid] as SuggestedLine | undefined;
+      const line = bucket.items[pid];
       if (line) {
         line.needsSupplier = true;
         line.reason = line.reason ?? 'no_supplier';
@@ -262,7 +272,6 @@ export async function buildSuggestedOrdersInMemory(
     }
   }
 
-  // Orphans: area-items with no linked product
   for (const it of orphanAreaItems) {
     const onHand = Number.isFinite(it.value as any) ? Number(it.value) : 0;
     if (onHand > 0) continue;
@@ -287,10 +296,9 @@ export async function buildSuggestedOrdersInMemory(
     bucket.items[pid] = line;
   }
 
-  // Finalize compat shape and wrap with Proxy that guarantees buckets for any key
   const compat = finalizeStore(store);
 
-  // Diagnostics (avoid alias double counting by tracking object identity)
+  // Diagnostics (count each unique bucket once)
   let suppliersWithLines = 0, totalLines = 0;
   const perSupplierCounts: Record<string, number> = {};
   const seen = new Set<CompatBucket>();
@@ -305,5 +313,5 @@ export async function buildSuggestedOrdersInMemory(
   console.log('[SuggestedOrders] summary', { suppliersWithLines, totalLines });
   console.log('[SuggestedOrders] perSupplierCounts', perSupplierCounts);
 
-  return withDefaultBucket(compat);
+  return compat;
 }

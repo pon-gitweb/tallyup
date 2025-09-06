@@ -1,3 +1,4 @@
+import '../polyfills/firestorePaths'
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, getAuth, User } from 'firebase/auth';
 import { db } from '../services/firebase';
@@ -137,3 +138,4 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
 export function useVenue() { return useContext(Ctx); }
 export function useVenueId(): string | null { return useContext(Ctx).venueId; }
+

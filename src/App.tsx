@@ -1,3 +1,4 @@
+import './polyfills/firestorePaths'
 import React from 'react';
 import RootNavigator from './navigation/RootNavigator';
 import { VenueProvider } from './context/VenueProvider';
