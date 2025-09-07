@@ -1,293 +1,355 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert, FlatList, Modal, Text, TextInput, TouchableOpacity, View, SafeAreaView, ActivityIndicator,
-} from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Alert, FlatList, Text, TouchableOpacity, View, SafeAreaView, ActivityIndicator, TextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { getAuth } from 'firebase/auth';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { getFirestore, collection, getDocs, query, where } from 'firebase/firestore';
 
 import {
   buildSuggestedOrdersInMemory,
   createDraftsFromSuggestions,
-  type SuggestedLegacyMap,
-  type SuggestedLine,
-  listSuppliers,
-  setParSmart,
-  setSupplierSmart,
-  type Supplier,
-  type CreateDraftsResult,
+  listSuppliers as listSuppliersFromBarrel,
+  setParOnProduct as setParOnProductFromBarrel,
+  setSupplierOnProduct as setSupplierOnProductFromBarrel,
 } from '../../services/orders';
 import { useVenueId } from '../../context/VenueProvider';
 
-const aliasKeys = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
+/** Types mirror your suggest.ts output */
+type SuggestedLineRaw = {
+  productId: string;
+  productName?: string | null;
+  qty: number;
+  cost?: number;
+  supplierId?: string | null;
+  reason?: string | null;
+};
+type CompatBucket = {
+  items: Record<string, SuggestedLineRaw>;
+  lines: SuggestedLineRaw[];
+  [pid: string]: any; // compat surface
+};
+type SuggestedLegacyMap = Record<string, CompatBucket>;
 
-type UIGroup = { key: string; title: string; lines: SuggestedLine[]; isUnassigned: boolean; };
+type SuggestedLine = {
+  productId: string;
+  qty: number;
+  cost?: number;
+  supplierId?: string | null;
+  name?: string;
+  reason?: string | null;
+};
+type Supplier = { id: string; name?: string | null; active?: boolean | null };
 
-function coerceLines(bucket: any): SuggestedLine[] {
-  if (!bucket || typeof bucket !== 'object') return [];
-  if (Array.isArray(bucket.lines)) return bucket.lines as SuggestedLine[];
-  if (bucket.items && typeof bucket.items === 'object') return Object.values(bucket.items) as SuggestedLine[];
-  return Object.values(bucket).filter((v: any) => v && typeof v === 'object' && 'productId' in v) as SuggestedLine[];
+const isArray = Array.isArray;
+const toNum = (v: any, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+const hasId = (x: unknown): x is string => typeof x === 'string' && x.length > 0;
+
+/** Flatten the compat map into a single raw lines list, deduping alias buckets */
+function flattenCompatLines(compat: SuggestedLegacyMap): SuggestedLineRaw[] {
+  const seen = new Set<CompatBucket>();
+  const out: SuggestedLineRaw[] = [];
+  for (const key of Object.keys(compat)) {
+    const b = compat[key];
+    if (!b || typeof b !== 'object') continue;
+    if (seen.has(b)) continue;       // many supplier aliases point to same bucket
+    seen.add(b);
+    if (isArray(b.lines)) out.push(...b.lines);
+  }
+  return out;
 }
 
-function hasRouteNamed(state: any, name: string): boolean {
-  if (!state) return false;
-  if (Array.isArray((state as any).routeNames) && (state as any).routeNames.includes(name)) return true;
-  if (Array.isArray(state.routes)) {
-    return state.routes.some((r: any) => r.name === name || hasRouteNamed(r.state, name));
+/** Aggregate duplicates by productId (sum qty, keep first defined cost/supplier/name/reason) */
+function aggregateByProduct(list: SuggestedLine[]): SuggestedLine[] {
+  const m = new Map<string, SuggestedLine>();
+  for (const l of list) {
+    const cur = m.get(l.productId);
+    if (!cur) {
+      m.set(l.productId, { ...l });
+    } else {
+      cur.qty = toNum(cur.qty, 0) + toNum(l.qty, 0);
+      if (cur.cost == null && l.cost != null) cur.cost = l.cost;
+      if (!cur.supplierId && l.supplierId) cur.supplierId = l.supplierId;
+      if (!cur.name && l.name) cur.name = l.name;
+      if (!cur.reason && l.reason) cur.reason = l.reason;
+    }
   }
-  return false;
+  return [...m.values()];
+}
+
+async function loadProductsMap(venueId: string): Promise<Record<string, { name?: string }>> {
+  const db = getFirestore();
+  const out: Record<string, { name?: string }> = {};
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
+    snap.forEach(doc => { const d = doc.data() as any; out[doc.id] = { name: d?.name ?? d?.title ?? undefined }; });
+  } catch {}
+  if (Object.keys(out).length === 0) {
+    try {
+      const snap = await getDocs(query(collection(db, 'products'), where('venueId', '==', venueId)));
+      snap.forEach(doc => { const d = doc.data() as any; out[doc.id] = { name: d?.name ?? d?.title ?? undefined }; });
+    } catch {}
+  }
+  return out;
 }
 
 export default function SuggestedOrderScreen() {
-  const nav = useNavigation<any>();
+  const nav = useNavigation<NativeStackNavigationProp<any>>();
   const venueId = useVenueId();
-  const uid = getAuth().currentUser?.uid ?? null;
 
   const [loading, setLoading] = useState(true);
-  const [roundToPack, setRoundToPack] = useState(true);
-  const [data, setData] = useState<SuggestedLegacyMap | null>(null);
-
-  const [supplierModalOpen, setSupplierModalOpen] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [supplierPickTarget, setSupplierPickTarget] = useState<{ productId: string; productName?: string | null } | null>(null);
+  const [lines, setLines] = useState<SuggestedLine[]>([]);
+  const [rawCount, setRawCount] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const [bulkSupplierId, setBulkSupplierId] = useState<string | null>(null);
 
-  const [parModalOpen, setParModalOpen] = useState(false);
-  const [parTarget, setParTarget] = useState<{ productId: string; productName?: string | null } | null>(null);
-  const [parInput, setParInput] = useState<string>('');
-
-  const [guardBanner, setGuardBanner] = useState<string | null>(null);
+  const listSuppliers = listSuppliersFromBarrel;
+  const setParOnProduct = setParOnProductFromBarrel;
+  const setSupplierOnProduct = setSupplierOnProductFromBarrel;
 
   const load = useCallback(async () => {
     try {
+      if (!venueId) throw new Error('No venue selected');
       setLoading(true);
-      const s = await buildSuggestedOrdersInMemory(venueId!, { roundToPack, defaultParIfMissing: 6 });
-      setData(s);
+
+      const sups = await listSuppliers(venueId);
+      setSuppliers(sups ?? []);
+
+      // Build compat (supplierId -> bucket with .lines[])
+      const compat = await buildSuggestedOrdersInMemory(venueId) as unknown as SuggestedLegacyMap;
+
+      // Flatten all buckets' lines (dedupe alias buckets)
+      const rawLines = flattenCompatLines(compat);
+      setRawCount(rawLines.length);
+
+      // Canonicalize → SuggestedLine
+      const canon: SuggestedLine[] = rawLines
+        .filter((r) => hasId(r?.productId))
+        .map((r) => ({
+          productId: r.productId,
+          qty: toNum(r.qty, 0),
+          cost: Number.isFinite(Number(r.cost)) ? Number(r.cost) : undefined,
+          supplierId: r.supplierId ?? null,
+          name: r.productName ?? undefined,
+          reason: r.reason ?? null,
+        }));
+
+      // Aggregate across areas → one line per product
+      let agg = aggregateByProduct(canon);
+
+      // Hydrate names from products if missing
+      const prodMap = await loadProductsMap(venueId);
+      agg = agg.map(l => ({ ...l, name: l.name ?? prodMap[l.productId]?.name ?? l.productId }));
+
+      setLines(agg);
+
+      console.log('[SuggestedOrders] load summary', {
+        raw: rawLines.length, aggregated: agg.length,
+      });
     } catch (e: any) {
-      console.log('[SuggestedOrders] load error', e?.message || e);
-      Alert.alert('Suggestions', e?.message ?? String(e));
+      console.warn('[SuggestedOrderScreen] load failed', e);
+      Alert.alert('Suggested Orders', e?.message ?? 'Failed to load suggestions.');
     } finally {
       setLoading(false);
     }
-  }, [venueId, roundToPack]);
+  }, [venueId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const groups: UIGroup[] = useMemo(() => {
-    if (!data) return [];
-    const seen = new Set<any>();
-    const uniq: Array<{ key: string; bucket: any }> = [];
-    for (const key of Object.keys(data)) {
-      const bucket = (data as any)[key];
-      if (!bucket) continue;
-      if (seen.has(bucket)) continue;
-      seen.add(bucket);
-      uniq.push({ key, bucket });
-    }
-    const out: UIGroup[] = [];
-    uniq.forEach(({ key, bucket }) => {
-      const lines = coerceLines(bucket);
-      if (!lines.length) return;
-      const isUnassigned = aliasKeys.has(key);
-      out.push({ key: isUnassigned ? 'unassigned' : key, title: isUnassigned ? 'Unassigned' : key, lines, isUnassigned });
-    });
-    out.sort((a, b) => (a.isUnassigned === b.isUnassigned ? a.title.localeCompare(b.title) : (a.isUnassigned ? -1 : 1)));
-    return out;
-  }, [data]);
+  const unassigned = useMemo(() => lines.filter(l => !l.supplierId), [lines]);
+  const totalQty = useMemo(() => lines.reduce((a, l) => a + toNum(l.qty, 0), 0), [lines]);
 
-  const openSupplierPicker = useCallback(async (productId: string, productName?: string | null) => {
+  const applyBulkSupplier = useCallback(() => {
+    if (!bulkSupplierId) return;
+    setLines(prev => prev.map(l => (l.supplierId ? l : { ...l, supplierId: bulkSupplierId })));
+  }, [bulkSupplierId]);
+
+  const saveAssignments = useCallback(async () => {
     try {
-      const rows = await listSuppliers(venueId!);
-      setSuppliers(rows);
-      setSupplierPickTarget({ productId, productName });
-      setSupplierModalOpen(true);
-    } catch (e: any) {
-      Alert.alert('Failed to load suppliers', e?.message ?? String(e));
-    }
-  }, [venueId]);
-
-  const pickSupplier = useCallback(async (supplier: Supplier) => {
-    if (!venueId || !supplierPickTarget) return;
-    try {
-      await setSupplierSmart(venueId, supplierPickTarget.productId, supplier.id, supplier.name ?? undefined);
-      setSupplierModalOpen(false);
-      setSupplierPickTarget(null);
-      await load();
-      Alert.alert('Supplier set', `Linked ${supplierPickTarget.productName ?? 'item'} to ${supplier.name ?? supplier.id}.`);
-    } catch (e: any) {
-      Alert.alert('Update failed', e?.message ?? String(e));
-    }
-  }, [venueId, supplierPickTarget, load]);
-
-  const openParEditor = useCallback((productId: string, suggestedQty: number, productName?: string | null) => {
-    setParTarget({ productId, productName });
-    setParInput(String(Math.max(1, Math.floor(suggestedQty))));
-    setParModalOpen(true);
-  }, []);
-
-  const savePar = useCallback(async () => {
-    if (!venueId || !parTarget) return;
-    const n = Number(parInput);
-    if (!Number.isFinite(n) || n <= 0) return Alert.alert('Invalid PAR', 'Enter a positive number.');
-    try {
-      await setParSmart(venueId, parTarget.productId, Math.floor(n));
-      setParModalOpen(false);
-      setParTarget(null);
-      await load();
-      Alert.alert('PAR saved', `PAR set to ${Math.floor(n)} for ${parTarget.productName ?? parTarget.productId}.`);
-    } catch (e: any) {
-      Alert.alert('Update failed', e?.message ?? String(e));
-    }
-  }, [venueId, parTarget, parInput, load]);
-
-  const goToOrders = useCallback(() => {
-    const state = (nav as any).getState?.();
-    const candidates: Array<{ name: string; params?: any }> = [
-      { name: 'Orders' },
-      { name: 'OrdersScreen' },
-      { name: 'Main', params: { screen: 'Orders' } },
-      { name: 'OrdersTab' },
-      { name: 'OrdersList' },
-    ];
-
-    for (const p of candidates) {
-      if (!state || hasRouteNamed(state, p.name)) {
-        // @ts-ignore
-        nav.navigate(p.name as never, (p.params ?? undefined) as never);
+      if (!venueId) throw new Error('No venue selected');
+      const toSave = lines.filter(l => l.supplierId && hasId(l.productId));
+      if (toSave.length === 0) {
+        Alert.alert('Assign Suppliers', 'No assigned lines to save.');
         return;
       }
+      for (const l of toSave) {
+        await setSupplierOnProduct(venueId, l.productId, l.supplierId as string);
+      }
+      Alert.alert('Assign Suppliers', 'Saved default suppliers on products.');
+    } catch (e: any) {
+      console.warn('[SuggestedOrderScreen] saveAssignments failed', e);
+      Alert.alert('Assign Suppliers', e?.message ?? 'Failed to save assignments.');
     }
-    Alert.alert('Navigate', 'Could not find Orders screen in navigator.');
-  }, [nav]);
+  }, [venueId, lines, setSupplierOnProduct]);
 
-  const createDrafts = useCallback(async () => {
+  const updatePar = useCallback(async (productId: string, parStr: string) => {
     try {
-      setGuardBanner(null);
-      if (!data) return;
-      const res: CreateDraftsResult = await createDraftsFromSuggestions(venueId!, data, { createdBy: uid });
-      if (res.skippedByGuard) {
-        setGuardBanner('Drafts already created recently for this cycle. No new drafts were made.');
+      if (!venueId) throw new Error('No venue selected');
+      if (!hasId(productId)) {
+        Alert.alert('Set Par', 'This row has no product ID and cannot be updated.');
         return;
       }
-      if (res.created.length === 0) {
-        Alert.alert('No drafts created', 'No suggestion lines were available.');
-      } else {
-        Alert.alert('Drafts created', `Created ${res.created.length} draft order(s).`, [
-          { text: 'View Orders', onPress: () => goToOrders() },
-          { text: 'OK' },
-        ]);
+      const n = Number(String(parStr ?? '').trim());
+      if (!Number.isFinite(n) || n < 0) {
+        Alert.alert('Set Par', 'Enter a non-negative number.');
+        return;
       }
+      await setParOnProduct(venueId, productId, n);
+      Alert.alert('Set Par', 'Par updated.');
     } catch (e: any) {
-      Alert.alert('Create drafts failed', e?.message ?? String(e));
+      console.warn('[SuggestedOrderScreen] setPar failed', e);
+      Alert.alert('Set Par', e?.message ?? 'Failed to set par.');
     }
-  }, [venueId, data, uid, goToOrders]);
+  }, [venueId, setParOnProduct]);
+
+  const onCreateDrafts = useCallback(async () => {
+    try {
+      if (!venueId) throw new Error('No venue selected');
+      if (lines.length === 0) {
+        Alert.alert('Suggested Orders', 'No lines to create.');
+        return;
+      }
+      const validAssigned = lines.filter(l => hasId(l.productId) && l.supplierId);
+      if (validAssigned.length === 0) {
+        Alert.alert('No Supplier Assigned', 'Assign suppliers first, then create drafts.');
+        return;
+      }
+
+      const grouped: Record<string, SuggestedLine[]> = {};
+      for (const l of validAssigned) {
+        const k = l.supplierId as string;
+        (grouped[k] ??= []).push(l);
+      }
+
+      let createdIds: string[] = [];
+      setCreating(true);
+      for (const sid of Object.keys(grouped)) {
+        const bucket = grouped[sid]!;
+        const ids = await createDraftsFromSuggestions(venueId, bucket as any);
+        if (Array.isArray(ids)) createdIds.push(...ids);
+        else if (typeof ids === 'string') createdIds.push(ids);
+      }
+
+      if (createdIds.length === 0) {
+        Alert.alert('Suggested Orders', 'No drafts were created. Check assignments.');
+        return;
+      }
+      Alert.alert('Created', `Created ${createdIds.length} draft order${createdIds.length === 1 ? '' : 's'}.`);
+    } catch (e: any) {
+      console.warn('[SuggestedOrderScreen] createDrafts failed', e);
+      Alert.alert('Create Drafts', e?.message ?? 'Failed to create drafts.');
+    } finally {
+      setCreating(false);
+    }
+  }, [venueId, lines]);
 
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 8 }}>Building suggestions…</Text>
+        <ActivityIndicator />
+        <Text style={{ marginTop: 8 }}>Loading suggestions…</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#eee' }}>
+    <SafeAreaView style={{ flex: 1, padding: 16 }}>
+      <View style={{ marginBottom: 8 }}>
         <Text style={{ fontSize: 18, fontWeight: '600' }}>Suggested Orders</Text>
-        {guardBanner ? <Text style={{ color: '#a60', marginTop: 6 }}>{guardBanner}</Text> : null}
-        <View style={{ flexDirection: 'row', marginTop: 8 }}>
-          <TouchableOpacity onPress={load} style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginRight: 8 }}>
-            <Text>Refresh</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setRoundToPack(x => !x)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8 }}>
-            <Text>{roundToPack ? 'Round to pack: ON' : 'Round to pack: OFF'}</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={{ color: '#666', marginTop: 2 }}>
+          Aggregated {rawCount} rows into {lines.length} products
+        </Text>
       </View>
 
-      <FlatList
-        data={groups}
-        keyExtractor={(g) => g.key}
-        contentContainerStyle={{ paddingBottom: 96 }}
-        renderItem={({ item: g }) => (
-          <View style={{ marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: '#eee', borderRadius: 12, overflow: 'hidden' }}>
-            <View style={{ padding: 12, backgroundColor: '#fafafa', borderBottomWidth: 1, borderColor: '#eee' }}>
-              <Text style={{ fontWeight: '600' }}>{g.title}</Text>
-              {g.isUnassigned ? <Text style={{ color: '#c00', marginTop: 2 }}>Some items need a supplier</Text> : null}
-            </View>
-            {g.lines.map((ln) => (
-              <View key={ln.productId} style={{ padding: 12, borderTopWidth: 1, borderColor: '#f2f2f2' }}>
-                <Text style={{ fontWeight: '500' }}>{ln.productName ?? ln.productId}</Text>
-                <Text style={{ marginTop: 2 }}>Qty: {ln.qty}</Text>
-                {ln.needsPar ? <Text style={{ color: '#d47a00' }}>Needs PAR</Text> : null}
-                {ln.needsSupplier ? <Text style={{ color: '#d47a00' }}>Needs supplier</Text> : null}
-                <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                  <TouchableOpacity onPress={() => openParEditor(ln.productId, ln.qty, ln.productName)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginRight: 8 }}>
-                    <Text>Set PAR</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => openSupplierPicker(ln.productId, ln.productName)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8 }}>
-                    <Text>Set supplier</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-        ListEmptyComponent={<View style={{ padding: 24 }}><Text>No suggestions yet. Try taking a stock count, then Refresh.</Text></View>}
-      />
-
-      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderColor: '#eee' }}>
-        <TouchableOpacity onPress={createDrafts} style={{ backgroundColor: '#0a7', paddingVertical: 14, borderRadius: 10, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Create drafts</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Supplier modal */}
-      <Modal visible={supplierModalOpen} transparent animationType="fade" onRequestClose={() => setSupplierModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, maxHeight: '70%' }}>
-            <Text style={{ fontWeight: '700', fontSize: 16 }}>Pick supplier</Text>
+      {unassigned.length > 0 ? (
+        <View style={{ backgroundColor: '#fff4e5', borderColor: '#f0ad4e', borderWidth: 1, padding: 10, borderRadius: 8, marginBottom: 10 }}>
+          <Text style={{ color: '#8a6d3b', marginBottom: 8 }}>
+            {unassigned.length} product(s) have no supplier.
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ marginRight: 8 }}>Assign all to:</Text>
             <FlatList
-              style={{ marginTop: 8 }}
               data={suppliers}
+              horizontal
               keyExtractor={(s) => s.id}
               renderItem={({ item }) => (
-                <TouchableOpacity onPress={() => pickSupplier(item)} style={{ paddingVertical: 10 }}>
+                <TouchableOpacity
+                  onPress={() => setBulkSupplierId(item.id)}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                    borderWidth: 1, borderColor: bulkSupplierId === item.id ? '#222' : '#ccc',
+                    marginRight: 8
+                  }}
+                >
                   <Text>{item.name ?? item.id}</Text>
                 </TouchableOpacity>
               )}
-              ListEmptyComponent={<Text style={{ paddingVertical: 8 }}>No suppliers yet.</Text>}
             />
-            <TouchableOpacity onPress={() => setSupplierModalOpen(false)} style={{ alignSelf: 'flex-end', paddingVertical: 10 }}>
-              <Text>Close</Text>
+            <TouchableOpacity onPress={applyBulkSupplier} disabled={!bulkSupplierId}
+              style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: bulkSupplierId ? '#222' : '#ccc', borderRadius: 10 }}>
+              <Text style={{ color: '#fff' }}>Apply</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={saveAssignments}
+              style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#222', borderRadius: 10, marginLeft: 8 }}>
+              <Text style={{ color: '#fff' }}>Save defaults</Text>
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      ) : null}
 
-      {/* PAR modal */}
-      <Modal visible={parModalOpen} transparent animationType="fade" onRequestClose={() => setParModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16 }}>
-            <Text style={{ fontWeight: '700', fontSize: 16 }}>Set PAR</Text>
-            <TextInput
-              style={{ marginTop: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, height: 40 }}
-              keyboardType="number-pad"
-              value={parInput}
-              onChangeText={setParInput}
-              placeholder="Enter PAR"
-            />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-              <TouchableOpacity onPress={() => setParModalOpen(false)} style={{ padding: 10, marginRight: 8 }}>
-                <Text>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={savePar} style={{ padding: 10 }}>
-                <Text style={{ color: '#0a7', fontWeight: '600' }}>Save</Text>
-              </TouchableOpacity>
+      <FlatList
+        data={lines}
+        keyExtractor={(item, index) => `${item.productId}-${index}`}
+        renderItem={({ item, index }) => (
+          <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+            <Text style={{ fontWeight: '600' }}>{item.name ?? item.productId}</Text>
+            <Text>Qty: {item.qty}</Text>
+            <Text>Supplier: {item.supplierId ?? '(unassigned)'}</Text>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+              {suppliers.map(s => (
+                <TouchableOpacity
+                  key={`${item.productId}-${s.id}`}
+                  onPress={() => setLines(prev => prev.map((l, i) => i === index ? { ...l, supplierId: s.id } : l))}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                    borderWidth: 1, borderColor: item.supplierId === s.id ? '#222' : '#ccc',
+                    marginRight: 8, marginBottom: 6
+                  }}
+                >
+                  <Text>{s.name ?? s.id}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+              <Text style={{ marginRight: 8 }}>Set Par:</Text>
+              <TextInput
+                placeholder="e.g. 12"
+                keyboardType="numeric"
+                style={{ borderWidth: 1, borderColor: '#ccc', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, minWidth: 70, marginRight: 8 }}
+                onSubmitEditing={(e) => updatePar(item.productId, e.nativeEvent.text)}
+              />
+              <Text style={{ color: '#777' }}>(press return to save)</Text>
             </View>
           </View>
-        </View>
-      </Modal>
+        )}
+      />
+
+      <TouchableOpacity
+        onPress={onCreateDrafts}
+        disabled={creating || lines.length === 0}
+        style={{
+          backgroundColor: creating || lines.length === 0 ? '#ccc' : '#222',
+          padding: 14,
+          borderRadius: 12,
+          alignItems: 'center',
+          marginTop: 16,
+        }}
+      >
+        <Text style={{ color: '#fff', fontWeight: '600' }}>
+          {creating ? 'Creating…' : `Create Draft${lines.length > 1 ? 's' : ''} (${totalQty} items)`}
+        </Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
