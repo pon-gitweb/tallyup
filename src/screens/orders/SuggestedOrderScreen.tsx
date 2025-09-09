@@ -1,355 +1,749 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View, SafeAreaView, ActivityIndicator, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  Modal,
+  SafeAreaView,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { getFirestore, collection, getDocs, query, where } from 'firebase/firestore';
+
+import { getApp } from 'firebase/app';
+import {
+  getFirestore,
+  collection,
+  collectionGroup,
+  getDocs,
+  addDoc,
+  doc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  Timestamp,
+} from 'firebase/firestore';
 
 import {
   buildSuggestedOrdersInMemory,
-  createDraftsFromSuggestions,
-  listSuppliers as listSuppliersFromBarrel,
-  setParOnProduct as setParOnProductFromBarrel,
-  setSupplierOnProduct as setSupplierOnProductFromBarrel,
-} from '../../services/orders';
-import { useVenueId } from '../../context/VenueProvider';
+  listSuppliers,
+  // optional helper in your services; not required by this screen now:
+  // createDraftsFromSuggestions,
+} from 'src/services/orders';
 
-/** Types mirror your suggest.ts output */
-type SuggestedLineRaw = {
-  productId: string;
-  productName?: string | null;
-  qty: number;
-  cost?: number;
-  supplierId?: string | null;
-  reason?: string | null;
-};
-type CompatBucket = {
-  items: Record<string, SuggestedLineRaw>;
-  lines: SuggestedLineRaw[];
-  [pid: string]: any; // compat surface
-};
-type SuggestedLegacyMap = Record<string, CompatBucket>;
+import { useVenueId } from 'src/context/VenueProvider';
+
+/* ----------------------------- local types ----------------------------- */
+
+type Supplier = { id: string; name?: string | null };
 
 type SuggestedLine = {
   productId: string;
-  qty: number;
-  cost?: number;
-  supplierId?: string | null;
-  name?: string;
+  productName?: string | null;
+  qty: number;       // computed suggestion
+  cost: number;      // unit cost if available
+  needsPar?: boolean;
+  needsSupplier?: boolean;
   reason?: string | null;
 };
-type Supplier = { id: string; name?: string | null; active?: boolean | null };
 
-const isArray = Array.isArray;
-const toNum = (v: any, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
-const hasId = (x: unknown): x is string => typeof x === 'string' && x.length > 0;
+type CompatBucket = { items: Record<string, SuggestedLine>; lines: SuggestedLine[] };
 
-/** Flatten the compat map into a single raw lines list, deduping alias buckets */
-function flattenCompatLines(compat: SuggestedLegacyMap): SuggestedLineRaw[] {
-  const seen = new Set<CompatBucket>();
-  const out: SuggestedLineRaw[] = [];
-  for (const key of Object.keys(compat)) {
-    const b = compat[key];
-    if (!b || typeof b !== 'object') continue;
-    if (seen.has(b)) continue;       // many supplier aliases point to same bucket
-    seen.add(b);
-    if (isArray(b.lines)) out.push(...b.lines);
-  }
-  return out;
+/* Picker modals */
+type PickerState = {
+  visible: boolean;
+  bucketKey: string | null;   // if set => assign to whole bucket
+  productId: string | null;   // if set => assign just that item
+  productName?: string | null;
+};
+
+type ParEditorState = {
+  visible: boolean;
+  productId: string | null;
+  productName?: string | null;
+  value: string;
+};
+
+/* --------------------------- local helpers (UI) -------------------------- */
+
+function Chip(props: { title: string; onPress?(): void }) {
+  return (
+    <TouchableOpacity onPress={props.onPress}>
+      <Text
+        style={{
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          backgroundColor: '#f2f2f2',
+          borderRadius: 8,
+          marginRight: 8,
+          marginBottom: 8,
+        }}
+      >
+        {props.title}
+      </Text>
+    </TouchableOpacity>
+  );
 }
 
-/** Aggregate duplicates by productId (sum qty, keep first defined cost/supplier/name/reason) */
-function aggregateByProduct(list: SuggestedLine[]): SuggestedLine[] {
-  const m = new Map<string, SuggestedLine>();
-  for (const l of list) {
-    const cur = m.get(l.productId);
-    if (!cur) {
-      m.set(l.productId, { ...l });
-    } else {
-      cur.qty = toNum(cur.qty, 0) + toNum(l.qty, 0);
-      if (cur.cost == null && l.cost != null) cur.cost = l.cost;
-      if (!cur.supplierId && l.supplierId) cur.supplierId = l.supplierId;
-      if (!cur.name && l.name) cur.name = l.name;
-      if (!cur.reason && l.reason) cur.reason = l.reason;
+/* ------------------------ data helpers (firestore) ----------------------- */
+
+/** Ensure a product doc exists (so subsequent merges succeed) */
+async function ensureProductIfMissing(
+  venueId: string,
+  productId: string,
+  nameHint?: string | null
+) {
+  const db = getFirestore(getApp());
+  await setDoc(
+    doc(db, 'venues', venueId, 'products', productId),
+    { name: nameHint ?? productId, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Link orphan area items (no productId) to a canonical product.
+ * Heuristic: match by (doc.id === productId) or (name === nameHint).
+ * Optionally copy supplier onto the item for immediate re-bucketing on next load.
+ */
+async function linkAreaItemsToProduct(
+  venueId: string,
+  productId: string,
+  nameHint?: string | null,
+  copySupplier?: { supplierId?: string | null; supplierName?: string | null }
+) {
+  const db = getFirestore(getApp());
+
+  const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  for (const dep of deps.docs) {
+    const areas = await getDocs(
+      collection(db, 'venues', venueId, 'departments', dep.id, 'areas')
+    );
+    for (const area of areas.docs) {
+      const items = await getDocs(
+        collection(
+          db,
+          'venues',
+          venueId,
+          'departments',
+          dep.id,
+          'areas',
+          area.id,
+          'items'
+        )
+      );
+
+      for (const it of items.docs) {
+        const data = it.data() as any;
+        const hasLink = !!(data?.productId || data?.productRef?.id || data?.product?.id);
+        if (hasLink) continue;
+
+        const idMatch = it.id === productId;
+        const nameMatch = (data?.name ?? data?.productName ?? '') === (nameHint ?? productId);
+
+        if (idMatch || nameMatch) {
+          const ref = doc(
+            db,
+            'venues',
+            venueId,
+            'departments',
+            dep.id,
+            'areas',
+            area.id,
+            'items',
+            it.id
+          );
+          const update: any = { productId, updatedAt: serverTimestamp() };
+          if (copySupplier?.supplierId) update.supplierId = copySupplier.supplierId;
+          if (copySupplier?.supplierName) update.supplierName = copySupplier.supplierName;
+
+          console.log('[linkAreaItemsToProduct] linking', { path: ref.path, to: productId });
+          await updateDoc(ref, update);
+        }
+      }
     }
   }
-  return [...m.values()];
 }
 
-async function loadProductsMap(venueId: string): Promise<Record<string, { name?: string }>> {
-  const db = getFirestore();
-  const out: Record<string, { name?: string }> = {};
-  try {
-    const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
-    snap.forEach(doc => { const d = doc.data() as any; out[doc.id] = { name: d?.name ?? d?.title ?? undefined }; });
-  } catch {}
-  if (Object.keys(out).length === 0) {
-    try {
-      const snap = await getDocs(query(collection(db, 'products'), where('venueId', '==', venueId)));
-      snap.forEach(doc => { const d = doc.data() as any; out[doc.id] = { name: d?.name ?? d?.title ?? undefined }; });
-    } catch {}
+// REMOVE the collectionGroup version and use this instead
+async function fetchLastStockTakeCompletedAt(venueId: string): Promise<Timestamp | null> {
+  const db = getFirestore(getApp());
+  let latest: Timestamp | null = null;
+
+  const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  for (const dep of deps.docs) {
+    const areas = await getDocs(
+      collection(db, 'venues', venueId, 'departments', dep.id, 'areas')
+    );
+    for (const a of areas.docs) {
+      const data = a.data() as any;
+      const comp = data?.completedAt as Timestamp | undefined;
+      if (comp && (!latest || comp.toMillis() > latest.toMillis())) {
+        latest = comp;
+      }
+    }
   }
-  return out;
+  return latest;
 }
+
+
+/* ------------------------------ main screen ----------------------------- */
 
 export default function SuggestedOrderScreen() {
-  const nav = useNavigation<NativeStackNavigationProp<any>>();
   const venueId = useVenueId();
+  const nav = useNavigation<any>();
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [lines, setLines] = useState<SuggestedLine[]>([]);
-  const [rawCount, setRawCount] = useState(0);
-  const [creating, setCreating] = useState(false);
-  const [bulkSupplierId, setBulkSupplierId] = useState<string | null>(null);
+  const [buckets, setBuckets] = useState<Record<string, CompatBucket>>({});
+  const [picker, setPicker] = useState<PickerState>({
+    visible: false,
+    bucketKey: null,
+    productId: null,
+    productName: null,
+  });
+  const [parEditor, setParEditor] = useState<ParEditorState>({
+    visible: false,
+    productId: null,
+    productName: null,
+    value: '',
+  });
 
-  const listSuppliers = listSuppliersFromBarrel;
-  const setParOnProduct = setParOnProductFromBarrel;
-  const setSupplierOnProduct = setSupplierOnProductFromBarrel;
+  const [draftedSupplierIds, setDraftedSupplierIds] = useState<Record<string, true>>({});
+  const [lastCompletedAt, setLastCompletedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!venueId) return;
+    setLoading(true);
     try {
-      if (!venueId) throw new Error('No venue selected');
-      setLoading(true);
-
-      const sups = await listSuppliers(venueId);
-      setSuppliers(sups ?? []);
-
-      // Build compat (supplierId -> bucket with .lines[])
-      const compat = await buildSuggestedOrdersInMemory(venueId) as unknown as SuggestedLegacyMap;
-
-      // Flatten all buckets' lines (dedupe alias buckets)
-      const rawLines = flattenCompatLines(compat);
-      setRawCount(rawLines.length);
-
-      // Canonicalize → SuggestedLine
-      const canon: SuggestedLine[] = rawLines
-        .filter((r) => hasId(r?.productId))
-        .map((r) => ({
-          productId: r.productId,
-          qty: toNum(r.qty, 0),
-          cost: Number.isFinite(Number(r.cost)) ? Number(r.cost) : undefined,
-          supplierId: r.supplierId ?? null,
-          name: r.productName ?? undefined,
-          reason: r.reason ?? null,
-        }));
-
-      // Aggregate across areas → one line per product
-      let agg = aggregateByProduct(canon);
-
-      // Hydrate names from products if missing
-      const prodMap = await loadProductsMap(venueId);
-      agg = agg.map(l => ({ ...l, name: l.name ?? prodMap[l.productId]?.name ?? l.productId }));
-
-      setLines(agg);
-
-      console.log('[SuggestedOrders] load summary', {
-        raw: rawLines.length, aggregated: agg.length,
+      const compat = await buildSuggestedOrdersInMemory(venueId, {
+        roundToPack: true,
+        defaultParIfMissing: 6,
       });
-    } catch (e: any) {
-      console.warn('[SuggestedOrderScreen] load failed', e);
-      Alert.alert('Suggested Orders', e?.message ?? 'Failed to load suggestions.');
+      setBuckets(compat);
+
+      const ss = await listSuppliers(venueId);
+      setSuppliers(ss);
+
+      // last completed stock-take banner
+      const ts = await fetchLastStockTakeCompletedAt(venueId);
+      setLastCompletedAt(ts ? new Date(ts.toMillis()).toLocaleString() : null);
+
+      const vals = Object.values(compat);
+      console.log('[SuggestedOrders] load summary', {
+        raw: vals.length,
+        aggregated: new Set(vals).size,
+      });
+    } catch (e) {
+      console.warn('[SuggestedOrders] load failed', e);
+      Alert.alert('Suggested Orders', 'Failed to load suggestions.');
     } finally {
       setLoading(false);
     }
   }, [venueId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const unassigned = useMemo(() => lines.filter(l => !l.supplierId), [lines]);
-  const totalQty = useMemo(() => lines.reduce((a, l) => a + toNum(l.qty, 0), 0), [lines]);
-
-  const applyBulkSupplier = useCallback(() => {
-    if (!bulkSupplierId) return;
-    setLines(prev => prev.map(l => (l.supplierId ? l : { ...l, supplierId: bulkSupplierId })));
-  }, [bulkSupplierId]);
-
-  const saveAssignments = useCallback(async () => {
-    try {
-      if (!venueId) throw new Error('No venue selected');
-      const toSave = lines.filter(l => l.supplierId && hasId(l.productId));
-      if (toSave.length === 0) {
-        Alert.alert('Assign Suppliers', 'No assigned lines to save.');
-        return;
-      }
-      for (const l of toSave) {
-        await setSupplierOnProduct(venueId, l.productId, l.supplierId as string);
-      }
-      Alert.alert('Assign Suppliers', 'Saved default suppliers on products.');
-    } catch (e: any) {
-      console.warn('[SuggestedOrderScreen] saveAssignments failed', e);
-      Alert.alert('Assign Suppliers', e?.message ?? 'Failed to save assignments.');
+  /** Deduplicate alias keys so each CompatBucket renders once. */
+  const uniqueBuckets = useMemo(() => {
+    const seen = new WeakSet<object>();
+    const out: Array<{ key: string; bucket: CompatBucket }> = [];
+    for (const [k, b] of Object.entries(buckets)) {
+      if (!b || typeof b !== 'object') continue;
+      if ((b.lines?.length ?? 0) === 0) continue;
+      if (seen.has(b as object)) continue;
+      seen.add(b as object);
+      out.push({ key: k, bucket: b });
     }
-  }, [venueId, lines, setSupplierOnProduct]);
+    return out;
+  }, [buckets]);
 
-  const updatePar = useCallback(async (productId: string, parStr: string) => {
-    try {
-      if (!venueId) throw new Error('No venue selected');
-      if (!hasId(productId)) {
-        Alert.alert('Set Par', 'This row has no product ID and cannot be updated.');
+  /* ---------------------------- write operations ---------------------------- */
+
+  const updatePar = useCallback(
+    async (productId: string, parStr: string, nameHint?: string | null) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        const n = Number(String(parStr ?? '').trim());
+        if (!Number.isFinite(n) || n < 0) {
+          Alert.alert('Set PAR', 'Enter a non-negative number.');
+          return;
+        }
+
+        await ensureProductIfMissing(venueId, productId, nameHint ?? productId);
+        await linkAreaItemsToProduct(venueId, productId, nameHint ?? productId);
+
+        const db = getFirestore(getApp());
+        const pref = doc(db, 'venues', venueId, 'products', productId);
+        console.log('[updatePar] writing', { path: pref.path, par: n });
+        await setDoc(
+          pref,
+          { par: n, parLevel: n, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+
+        Alert.alert('Set PAR', 'Par updated.');
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setPar failed', { code: e?.code, msg: e?.message });
+        Alert.alert('Set PAR', `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set PAR.'}`);
+      }
+    },
+    [venueId, load]
+  );
+
+  const assignSupplierGroup = useCallback(
+    async (bucket: CompatBucket, supplierId: string) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        const db = getFirestore(getApp());
+        const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? null;
+
+        for (const line of bucket.lines) {
+          const pid = line.productId;
+          if (!pid) continue;
+
+          await ensureProductIfMissing(venueId, pid, line.productName ?? pid);
+          await linkAreaItemsToProduct(venueId, pid, line.productName ?? pid, {
+            supplierId,
+            supplierName,
+          });
+
+          const pref = doc(db, 'venues', venueId, 'products', pid);
+          console.log('[assignSupplier:group] writing', { path: pref.path, supplierId });
+          await setDoc(
+            pref,
+            { supplierId, supplierName, updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+        }
+
+        Alert.alert('Supplier', 'Supplier assigned to all items in this group.');
+        setPicker({ visible: false, bucketKey: null, productId: null, productName: null });
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setSupplier (group) failed', {
+          code: e?.code,
+          msg: e?.message,
+        });
+        Alert.alert(
+          'Supplier',
+          `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set supplier.'}`
+        );
+      }
+    },
+    [venueId, suppliers, load]
+  );
+
+  const assignSupplierOne = useCallback(
+    async (productId: string, productName: string | null | undefined, supplierId: string) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        const db = getFirestore(getApp());
+        const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? null;
+
+        await ensureProductIfMissing(venueId, productId, productName ?? productId);
+        await linkAreaItemsToProduct(venueId, productId, productName ?? productId, {
+          supplierId,
+          supplierName,
+        });
+
+        const pref = doc(db, 'venues', venueId, 'products', productId);
+        console.log('[assignSupplier:item] writing', { path: pref.path, supplierId });
+        await setDoc(
+          pref,
+          { supplierId, supplierName, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+
+        setPicker({ visible: false, bucketKey: null, productId: null, productName: null });
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setSupplier (one) failed', {
+          code: e?.code,
+          msg: e?.message,
+        });
+        Alert.alert(
+          'Supplier',
+          `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set supplier.'}`
+        );
+      }
+    },
+    [venueId, suppliers, load]
+  );
+
+  /* ------------------------- create DRAFTS from UI ------------------------- */
+
+  /** Create one draft order for a given supplier bucket. */
+  const createDraftForBucket = useCallback(
+    async (bucketKey: string) => {
+      if (!venueId) return;
+      if (!bucketKey || bucketKey === 'unassigned') {
+        Alert.alert('Create Draft', 'Assign a supplier first.');
         return;
       }
-      const n = Number(String(parStr ?? '').trim());
-      if (!Number.isFinite(n) || n < 0) {
-        Alert.alert('Set Par', 'Enter a non-negative number.');
-        return;
+      const bucket = buckets[bucketKey];
+      if (!bucket || bucket.lines.length === 0) return;
+
+      const supplierName = suppliers.find((s) => s.id === bucketKey)?.name ?? null;
+
+      try {
+        const db = getFirestore(getApp());
+
+        // Create order header
+        const orderRef = await addDoc(collection(db, 'venues', venueId, 'orders'), {
+          status: 'draft',
+          supplierId: bucketKey,
+          supplierName,
+          lineCount: bucket.lines.length,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdFrom: {
+            type: 'suggestions',
+            stockTakeCompletedAt: lastCompletedAt ?? null,
+          },
+        });
+
+        // Add lines
+        for (const line of bucket.lines) {
+          await addDoc(collection(orderRef, 'lines'), {
+            productId: line.productId,
+            productName: line.productName ?? line.productId,
+            qty: line.qty,
+            unitCost: line.cost ?? null,
+            reason: line.reason ?? null,
+            createdAt: serverTimestamp(),
+          });
+        }
+
+        setDraftedSupplierIds((s) => ({ ...s, [bucketKey]: true }));
+        Alert.alert('Draft created', `Draft order for ${supplierName ?? bucketKey} created.`);
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] createDraftForBucket failed', e);
+        Alert.alert('Draft', e?.message ?? 'Failed to create draft.');
       }
-      await setParOnProduct(venueId, productId, n);
-      Alert.alert('Set Par', 'Par updated.');
-    } catch (e: any) {
-      console.warn('[SuggestedOrderScreen] setPar failed', e);
-      Alert.alert('Set Par', e?.message ?? 'Failed to set par.');
+    },
+    [venueId, buckets, suppliers, lastCompletedAt]
+  );
+
+  /** Create drafts for ALL visible supplier buckets (skip "unassigned"). */
+  const createDraftsAllVisible = useCallback(async () => {
+    for (const { key } of uniqueBuckets) {
+      if (key && key !== 'unassigned') {
+        // eslint-disable-next-line no-await-in-loop
+        await createDraftForBucket(key);
+      }
     }
-  }, [venueId, setParOnProduct]);
+    Alert.alert('Drafts', 'Drafts created for all visible suppliers. Go to Orders to finalise.');
+  }, [uniqueBuckets, createDraftForBucket]);
 
-  const onCreateDrafts = useCallback(async () => {
-    try {
-      if (!venueId) throw new Error('No venue selected');
-      if (lines.length === 0) {
-        Alert.alert('Suggested Orders', 'No lines to create.');
-        return;
-      }
-      const validAssigned = lines.filter(l => hasId(l.productId) && l.supplierId);
-      if (validAssigned.length === 0) {
-        Alert.alert('No Supplier Assigned', 'Assign suppliers first, then create drafts.');
-        return;
-      }
+  /* ------------------------------ rendering ------------------------------ */
 
-      const grouped: Record<string, SuggestedLine[]> = {};
-      for (const l of validAssigned) {
-        const k = l.supplierId as string;
-        (grouped[k] ??= []).push(l);
-      }
+  const renderLine = (line: SuggestedLine) => {
+    const pid = line.productId;
+    const pname = line.productName ?? pid;
 
-      let createdIds: string[] = [];
-      setCreating(true);
-      for (const sid of Object.keys(grouped)) {
-        const bucket = grouped[sid]!;
-        const ids = await createDraftsFromSuggestions(venueId, bucket as any);
-        if (Array.isArray(ids)) createdIds.push(...ids);
-        else if (typeof ids === 'string') createdIds.push(ids);
-      }
-
-      if (createdIds.length === 0) {
-        Alert.alert('Suggested Orders', 'No drafts were created. Check assignments.');
-        return;
-      }
-      Alert.alert('Created', `Created ${createdIds.length} draft order${createdIds.length === 1 ? '' : 's'}.`);
-    } catch (e: any) {
-      console.warn('[SuggestedOrderScreen] createDrafts failed', e);
-      Alert.alert('Create Drafts', e?.message ?? 'Failed to create drafts.');
-    } finally {
-      setCreating(false);
-    }
-  }, [venueId, lines]);
-
-  if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Loading suggestions…</Text>
-      </SafeAreaView>
-    );
-  }
+      <View
+        key={pid || `${pname}-${Math.random().toString(36).slice(2)}`}
+        style={{ paddingVertical: 10, borderTopWidth: 0.5, borderColor: '#eee' }}
+      >
+        <Text style={{ fontWeight: '600' }}>{pname}</Text>
 
-  return (
-    <SafeAreaView style={{ flex: 1, padding: 16 }}>
-      <View style={{ marginBottom: 8 }}>
-        <Text style={{ fontSize: 18, fontWeight: '600' }}>Suggested Orders</Text>
-        <Text style={{ color: '#666', marginTop: 2 }}>
-          Aggregated {rawCount} rows into {lines.length} products
-        </Text>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginTop: 6,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Chip title="Set PAR 6" onPress={() => updatePar(pid, '6', pname)} />
+          <Chip title="Set PAR 12" onPress={() => updatePar(pid, '12', pname)} />
+          <Chip
+            title="Custom PAR…"
+            onPress={() =>
+              setParEditor({
+                visible: true,
+                productId: pid,
+                productName: pname,
+                value: '',
+              })
+            }
+          />
+          <Chip
+            title="Assign supplier…"
+            onPress={() =>
+              setPicker({
+                visible: true,
+                bucketKey: null,
+                productId: pid,
+                productName: pname,
+              })
+            }
+          />
+        </View>
       </View>
+    );
+  };
 
-      {unassigned.length > 0 ? (
-        <View style={{ backgroundColor: '#fff4e5', borderColor: '#f0ad4e', borderWidth: 1, padding: 10, borderRadius: 8, marginBottom: 10 }}>
-          <Text style={{ color: '#8a6d3b', marginBottom: 8 }}>
-            {unassigned.length} product(s) have no supplier.
+  const renderBucketCard = ({ item }: { item: { key: string; bucket: CompatBucket } }) => {
+    const key = item.key || 'unassigned';
+    const b = item.bucket;
+    const count = b.lines.length;
+    const isUnassigned = key === 'unassigned';
+    const drafted = draftedSupplierIds[key];
+
+    const supplierLabel =
+      suppliers.find((s) => s.id === key)?.name ?? (isUnassigned ? 'unassigned' : key);
+
+    return (
+      <View
+        style={{
+          margin: 12,
+          padding: 12,
+          borderRadius: 12,
+          backgroundColor: '#fff',
+          elevation: 2,
+        }}
+      >
+        {/* Header with single group action + per-supplier draft CTAs */}
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 8,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Text style={{ fontWeight: '700' }}>
+            {supplierLabel} — {count} item{count > 1 ? 's' : ''}
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ marginRight: 8 }}>Assign all to:</Text>
-            <FlatList
-              data={suppliers}
-              horizontal
-              keyExtractor={(s) => s.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() => setBulkSupplierId(item.id)}
-                  style={{
-                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
-                    borderWidth: 1, borderColor: bulkSupplierId === item.id ? '#222' : '#ccc',
-                    marginRight: 8
-                  }}
-                >
-                  <Text>{item.name ?? item.id}</Text>
-                </TouchableOpacity>
-              )}
-            />
-            <TouchableOpacity onPress={applyBulkSupplier} disabled={!bulkSupplierId}
-              style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: bulkSupplierId ? '#222' : '#ccc', borderRadius: 10 }}>
-              <Text style={{ color: '#fff' }}>Apply</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={saveAssignments}
-              style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#222', borderRadius: 10, marginLeft: 8 }}>
-              <Text style={{ color: '#fff' }}>Save defaults</Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+            {!isUnassigned && (
+              <TouchableOpacity
+                onPress={() => createDraftForBucket(key)}
+                style={{ marginRight: 12 }}
+              >
+                <Text style={{ textDecorationLine: 'underline' }}>Create draft for supplier</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              onPress={() =>
+                setPicker({ visible: true, bucketKey: key, productId: null, productName: null })
+              }
+            >
+              <Text style={{ textDecorationLine: 'underline' }}>
+                Assign supplier to group…
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
-      ) : null}
 
-      <FlatList
-        data={lines}
-        keyExtractor={(item, index) => `${item.productId}-${index}`}
-        renderItem={({ item, index }) => (
-          <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-            <Text style={{ fontWeight: '600' }}>{item.name ?? item.productId}</Text>
-            <Text>Qty: {item.qty}</Text>
-            <Text>Supplier: {item.supplierId ?? '(unassigned)'}</Text>
-
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
-              {suppliers.map(s => (
-                <TouchableOpacity
-                  key={`${item.productId}-${s.id}`}
-                  onPress={() => setLines(prev => prev.map((l, i) => i === index ? { ...l, supplierId: s.id } : l))}
-                  style={{
-                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
-                    borderWidth: 1, borderColor: item.supplierId === s.id ? '#222' : '#ccc',
-                    marginRight: 8, marginBottom: 6
-                  }}
-                >
-                  <Text>{s.name ?? s.id}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-              <Text style={{ marginRight: 8 }}>Set Par:</Text>
-              <TextInput
-                placeholder="e.g. 12"
-                keyboardType="numeric"
-                style={{ borderWidth: 1, borderColor: '#ccc', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, minWidth: 70, marginRight: 8 }}
-                onSubmitEditing={(e) => updatePar(item.productId, e.nativeEvent.text)}
-              />
-              <Text style={{ color: '#777' }}>(press return to save)</Text>
-            </View>
+        {drafted && (
+          <View
+            style={{
+              backgroundColor: '#eef7ff',
+              borderRadius: 8,
+              padding: 8,
+              marginBottom: 8,
+            }}
+          >
+            <Text style={{ fontSize: 12 }}>
+              Draft created — go to Orders to finalise & send.
+            </Text>
           </View>
         )}
-      />
 
-      <TouchableOpacity
-        onPress={onCreateDrafts}
-        disabled={creating || lines.length === 0}
+        {/* Lines */}
+        {b.lines.map(renderLine)}
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fafafa' }}>
+      {/* Top bar */}
+      <View
         style={{
-          backgroundColor: creating || lines.length === 0 ? '#ccc' : '#222',
-          padding: 14,
-          borderRadius: 12,
-          alignItems: 'center',
-          marginTop: 16,
+          padding: 12,
+          borderBottomWidth: 0.5,
+          borderColor: '#eee',
         }}
       >
-        <Text style={{ color: '#fff', fontWeight: '600' }}>
-          {creating ? 'Creating…' : `Create Draft${lines.length > 1 ? 's' : ''} (${totalQty} items)`}
-        </Text>
-      </TouchableOpacity>
+        <View
+          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: '800' }}>Suggested Orders</Text>
+          <View style={{ flexDirection: 'row' }}>
+            <TouchableOpacity onPress={load} style={{ marginRight: 12 }}>
+              <Text style={{ textDecorationLine: 'underline' }}>
+                {loading ? 'Loading…' : 'Refresh'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={createDraftsAllVisible}>
+              <Text style={{ textDecorationLine: 'underline' }}>Create drafts (all)</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {lastCompletedAt && (
+          <Text style={{ marginTop: 6, color: '#666' }}>
+            Based on stock-take completed: {lastCompletedAt}
+          </Text>
+        )}
+      </View>
+
+      {/* One card per unique bucket */}
+      <FlatList
+        data={uniqueBuckets}
+        keyExtractor={(x) => x.key}
+        renderItem={renderBucketCard}
+        contentContainerStyle={{ paddingBottom: 48 }}
+      />
+
+      {/* Supplier picker modal (group or item depending on picker state) */}
+      <Modal
+        visible={picker.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() =>
+          setPicker({ visible: false, bucketKey: null, productId: null, productName: null })
+        }
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.3)',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <View
+            style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, maxHeight: '70%' }}
+          >
+            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>
+              Choose Supplier
+            </Text>
+            <ScrollView>
+              {suppliers.map((s) => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={async () => {
+                    if (picker.productId) {
+                      await assignSupplierOne(picker.productId, picker.productName, s.id);
+                    } else if (picker.bucketKey) {
+                      const bucket = buckets[picker.bucketKey];
+                      if (bucket) await assignSupplierGroup(bucket, s.id);
+                    }
+                  }}
+                >
+                  <View
+                    style={{ paddingVertical: 10, borderBottomWidth: 0.5, borderColor: '#eee' }}
+                  >
+                    <Text>{s.name ?? s.id}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {!suppliers.length && <Text>No suppliers found.</Text>}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() =>
+                setPicker({ visible: false, bucketKey: null, productId: null, productName: null })
+              }
+              style={{ alignSelf: 'flex-end', marginTop: 8 }}
+            >
+              <Text style={{ textDecorationLine: 'underline' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Custom PAR modal */}
+      <Modal
+        visible={parEditor.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() =>
+          setParEditor({ visible: false, productId: null, productName: null, value: '' })
+        }
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.3)',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>
+              Set PAR — {parEditor.productName ?? parEditor.productId}
+            </Text>
+
+            <TextInput
+              value={parEditor.value}
+              onChangeText={(t) => setParEditor((s) => ({ ...s, value: t }))}
+              placeholder="Enter a number"
+              keyboardType="number-pad"
+              style={{
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+              }}
+            />
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                marginTop: 12,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() =>
+                  setParEditor({
+                    visible: false,
+                    productId: null,
+                    productName: null,
+                    value: '',
+                  })
+                }
+              >
+                <Text style={{ marginRight: 16, textDecorationLine: 'underline' }}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  const pid = parEditor.productId;
+                  const name = parEditor.productName ?? parEditor.productId ?? undefined;
+                  const v = parEditor.value.trim();
+                  if (!pid || !v) {
+                    setParEditor({ visible: false, productId: null, productName: null, value: '' });
+                    return;
+                  }
+                  setParEditor({ visible: false, productId: null, productName: null, value: '' });
+                  updatePar(pid, v, name);
+                }}
+              >
+                <Text style={{ textDecorationLine: 'underline' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+
