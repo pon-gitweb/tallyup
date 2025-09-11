@@ -31,6 +31,7 @@ import {
 import { useVenueId } from 'src/context/VenueProvider';
 import { useNavigation } from '@react-navigation/native';
 import useLastCompletedAt from 'src/hooks/useLastCompletedAt';
+import SupplierBadge from 'src/components/SupplierBadge';
 
 type Supplier = { id: string; name?: string | null };
 type SuggestedLine = {
@@ -186,7 +187,7 @@ export default function SuggestedOrderScreen() {
 
   // Draft markers (existence check)
   const [draftBySupplier, setDraftBySupplier] = useState<Record<string, true>>({});
-  const [draftByProduct, setDraftByProduct] = useState<Record<string, true>>({});
+  const [draftByProduct, setDraftByProduct] = useState<Record<string, true>>({}); // kept if we bring back per-line markers
 
   const isKnownSupplier = useCallback((sid?: string | null) => {
     if (!sid || sid === 'unassigned') return false;
@@ -326,17 +327,22 @@ export default function SuggestedOrderScreen() {
 
   /** Setup flags */
   const setupNeeds = useMemo(() => {
-    let needsSupplier = false, needsPar = false;
-    for (const k of uniqueBucketKeys) {
+    let needsSupplier = false, needsPar = false, totalLines = 0, orderable = 0;
+    for (const k of Object.keys(buckets)) {
       const b = buckets[k];
       if (!b) continue;
-      for (const ln of b.lines) {
-        if (!ln.supplierId || !isKnownSupplier(ln.supplierId)) needsSupplier = true;
-        if (ln.needsPar) needsPar = true;
+      for (const ln of (b.lines || [])) {
+        totalLines += 1;
+        const hasKnownSupplier = !!ln.supplierId && isKnownSupplier(ln.supplierId);
+        const hasPar = !ln.needsPar;
+        const qty = Number(ln.qty || 0);
+        if (hasKnownSupplier && hasPar && qty > 0) orderable += 1;
+        if (!hasKnownSupplier) needsSupplier = true;
+        if (!hasPar) needsPar = true;
       }
     }
-    return { needsSupplier, needsPar };
-  }, [uniqueBucketKeys, buckets, isKnownSupplier]);
+    return { needsSupplier, needsPar, totalLines, orderable };
+  }, [buckets, isKnownSupplier]);
 
   /** Header supplier state */
   function headerSupplierState(b: CompatBucket) {
@@ -472,7 +478,7 @@ export default function SuggestedOrderScreen() {
     return { createdOrMerged: true, merged: false };
   }, [venueId, cycleId]);
 
-  /** Build & confirm plan for “Create Drafts (All)” so we don't assume */
+  /** Plan preview for Create Drafts (All) */
   function confirmAllPlan(perSupplier: Map<string, { supplierName: string; lines: SuggestedLine[] }>): Promise<boolean> {
     const plan: Array<{ sid: string; name: string; count: number; existing: boolean }> = [];
     for (const [sid, { supplierName, lines }] of perSupplier.entries()) {
@@ -506,7 +512,7 @@ export default function SuggestedOrderScreen() {
     });
   }
 
-  /** Create drafts for all suppliers (after showing plan) */
+  /** Create drafts for all suppliers */
   const createDraftsForAllSuppliers = useCallback(async () => {
     if (!venueId) return;
     const perSupplier = new Map<string, { supplierName: string; lines: SuggestedLine[] }>();
@@ -529,13 +535,12 @@ export default function SuggestedOrderScreen() {
       return;
     }
 
-    // ✅ show plan first so we don’t assume
     const ok = await confirmAllPlan(perSupplier);
     if (!ok) return;
 
     let processed = 0, mergedCount = 0;
     for (const [sid, { supplierName, lines }] of perSupplier.entries()) {
-      const res = await createOrMergeDraft(sid, supplierName, lines); // non-interactive (plan already shown)
+      const res = await createOrMergeDraft(sid, supplierName, lines);
       if (res?.createdOrMerged) { processed += 1; if (res.merged) mergedCount += 1; }
     }
     await loadDraftMarkers();
@@ -590,6 +595,69 @@ export default function SuggestedOrderScreen() {
     [venueId, suppliers, load]
   );
 
+  /** Find first bucket needing supplier (for empty-state quick action) */
+  function firstBucketNeedingSupplier(): string | null {
+    for (const k of Object.keys(buckets)) {
+      const b = buckets[k];
+      if (!b) continue;
+      if ((b.lines || []).some(ln => !ln.supplierId || !isKnownSupplier(ln.supplierId))) {
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /** Safe route check before navigating to setup */
+  function tryNavigateTo(route: string, fallbackMsg: string) {
+    try {
+      const names = nav?.getState?.()?.routeNames || [];
+      if (Array.isArray(names) && names.includes(route)) {
+        nav.navigate(route as any);
+      } else {
+        Alert.alert('Navigation', fallbackMsg);
+      }
+    } catch {
+      Alert.alert('Navigation', fallbackMsg);
+    }
+  }
+
+  /** Render empty-state helper when nothing orderable and config is missing */
+  function renderEmptyStateIfNeeded() {
+    const { needsSupplier, needsPar, totalLines, orderable } = setupNeeds;
+    const nothingOrderable = orderable === 0;
+
+    if (!nothingOrderable) return null;
+
+    // Only show if we *think* lack of supplier/PAR is the reason
+    if (!(needsSupplier || needsPar)) return null;
+
+    const k = firstBucketNeedingSupplier();
+
+    return (
+      <View style={{ margin: 12, padding: 16, borderRadius: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: '#fde68a' }}>
+        <Text style={{ fontWeight: '800', marginBottom: 6 }}>Nothing to suggest yet</Text>
+        <Text style={{ marginBottom: 4 }}>
+          We can’t build orders until products have a supplier and a PAR level.
+        </Text>
+        {needsSupplier ? <Text style={{ color: '#b45309' }}>• Some products have no valid supplier.</Text> : null}
+        {needsPar ? <Text style={{ color: '#b45309' }}>• Some products are missing PAR.</Text> : null}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+          {k ? (
+            <Chip onPress={() => setPicker({ visible: true, bucketKey: k, productId: null })}>
+              Assign supplier here…
+            </Chip>
+          ) : null}
+          <Chip onPress={() => tryNavigateTo('Suppliers', 'Open Settings → Suppliers to add or edit suppliers.')}>
+            Set Supplier (Setup)
+          </Chip>
+          <Chip onPress={() => tryNavigateTo('Products', 'Open Products to set PAR levels for your items.')}>
+            Set PAR (Setup)
+          </Chip>
+        </View>
+      </View>
+    );
+  }
+
   /** Render bucket */
   const renderBucket = ({ item: key }: { item: string }) => {
     const b = buckets[key];
@@ -640,11 +708,18 @@ export default function SuggestedOrderScreen() {
 
     return (
       <View style={{ margin: 12, padding: 12, borderRadius: 12, backgroundColor: '#fff', elevation: 2 }}>
-        {/* Group header */}
+        {/* Group header (layout-stable) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          {/* Left: badge (if single known) */}
+          {known && !mixed && sid ? (
+            <SupplierBadge supplierId={sid} supplierName={supplierNameOf(sid)} size={28} style={{ marginRight: 8 }} />
+          ) : null}
+
+          {/* Middle: label */}
           <Text
             style={{ fontWeight: '700', flex: 1, minWidth: 0, marginRight: 8 }}
-            numberOfLines={2}
+            numberOfLines={1}
+            ellipsizeMode="tail"
           >
             {label} {lineSuffix}{' '}
             {groupDrafted ? <Text style={{ color: '#059669' }}>• Draft generated</Text> : null}
@@ -652,6 +727,7 @@ export default function SuggestedOrderScreen() {
             {mixed ? <Text style={{ color: '#6b7280' }}>  • Mixed</Text> : null}
           </Text>
 
+          {/* Right: action (no shrink) */}
           <View style={{ flexShrink: 0 }}>
             {primaryAction}
           </View>
@@ -662,7 +738,7 @@ export default function SuggestedOrderScreen() {
           const needsPar = !!line.needsPar;
           const qty = Number(line.qty || 0);
 
-          return (
+        return (
             <View key={line.productId || `${line.productName}-${Math.random().toString(36).slice(2)}`}
                   style={{ paddingVertical: 10, borderTopWidth: 0.5, borderColor: '#eee' }}>
               <Text style={{ fontWeight: '600' }}>
@@ -780,14 +856,8 @@ export default function SuggestedOrderScreen() {
         )}
       </View>
 
-      {/* Setup helper panel */}
-      {(setupNeeds.needsSupplier || setupNeeds.needsPar) && (
-        <View style={{ padding: 12, backgroundColor: '#fff7ed', borderBottomWidth: 1, borderBottomColor: '#fde68a' }}>
-          <Text style={{ fontWeight: '700', marginBottom: 6 }}>Heads up</Text>
-          {setupNeeds.needsSupplier ? <Text>Some products need a valid Supplier assigned.</Text> : null}
-          {setupNeeds.needsPar ? <Text>Some products are missing a PAR level.</Text> : null}
-        </View>
-      )}
+      {/* Empty-state helper (if nothing orderable because of config) */}
+      {renderEmptyStateIfNeeded()}
 
       {/* Header controls */}
       <View style={{ padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
