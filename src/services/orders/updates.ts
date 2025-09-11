@@ -1,84 +1,86 @@
 import { getApp } from 'firebase/app';
 import {
   getFirestore,
-  collection, doc, getDoc, getDocs, query, where,
-  setDoc, updateDoc,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  getDocs,
+  collection,
 } from 'firebase/firestore';
-
-type LinkResult = {
-  productId: string;
-  created?: boolean;
-};
-
-/**
- * Ensure an area-item is linked to a product:
- *  - try find product by name (best-effort)
- *  - else create a product
- *  - then link the area-item's productId/productRef
- */
-export async function linkAreaItemToProduct(
-  venueId: string,
-  areaItemId: string,
-  name?: string | null,
-  supplierId?: string | null
-): Promise<LinkResult> {
-  const db = getFirestore(getApp());
-
-  // 1) try find by exact name
-  let productId: string | null = null;
-  if (name) {
-    try {
-      const q = query(collection(db, 'venues', venueId, 'products'), where('name', '==', name));
-      const snap = await getDocs(q);
-      const first = snap.docs.at(0);
-      if (first) productId = first.id;
-    } catch {
-      // ignore
-    }
-  }
-
-  // 2) create if not found
-  if (!productId) {
-    const newId = doc(collection(db, 'venues', venueId, 'products')).id;
-    await setDoc(doc(db, 'venues', venueId, 'products', newId), {
-      name: name ?? 'Unnamed',
-      supplierId: supplierId ?? null,
-      createdAt: new Date(),
-    }, { merge: true });
-    productId = newId;
-  }
-
-  // 3) link the area-item (we don’t know dep/area ids; scan shallowly — fine for dev)
-  const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
-  for (const dep of deps.docs) {
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
-    for (const area of areasSnap.docs) {
-      const itemRef = doc(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items', areaItemId);
-      const item = await getDoc(itemRef);
-      if (item.exists()) {
-        await updateDoc(itemRef, {
-          productId: productId,
-          productRef: doc(db, 'venues', venueId, 'products', productId),
-        });
-        return { productId, created: true };
-      }
-    }
-  }
-
-  return { productId, created: false };
-}
 
 export async function setParOnProduct(venueId: string, productId: string, par: number) {
   const db = getFirestore(getApp());
-  await setDoc(doc(db, 'venues', venueId, 'products', productId), {
-    par,
-    parLevel: par,
-  }, { merge: true });
+  const ref = doc(db, 'venues', venueId, 'products', productId);
+  const path = `venues/${venueId}/products/${productId}`;
+  try {
+    // Ensure doc exists
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, { createdAt: serverTimestamp() }, { merge: true });
+    }
+    // Normal write: par + parLevel
+    await setDoc(
+      ref,
+      { par: Number(par), parLevel: Number(par), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    if (__DEV__) console.log('[orders/setParOnProduct] updated', { venueId, productId, par, path });
+  } catch (e: any) {
+    console.warn('[orders/setParOnProduct] error(primary)', {
+      venueId, productId, par, path, code: e?.code, message: e?.message,
+    });
+    // Fallback: only parLevel (some rulesets gate specific fields)
+    try {
+      await setDoc(
+        ref,
+        { parLevel: Number(par), updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      if (__DEV__) console.log('[orders/setParOnProduct] updated(fallback:parLevel-only)', { venueId, productId, par, path });
+    } catch (e2: any) {
+      console.warn('[orders/setParOnProduct] error(fallback)', {
+        venueId, productId, par, path, code: e2?.code, message: e2?.message,
+      });
+      throw e2;
+    }
+  }
 }
 
-export async function setSupplierOnProduct(venueId: string, productId: string, supplierId: string) {
+export async function setSupplierOnProduct(
+  venueId: string,
+  productId: string,
+  supplierId: string,
+  supplierName?: string | null
+) {
   const db = getFirestore(getApp());
-  await setDoc(doc(db, 'venues', venueId, 'products', productId), {
-    supplierId,
-  }, { merge: true });
+  const ref = doc(db, 'venues', venueId, 'products', productId);
+  const path = `venues/${venueId}/products/${productId}`;
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, { createdAt: serverTimestamp() }, { merge: true });
+    }
+
+    let name = supplierName ?? null;
+    if (!name) {
+      try {
+        const sSnap = await getDoc(doc(db, 'venues', venueId, 'suppliers', supplierId));
+        name = (sSnap.data() as any)?.name ?? null;
+      } catch {}
+    }
+
+    const payload: any = { supplierId, updatedAt: serverTimestamp() };
+    if (name) payload.supplierName = name;
+
+    await setDoc(ref, payload, { merge: true });
+    if (__DEV__) {
+      console.log('[orders/setSupplierOnProduct] updated', { venueId, productId, supplierId, supplierName: name ?? null, path });
+    }
+  } catch (e: any) {
+    console.warn('[orders/setSupplierOnProduct] error', {
+      venueId, productId, supplierId, path, code: e?.code, message: e?.message,
+    });
+    throw e;
+  }
 }
