@@ -154,6 +154,11 @@ export default function SuggestedOrderScreen() {
   const [picker, setPicker] = useState<{ visible: boolean; bucketKey: string | null; productId: string | null; }>
     ({ visible: false, bucketKey: null, productId: null });
 
+  // Per-supplier draft menu (for mixed/unknown groups)
+  const [perSupplierMenu, setPerSupplierMenu] = useState<{ visible: boolean; bucketKey: string | null }>({
+    visible: false, bucketKey: null,
+  });
+
   // Banner / cycle
   const { loading: bannerLoading, ts: lastCompletedAt, error: bannerError } = useLastCompletedAt(venueId);
   const cycleId = lastCompletedAt ? `cycle_${lastCompletedAt.toMillis()}` : 'cycle_unknown';
@@ -177,7 +182,7 @@ export default function SuggestedOrderScreen() {
 
   /**
    * Load suggestions + suppliers, then HYDRATE lines with supplier info from product docs if missing.
-   * This makes the UI correct even if the builder didn’t attach supplier fields.
+   * Auto-reloads whenever lastCompletedAt changes → auto-hide stale post-finalization.
    */
   const load = useCallback(async () => {
     if (!venueId) return;
@@ -214,7 +219,6 @@ export default function SuggestedOrderScreen() {
           let sid: string | null | undefined = ln.supplierId;
           let sname: string | null | undefined = ln.supplierName;
 
-          // If builder didn’t set or it’s not a known supplier, try pull from product doc
           if (!sid || !known.has(sid)) {
             const pd = productMap.get(ln.productId);
             const fromPd = extractSupplierFromProductDoc(pd);
@@ -229,14 +233,13 @@ export default function SuggestedOrderScreen() {
             supplierId: sid ?? null,
             supplierName: sname ?? null,
             needsSupplier: !sid || !known.has(sid) ? true : false,
-            // keep needsPar as supplied by builder
           };
           newLines.push(hydrated);
         });
         nextBuckets[key] = { ...b, lines: newLines, items: b.items || {} };
       });
 
-      // 6) Logging for visibility
+      // Visibility logs
       const vals: any[] = Object.values(nextBuckets);
       const perSupplierCounts: Record<string, number> = {};
       const countedProductIds = new Set<string>();
@@ -287,23 +290,31 @@ export default function SuggestedOrderScreen() {
     }
   }, [venueId, cycleId]);
 
-  /** Detect stale suggestions (unchanged) */
+  /** Detect stale suggestions hint (optional banner) */
   const detectStale = useCallback(async () => {
     try {
       if (!venueId) { setIsStale(false); return; }
-      const root = collection(getFirestore(getApp()), 'venues', venueId, 'suggestions');
-      const snap = await getDocs(root);
-      const ids = snap.docs.map(d => d.id);
-      setIsStale(ids.length > 0 && !ids.includes(cycleId));
+      // If lastCompletedAt changes, load() runs (see effect below). This hint remains optional.
+      setIsStale(false);
     } catch {
       setIsStale(false);
     }
-  }, [venueId, cycleId]);
+  }, [venueId]);
 
+  // Initial + on demand
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadDraftMarkers(); detectStale(); }, [loadDraftMarkers, detectStale]);
 
-  /** De-dupe keys (keep builder’s groups, but we won’t trust their header for supplier) */
+  // 🔁 Auto-hide stale: react to new stock take (lastCompletedAt changed) → auto reload suggestions
+  useEffect(() => {
+    // changes in lastCompletedAt imply a new cycle; auto-reload suggestions
+    if (venueId && lastCompletedAt) {
+      load();
+      loadDraftMarkers();
+    }
+  }, [venueId, lastCompletedAt?.toMillis()]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** De-dupe keys (keep builder’s grouping, but we won’t trust header for supplier) */
   const uniqueBucketKeys = useMemo(() => {
     const seen = new WeakSet<object>();
     const out: string[] = [];
@@ -330,7 +341,7 @@ export default function SuggestedOrderScreen() {
     return { needsSupplier, needsPar };
   }, [uniqueBucketKeys, buckets, isKnownSupplier]);
 
-  /** Create draft (per supplier) */
+  /** Create draft (per supplier) with duplicate guard + quantity aggregation on merge */
   const createOrMergeDraft = useCallback(async (supplierId: string, supplierName: string, lines: SuggestedLine[]) => {
     const db = getFirestore(getApp());
     if (!venueId) throw new Error('No venue selected');
@@ -347,25 +358,65 @@ export default function SuggestedOrderScreen() {
       where('suggestionCycleId', '==', cycleId),
     );
     const snap = await getDocs(q1);
-    const batch = writeBatch(db);
 
     if (!snap.empty) {
+      // Merge path: aggregate quantities predictably
       const existing = snap.docs[0];
       const orderRef = doc(db, 'venues', venueId, 'orders', existing.id);
-      batch.set(orderRef, { status: 'draft', supplierId, supplierName, suggestionCycleId: cycleId, source: 'suggested', origin: 'suggested', displayStatus: 'Draft', updatedAt: now }, { merge: true });
-      valid.forEach((it) => batch.set(doc(orderRef, 'lines', it.productId), { productId: it.productId, name: it.productName || it.productId, qty: Number(it.qty), updatedAt: now }, { merge: true }));
-      await batch.commit();
+      await setDoc(orderRef, {
+        status: 'draft',
+        supplierId,
+        supplierName,
+        suggestionCycleId: cycleId,
+        source: 'suggested',
+        origin: 'suggested',
+        displayStatus: 'Draft',
+        updatedAt: now,
+      }, { merge: true });
+
+      for (const it of valid) {
+        const lineRef = doc(orderRef, 'lines', it.productId);
+        const prev = await getDoc(lineRef);
+        const prevQty = Number(prev.exists() ? (prev.data() as any)?.qty ?? 0 : 0);
+        const nextQty = prevQty + Number(it.qty);
+        await setDoc(lineRef, {
+          productId: it.productId,
+          name: it.productName || it.productId,
+          qty: nextQty,
+          updatedAt: now,
+        }, { merge: true });
+      }
       return { createdOrMerged: true, merged: true };
     }
 
+    // New draft
     const newOrderRef = doc(collection(db, 'venues', venueId, 'orders'));
-    batch.set(newOrderRef, { status: 'draft', supplierId, supplierName, suggestionCycleId: cycleId, source: 'suggested', origin: 'suggested', displayStatus: 'Draft', createdAt: now, updatedAt: now });
-    valid.forEach((it) => batch.set(doc(newOrderRef, 'lines', it.productId), { productId: it.productId, name: it.productName || it.productId, qty: Number(it.qty), createdAt: now, updatedAt: now }));
+    const batch = writeBatch(db);
+    batch.set(newOrderRef, {
+      status: 'draft',
+      supplierId,
+      supplierName,
+      suggestionCycleId: cycleId,
+      source: 'suggested',
+      origin: 'suggested',
+      displayStatus: 'Draft',
+      createdAt: now,
+      updatedAt: now,
+    });
+    valid.forEach((it) => {
+      batch.set(doc(newOrderRef, 'lines', it.productId), {
+        productId: it.productId,
+        name: it.productName || it.productId,
+        qty: Number(it.qty),
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
     await batch.commit();
     return { createdOrMerged: true, merged: false };
   }, [venueId, cycleId]);
 
-  /** Create Drafts (All): bucket per-line by supplierId (don’t trust header) */
+  /** “Create Drafts (All)” still supported: per-line bucketing by supplierId */
   const createDraftsForAllSuppliers = useCallback(async () => {
     if (!venueId) return;
     const perSupplier = new Map<string, { supplierName: string; lines: SuggestedLine[] }>();
@@ -388,13 +439,13 @@ export default function SuggestedOrderScreen() {
       return;
     }
 
-    let processed = 0;
+    let processed = 0, mergedCount = 0;
     for (const [sid, { supplierName, lines }] of perSupplier.entries()) {
       const res = await createOrMergeDraft(sid, supplierName, lines);
-      if (res?.createdOrMerged) processed += 1;
+      if (res?.createdOrMerged) { processed += 1; if (res.merged) mergedCount += 1; }
     }
     await loadDraftMarkers();
-    Alert.alert('Drafts', `Processed ${processed} supplier draft(s).${skippedUnknown ? ` Skipped ${skippedUnknown} line(s) without a valid supplier.` : ''}`);
+    Alert.alert('Drafts', `Processed ${processed} supplier draft(s).${mergedCount ? ` ${mergedCount} merged.` : ''}${skippedUnknown ? ` Skipped ${skippedUnknown} line(s) without a valid supplier.` : ''}`);
     nav.navigate('Orders');
   }, [venueId, uniqueBucketKeys, buckets, isKnownSupplier, supplierNameOf, createOrMergeDraft, loadDraftMarkers, nav]);
 
@@ -445,7 +496,7 @@ export default function SuggestedOrderScreen() {
     [venueId, suppliers, load]
   );
 
-  /** Render helpers */
+  /** Header label state (derived from lines) */
   function headerSupplierState(b: CompatBucket) {
     const sids = new Set<string>();
     b.lines?.forEach((ln) => { if (ln?.supplierId) sids.add(ln.supplierId); });
@@ -456,6 +507,20 @@ export default function SuggestedOrderScreen() {
     return { label: supplierNameOf(sid), sid, known, mixed: false };
   }
 
+  /** List known suppliers present in this bucket (for per-supplier draft menu) */
+  function knownSuppliersInBucket(b: CompatBucket): Array<{ supplierId: string; supplierName: string; count: number }> {
+    const map = new Map<string, { supplierName: string; count: number }>();
+    (b.lines || []).forEach(ln => {
+      const sid = ln.supplierId;
+      if (!sid || !isKnownSupplier(sid)) return;
+      const name = supplierNameOf(sid, ln.supplierName);
+      const prev = map.get(sid) || { supplierName: name, count: 0 };
+      prev.count += 1;
+      map.set(sid, prev);
+    });
+    return [...map.entries()].map(([supplierId, { supplierName, count }]) => ({ supplierId, supplierName, count }));
+  }
+
   const renderBucket = ({ item: key }: { item: string }) => {
     const b = buckets[key];
     const count = b?.lines?.length ?? 0;
@@ -463,6 +528,8 @@ export default function SuggestedOrderScreen() {
 
     const { label, sid, known, mixed } = headerSupplierState(b);
     const groupDrafted = sid && known ? !!draftBySupplier[sid] : false;
+
+    const perSupplier = knownSuppliersInBucket(b); // for menu
 
     return (
       <View style={{ margin: 12, padding: 12, borderRadius: 12, backgroundColor: '#fff', elevation: 2 }}>
@@ -472,23 +539,37 @@ export default function SuggestedOrderScreen() {
             {label} — {count} item{count > 1 ? 's' : ''}{' '}
             {groupDrafted ? <Text style={{ color: '#059669' }}>• Draft generated</Text> : null}
             {!known ? <Text style={{ color: '#b45309' }}>  • Supplier not set</Text> : null}
+            {mixed ? <Text style={{ color: '#6b7280' }}>  • Mixed</Text> : null}
           </Text>
 
-          {known && !mixed ? (
-            <TouchableOpacity
-              onPress={() => createOrMergeDraft(sid!, supplierNameOf(sid!), b.lines)}
-              style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' }}
-            >
-              <Text style={{ fontWeight: '600' }}>Create Draft</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={() => setPicker({ visible: true, bucketKey: key, productId: null })}
-              style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#111827' }}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Assign Supplier</Text>
-            </TouchableOpacity>
-          )}
+          <View style={{ flexDirection: 'row' }}>
+            {known && !mixed ? (
+              <TouchableOpacity
+                onPress={() => createOrMergeDraft(sid!, supplierNameOf(sid!), b.lines)}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb', marginRight: 8 }}
+              >
+                <Text style={{ fontWeight: '600' }}>Create Draft</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Per-supplier menu always available if any known suppliers in this bucket */}
+            {perSupplier.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setPerSupplierMenu({ visible: true, bucketKey: key })}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' }}
+              >
+                <Text style={{ fontWeight: '600' }}>Per-supplier…</Text>
+              </TouchableOpacity>
+            ) : (
+              // Otherwise offer Assign Supplier
+              <TouchableOpacity
+                onPress={() => setPicker({ visible: true, bucketKey: key, productId: null })}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#111827' }}
+              >
+                <Text style={{ color: 'white', fontWeight: '700' }}>Assign Supplier</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {b.lines.map((line) => {
@@ -528,6 +609,49 @@ export default function SuggestedOrderScreen() {
     );
   };
 
+  /** Per-supplier menu content for a given bucket */
+  function renderPerSupplierMenu() {
+    if (!perSupplierMenu.visible || !perSupplierMenu.bucketKey) return null;
+    const b = buckets[perSupplierMenu.bucketKey];
+    const options = knownSuppliersInBucket(b || { lines: [], items: {} });
+
+    return (
+      <Modal visible transparent animationType="fade"
+             onRequestClose={() => setPerSupplierMenu({ visible: false, bucketKey: null })}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, maxHeight: '70%' }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>Create draft for…</Text>
+            <ScrollView>
+              {options.map(opt => (
+                <TouchableOpacity
+                  key={opt.supplierId}
+                  onPress={async () => {
+                    await createOrMergeDraft(opt.supplierId, opt.supplierName, b.lines);
+                    await loadDraftMarkers();
+                    setPerSupplierMenu({ visible: false, bucketKey: null });
+                    Alert.alert('Draft', `Draft created for ${opt.supplierName}`);
+                  }}
+                >
+                  <View style={{ paddingVertical: 10, borderBottomWidth: 0.5, borderColor: '#eee' }}>
+                    <Text>{opt.supplierName}  <Text style={{ color: '#6b7280' }}>({opt.count} line{opt.count>1?'s':''})</Text></Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {options.length === 0 && <Text>No known suppliers in this group.</Text>}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() => setPerSupplierMenu({ visible: false, bucketKey: null })}
+              style={{ alignSelf: 'flex-end', marginTop: 8 }}
+            >
+              <Text style={{ textDecorationLine: 'underline' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fafafa' }}>
       {/* Context banner */}
@@ -553,10 +677,10 @@ export default function SuggestedOrderScreen() {
         </View>
       )}
 
-      {/* Optional stale hint */}
+      {/* Optional stale hint (we auto-reload anyway) */}
       {isStale && (
         <View style={{ padding: 12, backgroundColor: '#fef2f2', borderBottomWidth: 1, borderBottomColor: '#fecaca' }}>
-          <Text style={{ color: '#991b1b' }}>A newer stock take exists. Old suggestions may be hidden.</Text>
+          <Text style={{ color: '#991b1b' }}>A newer stock take exists. Suggestions were refreshed.</Text>
         </View>
       )}
 
@@ -615,6 +739,9 @@ export default function SuggestedOrderScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Per-supplier create menu */}
+      {renderPerSupplierMenu()}
     </SafeAreaView>
   );
 }
