@@ -1,58 +1,119 @@
-// @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, collection, getDocs, query, where, orderBy, limit,
-  doc, setDoc, serverTimestamp
+  getFirestore, collection, query, orderBy, limit as fblimit, where,
+  getDocs, startAt, endAt
 } from 'firebase/firestore';
 
-export type Product = {
+export type ProductRow = {
   id: string;
   name?: string | null;
   supplierId?: string | null;
-  supplierName?: string | null;
+  active?: boolean | null;
 };
 
-/** Simple client-side search by name/id, optionally constrained to supplierId */
-export async function searchProducts(venueId: string, opts: { q?: string; supplierId?: string | null } = {}): Promise<Product[]> {
+type ListOpts = { limit?: number; onlyActive?: boolean };
+
+/** First page browse by supplier (ordered by name). */
+export async function listProductsBySupplierPage(
+  venueId: string,
+  supplierId: string,
+  limit: number = 50,
+  onlyActive: boolean = true,
+  startAfterName?: string | null
+): Promise<{ items: ProductRow[]; nextCursor: string | null }> {
+  if (!venueId || !supplierId) return { items: [], nextCursor: null };
   const db = getFirestore(getApp());
-  // Fetch by supplier if provided; otherwise fetch a small page, we filter client-side
-  const baseCol = collection(db, 'venues', venueId, 'products');
-  let snap;
-  if (opts.supplierId) {
-    snap = await getDocs(query(baseCol, where('supplierId', '==', opts.supplierId)));
-  } else {
-    // A small bounded set to keep UI responsive on large catalogs
-    try {
-      snap = await getDocs(query(baseCol, orderBy('name'), limit(200)));
-    } catch {
-      snap = await getDocs(baseCol);
-    }
-  }
-  const q = (opts.q || '').toLowerCase().trim();
-  const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-  if (!q) return rows;
-  return rows.filter(p =>
-    String(p.name || '').toLowerCase().includes(q) ||
-    String(p.id || '').toLowerCase().includes(q)
+  let qRef = query(
+    collection(db, 'venues', venueId, 'products'),
+    where('supplierId', '==', supplierId),
+    orderBy('name'),
+    fblimit(Math.max(1, Math.min(limit, 100)))
   );
+  // For cursor, we use name-based “startAt next value” pagination.
+  if (startAfterName && startAfterName.length) {
+    // move past previous name by starting at a string just after it
+    const bump = startAfterName + '\u0000';
+    qRef = query(
+      collection(db, 'venues', venueId, 'products'),
+      where('supplierId', '==', supplierId),
+      orderBy('name'),
+      startAt(bump),
+      fblimit(Math.max(1, Math.min(limit, 100)))
+    );
+  }
+  if (onlyActive) {
+    // If you add this filter, you will need index: supplierId ASC, active ASC, name ASC
+    // qRef = query(qRef, where('active', '==', true));
+  }
+  const snap = await getDocs(qRef);
+  const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+  const last = items.length ? items[items.length - 1] : null;
+  return { items, nextCursor: last?.name ?? null };
 }
 
-/** Quick-create a product (ID = slug from name), supplier set to the draft's supplier */
-export async function quickCreateProduct(venueId: string, name: string, supplierId: string, supplierName?: string | null) {
-  const id = slug3(name);
+/**
+ * Supplier-scoped prefix search with pagination.
+ * Uses orderBy('name') + startAt(term) + endAt(term+'\uf8ff') limited by `limit`.
+ * Cursor is the last `name` from previous page (same term).
+ *
+ * Required composite index (one-time):
+ *   Collection group: products
+ *   Fields: supplierId ASC, name ASC
+ */
+export async function searchProductsBySupplierPrefixPage(
+  venueId: string,
+  supplierId: string,
+  term: string,
+  limit: number = 30,
+  startAfterName?: string | null
+): Promise<{ items: ProductRow[]; nextCursor: string | null }> {
+  if (!venueId || !supplierId) return { items: [], nextCursor: null };
+  const clean = (term || '').trim();
+  if (!clean) return { items: [], nextCursor: null };
+
   const db = getFirestore(getApp());
-  await setDoc(doc(db, 'venues', venueId, 'products', id), {
-    name,
-    supplierId,
-    supplierName: supplierName ?? supplierId,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
-  return { id, name, supplierId, supplierName: supplierName ?? supplierId };
+
+  // Base query for first page
+  let qRef = query(
+    collection(db, 'venues', venueId, 'products'),
+    where('supplierId', '==', supplierId),
+    orderBy('name'),
+    startAt(clean),
+    endAt(clean + '\uf8ff'),
+    fblimit(Math.max(1, Math.min(limit, 50)))
+  );
+
+  // For “next pages”, we start just after the last name we’ve already shown, but keep the same prefix window.
+  if (startAfterName && startAfterName.length) {
+    const bump = startAfterName + '\u0000';
+    qRef = query(
+      collection(db, 'venues', venueId, 'products'),
+      where('supplierId', '==', supplierId),
+      orderBy('name'),
+      startAt(bump),
+      endAt(clean + '\uf8ff'),
+      fblimit(Math.max(1, Math.min(limit, 50)))
+    );
+  }
+
+  const snap = await getDocs(qRef);
+  const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+  const last = items.length ? items[items.length - 1] : null;
+  return { items, nextCursor: last?.name ?? null };
 }
 
-/** Tiny slugger, keeps alnum and dashes, min 3 chars */
-export function slug3(s: string) {
-  const base = (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return (base || 'prod').slice(0, 40);
+// (Kept for any other callers that used these before)
+export async function listProducts(venueId: string, opts: ListOpts = {}): Promise<ProductRow[]> {
+  const { limit = 50, onlyActive = true } = opts;
+  if (!venueId) return [];
+  const db = getFirestore(getApp());
+  let qRef = query(collection(db, 'venues', venueId, 'products'), orderBy('name'), fblimit(Math.max(1, Math.min(limit, 100))));
+  if (onlyActive) {
+    // qRef = query(qRef, where('active', '==', true));
+  }
+  const snap = await getDocs(qRef);
+  return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 }
+
+const _default = { listProductsBySupplierPage, searchProductsBySupplierPrefixPage, listProducts };
+export default _default;

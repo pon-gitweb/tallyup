@@ -1,31 +1,47 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, DevSettings } from 'react-native';
-import { logError } from '../utils/errors';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 
-type State = { hasError: boolean; detail?: string };
+type State = { error?: any; info?: any };
 
 export default class AppErrorBoundary extends React.Component<React.PropsWithChildren, State> {
-  state: State = { hasError: false };
-  static getDerivedStateFromError(error: any) { return { hasError: true, detail: String(error?.message || error) }; }
-  componentDidCatch(error: any, info: any) { logError(error, 'AppErrorBoundary', { componentStack: info?.componentStack }); }
-  handleReload = () => { DevSettings.reload(); };
+  state: State = {};
+
+  static getDerivedStateFromError(error: any) {
+    return { error };
+  }
+
+  componentDidCatch(error: any, info: any) {
+    console.error('[ErrorBoundary] componentDidCatch error:', error);
+    console.error('[ErrorBoundary] componentDidCatch info:', info);
+    this.setState({ error, info });
+  }
+
   render() {
-    if (!this.state.hasError) return this.props.children;
+    const { error, info } = this.state;
+    if (!error) return this.props.children as any;
+
+    const details = String(error?.stack || error?.message || error) +
+      (info?.componentStack ? `\n\nComponent stack:\n${info.componentStack}` : '');
+
     return (
-      <View style={styles.wrap}>
+      <View style={styles.container}>
         <Text style={styles.title}>Something went wrong</Text>
-        <Text style={styles.sub}>The app hit an unexpected error. You can reload and continue. If this keeps happening, please let us know.</Text>
-        {this.state.detail ? <Text style={styles.detail}>{this.state.detail}</Text> : null}
-        <TouchableOpacity style={styles.btn} onPress={this.handleReload}><Text style={styles.btnText}>Reload App</Text></TouchableOpacity>
+        <ScrollView style={styles.box} contentContainerStyle={{ padding: 12 }}>
+          <Text style={styles.mono}>{details}</Text>
+        </ScrollView>
+        <TouchableOpacity style={styles.btn} onPress={() => this.setState({ error: undefined, info: undefined })}>
+          <Text style={styles.btnText}>Dismiss</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 }
+
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 20, gap: 12, justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '800' },
-  sub: { opacity: 0.8 },
-  detail: { fontFamily: 'monospace', fontSize: 12, opacity: 0.7 },
-  btn: { backgroundColor: '#0A84FF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, alignSelf: 'flex-start' },
+  container: { flex: 1, padding: 16, backgroundColor: '#fff' },
+  title: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  box: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, backgroundColor: '#fafafa' },
+  mono: { fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }) as any, fontSize: 12, color: '#333' },
+  btn: { marginTop: 12, backgroundColor: '#0a7', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   btnText: { color: '#fff', fontWeight: '700' },
 });
