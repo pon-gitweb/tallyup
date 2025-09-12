@@ -10,6 +10,11 @@ import SettingsScreen from '../screens/SettingsScreen';
 import ReportsScreen from '../screens/ReportsScreen';
 import CreateVenueScreen from '../screens/CreateVenueScreen';
 
+// Orders / Suggested Orders (use the singular file)
+import OrdersScreen from '../screens/orders/OrdersScreen';
+import SuggestedOrderScreen from '../screens/orders/SuggestedOrderScreen';
+import OrderDetailScreen from '../screens/orders/OrderDetailScreen';
+
 export type AppStackParamList = {
   Dashboard: undefined;
   DepartmentSelection: { venueId: string; sessionId?: string };
@@ -18,6 +23,11 @@ export type AppStackParamList = {
   Settings: undefined;
   Reports: undefined;
   CreateVenue: { origin?: 'auth' | 'app' } | undefined;
+
+  // Orders
+  SuggestedOrders: undefined;
+  Orders: undefined;
+  OrderDetail: { orderId: string };
 };
 
 const Stack = createNativeStackNavigator<AppStackParamList>();
@@ -34,6 +44,11 @@ export default function AppNavigator() {
         <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
         <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create Venue' }} />
         <Stack.Screen name="VenueSetup" component={require('../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
+
+        {/* Orders flow */}
+        <Stack.Screen name="SuggestedOrders" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
+        <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
+        <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -5,12 +5,16 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import OriginalOrderDetailScreen from './OrderDetailScreen';
 
 import { getApp } from 'firebase/app';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  onSnapshot,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  getDocs,
+} from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
-import { submitDraftOrder } from '../../services/orders';
-
-// ✅ NEW: inline "Add item" for drafts
-import AddLineToDraft from '../../components/orders/AddLineToDraft';
 
 export default function OrderDetailWithHeader(props: any) {
   const navigation = useNavigation<any>();
@@ -23,7 +27,7 @@ export default function OrderDetailWithHeader(props: any) {
 
   const [liveStatus, setLiveStatus] = useState<string | undefined>(undefined);
 
-  // Live order status
+  // Live order status from Firestore
   useEffect(() => {
     if (!venueId || !orderId) return;
     const db = getFirestore(getApp());
@@ -32,9 +36,11 @@ export default function OrderDetailWithHeader(props: any) {
       ref,
       (snap) => {
         const data = snap.data() as any;
-        if (data && typeof data.status === 'string') setLiveStatus(data.status);
+        if (data && typeof data.status === 'string') {
+          setLiveStatus((data.status || '').toString().toLowerCase());
+        }
       },
-      (err) => console.warn('[OrderDetailHeader] onSnapshot error', err)
+      (err) => console.warn('[OrderDetailHeader v7] onSnapshot error', err)
     );
     return () => unsub();
   }, [venueId, orderId]);
@@ -44,7 +50,7 @@ export default function OrderDetailWithHeader(props: any) {
     [liveStatus, paramStatus]
   );
 
-  // Visibility rules (MVP)
+  // Visibility (MVP)
   const showSubmit  = status === 'draft';
   const showReceive = status === 'submitted';
   const showInvoice = status === 'submitted' || status === 'received';
@@ -52,32 +58,39 @@ export default function OrderDetailWithHeader(props: any) {
   const doSubmit = useCallback(async () => {
     try {
       if (!venueId || !orderId) throw new Error('Missing venue/order id.');
-      await submitDraftOrder(venueId, orderId, user?.uid);
-      setLiveStatus('submitted'); // optimistic; snapshot will confirm
+      const db = getFirestore(getApp());
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+
+      // Guard: don't submit an empty draft
+      const linesSnap = await getDocs(collection(orderRef, 'lines'));
+      if (linesSnap.empty) {
+        Alert.alert('Submit', 'This draft has no lines to submit.');
+        return;
+      }
+
+      // Persist transition (idempotent)
+      await updateDoc(orderRef, {
+        status: 'submitted',
+        displayStatus: 'Submitted',
+        submittedAt: serverTimestamp(),
+        submittedBy: user?.uid ?? null,
+        updatedAt: serverTimestamp(),
+      });
+
+      // Optimistic; onSnapshot will confirm
+      setLiveStatus('submitted');
       Alert.alert('Order', 'Order submitted.');
     } catch (e: any) {
-      console.warn('[OrderDetailHeader] submit error', e);
+      console.warn('[OrderDetailHeader v7] submit error', e);
       Alert.alert('Order', e?.message || 'Failed to submit order.');
     }
   }, [venueId, orderId, user?.uid]);
 
   const applyHeader = useCallback(() => {
-    console.log('[OrderDetailHeader v6] apply', { orderId, status, showSubmit, showReceive, showInvoice });
+    console.log('[OrderDetailHeader v7] apply', { orderId, status, showSubmit, showReceive, showInvoice });
     navigation.setOptions({
       headerRight: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          {/* NEW: Add item (only in Draft) */}
-          {showSubmit && !!venueId && !!orderId && (
-            <View style={{ paddingHorizontal: 8 }}>
-              <AddLineToDraft
-                venueId={venueId}
-                orderId={orderId}
-                compact
-                // onAdded can trigger any local refresh if you keep order state here
-              />
-            </View>
-          )}
-
+        <View style={{ flexDirection: 'row' }}>
           {showSubmit && (
             <TouchableOpacity onPress={doSubmit} style={{ paddingHorizontal: 12 }}>
               <Text style={{ fontSize: 16, fontWeight: '600' }}>Submit</Text>
@@ -110,7 +123,7 @@ export default function OrderDetailWithHeader(props: any) {
         </View>
       ),
     });
-  }, [navigation, orderId, status, showSubmit, showReceive, showInvoice, doSubmit, venueId]);
+  }, [navigation, orderId, status, showSubmit, showReceive, showInvoice, doSubmit]);
 
   useFocusEffect(useCallback(() => { applyHeader(); return () => {}; }, [applyHeader]));
   useEffect(() => { applyHeader(); }, [applyHeader]);
