@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
@@ -16,26 +16,45 @@ export default function AreaSelectionScreen() {
   const [loading, setLoading] = useState(true);
   const [areas, setAreas] = useState<AreaRow[]>([]);
 
+  // Stable loader used by both effects
+  const fetchAreas = useCallback(async () => {
+    if (!venueId || !departmentId) { return; }
+    try {
+      const snap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
+      const rows: AreaRow[] = [];
+      snap.forEach(a => {
+        const d: any = a.data();
+        rows.push({ id: a.id, name: d?.name || a.id, startedAt: d?.startedAt, completedAt: d?.completedAt });
+      });
+      setAreas(rows);
+    } catch (e: any) {
+      console.log('[TallyUp Areas] load error', JSON.stringify({ code: e?.code, message: e?.message }));
+    }
+  }, [venueId, departmentId]);
+
+  // Initial load
   useEffect(() => {
-    let cancel = false;
+    let alive = true;
     (async () => {
       if (!venueId || !departmentId) { setLoading(false); return; }
-      try {
-        const snap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
-        const rows: AreaRow[] = [];
-        snap.forEach(a => {
-          const d: any = a.data();
-          rows.push({ id: a.id, name: d?.name || a.id, startedAt: d?.startedAt, completedAt: d?.completedAt });
-        });
-        if (!cancel) setAreas(rows);
-      } catch (e: any) {
-        console.log('[TallyUp Areas] load error', JSON.stringify({ code: e?.code, message: e?.message }));
-      } finally {
-        if (!cancel) setLoading(false);
-      }
+      setLoading(true);
+      await fetchAreas();
+      if (alive) setLoading(false);
     })();
-    return () => { cancel = true; };
-  }, [venueId, departmentId]);
+    return () => { alive = false; };
+  }, [venueId, departmentId, fetchAreas]);
+
+  // Refresh when screen regains focus (after submitting an area)
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        if (cancelled) return;
+        await fetchAreas();
+      })();
+      return () => { cancelled = true; };
+    }, [fetchAreas])
+  );
 
   function statusOf(a: AreaRow) {
     if (a.completedAt) return 'Completed';
