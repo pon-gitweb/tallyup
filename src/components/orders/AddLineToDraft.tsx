@@ -8,6 +8,7 @@ import {
   getFirestore, doc, getDoc, setDoc, serverTimestamp, collection
 } from 'firebase/firestore';
 import { searchProducts, quickCreateProduct } from '../../services/products';
+import { savedToast } from '../../utils/toast';
 
 type Props = {
   venueId: string;
@@ -121,6 +122,7 @@ function PickerModal({ venueId, orderId, supplierId, supplierName, onClose, onAd
       qty: prevQty + n,
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    savedToast('Line added');
 
     onAdded?.();
     Alert.alert('Draft', `Added ${n} × “${product.name || product.id}”`);

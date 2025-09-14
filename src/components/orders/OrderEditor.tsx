@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { useVenueId } from 'src/context/VenueProvider';
 import SupplierBadge from 'src/components/SupplierBadge';
+import { savedToast } from '../../utils/toast';
 
 type Line = { productId: string; name?: string | null; qty: number };
 type Props = { orderId: string; onSubmitted?: () => void };
@@ -67,14 +68,17 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
     const next = prev + delta;
     if (next <= 0) {
       await deleteDoc(lr);
+      savedToast('Line removed');
     } else {
       await setDoc(lr, { qty: next, updatedAt: serverTimestamp() }, { merge: true });
+      savedToast('Draft updated');
     }
   }, [orderRef]);
 
   const deleteLine = useCallback(async (productId: string) => {
     if (!orderRef) return;
     await deleteDoc(doc(orderRef, 'lines', productId));
+    savedToast('Line removed');
   }, [orderRef]);
 
   const submit = useCallback(async () => {
