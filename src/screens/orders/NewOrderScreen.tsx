@@ -56,12 +56,18 @@ export default function NewOrderScreen() {
     const q = search.trim().toLowerCase();
     return products
       .filter(p => {
-        // Show all for now; in future you might filter by supplier price list
+        // Supplier-scoped list (client-side only)
+        if (!supplierId) return false;
+        if ((p as any)?.supplierId !== supplierId) return false;
+
+        // Optional search on name/SKU
         if (!q) return true;
-        return (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q);
+        const name = (p.name || '').toLowerCase();
+        const sku  = (p.sku  || '').toLowerCase();
+        return name.includes(q) || sku.includes(q);
       })
       .slice(0, 100);
-  }, [products, search]);
+  }, [products, search, supplierId]);
 
   function addProduct(p: Product) {
     const exists = lines.find(l => l.productId === p.id);
