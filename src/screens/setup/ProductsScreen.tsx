@@ -4,6 +4,11 @@ import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById, Product } from '../../services/products';
 
+const BRAND_BLUE = '#0A84FF';
+const STUB_BG = '#EAF2FF';     // lighter brand blue for "no-op" pills
+const STUB_TAG_BG = '#DDEBFF';  // even lighter tag
+const STUB_TEXT = BRAND_BLUE;
+
 export default function ProductsScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
@@ -53,6 +58,37 @@ export default function ProductsScreen() {
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Products</Text>
+
+      {/* Coming-soon pills (uniform 2-column, lighter brand blue) */}
+      <View style={styles.stubGrid}>
+        <TouchableOpacity
+          style={styles.stub}
+          onPress={() => Alert.alert('Bulk Edit', 'Coming soon')}
+          activeOpacity={0.9}
+        >
+          <Text style={styles.stubTitle}>Bulk Edit</Text>
+          <Text style={styles.stubTag}>Coming soon</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.stub}
+          onPress={() => Alert.alert('CSV Import', 'Coming soon')}
+          activeOpacity={0.9}
+        >
+          <Text style={styles.stubTitle}>CSV Import</Text>
+          <Text style={styles.stubTag}>Coming soon</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.stub}
+          onPress={() => Alert.alert('Barcode Scan', 'Coming soon')}
+          activeOpacity={0.9}
+        >
+          <Text style={styles.stubTitle}>Barcode Scan</Text>
+          <Text style={styles.stubTag}>Coming soon</Text>
+        </TouchableOpacity>
+      </View>
+
       <TouchableOpacity style={styles.primary} onPress={onNew}><Text style={styles.primaryText}>Add Product</Text></TouchableOpacity>
 
       <FlatList
@@ -83,11 +119,20 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, gap: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   title: { fontSize: 22, fontWeight: '800' },
-  primary: { backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+
+  // Uniform two-column pill grid (brand-aligned "no-op" look)
+  stubGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 2 },
+  stub: { backgroundColor: STUB_BG, padding: 12, borderRadius: 12, marginBottom: 10, flexBasis: '48%' },
+  stubTitle: { fontWeight: '800', color: STUB_TEXT },
+  stubTag: { marginTop: 6, alignSelf: 'flex-start', backgroundColor: STUB_TAG_BG, color: STUB_TEXT, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, fontSize: 12, fontWeight: '700' },
+
+  primary: { backgroundColor: BRAND_BLUE, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   primaryText: { color: 'white', fontWeight: '700' },
+
   row: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { fontWeight: '700' },
   sub: { opacity: 0.7, marginTop: 2 },
   smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
   smallText: { fontWeight: '700' },
 });
+

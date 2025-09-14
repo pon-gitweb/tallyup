@@ -53,6 +53,23 @@ export default function SuppliersScreen() {
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Suppliers</Text>
+
+      {/* Coming-soon stubs (uniform two-column pills) */}
+      <View style={styles.pillGrid} pointerEvents="none">
+        <View style={styles.pill}>
+          <Text style={styles.pillTitle}>Import Catalog (CSV/XLS)</Text>
+          <Text style={styles.pillBadge}>Coming soon</Text>
+        </View>
+        <View style={styles.pill}>
+          <Text style={styles.pillTitle}>Link Supplier API</Text>
+          <Text style={styles.pillBadge}>Coming soon</Text>
+        </View>
+        <View style={styles.pill}>
+          <Text style={styles.pillTitle}>Bulk Price Update</Text>
+          <Text style={styles.pillBadge}>Coming soon</Text>
+        </View>
+      </View>
+
       <TouchableOpacity style={styles.primary} onPress={onNew}><Text style={styles.primaryText}>Add Supplier</Text></TouchableOpacity>
 
       <FlatList
@@ -79,8 +96,25 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, gap: 12 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   title: { fontSize: 22, fontWeight: '800' },
+
+  // Coming-soon pills
+  pillGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 },
+  pill: {
+    width: '48%',
+    backgroundColor: '#F2F2F7',
+    borderRadius: 12,
+    padding: 12,
+    minHeight: 76,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    justifyContent: 'space-between',
+  },
+  pillTitle: { fontWeight: '800' },
+  pillBadge: { marginTop: 6, color: '#6b7280', fontWeight: '600' },
+
   primary: { backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   primaryText: { color: 'white', fontWeight: '700' },
+
   row: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { fontWeight: '700' },
   sub: { opacity: 0.7, marginTop: 2 },
