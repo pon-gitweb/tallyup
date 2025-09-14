@@ -1,19 +1,18 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList, TextInput
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById, Product } from '../../services/products';
 
-const BRAND_BLUE = '#0A84FF';
-const STUB_BG = '#EAF2FF';     // lighter brand blue for "no-op" pills
-const STUB_TAG_BG = '#DDEBFF';  // even lighter tag
-const STUB_TEXT = BRAND_BLUE;
-
 export default function ProductsScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Product[]>([]);
+  const [q, setQ] = useState('');
 
   async function load() {
     if (!venueId) { setRows([]); setLoading(false); return; }
@@ -53,50 +52,79 @@ export default function ProductsScreen() {
     ]);
   }
 
-  if (loading) return (<View style={styles.center}><ActivityIndicator /><Text>Loading products…</Text></View>);
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((p) => {
+      const name = (p.name || '').toLowerCase();
+      const sku = (p.sku || '').toLowerCase();
+      const unit = (p.unit || '').toLowerCase();
+      const supplierName = (p as any)?.supplierName ? String((p as any).supplierName).toLowerCase() : '';
+      return name.includes(needle) || sku.includes(needle) || unit.includes(needle) || supplierName.includes(needle);
+    });
+  }, [rows, q]);
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+        <Text>Loading products…</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Products</Text>
 
-      {/* Coming-soon pills (uniform 2-column, lighter brand blue) */}
-      <View style={styles.stubGrid}>
+      {/* Coming-soon pills (No-Op, lighter blue to signal future feature) */}
+      <View style={styles.pillsRow}>
         <TouchableOpacity
-          style={styles.stub}
-          onPress={() => Alert.alert('Bulk Edit', 'Coming soon')}
-          activeOpacity={0.9}
+          style={[styles.pill, styles.pillDisabled]}
+          onPress={() => Alert.alert('Coming soon', 'Bulk CSV import for products.')}
         >
-          <Text style={styles.stubTitle}>Bulk Edit</Text>
-          <Text style={styles.stubTag}>Coming soon</Text>
+          <Text style={styles.pillText}>Bulk CSV Import</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
-          style={styles.stub}
-          onPress={() => Alert.alert('CSV Import', 'Coming soon')}
-          activeOpacity={0.9}
+          style={[styles.pill, styles.pillDisabled]}
+          onPress={() => Alert.alert('Coming soon', 'Scan UPCs in batch to add/update products.')}
         >
-          <Text style={styles.stubTitle}>CSV Import</Text>
-          <Text style={styles.stubTag}>Coming soon</Text>
+          <Text style={styles.pillText}>Scan UPC batch</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
-          style={styles.stub}
-          onPress={() => Alert.alert('Barcode Scan', 'Coming soon')}
-          activeOpacity={0.9}
+          style={[styles.pill, styles.pillDisabled]}
+          onPress={() => Alert.alert('Coming soon', 'Suggest PAR levels from history.')}
         >
-          <Text style={styles.stubTitle}>Barcode Scan</Text>
-          <Text style={styles.stubTag}>Coming soon</Text>
+          <Text style={styles.pillText}>Suggest PARs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.pill, styles.pillDisabled]}
+          onPress={() => Alert.alert('Coming soon', 'AI normalize units / pack sizes.')}
+        >
+          <Text style={styles.pillText}>AI normalize units</Text>
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.primary} onPress={onNew}><Text style={styles.primaryText}>Add Product</Text></TouchableOpacity>
+      {/* Search + Add */}
+      <View style={styles.row}>
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="Search products (name, SKU, unit, supplier)"
+          autoCapitalize="none"
+          style={styles.search}
+        />
+        <TouchableOpacity style={styles.primary} onPress={onNew}>
+          <Text style={styles.primaryText}>Add Product</Text>
+        </TouchableOpacity>
+      </View>
 
       <FlatList
-        data={rows}
+        data={filtered}
         keyExtractor={(p) => p.id!}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => (
-          <View style={styles.row}>
+          <View style={styles.rowCard}>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{item.name}</Text>
               <Text style={styles.sub}>
@@ -105,34 +133,44 @@ export default function ProductsScreen() {
                 {(typeof item.parLevel === 'number' ? ` · Par ${item.parLevel}` : '')}
               </Text>
             </View>
-            <TouchableOpacity style={styles.smallBtn} onPress={() => onEdit(item)}><Text style={styles.smallText}>Edit</Text></TouchableOpacity>
-            <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]} onPress={() => onDelete(item)}><Text style={[styles.smallText, { color: 'white' }]}>Delete</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.smallBtn} onPress={() => onEdit(item)}>
+              <Text style={styles.smallText}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]} onPress={() => onDelete(item)}>
+              <Text style={[styles.smallText, { color: 'white' }]}>Delete</Text>
+            </TouchableOpacity>
           </View>
         )}
-        ListEmptyComponent={<Text>No products yet.</Text>}
+        ListEmptyComponent={
+          <Text>{q.trim() ? 'No products match your search.' : 'No products yet.'}</Text>
+        }
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#fff' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   title: { fontSize: 22, fontWeight: '800' },
 
-  // Uniform two-column pill grid (brand-aligned "no-op" look)
-  stubGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 2 },
-  stub: { backgroundColor: STUB_BG, padding: 12, borderRadius: 12, marginBottom: 10, flexBasis: '48%' },
-  stubTitle: { fontWeight: '800', color: STUB_TEXT },
-  stubTag: { marginTop: 6, alignSelf: 'flex-start', backgroundColor: STUB_TAG_BG, color: STUB_TEXT, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, fontSize: 12, fontWeight: '700' },
+  pillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  pill: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: '#D6E9FF' },
+  pillDisabled: { opacity: 1 },
+  pillText: { color: '#0A84FF', fontWeight: '700' },
 
-  primary: { backgroundColor: BRAND_BLUE, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  search: {
+    flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff'
+  },
+
+  primary: { backgroundColor: '#0A84FF', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center' },
   primaryText: { color: 'white', fontWeight: '700' },
 
-  row: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowCard: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { fontWeight: '700' },
   sub: { opacity: 0.7, marginTop: 2 },
   smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
   smallText: { fontWeight: '700' },
 });
-
