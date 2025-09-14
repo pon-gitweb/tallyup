@@ -150,3 +150,7 @@ export async function createDraftOrderWithLines(
 
   return orderId;
 }
+
+export { buildSuggestedOrdersInMemory } from './orders/suggest';
+
+export { listSuppliers } from './suppliers';

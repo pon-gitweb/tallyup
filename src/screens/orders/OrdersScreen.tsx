@@ -9,15 +9,14 @@ import { getApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
-// If your suppliers API lives elsewhere, tweak this import path:
 import { listSuppliers } from '../../services/suppliers';
 
 type Row = {
   id: string;
   supplierId?: string | null;
   supplierName?: string | null;
-  status?: string | null;          // 'draft' | 'submitted' | 'received' | ...
-  displayStatus?: string | null;   // human label (fallback)
+  status?: string | null;
+  displayStatus?: string | null;
   createdAt?: any;
   updatedAt?: any;
 };
@@ -56,7 +55,6 @@ export default function OrdersScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({});
 
-  // One-time supplier name map (for nice labels)
   const loadSuppliers = useCallback(async () => {
     try {
       if (!venueId) return;
@@ -69,7 +67,6 @@ export default function OrdersScreen() {
     }
   }, [venueId]);
 
-  // Live subscription to orders (reacts to submit instantly)
   const bindOrders = useCallback(() => {
     if (!venueId) return () => {};
     const db = getFirestore(getApp());
@@ -78,7 +75,6 @@ export default function OrdersScreen() {
       q,
       (snap) => {
         const next: Row[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-        // Secondary sort when updatedAt is still serverTimestamp()
         next.sort((a, b) => (millis(b.updatedAt) || millis(b.createdAt)) - (millis(a.updatedAt) || millis(a.createdAt)));
         setRows(next);
         setLoading(false);
@@ -105,7 +101,6 @@ export default function OrdersScreen() {
     setRefreshing(true);
     const off = bindOrders();
     loadSuppliers();
-    // Unbind the previous listener shortly after to avoid flicker
     setTimeout(() => off && off(), 200);
   }, [bindOrders, loadSuppliers]);
 
@@ -161,18 +156,51 @@ export default function OrdersScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Quick actions (uniform two-column pills; blue for active, light blue dashed for upcoming) */}
+      <View style={styles.pillGrid}>
+        <TouchableOpacity style={[styles.pill, styles.pillActive]} onPress={() => nav.navigate('NewOrder')}>
+          <Text style={styles.pillTitle}>New Order</Text>
+          <Text style={styles.pillSub}>Choose supplier, add lines</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.pill, styles.pillSoon]}
+          onPress={() => Alert.alert('Coming soon', 'Invoices list & search will live here.')}
+        >
+          <Text style={styles.pillTitle}>Invoices (Soon)</Text>
+          <Text style={styles.pillSub}>Search by supplier/date/total</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.pill, styles.pillSoon]}
+          onPress={() => Alert.alert('Coming soon', 'Export purchase history (CSV) coming soon.')}
+        >
+          <Text style={styles.pillTitle}>Export CSV (Soon)</Text>
+          <Text style={styles.pillSub}>Purchase history export</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.pill, styles.pillSoon]}
+          onPress={() => Alert.alert('Coming soon', 'Budget impact preview per supplier will appear here.')}
+        >
+          <Text style={styles.pillTitle}>Budget Impact (Soon)</Text>
+          <Text style={styles.pillSub}>Per-supplier preview</Text>
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={rows}
         keyExtractor={(i) => i.id}
         renderItem={renderItem}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 24 }}
       />
     </SafeAreaView>
   );
 }
+
+const BLUE = '#0A84FF';
+const BLUE_LIGHT = '#DCEBFF';
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#fafafa' },
@@ -186,6 +214,28 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: '800' },
   link: { textDecorationLine: 'underline' },
 
+  pillGrid: {
+    paddingHorizontal: 12, paddingBottom: 6,
+    flexDirection: 'row', flexWrap: 'wrap', gap: 10,
+  },
+  pill: {
+    flexBasis: '48%',
+    backgroundColor: BLUE,
+    padding: 12,
+    borderRadius: 12,
+  },
+  pillActive: {
+    backgroundColor: BLUE,
+  },
+  pillSoon: {
+    backgroundColor: BLUE_LIGHT,
+    borderWidth: 1,
+    borderColor: '#BBD4FF',
+    borderStyle: 'dashed',
+  },
+  pillTitle: { color: '#fff', fontWeight: '800' },
+  pillSub: { color: '#fff', opacity: 0.9, marginTop: 4, fontSize: 12 },
+
   card: {
     backgroundColor: '#fff',
     marginHorizontal: 12, marginVertical: 6,
@@ -196,4 +246,3 @@ const styles = StyleSheet.create({
   rowSub: { color: '#6b7280', marginTop: 2 },
   chev: { fontSize: 20, color: '#9CA3AF', marginLeft: 8 },
 });
-

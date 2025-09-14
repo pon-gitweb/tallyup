@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet } from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
@@ -7,6 +7,7 @@ import {
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
+import { savedToast } from '../../utils/toast';
 
 type LineRow = { id: string; name: string; qty: number };
 type RouteParams = { orderId: string; supplierName?: string };
@@ -69,6 +70,7 @@ export default function OrderEditorScreen() {
         notes: (notes || '').trim(),
         updatedAt: serverTimestamp(),
       });
+      savedToast('Notes saved'); // ✅ subtle confirmation
     } catch (e) {
       console.warn('[OrderEditor] persistNotes error', e);
     }
@@ -169,6 +171,7 @@ export default function OrderEditorScreen() {
         source: 'manual',
       });
       setLines(prev => [{ id: added.id, name, qty }, ...prev]);
+      savedToast('Notes saved'); // ✅ subtle confirmation
     } catch (e: any) {
       console.warn('[OrderEditor] addLine error', e);
       Alert.alert('Error', e?.message ?? 'Failed adding line.');
