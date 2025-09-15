@@ -1,167 +1,177 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput } from 'react-native';
-import { signOutAll } from '../services/auth';
-import { DEV_VENUE_ID, DEV_EMAIL } from '../config/dev';
-import { attachSelfToVenue, ensureDevMembership, getCurrentVenueForUser } from '../services/devBootstrap';
-import { leaveCurrentVenue } from '../services/venues';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
+import { db } from '../../services/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import Constants from 'expo-constants';
+import { useVenueId } from '../../context/VenueProvider';
+// REPLACED: legacy resetVenueCycle in favor of robust service
+import { resetAllDepartmentsStockTake } from '../../services/reset';
+import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
 
 export default function SettingsScreen() {
-  const [uid, setUid] = useState<string>('');
-  const [email, setEmail] = useState<string | null>(null);
-  const [venueId, setVenueId] = useState<string | null>(null);
-  const [attachId, setAttachId] = useState<string>('');
-  const [busy, setBusy] = useState(false);
+  const nav = useNavigation<any>();
+  const auth = getAuth();
+  const user = auth.currentUser;
+  const venueId = useVenueId();
 
-  const reload = async () => {
+  const devVenueId =
+    (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_DEV_VENUE_ID ||
+    (Constants.expoConfig?.extra as any)?.DEV_VENUE_ID ||
+    process.env.EXPO_PUBLIC_DEV_VENUE_ID ||
+    undefined;
+
+  async function doSignOut() {
     try {
-      const v = await getCurrentVenueForUser();
-      setUid(v.uid);
-      setEmail(v.email ?? null);
-      setVenueId(v.venueId ?? null);
+      await auth.signOut();
+      console.log('[TallyUp Settings] signOut success');
     } catch (e: any) {
-      Alert.alert('Load failed', e?.message ?? 'Unknown error');
+      console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
     }
-  };
+  }
 
-  useEffect(() => { void reload(); }, []);
-
-  const onReattachDev = async () => {
-    try {
-      setBusy(true);
-      const { venueId } = await ensureDevMembership();
-      setVenueId(venueId);
-      Alert.alert('Attached', `You are attached to ${venueId}.`);
-    } catch (e: any) {
-      Alert.alert('Attach failed', e?.message ?? 'Unknown error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onAttachCustom = async () => {
-    const target = attachId.trim();
-    if (!target) { Alert.alert('Missing venue ID', 'Enter a venue ID to attach.'); return; }
-    try {
-      setBusy(true);
-      const { venueId } = await attachSelfToVenue(target);
-      setVenueId(venueId);
-      setAttachId('');
-      Alert.alert('Attached', `You are attached to ${venueId}.`);
-    } catch (e: any) {
-      Alert.alert('Attach failed', e?.message ?? 'Unknown error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onLeaveVenue = async () => {
-    if (!venueId) { Alert.alert('No venue', 'You are not currently attached to a venue.'); return; }
-    Alert.alert(
-      'Leave this venue?',
-      'You will lose access to all venue data. You can rejoin later with an invite or by reattaching.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Leave',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setBusy(true);
-              const { venueId: left } = await leaveCurrentVenue();
-              setVenueId(null);
-              Alert.alert('Left venue', `You have left ${left}. You will be signed out now.`, [
-                { text: 'OK', onPress: async () => { await signOutAll(); } }
-              ]);
-            } catch (e: any) {
-              Alert.alert('Leave failed', e?.message ?? 'Unknown error');
-            } finally {
-              setBusy(false);
-            }
-          }
+  // UPDATED: reset ALL departments in the current venue
+  async function doResetCycle() {
+    if (!venueId) { Alert.alert('No Venue', 'You are not attached to a venue.'); return; }
+    Alert.alert('Reset Stock Take','This reopens all areas in all departments for the current venue. Continue?',[
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reset', style: 'destructive', onPress: async () => {
+        try {
+          console.log('[Settings] reset start', { venueId });
+          const res = await resetAllDepartmentsStockTake(venueId);
+          console.log('[Settings] reset ok', res);
+          Alert.alert('Reset Complete', `Departments: ${res.departments} • Areas reopened: ${res.areasReset}`);
+        } catch (e: any) {
+          console.log('[TallyUp Settings] reset error', JSON.stringify({ code: e?.code, message: e?.message }));
+          Alert.alert('Reset Failed', e?.message || 'Unknown error.');
         }
-      ]
-    );
-  };
+      }}
+    ]);
+  }
 
-  const onSignOut = async () => {
+  async function doAttachDevVenue() {
+    if (!user) { Alert.alert('Not Signed In', 'Sign in first.'); return; }
+    if (!devVenueId) { Alert.alert('Dev Venue Not Configured', 'Set EXPO_PUBLIC_DEV_VENUE_ID in app.json > extra.'); return; }
+    if (venueId) { Alert.alert('Already Attached', `You are already attached to: ${venueId}`); return; }
+
     try {
-      setBusy(true);
-      await signOutAll(); // auth observer will route to AuthEntry
+      const uref = doc(db, 'users', user.uid);
+      const usnap = await getDoc(uref);
+      const hasVenueField = usnap.exists() && (usnap.data() as any)?.venueId != null;
+      if (hasVenueField) { Alert.alert('Cannot Attach', 'Your user already has venueId set.'); return; }
+      await setDoc(uref, { venueId: devVenueId }, { merge: true });
+      Alert.alert('Attached', `Pinned to dev venue: ${devVenueId}`);
+      console.log('[TallyUp Settings] attached dev venue', { uid: user.uid, venueId: devVenueId });
     } catch (e: any) {
-      Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
-    } finally {
-      setBusy(false);
+      console.log('[TallyUp Settings] attach error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Attach Failed', e?.message || 'Unknown error.');
     }
-  };
+  }
+
+  async function doSeedDemo() {
+    try {
+      if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+      const res = await seedDemoSuppliersAndProducts(venueId);
+      Alert.alert('Seeded', `Supplier + ${res.count} products added. Try Suggested Orders.`);
+    } catch (e: any) {
+      console.log('[TallyUp Settings] seed error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Seed Failed', e?.message || 'Unknown error');
+    }
+  }
 
   return (
-    <View style={S.c}>
-      <Text style={S.h1}>Settings</Text>
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Settings</Text>
 
-      <View style={S.card}>
-        <Text style={S.cardTitle}>Account</Text>
-        <Text style={S.p}>UID: {uid || '—'}</Text>
-        <Text style={S.p}>Email: {email || '—'}</Text>
-        <Text style={S.p}>Current venue: {venueId || '—'}</Text>
+      <View style={styles.card}>
+        <Text style={styles.heading}>Account</Text>
+        <Text>Email: {user?.email || '—'}</Text>
+        <Text>UID: {user?.uid || '—'}</Text>
+        <Text>Venue: {venueId || '—'}</Text>
       </View>
 
-      <View style={S.card}>
-        <Text style={S.cardTitle}>Dev Utilities</Text>
-        <Text style={S.p}>Pinned dev account: {DEV_EMAIL}</Text>
-        <Text style={S.p}>Pinned dev venue: {DEV_VENUE_ID}</Text>
-
-        <TouchableOpacity style={[S.btn, busy && S.btnDisabled]} onPress={onReattachDev} disabled={busy}>
-          <Text style={S.btnText}>{busy ? 'Working…' : 'Reattach to Dev Venue'}</Text>
+      <View style={styles.row}>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
+          <Text style={styles.btnText}>Open Setup Wizard</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.btn} onPress={doResetCycle}>
+          <Text style={styles.btnText}>Reset Stock Take</Text>
+        </TouchableOpacity>
+      </View>
 
-        <View style={S.row}>
-          <TextInput
-            style={S.input}
-            placeholder="Enter venue ID (dev)"
-            value={attachId}
-            onChangeText={setAttachId}
-            autoCapitalize="none"
-            editable={!busy}
-          />
-          <TouchableOpacity style={[S.btnSmall, busy && S.btnDisabled]} onPress={onAttachCustom} disabled={busy}>
-            <Text style={S.btnTextSmall}>Attach me</Text>
-          </TouchableOpacity>
-        </View>
+      <View style={styles.row}>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Suppliers')}>
+          <Text style={styles.btnText}>Manage Suppliers</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Products')}>
+          <Text style={styles.btnText}>Manage Products</Text>
+        </TouchableOpacity>
+      </View>
 
+      <View style={styles.row}>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SuggestedOrder')}>
+          <Text style={styles.btnText}>Suggested Orders</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Orders')}>
+          <Text style={styles.btnText}>Orders</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* NEW: light-blue stub pills (no-op) */}
+      <View style={styles.row}>
         <TouchableOpacity
-          style={[S.btnWarning, (!venueId || busy) && S.btnDisabled]}
-          onPress={onLeaveVenue}
-          disabled={!venueId || busy}
+          style={styles.stub}
+          onPress={() => Alert.alert('Coming soon', 'CSV uploads & integrations will land here.')}
         >
-          <Text style={S.btnText}>Leave this venue</Text>
+          <Text style={styles.stubText}>Data & Integrations (CSV)</Text>
         </TouchableOpacity>
-
-        <Text style={S.note}>
-          Note: “Attach me” updates your /users profile and membership to match rules. “Leave this venue” removes your membership and clears your profile venue.
-        </Text>
+        <TouchableOpacity
+          style={styles.stub}
+          onPress={() => Alert.alert('Coming soon', 'Sales report imports will land here.')}
+        >
+          <Text style={styles.stubText}>Sales Reports (CSV)</Text>
+        </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={[S.btnDanger, busy && S.btnDisabled]} onPress={onSignOut} disabled={busy}>
-        <Text style={S.btnText}>Sign out</Text>
+      <View style={styles.card}>
+        <Text style={styles.heading}>Developer Utilities</Text>
+        <Text style={{ opacity: 0.7, marginBottom: 8 }}>
+          Dev venue ID: {devVenueId || 'not configured'}
+        </Text>
+        <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
+          <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.devBtn} onPress={doSeedDemo}>
+          <Text style={styles.devBtnText}>Seed Demo Suppliers & Products</Text>
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
+        <Text style={styles.signOutText}>Sign Out</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-const S = StyleSheet.create({
-  c:{ flex:1, padding:16, backgroundColor:'#fff' },
-  h1:{ fontSize:22, fontWeight:'700', marginBottom:12 },
-  card:{ padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginBottom:12 },
-  cardTitle:{ fontWeight:'700', marginBottom:6 },
-  p:{ color:'#333' },
-  row:{ flexDirection:'row', alignItems:'center', marginTop:10 },
-  input:{ flex:1, borderWidth:1, borderColor:'#ddd', borderRadius:10, padding:10, backgroundColor:'#fff' },
-  btn:{ backgroundColor:'#0A84FF', padding:12, borderRadius:10, alignItems:'center', marginTop:10 },
-  btnWarning:{ backgroundColor:'#F59E0B', padding:12, borderRadius:10, alignItems:'center', marginTop:10 },
-  btnDisabled:{ opacity:0.6 },
-  btnText:{ color:'#fff', fontWeight:'700' },
-  btnSmall:{ marginLeft:8, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:10, alignItems:'center' },
-  btnTextSmall:{ color:'#fff', fontWeight:'700' },
-  note:{ color:'#555', fontSize:12, marginTop:8 },
-  btnDanger:{ backgroundColor:'#EF4444', padding:14, borderRadius:10, alignItems:'center', marginTop:16 },
+const styles = StyleSheet.create({
+  wrap: { flex: 1, padding: 16, gap: 12 },
+  title: { fontSize: 22, fontWeight: '800', marginBottom: 4 },
+  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 6 },
+  heading: { fontWeight: '800', marginBottom: 4 },
+  row: { flexDirection: 'row', gap: 10 },
+
+  /* Active pills (existing) */
+  btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  btnText: { color: 'white', fontWeight: '700' },
+
+  /* Stub pills (lighter blue, non-verbal “coming soon”) */
+  stub: { flex: 1, backgroundColor: '#D6E9FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#A9D2FF' },
+  stubText: { color: '#0A84FF', fontWeight: '700' },
+
+  devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  devBtnText: { fontWeight: '700' },
+  signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  signOutText: { color: 'white', fontWeight: '800' },
 });
