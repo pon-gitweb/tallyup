@@ -1,105 +1,231 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
+  Modal, Pressable, Alert, ActivityIndicator
+} from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import {
+  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
+  doc, serverTimestamp
+} from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
-type AreaRow = { id: string; name: string; startedAt?: any; completedAt?: any };
+type RouteParams = { departmentId: string; departmentName?: string };
+type AreaRow = {
+  id: string;
+  name: string;
+  startedAt?: any | null;
+  completedAt?: any | null;
+};
 
 export default function AreaSelectionScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { departmentId, departmentName } = (route.params || {}) as { departmentId: string; departmentName?: string };
+  const { departmentId, departmentName }: RouteParams = route.params || {};
   const venueId = useVenueId();
 
-  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
   const [areas, setAreas] = useState<AreaRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Stable loader used by both effects
-  const fetchAreas = useCallback(async () => {
-    if (!venueId || !departmentId) { return; }
+  // Create/Edit modal state
+  const [showEdit, setShowEdit] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [areaName, setAreaName] = useState('');
+
+  useEffect(() => { load(); }, [venueId, departmentId]);
+
+  async function load() {
+    if (!venueId || !departmentId) { setAreas([]); setLoading(false); return; }
     try {
-      const snap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
-      const rows: AreaRow[] = [];
-      snap.forEach(a => {
-        const d: any = a.data();
-        rows.push({ id: a.id, name: d?.name || a.id, startedAt: d?.startedAt, completedAt: d?.completedAt });
-      });
-      setAreas(rows);
-    } catch (e: any) {
-      console.log('[TallyUp Areas] load error', JSON.stringify({ code: e?.code, message: e?.message }));
-    }
-  }, [venueId, departmentId]);
-
-  // Initial load
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!venueId || !departmentId) { setLoading(false); return; }
       setLoading(true);
-      await fetchAreas();
-      if (alive) setLoading(false);
-    })();
-    return () => { alive = false; };
-  }, [venueId, departmentId, fetchAreas]);
-
-  // Refresh when screen regains focus (after submitting an area)
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      (async () => {
-        if (cancelled) return;
-        await fetchAreas();
-      })();
-      return () => { cancelled = true; };
-    }, [fetchAreas])
-  );
-
-  function statusOf(a: AreaRow) {
-    if (a.completedAt) return 'Completed';
-    if (a.startedAt) return 'In Progress';
-    return 'Not Started';
+      const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+      const snap = await getDocs(query(col, orderBy('name')));
+      const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as AreaRow[];
+      setAreas(list);
+    } catch (e: any) {
+      console.log('[Areas] load error', e?.message);
+      setAreas([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  if (loading) {
-    return (<View style={styles.center}><ActivityIndicator /><Text>Loading areas…</Text></View>);
+  const filtered = useMemo(() => {
+    if (!q.trim()) return areas;
+    const needle = q.trim().toLowerCase();
+    return areas.filter(a => (a.name || '').toLowerCase().includes(needle));
+  }, [q, areas]);
+
+  function openCreate() {
+    setEditingId(null);
+    setAreaName('');
+    setShowEdit(true);
+  }
+  function openEdit(row: AreaRow) {
+    setEditingId(row.id);
+    setAreaName(row.name || '');
+    setShowEdit(true);
+  }
+
+  async function commitEdit() {
+    if (!venueId || !departmentId) return;
+    const name = areaName.trim();
+    if (!name) { Alert.alert('Missing name', 'Please enter an area name.'); return; }
+    try {
+      if (editingId) {
+        const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', editingId);
+        await updateDoc(ref, { name, updatedAt: serverTimestamp() });
+      } else {
+        const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+        const now = serverTimestamp();
+        await addDoc(col, { name, createdAt: now, updatedAt: now });
+      }
+      setShowEdit(false);
+      setAreaName('');
+      setEditingId(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Save failed', e?.message || 'Unknown error');
+    }
+  }
+
+  async function confirmDelete(row: AreaRow) {
+    Alert.alert(
+      'Delete area',
+      `Remove “${row.name}”? You won’t be able to count this area unless you recreate it.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive',
+          onPress: async () => {
+            try {
+              if (!venueId) return;
+              const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', row.id);
+              await deleteDoc(ref);
+              await load();
+            } catch (e: any) {
+              Alert.alert('Delete failed', e?.message || 'Unknown error');
+            }
+          }
+        }
+      ]
+    );
+  }
+
+  function statusPill(row: AreaRow) {
+    if (row.completedAt) return <Text style={[styles.pill, styles.pillDone]}>Done</Text>;
+    if (row.startedAt) return <Text style={[styles.pill, styles.pillInProg]}>In progress</Text>;
+    return <Text style={[styles.pill, styles.pillIdle]}>Not started</Text>;
   }
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>{departmentName || departmentId}</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>{departmentName || 'Areas'}</Text>
+        <TouchableOpacity onPress={openCreate} style={styles.primaryBtn}>
+          <Text style={styles.primaryText}>Add Area</Text>
+        </TouchableOpacity>
+      </View>
 
-      {areas.map(a => {
-        const status = statusOf(a);
-        const badgeStyle =
-          status === 'In Progress' ? styles.badgeWarn :
-          status === 'Completed'  ? styles.badgeOk   :
-                                    styles.badgeDim;
-        return (
-          <TouchableOpacity
-            key={a.id}
-            style={styles.row}
-            onPress={() => nav.navigate('AreaInventory', { departmentId, areaId: a.id, areaName: a.name })}
-          >
-            <Text style={styles.rowTitle}>{a.name}</Text>
-            <Text style={[styles.badge, badgeStyle]}>{status}</Text>
-          </TouchableOpacity>
-        );
-      })}
-      {!areas.length ? <Text>No areas configured.</Text> : null}
+      <TextInput
+        placeholder="Search areas…"
+        value={q}
+        onChangeText={setQ}
+        style={styles.search}
+      />
+
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator /><Text>Loading areas…</Text></View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(i) => i.id}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => nav.navigate('AreaInventory', { departmentId, areaId: item.id, areaName: item.name })}
+              onLongPress={() => openEdit(item)}
+              delayLongPress={250}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.name}>{item.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                  {statusPill(item)}
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => openEdit(item)} style={styles.smallBtn}>
+                <Text style={styles.smallText}>⋯</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => confirmDelete(item)} style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]}>
+                <Text style={[styles.smallText, { color: 'white' }]}>Del</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={<Text>No areas yet. Tap “Add Area”.</Text>}
+          contentContainerStyle={{ paddingBottom: 16 }}
+        />
+      )}
+
+      {/* Create/Edit modal */}
+      <Modal visible={showEdit} transparent animationType="fade" onRequestClose={() => setShowEdit(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{editingId ? 'Rename area' : 'Add area'}</Text>
+            <TextInput
+              value={areaName}
+              onChangeText={setAreaName}
+              placeholder="Area name"
+              style={styles.modalInput}
+              autoFocus
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <Pressable style={styles.secondaryBtn} onPress={() => setShowEdit(false)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.primaryBtn, !areaName.trim() && { opacity: 0.6 }]} onPress={commitEdit} disabled={!areaName.trim()}>
+                <Text style={styles.primaryText}>{editingId ? 'Save' : 'Add'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  title: { fontSize: 22, fontWeight: '800' },
-  row: { padding: 14, borderRadius: 12, backgroundColor: '#EFEFF4', marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rowTitle: { fontWeight: '700', fontSize: 16 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, color: 'white', fontWeight: '700' },
-  badgeOk: { backgroundColor: '#34C759' },
-  badgeWarn: { backgroundColor: '#FF9500' },
-  badgeDim: { backgroundColor: '#8E8E93' },
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: 'white' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  title: { fontSize: 20, fontWeight: '800' },
+
+  search: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: 'white' },
+
+  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 8 },
+
+  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 12, padding: 12 },
+  name: { fontWeight: '700' },
+
+  primaryBtn: { backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  primaryText: { color: 'white', fontWeight: '700' },
+
+  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 6 },
+  smallText: { fontWeight: '800', fontSize: 14 },
+
+  // status pills
+  pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
+  pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
+  pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
+  pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+
+  // modal
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
+  modalTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8 },
+  modalInput: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white' },
+
+  secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  secondaryText: { fontWeight: '700' },
 });
