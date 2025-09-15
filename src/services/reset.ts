@@ -3,11 +3,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
-/**
- * Reset ONE department:
- * - Write "reset" markers to both session paths for traceability
- * - Set startedAt:null and completedAt:null on ALL areas in that department
- */
+/** Reset ONE department: writes session markers + reopens all areas */
 export async function resetDepartmentStockTake(venueId: string, departmentId: string) {
   if (!venueId || !departmentId) throw new Error('Missing venue/department');
   const now = serverTimestamp();
@@ -16,11 +12,11 @@ export async function resetDepartmentStockTake(venueId: string, departmentId: st
   const rootSessionRef = doc(db, 'venues', venueId, 'sessions', departmentId);
   await setDoc(rootSessionRef, { reason: 'manual-reset', updatedAt: now }, { merge: true });
 
-  // Department-scoped session marker (legacy)
+  // Department-scoped session marker (legacy path)
   const deptSessionRef = doc(db, 'venues', venueId, 'departments', departmentId, 'session', 'reset');
   await setDoc(deptSessionRef, { reason: 'manual-reset', updatedAt: now }, { merge: true });
 
-  // Reset lifecycle on all areas in department
+  // Reopen all areas in department
   const areasCol = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
   const snap = await getDocs(query(areasCol));
   for (const d of snap.docs) {
@@ -29,10 +25,7 @@ export async function resetDepartmentStockTake(venueId: string, departmentId: st
   return { ok: true, count: snap.size, departmentId };
 }
 
-/**
- * Reset ALL departments under a venue:
- * - For each department, call resetDepartmentStockTake
- */
+/** Reset ALL departments under the venue */
 export async function resetAllDepartmentsStockTake(venueId: string) {
   if (!venueId) throw new Error('Missing venueId');
   const depsCol = collection(db, 'venues', venueId, 'departments');

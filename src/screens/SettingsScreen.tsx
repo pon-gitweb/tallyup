@@ -6,7 +6,6 @@ import { db } from '../../services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import Constants from 'expo-constants';
 import { useVenueId } from '../../context/VenueProvider';
-// REPLACED: legacy resetVenueCycle in favor of robust service
 import { resetAllDepartmentsStockTake } from '../../services/reset';
 import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
 
@@ -32,10 +31,9 @@ export default function SettingsScreen() {
     }
   }
 
-  // UPDATED: reset ALL departments in the current venue
   async function doResetCycle() {
     if (!venueId) { Alert.alert('No Venue', 'You are not attached to a venue.'); return; }
-    Alert.alert('Reset Stock Take','This reopens all areas in all departments for the current venue. Continue?',[
+    Alert.alert('Reset Stock Take','This reopens all areas in all departments for this venue. Continue?',[
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: async () => {
         try {
@@ -119,7 +117,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* NEW: light-blue stub pills (no-op) */}
+      {/* Lighter blue stub pills */}
       <View style={styles.row}>
         <TouchableOpacity
           style={styles.stub}
@@ -161,15 +159,10 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 6 },
   heading: { fontWeight: '800', marginBottom: 4 },
   row: { flexDirection: 'row', gap: 10 },
-
-  /* Active pills (existing) */
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   btnText: { color: 'white', fontWeight: '700' },
-
-  /* Stub pills (lighter blue, non-verbal “coming soon”) */
   stub: { flex: 1, backgroundColor: '#D6E9FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#A9D2FF' },
   stubText: { color: '#0A84FF', fontWeight: '700' },
-
   devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   devBtnText: { fontWeight: '700' },
   signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },

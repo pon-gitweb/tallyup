@@ -7,7 +7,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp
+  doc, serverTimestamp, where
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
@@ -80,7 +80,7 @@ export default function AreaSelectionScreen() {
       } else {
         const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
         const now = serverTimestamp();
-        // IMPORTANT: seed lifecycle so new areas are OPEN immediately
+        // Seed lifecycle so new areas are OPEN immediately
         await addDoc(col, {
           name,
           createdAt: now,
@@ -122,6 +122,31 @@ export default function AreaSelectionScreen() {
     );
   }
 
+  // NEW: one-tap fix for legacy (stuck) areas: set startedAt/completedAt to null
+  async function fixLegacyAreas() {
+    if (!venueId || !departmentId) return;
+    try {
+      const now = serverTimestamp();
+      const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+      const snap = await getDocs(query(col));
+      let count = 0;
+      for (const d of snap.docs) {
+        const data: any = d.data();
+        const needsFix =
+          !('startedAt' in data) || !('completedAt' in data) ||
+          data.startedAt === undefined || data.completedAt === undefined;
+        if (needsFix) {
+          await updateDoc(d.ref, { startedAt: null, completedAt: null, updatedAt: now });
+          count++;
+        }
+      }
+      Alert.alert('Legacy Fix Complete', `Updated ${count} area(s).`);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Fix failed', e?.message || 'Unknown error');
+    }
+  }
+
   function statusPill(row: AreaRow) {
     if (row.completedAt) return <Text style={[styles.pill, styles.pillDone]}>Done</Text>;
     if (row.startedAt) return <Text style={[styles.pill, styles.pillInProg]}>In progress</Text>;
@@ -132,9 +157,14 @@ export default function AreaSelectionScreen() {
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>{departmentName || 'Areas'}</Text>
-        <TouchableOpacity onPress={openCreate} style={styles.primaryBtn}>
-          <Text style={styles.primaryText}>Add Area</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={fixLegacyAreas} style={[styles.smallBtn, { backgroundColor: '#D6E9FF', borderColor:'#A9D2FF', borderWidth:1 }]}>
+            <Text style={[styles.smallText, { color: '#0A84FF' }]}>Fix legacy areas</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={openCreate} style={styles.primaryBtn}>
+            <Text style={styles.primaryText}>Add Area</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <TextInput
@@ -222,13 +252,11 @@ const styles = StyleSheet.create({
   smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 6 },
   smallText: { fontWeight: '800', fontSize: 14 },
 
-  // status pills
   pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
   pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
   pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
   pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
 
-  // modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
   modalTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8 },
