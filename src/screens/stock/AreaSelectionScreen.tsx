@@ -80,7 +80,15 @@ export default function AreaSelectionScreen() {
       } else {
         const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
         const now = serverTimestamp();
-        await addDoc(col, { name, createdAt: now, updatedAt: now });
+        // IMPORTANT: seed lifecycle so new areas are OPEN immediately
+        await addDoc(col, {
+          name,
+          createdAt: now,
+          updatedAt: now,
+          startedAt: null,
+          completedAt: null,
+          cycleResetAt: null,
+        });
       }
       setShowEdit(false);
       setAreaName('');
