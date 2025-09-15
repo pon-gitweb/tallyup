@@ -7,7 +7,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp, where
+  doc, serverTimestamp
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
@@ -122,11 +122,10 @@ export default function AreaSelectionScreen() {
     );
   }
 
-  // NEW: one-tap fix for legacy (stuck) areas: set startedAt/completedAt to null
+  // Only write lifecycle keys (no updatedAt) to satisfy rules
   async function fixLegacyAreas() {
     if (!venueId || !departmentId) return;
     try {
-      const now = serverTimestamp();
       const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
       const snap = await getDocs(query(col));
       let count = 0;
@@ -136,7 +135,7 @@ export default function AreaSelectionScreen() {
           !('startedAt' in data) || !('completedAt' in data) ||
           data.startedAt === undefined || data.completedAt === undefined;
         if (needsFix) {
-          await updateDoc(d.ref, { startedAt: null, completedAt: null, updatedAt: now });
+          await updateDoc(d.ref, { startedAt: null, completedAt: null });
           count++;
         }
       }

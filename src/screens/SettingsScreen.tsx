@@ -117,7 +117,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Lighter blue stub pills */}
+      {/* Light blue no-op pills */}
       <View style={styles.row}>
         <TouchableOpacity
           style={styles.stub}
