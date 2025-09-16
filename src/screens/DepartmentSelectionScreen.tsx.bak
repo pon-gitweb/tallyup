@@ -1,0 +1,240 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, TextInput,
+  FlatList, Modal, Pressable, Alert, ActivityIndicator
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import {
+  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
+  doc, serverTimestamp, limit, where
+} from 'firebase/firestore';
+import { db } from '../services/firebase';
+import { useVenueId } from '../context/VenueProvider';
+
+type Dept = { id: string; name: string };
+
+export default function DepartmentSelectionScreen() {
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+
+  const [loading, setLoading] = useState(true);
+  const [list, setList] = useState<Dept[]>([]);
+  const [q, setQ] = useState('');
+
+  // create / edit modal state
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [editFor, setEditFor] = useState<Dept | null>(null);
+  const [editName, setEditName] = useState('');
+
+  async function reload() {
+    if (!venueId) { setList([]); setLoading(false); return; }
+    try {
+      setLoading(true);
+      const ref = collection(db, 'venues', venueId, 'departments');
+      const snap = await getDocs(query(ref, orderBy('name'), limit(500)));
+      const rows: Dept[] = snap.docs.map(d => ({ id: d.id, name: String(d.data()?.name || d.id) }));
+      setList(rows);
+    } catch (e:any) {
+      console.log('[Departments] load error', e?.message);
+      setList([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { reload(); }, [venueId]);
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return list;
+    return list.filter(d => d.name.toLowerCase().includes(needle));
+  }, [q, list]);
+
+  async function onCreate() {
+    const name = newName.trim();
+    if (!name) { Alert.alert('Missing name', 'Please enter a department name.'); return; }
+    try {
+      const ref = collection(db, 'venues', venueId!, 'departments');
+      await addDoc(ref, { name, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setShowCreate(false);
+      setNewName('');
+      await reload();
+    } catch (e:any) {
+      Alert.alert('Create failed', e?.message || 'Unknown error');
+    }
+  }
+
+  function openEdit(d: Dept) {
+    setEditFor(d);
+    setEditName(d.name);
+  }
+  async function onEditSave() {
+    if (!editFor) return;
+    const name = editName.trim();
+    if (!name) { Alert.alert('Missing name', 'Please enter a department name.'); return; }
+    try {
+      const dRef = doc(db, 'venues', venueId!, 'departments', editFor.id);
+      await updateDoc(dRef, { name, updatedAt: serverTimestamp() });
+      setEditFor(null);
+      await reload();
+    } catch (e:any) {
+      Alert.alert('Rename failed', e?.message || 'Unknown error');
+    }
+  }
+
+  async function hasAreas(deptId: string) {
+    const aRef = collection(db, 'venues', venueId!, 'departments', deptId, 'areas');
+    const snap = await getDocs(query(aRef, limit(1)));
+    return !snap.empty;
+  }
+
+  async function onDelete(d: Dept) {
+    try {
+      const containsAreas = await hasAreas(d.id);
+      if (containsAreas) {
+        Alert.alert('Cannot delete', 'This department still has areas. Please delete or move its areas first.');
+        return;
+      }
+      Alert.alert('Delete department', `Remove “${d.name}”?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              const dRef = doc(db, 'venues', venueId!, 'departments', d.id);
+              await deleteDoc(dRef);
+              await reload();
+            } catch (e:any) {
+              Alert.alert('Delete failed', e?.message || 'Unknown error');
+            }
+          }
+        }
+      ]);
+    } catch (e:any) {
+      Alert.alert('Check failed', e?.message || 'Unknown error');
+    }
+  }
+
+  function onOpenAreas(d: Dept) {
+    // existing route name kept the same as before
+    nav.navigate('AreaSelection', { departmentId: d.id, departmentName: d.name });
+  }
+
+  return (
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Departments</Text>
+
+      <View style={styles.topRow}>
+        <TextInput
+          placeholder="Search departments…"
+          value={q}
+          onChangeText={setQ}
+          style={styles.search}
+        />
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => setShowCreate(true)}>
+          <Text style={styles.primaryText}>New</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator /></View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={d => d.id}
+          ItemSeparatorComponent={() => <View style={{height:8}} />}
+          renderItem={({ item }) => (
+            <View style={styles.row}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => onOpenAreas(item)}>
+                <Text style={styles.name}>{item.name}</Text>
+                <Text style={styles.sub}>Tap to manage areas</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.smallBtn} onPress={() => openEdit(item)}>
+                <Text style={styles.smallText}>Rename</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]} onPress={() => onDelete(item)}>
+                <Text style={[styles.smallText, { color: 'white' }]}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          ListEmptyComponent={<Text>No departments yet. Create your first one.</Text>}
+          contentContainerStyle={{ paddingBottom: 20 }}
+        />
+      )}
+
+      {/* Create modal */}
+      <Modal visible={showCreate} transparent animationType="fade" onRequestClose={() => setShowCreate(false)}>
+        <View style={styles.backdrop}>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>New Department</Text>
+            <TextInput
+              value={newName}
+              onChangeText={setNewName}
+              placeholder="Name *"
+              style={styles.input}
+              autoFocus
+            />
+            <View style={styles.actions}>
+              <Pressable style={styles.secondaryBtn} onPress={() => setShowCreate(false)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.primaryBtn} onPress={onCreate}>
+                <Text style={styles.primaryText}>Create</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename modal */}
+      <Modal visible={!!editFor} transparent animationType="fade" onRequestClose={() => setEditFor(null)}>
+        <View style={styles.backdrop}>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Rename Department</Text>
+            <TextInput
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="New name *"
+              style={styles.input}
+              autoFocus
+            />
+            <View style={styles.actions}>
+              <Pressable style={styles.secondaryBtn} onPress={() => setEditFor(null)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.primaryBtn} onPress={onEditSave}>
+                <Text style={styles.primaryText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { flex: 1, padding: 16, backgroundColor: 'white', gap: 10 },
+  title: { fontSize: 20, fontWeight: '800' },
+  topRow: { flexDirection: 'row', gap: 8 },
+  search: { flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: 'white' },
+
+  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 12, padding: 12 },
+  name: { fontWeight: '800' },
+  sub: { opacity: 0.65, marginTop: 2 },
+
+  center: { alignItems: 'center', justifyContent: 'center', padding: 20 },
+
+  primaryBtn: { backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  primaryText: { color: 'white', fontWeight: '700' },
+  secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  secondaryText: { fontWeight: '700' },
+
+  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 6 },
+  smallText: { fontWeight: '700', fontSize: 12 },
+
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  card: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
+  cardTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8 },
+  input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white' },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 10, justifyContent: 'flex-end' },
+});

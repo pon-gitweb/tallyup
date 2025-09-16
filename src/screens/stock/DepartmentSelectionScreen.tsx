@@ -1,190 +1,220 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import {
-  getFirestore, collection, onSnapshot, Unsubscribe, QuerySnapshot, DocumentData
+  collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
 
-type Dept = { id: string; name?: string };
-
-type DeptStatus = {
-  total: number;
-  completed: number;
-  startedOnly: number; // startedAt set but not completed
-  statusText: 'Not started' | 'In progress' | 'Completed';
-};
+type Dept = { id: string; name: string };
 
 export default function DepartmentSelectionScreen() {
-  const route = useRoute() as any;
-  const navigation = useNavigation() as any;
-
-  const venueId: string | undefined = route?.params?.venueId;
-  const sessionId = route?.params?.sessionId; // kept for compatibility / future use
-
-  const db = getFirestore();
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
   const [departments, setDepartments] = useState<Dept[]>([]);
-  const [statusByDept, setStatusByDept] = useState<Record<string, DeptStatus>>({});
+  const [search, setSearch] = useState('');
 
-  // Track child subscriptions so we can clean them up when departments list changes
-  const areaUnsubsRef = useRef<Record<string, Unsubscribe>>({});
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
 
-  useEffect(() => {
-    if (!venueId) return;
-    setLoading(true);
+  const [renaming, setRenaming] = useState<Dept | null>(null);
+  const [renameTo, setRenameTo] = useState('');
 
-    // Subscribe to departments for this venue
-    const unsub = onSnapshot(
-      collection(db, 'venues', venueId, 'departments'),
-      (snap) => {
-        const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        setDepartments(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.warn('[Departments subscribe error]', err?.message || err);
-        setLoading(false);
-      }
-    );
-
-    return () => {
-      unsub();
-      // cleanup areas subs when screen unmounts
-      Object.values(areaUnsubsRef.current).forEach(fn => fn?.());
-      areaUnsubsRef.current = {};
-    };
-  }, [db, venueId]);
-
-  // For each department, subscribe to its areas to compute live status
-  useEffect(() => {
-    if (!venueId) return;
-    // Unsubscribe previous area listeners that no longer match current departments
-    const keepIds = new Set(departments.map(d => d.id));
-    for (const k of Object.keys(areaUnsubsRef.current)) {
-      if (!keepIds.has(k)) {
-        areaUnsubsRef.current[k]?.();
-        delete areaUnsubsRef.current[k];
-      }
+  async function reload() {
+    if (!venueId) { setDepartments([]); setLoading(false); return; }
+    try {
+      setLoading(true);
+      const colRef = collection(db, 'venues', venueId, 'departments');
+      const snap = await getDocs(query(colRef, orderBy('name'), limit(500)));
+      setDepartments(snap.docs.map(d => ({ id: d.id, name: (d.data() as any)?.name || d.id })));
+    } catch (e) {
+      console.log('[Departments] reload error', (e as any)?.message);
+      setDepartments([]);
+    } finally {
+      setLoading(false);
     }
+  }
+  useEffect(() => { reload(); }, [venueId]);
 
-    departments.forEach((dept) => {
-      if (areaUnsubsRef.current[dept.id]) return; // already subscribed
+  const filtered = useMemo(() => {
+    const n = search.trim().toLowerCase();
+    if (!n) return departments;
+    return departments.filter(d => d.name.toLowerCase().includes(n));
+  }, [departments, search]);
 
-      const areasCol = collection(db, 'venues', venueId, 'departments', dept.id, 'areas');
-      const unsub = onSnapshot(
-        areasCol,
-        (areasSnap: QuerySnapshot<DocumentData>) => {
-          const totals = computeDeptStatus(areasSnap);
-          setStatusByDept(prev => ({ ...prev, [dept.id]: totals }));
-        },
-        (err) => {
-          console.warn('[Dept areas subscribe error]', dept.id, err?.message || err);
-        }
-      );
-      areaUnsubsRef.current[dept.id] = unsub;
-    });
-
-    return () => {
-      // We keep listeners while the screen is active; cleaned in the outer cleanup and when deps change
-    };
-  }, [db, venueId, departments]);
-
-  const rows = useMemo(() => {
-    return departments.map(d => {
-      const s = statusByDept[d.id];
-      return {
-        id: d.id,
-        name: d.name || d.id,
-        status: s?.statusText ?? 'Not started',
-        meta:
-          s
-            ? `${s.completed}/${s.total} completed • ${s.startedOnly} in progress`
-            : '—',
-      };
-    });
-  }, [departments, statusByDept]);
-
-  if (!venueId) {
-    return (
-      <View style={styles.center}>
-        <Text>No venue selected.</Text>
-      </View>
-    );
+  async function onAdd() {
+    const name = newName.trim();
+    if (!name) { Alert.alert('Missing name', 'Please enter a department name.'); return; }
+    try {
+      if (!venueId) return;
+      const now = serverTimestamp();
+      await addDoc(collection(db, 'venues', venueId, 'departments'), {
+        name, createdAt: now, updatedAt: now
+      });
+      setNewName('');
+      setAdding(false);
+      await reload();
+    } catch (e: any) {
+      Alert.alert('Create failed', e?.message ?? 'Unknown error');
+    }
   }
 
-  if (loading) {
+  async function onRenameConfirm() {
+    if (!renaming || !venueId) return;
+    const newLabel = renameTo.trim();
+    if (!newLabel) { Alert.alert('Missing name', 'Please enter a department name.'); return; }
+    try {
+      const dref = doc(db, 'venues', venueId, 'departments', renaming.id);
+      await updateDoc(dref, { name: newLabel, updatedAt: serverTimestamp() });
+      setRenaming(null);
+      setRenameTo('');
+      await reload();
+    } catch (e: any) {
+      Alert.alert('Rename failed', e?.message ?? 'Unknown error');
+    }
+  }
+
+  async function onDelete(dep: Dept) {
+    if (!venueId) return;
+    let proceed = false;
+    await new Promise<void>((resolve) => {
+      Alert.alert('Delete department', `Delete “${dep.name}”? This cannot be undone.`, [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
+        { text: 'Delete', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
+      ]);
+    });
+    if (!proceed) return;
+
+    try {
+      await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id));
+      await reload();
+    } catch (e: any) {
+      Alert.alert('Delete failed', e?.message ?? 'Unknown error');
+    }
+  }
+
+  function Row({ item }: { item: Dept }) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator />
-        <Text>Loading departments…</Text>
-      </View>
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => nav.navigate('Areas', { venueId, departmentId: item.id })}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name}>{item.name}</Text>
+        </View>
+        <TouchableOpacity style={styles.smallBtn} onPress={() => { setRenaming(item); setRenameTo(item.name); }}>
+          <Text style={styles.smallBtnText}>Rename</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]} onPress={() => onDelete(item)}>
+          <Text style={[styles.smallBtnText, { color: 'white' }]}>Del</Text>
+        </TouchableOpacity>
+      </TouchableOpacity>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.heading}>Departments</Text>
-      {sessionId ? <Text style={styles.subtle}>Session active</Text> : <Text style={styles.subtle}>Start or continue stock take</Text>}
-      <FlatList
-        data={rows}
-        keyExtractor={(i) => i.id}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.row}
-            onPress={() => navigation.navigate('Areas', { venueId, departmentId: item.id })}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Text
-                style={[
-                  styles.status,
-                  item.status === 'Completed'
-                    ? styles.statusComplete
-                    : item.status === 'In progress'
-                    ? styles.statusInProgress
-                    : styles.statusIdle,
-                ]}
-              >
-                {item.status}
-              </Text>
-              <Text style={styles.meta}>{item.meta}</Text>
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Departments</Text>
+
+      <View style={styles.searchRow}>
+        <TextInput
+          placeholder="Search departments…"
+          value={search}
+          onChangeText={setSearch}
+          style={styles.search}
+        />
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => setAdding(true)}>
+          <Text style={styles.primaryText}>New</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator /><Text>Loading…</Text></View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={d => d.id}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          renderItem={Row}
+        />
+      )}
+
+      {/* Add modal */}
+      <Modal visible={adding} animationType="slide" transparent onRequestClose={() => setAdding(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>New department</Text>
+            <TextInput
+              autoFocus
+              placeholder="Department name"
+              value={newName}
+              onChangeText={setNewName}
+              style={styles.input}
+            />
+            <View style={styles.modalRow}>
+              <TouchableOpacity style={[styles.secondaryBtn]} onPress={() => setAdding(false)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryBtn, !newName.trim() && styles.disabled]} onPress={onAdd} disabled={!newName.trim()}>
+                <Text style={styles.primaryText}>Create</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.chev}>›</Text>
-          </TouchableOpacity>
-        )}
-      />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename modal */}
+      <Modal visible={!!renaming} animationType="slide" transparent onRequestClose={() => setRenaming(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Rename department</Text>
+            <TextInput
+              autoFocus
+              placeholder="New name"
+              value={renameTo}
+              onChangeText={setRenameTo}
+              style={styles.input}
+            />
+            <View style={styles.modalRow}>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setRenaming(null)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryBtn, !renameTo.trim() && styles.disabled]} onPress={onRenameConfirm} disabled={!renameTo.trim()}>
+                <Text style={styles.primaryText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-function computeDeptStatus(areasSnap: QuerySnapshot<DocumentData>): DeptStatus {
-  const docs = areasSnap.docs.map(d => d.data() as any);
-  const total = docs.length;
-  const completed = docs.filter(a => !!a?.completedAt).length;
-  const startedOnly = docs.filter(a => !!a?.startedAt && !a?.completedAt).length;
-
-  let statusText: DeptStatus['statusText'] = 'Not started';
-  if (total > 0) {
-    if (completed === total) statusText = 'Completed';
-    else if (completed > 0 || startedOnly > 0) statusText = 'In progress';
-  }
-  return { total, completed, startedOnly, statusText };
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, gap: 8 },
-  heading: { fontSize: 18, fontWeight: '700' },
-  subtle: { color: '#666' },
-  row: { paddingVertical: 12, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center' },
+  wrap: { flex: 1, padding: 16, backgroundColor: 'white' },
+  title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  search: {
+    flex: 1, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
+    paddingHorizontal: 12, height: 40, backgroundColor: '#F9FAFB'
+  },
+  primaryBtn: { backgroundColor: '#0A84FF', paddingHorizontal: 16, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  primaryText: { color: 'white', fontWeight: '700' },
+  secondaryBtn: { paddingHorizontal: 16, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1' },
+  secondaryText: { color: '#0A84FF', fontWeight: '700' },
+  disabled: { opacity: 0.5 },
+  center: { alignItems: 'center', justifyContent: 'center', marginTop: 24, gap: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12 },
   name: { fontSize: 16, fontWeight: '600' },
-  status: { marginTop: 4, fontSize: 12 },
-  statusComplete: { color: '#0a7a0a' },
-  statusInProgress: { color: '#8a5a00' },
-  statusIdle: { color: '#666' },
-  meta: { marginTop: 2, color: '#888', fontSize: 12 },
-  sep: { height: 1, backgroundColor: '#eee' },
-  chev: { fontSize: 24, marginLeft: 8, color: '#999' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  smallBtn: { paddingHorizontal: 10, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1' },
+  smallBtnText: { fontWeight: '700', color: '#0A84FF' },
+  input: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 12, height: 40, backgroundColor: '#F9FAFB' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  modalCard: { width: '100%', backgroundColor: 'white', borderRadius: 16, padding: 16, gap: 12 },
+  modalTitle: { fontSize: 18, fontWeight: '700' },
+  modalRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
 });
