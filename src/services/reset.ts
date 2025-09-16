@@ -5,32 +5,34 @@ import { db } from '../services/firebase';
 
 /**
  * Reset ONE department:
- * - Write session markers to both accepted paths (root + legacy)
- * - Reopen all areas (startedAt:null, completedAt:null) WITHOUT updatedAt
- *   so it passes the lifecycle-only rules branch.
+ * - Writes session markers (both accepted paths by rules)
+ * - Reopens all areas by setting startedAt:null, completedAt:null, cycleResetAt:now
+ *   in a SINGLE update that matches the rule.
  */
 export async function resetDepartmentStockTake(venueId: string, departmentId: string) {
   if (!venueId || !departmentId) throw new Error('Missing venue/department');
   const now = serverTimestamp();
 
-  // Session markers (both paths are allowed by rules)
-  const rootSessionRef = doc(db, 'venues', venueId, 'sessions', departmentId);
-  await setDoc(rootSessionRef, { reason: 'manual-reset', updatedAt: now }, { merge: true });
+  // Session markers
+  await setDoc(doc(db, 'venues', venueId, 'sessions', departmentId),
+    { reason: 'manual-reset', updatedAt: now }, { merge: true });
 
-  const deptSessionRef = doc(db, 'venues', venueId, 'departments', departmentId, 'session', 'reset');
-  await setDoc(deptSessionRef, { reason: 'manual-reset', updatedAt: now }, { merge: true });
+  await setDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'session', 'reset'),
+    { reason: 'manual-reset', updatedAt: now }, { merge: true });
 
-  // Reopen all areas: ONLY lifecycle fields to satisfy rules
+  // Reopen all areas with a lifecycle RESET write (must match rules)
   const areasCol = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
   const snap = await getDocs(query(areasCol));
   for (const d of snap.docs) {
-    // IMPORTANT: do NOT include updatedAt here
-    await updateDoc(d.ref, { startedAt: null, completedAt: null });
+    await updateDoc(d.ref, {
+      startedAt: null,
+      completedAt: null,
+      cycleResetAt: now,   // key to satisfy isCycleReset()
+    });
   }
   return { ok: true, count: snap.size, departmentId };
 }
 
-/** Reset ALL departments in a venue */
 export async function resetAllDepartmentsStockTake(venueId: string) {
   if (!venueId) throw new Error('Missing venueId');
   const depsCol = collection(db, 'venues', venueId, 'departments');

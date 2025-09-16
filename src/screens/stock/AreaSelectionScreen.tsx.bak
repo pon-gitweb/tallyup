@@ -3,11 +3,11 @@ import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
   Modal, Pressable, Alert, ActivityIndicator
 } from 'react-native';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
-  doc, serverTimestamp
+  doc, serverTimestamp, where
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
@@ -35,11 +35,6 @@ export default function AreaSelectionScreen() {
   const [areaName, setAreaName] = useState('');
 
   useEffect(() => { load(); }, [venueId, departmentId]);
-  useFocusEffect(React.useCallback(() => {
-    load();
-    return () => {};
-  }, [venueId, departmentId]));
-
 
   async function load() {
     if (!venueId || !departmentId) { setAreas([]); setLoading(false); return; }
@@ -127,10 +122,11 @@ export default function AreaSelectionScreen() {
     );
   }
 
-  // Only write lifecycle keys (no updatedAt) to satisfy rules
+  // NEW: one-tap fix for legacy (stuck) areas: set startedAt/completedAt to null
   async function fixLegacyAreas() {
     if (!venueId || !departmentId) return;
     try {
+      const now = serverTimestamp();
       const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
       const snap = await getDocs(query(col));
       let count = 0;
@@ -140,7 +136,7 @@ export default function AreaSelectionScreen() {
           !('startedAt' in data) || !('completedAt' in data) ||
           data.startedAt === undefined || data.completedAt === undefined;
         if (needsFix) {
-          await updateDoc(d.ref, { startedAt: null, completedAt: null });
+          await updateDoc(d.ref, { startedAt: null, completedAt: null, updatedAt: now });
           count++;
         }
       }
