@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore';
@@ -8,13 +8,15 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 
 type Dept = { id: string; name: string };
+type AreaDoc = { startedAt?: any; completedAt?: any };
+type DeptWithStatus = Dept & { status: 'Completed' | 'In progress' | 'Not started' };
 
 export default function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
-  const [departments, setDepartments] = useState<Dept[]>([]);
+  const [departments, setDepartments] = useState<DeptWithStatus[]>([]);
   const [search, setSearch] = useState('');
 
   const [adding, setAdding] = useState(false);
@@ -23,13 +25,34 @@ export default function DepartmentSelectionScreen() {
   const [renaming, setRenaming] = useState<Dept | null>(null);
   const [renameTo, setRenameTo] = useState('');
 
+  async function computeDeptStatus(dep: Dept): Promise<DeptWithStatus> {
+    if (!venueId) return { ...dep, status: 'Not started' };
+    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    if (areasSnap.empty) return { ...dep, status: 'Not started' };
+
+    let anyProgress = false;  // progress = startedAt OR completedAt
+    let allCompleted = true;
+    areasSnap.forEach((d) => {
+      const a = d.data() as AreaDoc;
+      if (a?.startedAt || a?.completedAt) anyProgress = true;
+      if (!a?.completedAt) allCompleted = false;
+    });
+
+    if (allCompleted) return { ...dep, status: 'Completed' };
+    if (anyProgress) return { ...dep, status: 'In progress' };
+    return { ...dep, status: 'Not started' };
+  }
+
   async function reload() {
     if (!venueId) { setDepartments([]); setLoading(false); return; }
     try {
       setLoading(true);
       const colRef = collection(db, 'venues', venueId, 'departments');
       const snap = await getDocs(query(colRef, orderBy('name'), limit(500)));
-      setDepartments(snap.docs.map(d => ({ id: d.id, name: (d.data() as any)?.name || d.id })));
+      const base = snap.docs.map(d => ({ id: d.id, name: (d.data() as any)?.name || d.id }));
+      const withStatuses: DeptWithStatus[] = [];
+      for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
+      setDepartments(withStatuses);
     } catch (e) {
       console.log('[Departments] reload error', (e as any)?.message);
       setDepartments([]);
@@ -38,6 +61,9 @@ export default function DepartmentSelectionScreen() {
     }
   }
   useEffect(() => { reload(); }, [venueId]);
+
+  // Refresh when returning to this screen
+  useFocusEffect(React.useCallback(() => { reload(); }, [venueId]));
 
   const filtered = useMemo(() => {
     const n = search.trim().toLowerCase();
@@ -51,15 +77,11 @@ export default function DepartmentSelectionScreen() {
     try {
       if (!venueId) return;
       const now = serverTimestamp();
-      await addDoc(collection(db, 'venues', venueId, 'departments'), {
-        name, createdAt: now, updatedAt: now
-      });
+      await addDoc(collection(db, 'venues', venueId, 'departments'), { name, createdAt: now, updatedAt: now });
       setNewName('');
       setAdding(false);
       await reload();
-    } catch (e: any) {
-      Alert.alert('Create failed', e?.message ?? 'Unknown error');
-    }
+    } catch (e: any) { Alert.alert('Create failed', e?.message ?? 'Unknown error'); }
   }
 
   async function onRenameConfirm() {
@@ -69,12 +91,8 @@ export default function DepartmentSelectionScreen() {
     try {
       const dref = doc(db, 'venues', venueId, 'departments', renaming.id);
       await updateDoc(dref, { name: newLabel, updatedAt: serverTimestamp() });
-      setRenaming(null);
-      setRenameTo('');
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Rename failed', e?.message ?? 'Unknown error');
-    }
+      setRenaming(null); setRenameTo(''); await reload();
+    } catch (e: any) { Alert.alert('Rename failed', e?.message ?? 'Unknown error'); }
   }
 
   async function onDelete(dep: Dept) {
@@ -88,15 +106,17 @@ export default function DepartmentSelectionScreen() {
     });
     if (!proceed) return;
 
-    try {
-      await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id));
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Delete failed', e?.message ?? 'Unknown error');
-    }
+    try { await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id)); await reload(); }
+    catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
   }
 
-  function Row({ item }: { item: Dept }) {
+  function Row({ item }: { item: DeptWithStatus }) {
+    const pill = {
+      'Completed':  { bg: '#E8F5E9', fg: '#2E7D32' },
+      'In progress': { bg: '#FFF8E1', fg: '#FF6F00' },
+      'Not started': { bg: '#ECEFF1', fg: '#455A64' },
+    }[item.status];
+
     return (
       <TouchableOpacity
         style={styles.row}
@@ -104,6 +124,9 @@ export default function DepartmentSelectionScreen() {
       >
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name}</Text>
+        </View>
+        <View style={[styles.statusPill, { backgroundColor: pill.bg }]}>
+          <Text style={{ color: pill.fg, fontWeight: '700' }}>{item.status}</Text>
         </View>
         <TouchableOpacity style={styles.smallBtn} onPress={() => { setRenaming(item); setRenameTo(item.name); }}>
           <Text style={styles.smallBtnText}>Rename</Text>
@@ -120,12 +143,7 @@ export default function DepartmentSelectionScreen() {
       <Text style={styles.title}>Departments</Text>
 
       <View style={styles.searchRow}>
-        <TextInput
-          placeholder="Search departments…"
-          value={search}
-          onChangeText={setSearch}
-          style={styles.search}
-        />
+        <TextInput placeholder="Search departments…" value={search} onChangeText={setSearch} style={styles.search} />
         <TouchableOpacity style={styles.primaryBtn} onPress={() => setAdding(true)}>
           <Text style={styles.primaryText}>New</Text>
         </TouchableOpacity>
@@ -148,13 +166,7 @@ export default function DepartmentSelectionScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New department</Text>
-            <TextInput
-              autoFocus
-              placeholder="Department name"
-              value={newName}
-              onChangeText={setNewName}
-              style={styles.input}
-            />
+            <TextInput autoFocus placeholder="Department name" value={newName} onChangeText={setNewName} style={styles.input} />
             <View style={styles.modalRow}>
               <TouchableOpacity style={[styles.secondaryBtn]} onPress={() => setAdding(false)}>
                 <Text style={styles.secondaryText}>Cancel</Text>
@@ -172,13 +184,7 @@ export default function DepartmentSelectionScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Rename department</Text>
-            <TextInput
-              autoFocus
-              placeholder="New name"
-              value={renameTo}
-              onChangeText={setRenameTo}
-              style={styles.input}
-            />
+            <TextInput autoFocus placeholder="New name" value={renameTo} onChangeText={setRenameTo} style={styles.input} />
             <View style={styles.modalRow}>
               <TouchableOpacity style={styles.secondaryBtn} onPress={() => setRenaming(null)}>
                 <Text style={styles.secondaryText}>Cancel</Text>
@@ -198,10 +204,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, backgroundColor: 'white' },
   title: { fontSize: 22, fontWeight: '700', marginBottom: 12 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  search: {
-    flex: 1, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10,
-    paddingHorizontal: 12, height: 40, backgroundColor: '#F9FAFB'
-  },
+  search: { flex: 1, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 12, height: 40, backgroundColor: '#F9FAFB' },
   primaryBtn: { backgroundColor: '#0A84FF', paddingHorizontal: 16, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   primaryText: { color: 'white', fontWeight: '700' },
   secondaryBtn: { paddingHorizontal: 16, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1' },
@@ -217,4 +220,5 @@ const styles = StyleSheet.create({
   modalCard: { width: '100%', backgroundColor: 'white', borderRadius: 16, padding: 16, gap: 12 },
   modalTitle: { fontSize: 18, fontWeight: '700' },
   modalRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
 });

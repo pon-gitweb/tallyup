@@ -9,6 +9,7 @@ import { useVenueId } from '../../context/VenueProvider';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
+
 type DeptWithStatus = Dept & { status: 'Completed' | 'In progress' | 'Not started' };
 
 export default function DepartmentSelectionScreen() {
@@ -27,6 +28,7 @@ export default function DepartmentSelectionScreen() {
 
   async function computeDeptStatus(dep: Dept): Promise<DeptWithStatus> {
     if (!venueId) return { ...dep, status: 'Not started' };
+    // read areas for this department
     const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     if (areasSnap.empty) return { ...dep, status: 'Not started' };
 
@@ -50,6 +52,7 @@ export default function DepartmentSelectionScreen() {
       const colRef = collection(db, 'venues', venueId, 'departments');
       const snap = await getDocs(query(colRef, orderBy('name'), limit(500)));
       const base = snap.docs.map(d => ({ id: d.id, name: (d.data() as any)?.name || d.id }));
+      // compute statuses (sequential to keep it simple; could parallelize if needed)
       const withStatuses: DeptWithStatus[] = [];
       for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
       setDepartments(withStatuses);
@@ -88,7 +91,8 @@ export default function DepartmentSelectionScreen() {
     try {
       const dref = doc(db, 'venues', venueId, 'departments', renaming.id);
       await updateDoc(dref, { name: newLabel, updatedAt: serverTimestamp() });
-      setRenaming(null); setRenameTo(''); await reload();
+      setRenaming(null); setRenameTo('');
+      await reload();
     } catch (e: any) { Alert.alert('Rename failed', e?.message ?? 'Unknown error'); }
   }
 
@@ -103,8 +107,10 @@ export default function DepartmentSelectionScreen() {
     });
     if (!proceed) return;
 
-    try { await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id)); await reload(); }
-    catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
+    try {
+      await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id));
+      await reload();
+    } catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
   }
 
   function Row({ item }: { item: DeptWithStatus }) {

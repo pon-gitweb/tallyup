@@ -19,16 +19,18 @@ type Item = {
   lastCount?: number;
   lastCountAt?: any;
 
+  // Expected (guide only — never written here)
   expectedQty?: number;
   incomingQty?: number;
   soldQty?: number;
   wastageQty?: number;
 
+  // meta (not changed during counts)
   unit?: string;
   supplierId?: string;
   costPrice?: number;
   salePrice?: number;
-  parLevel?: number;
+  parLevel?: number; // ordering only (NOT used as expected)
   productId?: string;
   productName?: string;
   createdAt?: any;
@@ -51,23 +53,24 @@ export default function StockTakeAreaInventoryScreen() {
 
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
 
+  // auth/role
   const uid = getAuth().currentUser?.uid;
   const [isManager, setIsManager] = useState(false);
 
+  // state
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState('');
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
+  // adjustment modal (only for locked rows & non-managers)
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
+  // Quick Add
   const [addingName, setAddingName] = useState('');
   const nameInputRef = useRef<TextInput>(null);
-
-  // area meta for cycle-aware logic
-  const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
   // ----- subscriptions -----
   useEffect(() => {
@@ -80,14 +83,6 @@ export default function StockTakeAreaInventoryScreen() {
       const rows: Item[] = [];
       snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
       setItems(rows);
-    });
-    return () => unsub();
-  }, [itemsPathOk, venueId, departmentId, areaId]);
-
-  useEffect(() => {
-    if (!itemsPathOk) return;
-    const unsub = onSnapshot(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), (d) => {
-      setAreaMeta((d.data() as AreaDoc) || null);
     });
     return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
@@ -108,14 +103,6 @@ export default function StockTakeAreaInventoryScreen() {
   }, [venueId, uid]);
 
   // ----- helpers -----
-  const startedAtMs = areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null);
-
-  const countedInThisCycle = (it: Item): boolean => {
-    const lcMs = it?.lastCountAt?.toMillis ? it.lastCountAt.toMillis() : (it?.lastCountAt?._seconds ? it.lastCountAt._seconds * 1000 : null);
-    if (!lcMs || !startedAtMs) return false;
-    return lcMs >= startedAtMs;
-  };
-
   // Expected is GUIDE ONLY (chip + placeholder). Never assigned to input value.
   const deriveExpected = (it: Item): number | null => {
     if (typeof it.expectedQty === 'number') return it.expectedQty;
@@ -132,11 +119,13 @@ export default function StockTakeAreaInventoryScreen() {
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filter]);
 
+  // paths
   const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
   const itemRef  = (id: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id);
   const areaRef  = () => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId);
   const areasCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas');
 
+  // lifecycle
   const ensureAreaStarted = async () => {
     try {
       const a = await getDoc(areaRef()); const data = a.data() as AreaDoc | undefined;
@@ -163,6 +152,7 @@ export default function StockTakeAreaInventoryScreen() {
         await updateDoc(itemRef(item.id), {
           lastCount: qty,
           lastCountAt: serverTimestamp(),
+          // IMPORTANT: DO NOT write updatedAt here (keeps Firestore "count-only" rule happy)
         });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
       } catch (e: any) { Alert.alert('Could not save count', e?.message ?? String(e)); }
@@ -188,6 +178,7 @@ export default function StockTakeAreaInventoryScreen() {
     ]);
   };
 
+  // Adjustments (only after save, for non-managers)
   const openAdjustment = (item: Item) => { setAdjModalFor(item); setAdjQty(''); setAdjReason(''); };
   const submitAdjustment = async () => {
     const it = adjModalFor!; const qtyStr = adjQty.trim();
@@ -205,6 +196,7 @@ export default function StockTakeAreaInventoryScreen() {
     } catch (e: any) { Alert.alert('Could not submit request', e?.message ?? String(e)); }
   };
 
+  // submit area (confirm zeros on untouched; rules-clean writes)
   const maybeFinalizeDepartment = async () => {
     try {
       const snap = await getDocs(areasCol());
@@ -215,7 +207,7 @@ export default function StockTakeAreaInventoryScreen() {
   };
 
   const completeArea = async () => {
-    const missing = items.filter((it) => !countedInThisCycle(it));
+    const missing = items.filter((it) => !it.lastCountAt);
     const perform = async () => {
       try {
         if (missing.length > 0) {
@@ -223,10 +215,11 @@ export default function StockTakeAreaInventoryScreen() {
             updateDoc(itemRef(it.id), {
               lastCount: 0,
               lastCountAt: serverTimestamp(),
+              // no updatedAt here either
             })
           ));
         }
-        await updateDoc(areaRef(), { completedAt: serverTimestamp() });
+        await updateDoc(areaRef(), { completedAt: serverTimestamp() }); // lifecycle-only
         await maybeFinalizeDepartment();
         nav.goBack();
       } catch (e: any) { Alert.alert('Could not complete area', e?.message ?? String(e)); }
@@ -234,8 +227,8 @@ export default function StockTakeAreaInventoryScreen() {
 
     if (missing.length > 0) {
       const msg = missing.length === items.length
-        ? 'No items have been counted yet this cycle. Continue and save all as 0?'
-        : `Not all items have a count for this cycle. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
+        ? 'No items have been counted yet. Continue and save all as 0?'
+        : `Not all items have a count. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
       Alert.alert('Incomplete counts', msg, [
         { text: 'Go back', style: 'cancel' },
         { text: 'Continue', onPress: perform }
@@ -248,13 +241,12 @@ export default function StockTakeAreaInventoryScreen() {
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
+  // ----- UI -----
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
-
-    const countedNow = countedInThisCycle(item);
-    const locked = countedNow && !isManager;
+    const locked = !!item.lastCountAt && !isManager; // lock after save for non-managers
 
     const placeholder = showExpected
       ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available')
@@ -265,8 +257,8 @@ export default function StockTakeAreaInventoryScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
-            <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
-              {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
+            <Text style={{ fontSize: 12, color: item.lastCountAt ? '#4CAF50' : '#999' }}>
+              {item.lastCountAt ? `Counted: ${item.lastCount}` : 'To count'}
             </Text>
           </View>
           {showExpected && expectedStr ? (
@@ -278,10 +270,10 @@ export default function StockTakeAreaInventoryScreen() {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TextInput
-            value={typed}
+            value={typed}                   /* user-typed only; never set to expected */
             onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
             placeholder={placeholder}
-            keyboardType="number-pad"
+            keyboardType="number-pad"       /* multi-digit stable on Android; switch to decimal-pad if needed */
             inputMode="decimal"
             maxLength={32}
             returnKeyType="done"
@@ -309,17 +301,15 @@ export default function StockTakeAreaInventoryScreen() {
             <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
           </TouchableOpacity>
 
-          {/* Request adj. — only when a current-cycle count exists, and user is not a manager */}
-          {countedNow && !isManager ? (
+          {/* Request adj. ONLY when row is locked (i.e., a saved count exists) and user is not a manager */}
+          {locked ? (
             <TouchableOpacity onPress={() => setAdjModalFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
           ) : (
-            !locked && (
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
-                <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
-              </TouchableOpacity>
-            )
+            <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
+              <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
+            </TouchableOpacity>
           )}
         </View>
       </View>
@@ -369,7 +359,7 @@ export default function StockTakeAreaInventoryScreen() {
         </View>
       </View>
 
-      {/* Single list */}
+      {/* Single flat list — NO toCount/Counted split to avoid focus churn */}
       <FlatList
         data={filtered}
         keyExtractor={(it) => it.id}

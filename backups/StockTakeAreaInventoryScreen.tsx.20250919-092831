@@ -1,8 +1,8 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View
+  Alert, FlatList, Keyboard, Modal, Pressable, SafeAreaView,
+  ScrollView, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
@@ -18,12 +18,10 @@ type Item = {
   name: string;
   lastCount?: number;
   lastCountAt?: any;
-
   expectedQty?: number;
   incomingQty?: number;
   soldQty?: number;
   wastageQty?: number;
-
   unit?: string;
   supplierId?: string;
   costPrice?: number;
@@ -38,6 +36,7 @@ type Item = {
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
 type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
+
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
 export default function StockTakeAreaInventoryScreen() {
@@ -51,25 +50,21 @@ export default function StockTakeAreaInventoryScreen() {
 
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
 
+  // auth/role
   const uid = getAuth().currentUser?.uid;
   const [isManager, setIsManager] = useState(false);
 
+  // state
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState('');
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
-
-  const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
-  const [adjQty, setAdjQty] = useState('');
-  const [adjReason, setAdjReason] = useState('');
-
   const [addingName, setAddingName] = useState('');
   const nameInputRef = useRef<TextInput>(null);
+  const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
+  const [adjQty, setAdjQty] = useState(''); const [adjReason, setAdjReason] = useState('');
 
-  // area meta for cycle-aware logic
-  const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
-
-  // ----- subscriptions -----
+  // subscribe items
   useEffect(() => {
     if (!itemsPathOk) return;
     const q = query(
@@ -84,14 +79,7 @@ export default function StockTakeAreaInventoryScreen() {
     return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
-  useEffect(() => {
-    if (!itemsPathOk) return;
-    const unsub = onSnapshot(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), (d) => {
-      setAreaMeta((d.data() as AreaDoc) || null);
-    });
-    return () => unsub();
-  }, [itemsPathOk, venueId, departmentId, areaId]);
-
+  // subscribe role
   useEffect(() => {
     let unsub: any;
     (async () => {
@@ -107,16 +95,7 @@ export default function StockTakeAreaInventoryScreen() {
     return () => unsub && unsub();
   }, [venueId, uid]);
 
-  // ----- helpers -----
-  const startedAtMs = areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null);
-
-  const countedInThisCycle = (it: Item): boolean => {
-    const lcMs = it?.lastCountAt?.toMillis ? it.lastCountAt.toMillis() : (it?.lastCountAt?._seconds ? it.lastCountAt._seconds * 1000 : null);
-    if (!lcMs || !startedAtMs) return false;
-    return lcMs >= startedAtMs;
-  };
-
-  // Expected is GUIDE ONLY (chip + placeholder). Never assigned to input value.
+  // expected helpers (ghost only)
   const deriveExpected = (it: Item): number | null => {
     if (typeof it.expectedQty === 'number') return it.expectedQty;
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
@@ -127,24 +106,24 @@ export default function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
+  // filter/buckets
   const filtered = useMemo(() => {
     const n = filter.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filter]);
+  const { toCount, counted } = useMemo(() => {
+    const t: Item[] = [], c: Item[] = [];
+    for (const it of filtered) (it.lastCountAt ? c : t).push(it);
+    return { toCount: t, counted: c };
+  }, [filtered]);
 
+  // paths
   const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
-  const itemRef  = (id: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id);
+  const itemRef  = (itemId: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', itemId);
   const areaRef  = () => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId);
   const areasCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas');
 
-  const ensureAreaStarted = async () => {
-    try {
-      const a = await getDoc(areaRef()); const data = a.data() as AreaDoc | undefined;
-      if (!data?.startedAt) await updateDoc(areaRef(), { startedAt: serverTimestamp() });
-    } catch {}
-  };
-
-  // ----- CRUD -----
+  // quick add
   const addQuickItem = async () => {
     const nm = (addingName || '').trim(); if (!nm) return Alert.alert('Name required');
     try {
@@ -153,21 +132,24 @@ export default function StockTakeAreaInventoryScreen() {
     } catch (e: any) { Alert.alert('Could not add item', e?.message ?? String(e)); }
   };
 
-  // SAVE COUNT: rules-clean (ONLY lastCount & lastCountAt)
+  // lifecycle
+  const ensureAreaStarted = async () => {
+    try {
+      const a = await getDoc(areaRef()); const data = a.data() as AreaDoc | undefined;
+      if (!data?.startedAt) await updateDoc(areaRef(), { startedAt: serverTimestamp() });
+    } catch {}
+  };
+
+  // save count
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
-
     const doWrite = async (qty: number) => {
       try {
         await ensureAreaStarted();
-        await updateDoc(itemRef(item.id), {
-          lastCount: qty,
-          lastCountAt: serverTimestamp(),
-        });
+        await updateDoc(itemRef(item.id), { lastCount: qty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
       } catch (e: any) { Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
-
     if (typed === '') {
       Alert.alert('No quantity entered', `Save “${item.name}” as 0?`, [
         { text: 'Cancel', style: 'cancel' },
@@ -175,10 +157,11 @@ export default function StockTakeAreaInventoryScreen() {
       ]);
       return;
     }
-    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5)');
+    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20.5)');
     await doWrite(parseFloat(typed));
   };
 
+  // delete
   const removeItem = async (itemId: string) => {
     Alert.alert('Delete item', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
@@ -188,6 +171,7 @@ export default function StockTakeAreaInventoryScreen() {
     ]);
   };
 
+  // adjustments
   const openAdjustment = (item: Item) => { setAdjModalFor(item); setAdjQty(''); setAdjReason(''); };
   const submitAdjustment = async () => {
     const it = adjModalFor!; const qtyStr = adjQty.trim();
@@ -205,6 +189,7 @@ export default function StockTakeAreaInventoryScreen() {
     } catch (e: any) { Alert.alert('Could not submit request', e?.message ?? String(e)); }
   };
 
+  // department completion check
   const maybeFinalizeDepartment = async () => {
     try {
       const snap = await getDocs(areasCol());
@@ -214,16 +199,14 @@ export default function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
+  // submit area
   const completeArea = async () => {
-    const missing = items.filter((it) => !countedInThisCycle(it));
+    const missing = items.filter((it) => !it.lastCountAt);
     const perform = async () => {
       try {
         if (missing.length > 0) {
           await Promise.all(missing.map((it) =>
-            updateDoc(itemRef(it.id), {
-              lastCount: 0,
-              lastCountAt: serverTimestamp(),
-            })
+            updateDoc(itemRef(it.id), { lastCount: 0, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() })
           ));
         }
         await updateDoc(areaRef(), { completedAt: serverTimestamp() });
@@ -231,11 +214,10 @@ export default function StockTakeAreaInventoryScreen() {
         nav.goBack();
       } catch (e: any) { Alert.alert('Could not complete area', e?.message ?? String(e)); }
     };
-
     if (missing.length > 0) {
       const msg = missing.length === items.length
-        ? 'No items have been counted yet this cycle. Continue and save all as 0?'
-        : `Not all items have a count for this cycle. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
+        ? 'No items have been counted yet. Continue and save all as 0?'
+        : `Not all items have a count. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
       Alert.alert('Incomplete counts', msg, [
         { text: 'Go back', style: 'cancel' },
         { text: 'Continue', onPress: perform }
@@ -245,28 +227,28 @@ export default function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // stubs
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
+  // row
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
-
-    const countedNow = countedInThisCycle(item);
-    const locked = countedNow && !isManager;
+    const locked = !!item.lastCountAt && !isManager; // lock after saved unless manager
 
     const placeholder = showExpected
       ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available')
       : 'enter count here';
 
     return (
-      <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
+      <Pressable style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
-            <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
-              {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
+            <Text style={{ fontSize: 12, color: item.lastCountAt ? '#4CAF50' : '#999' }}>
+              {item.lastCountAt ? `Counted: ${item.lastCount}` : 'To count'}
             </Text>
           </View>
           {showExpected && expectedStr ? (
@@ -278,10 +260,10 @@ export default function StockTakeAreaInventoryScreen() {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TextInput
-            value={typed}
+            value={typed}                                    /* <- input is ONLY what user types */
             onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
             placeholder={placeholder}
-            keyboardType="number-pad"
+            keyboardType="numeric"
             inputMode="decimal"
             maxLength={32}
             returnKeyType="done"
@@ -309,29 +291,33 @@ export default function StockTakeAreaInventoryScreen() {
             <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
           </TouchableOpacity>
 
-          {/* Request adj. — only when a current-cycle count exists, and user is not a manager */}
-          {countedNow && !isManager ? (
-            <TouchableOpacity onPress={() => setAdjModalFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
+          {/* Request adj. only AFTER a count exists (locked) and only for non-managers */}
+          {locked ? (
+            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
           ) : (
-            !locked && (
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
-                <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
-              </TouchableOpacity>
-            )
+            <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
+              <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
+            </TouchableOpacity>
           )}
         </View>
-      </View>
+      </Pressable>
     );
   };
 
+  const Section = ({ title, data }: { title: string; data: Item[] }) => (
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ marginHorizontal: 12, marginBottom: 6, fontWeight: '800', color: '#666' }}>{title} ({data.length})</Text>
+      <FlatList data={data} keyExtractor={(it) => it.id} renderItem={({ item }) => <Row item={item} />}
+        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>} />
+    </View>
+  );
+
   if (!itemsPathOk) {
-    return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <Text style={{ fontSize: 16, textAlign: 'center' }}>Missing navigation params. Need venueId, departmentId and areaId.</Text>
-      </SafeAreaView>
-    );
+    return (<SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Text style={{ fontSize: 16, textAlign: 'center' }}>Missing navigation params. Need venueId, departmentId and areaId.</Text>
+    </SafeAreaView>);
   }
 
   return (
@@ -340,28 +326,19 @@ export default function StockTakeAreaInventoryScreen() {
       <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
 
-        {/* Search + Toggle */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TextInput
-            value={filter}
-            onChangeText={setFilter}
-            placeholder="Search items…"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-          />
-          <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
+          <TextInput value={filter} onChangeText={setFilter} placeholder="Search items…"
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }} />
+          <TouchableOpacity onPress={() => setShowExpected((v) => !v)}
+            style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
             <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
           </TouchableOpacity>
         </View>
 
         {/* Quick Add */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TextInput
-            ref={nameInputRef}
-            value={addingName}
-            onChangeText={setAddingName}
-            placeholder="Quick add item name"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-          />
+          <TextInput ref={nameInputRef} value={addingName} onChangeText={setAddingName} placeholder="Quick add item name"
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }} />
           <TouchableOpacity onPress={addQuickItem}
             style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
             <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
@@ -369,12 +346,12 @@ export default function StockTakeAreaInventoryScreen() {
         </View>
       </View>
 
-      {/* Single list */}
+      {/* Lists */}
       <FlatList
-        data={filtered}
-        keyExtractor={(it) => it.id}
-        renderItem={({ item }) => <Row item={item} />}
-        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
+        ListHeaderComponent={<><Section title="To count" data={toCount} /><Section title="Counted" data={counted} /></>}
+        data={[]}
+        renderItem={null as any}
+        keyExtractor={() => 'x'}
       />
 
       {/* Sticky footer Submit */}
@@ -396,7 +373,7 @@ export default function StockTakeAreaInventoryScreen() {
             </Text>
             <View style={{ marginBottom: 10 }}>
               <Text style={{ fontWeight: '600', marginBottom: 4 }}>Proposed qty</Text>
-              <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="number-pad" inputMode="decimal"
+              <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="numeric" inputMode="decimal"
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
             </View>
             <View style={{ marginBottom: 10 }}>

@@ -1,0 +1,317 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Keyboard, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { db } from 'src/services/firebase';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { useVenueId } from 'src/context/VenueProvider';
+
+type Item = {
+  id: string;
+  name: string;
+  lastCount?: number;
+  lastCountAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+  // optional meta fields
+  unit?: string;
+  supplierId?: string;
+  costPrice?: number;
+  salePrice?: number;
+  parLevel?: number;
+};
+
+type RouteParams = {
+  venueId?: string;         // prefer context, but allow param
+  departmentId: string;
+  areaId: string;
+  areaName?: string;
+};
+
+export default function StockTakeAreaInventoryScreen() {
+  const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const venueIdFromCtx = useVenueId();
+  const { departmentId, areaId, areaName, venueId: venueIdFromRoute } = (route.params ?? {}) as RouteParams;
+
+  const venueId = venueIdFromCtx || venueIdFromRoute;
+  const [items, setItems] = useState<Item[]>([]);
+  const [addingName, setAddingName] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [localQty, setLocalQty] = useState<Record<string, string>>({});
+  const nameInputRef = useRef<TextInput>(null);
+
+  // ---- guard path ----
+  const itemsPathOk = !!venueId && !!departmentId && !!areaId;
+
+  useEffect(() => {
+    if (!itemsPathOk) return;
+    // live query
+    const q = query(
+      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+      orderBy('name')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const rows: Item[] = [];
+      snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
+      setItems(rows);
+    });
+    return () => unsub();
+  }, [itemsPathOk, venueId, departmentId, areaId]);
+
+  // split to “toCount” and “counted”
+  const { toCount, counted } = useMemo(() => {
+    const t: Item[] = [];
+    const c: Item[] = [];
+    for (const it of items) {
+      if (it.lastCountAt) c.push(it); else t.push(it);
+    }
+    return { toCount: t, counted: c };
+  }, [items]);
+
+  // ----- actions -----
+  const addQuickItem = async () => {
+    const trimmed = (addingName || '').trim();
+    if (!trimmed) {
+      Alert.alert('Name required', 'Please enter a name for the new item.');
+      return;
+    }
+    try {
+      await addDoc(
+        collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+        {
+          name: trimmed,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      setAddingName('');
+      nameInputRef.current?.blur();
+      Keyboard.dismiss();
+    } catch (e: any) {
+      console.log('[QuickCreate:error]', e);
+      Alert.alert('Could not add item', e?.message ?? String(e));
+    }
+  };
+
+  const saveCount = async (itemId: string) => {
+    const raw = (localQty[itemId] ?? '').trim();
+    const qty = Number.isFinite(+raw) ? Math.max(0, parseFloat(raw)) : NaN;
+    if (!Number.isFinite(qty)) {
+      Alert.alert('Invalid number', 'Enter a numeric quantity.');
+      return;
+    }
+    try {
+      await updateDoc(
+        doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', itemId),
+        { lastCount: qty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      );
+      setLocalQty((m) => ({ ...m, [itemId]: '' }));
+    } catch (e: any) {
+      console.log('[CountSave:error]', e);
+      Alert.alert('Could not save count', e?.message ?? String(e));
+    }
+  };
+
+  const incrementByOne = async (itemId: string, current?: number) => {
+    const newVal = (Number.isFinite(current) ? (current || 0) : 0) + 1;
+    try {
+      await updateDoc(
+        doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', itemId),
+        { lastCount: newVal, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      );
+    } catch (e: any) {
+      console.log('[Increment:error]', e);
+    }
+  };
+
+  const startRename = (item: Item) => {
+    setEditingId(item.id);
+    setEditingName(item.name);
+  };
+  const commitRename = async () => {
+    const id = editingId;
+    const nm = editingName.trim();
+    if (!id) return;
+    if (!nm) {
+      Alert.alert('Name required', 'Item name cannot be empty.');
+      return;
+    }
+    try {
+      await updateDoc(
+        doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id),
+        { name: nm, updatedAt: serverTimestamp() }
+      );
+      setEditingId(null);
+      setEditingName('');
+    } catch (e: any) {
+      console.log('[Rename:error]', e);
+      Alert.alert('Could not rename', e?.message ?? String(e));
+    }
+  };
+
+  const removeItem = async (itemId: string) => {
+    Alert.alert('Delete item', 'Are you sure you want to delete this item?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await deleteDoc(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', itemId));
+          } catch (e: any) {
+            console.log('[Delete:error]', e);
+            Alert.alert('Could not delete', e?.message ?? String(e));
+          }
+        }
+      }
+    ]);
+  };
+
+  const completeArea = async () => {
+    Alert.alert('Complete Area', 'Mark this area as completed?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Complete', style: 'default', onPress: async () => {
+          try {
+            await updateDoc(
+              doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId),
+              { completedAt: serverTimestamp(), updatedAt: serverTimestamp() }
+            );
+            nav.goBack();
+          } catch (e: any) {
+            console.log('[CompleteArea:error]', e);
+            Alert.alert('Could not complete area', e?.message ?? String(e));
+          }
+        }
+      }
+    ]);
+  };
+
+  // stubs
+  const openBluetooth = () => {
+    Alert.alert('Bluetooth Count', 'Scanner integration stubbed here. (Coming soon)');
+  };
+  const openCamera = () => {
+    Alert.alert('Photo Count', 'Camera OCR/vision stubbed here. (Coming soon)');
+  };
+
+  // ---- row ----
+  const Row = ({ item }: { item: Item }) => {
+    const qtyStr = localQty[item.id] ?? '';
+    return (
+      <Pressable
+        onLongPress={() => incrementByOne(item.id, item.lastCount)}
+        style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', flexDirection: 'row', alignItems: 'center', gap: 8 }}
+      >
+        {/* name / rename */}
+        <View style={{ flex: 1 }}>
+          {editingId === item.id ? (
+            <TextInput
+              value={editingName}
+              onChangeText={setEditingName}
+              onBlur={commitRename}
+              onSubmitEditing={commitRename}
+              autoFocus
+              placeholder="Item name"
+              style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, fontSize: 16 }}
+            />
+          ) : (
+            <TouchableOpacity onLongPress={() => startRename(item)}>
+              <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
+              {item.lastCountAt ? (
+                <Text style={{ fontSize: 12, color: '#4CAF50' }}>Counted: {item.lastCount}</Text>
+              ) : (
+                <Text style={{ fontSize: 12, color: '#999' }}>Not counted</Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* quick qty input + save */}
+        <View style={{ width: 120, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TextInput
+            value={qtyStr}
+            onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
+            placeholder="qty"
+            keyboardType="numeric"
+            style={{ flex: 1, paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ccc', borderRadius: 8 }}
+          />
+          <TouchableOpacity onPress={() => saveCount(item.id)} style={{ backgroundColor: '#0A84FF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}>
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* overflow: delete */}
+        <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
+          <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
+        </TouchableOpacity>
+      </Pressable>
+    );
+  };
+
+  const Section = ({ title, data }: { title: string; data: Item[] }) => (
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ marginHorizontal: 12, marginBottom: 6, fontWeight: '800', color: '#666' }}>{title} ({data.length})</Text>
+      <FlatList
+        data={data}
+        keyExtractor={(it) => it.id}
+        renderItem={({ item }) => <Row item={item} />}
+        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
+      />
+    </View>
+  );
+
+  if (!itemsPathOk) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ fontSize: 16, textAlign: 'center' }}>Missing navigation params. Need venueId, departmentId and areaId.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* header / actions */}
+      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
+        <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TextInput
+            ref={nameInputRef}
+            value={addingName}
+            onChangeText={setAddingName}
+            placeholder="Quick add item name"
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+          />
+          <TouchableOpacity onPress={addQuickItem} style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity onPress={openBluetooth} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#E3F2FD' }}>
+            <Text style={{ color: '#0A84FF', fontWeight: '700' }}>🔵 Bluetooth</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={openCamera} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#FFF8E1' }}>
+            <Text style={{ color: '#FF6F00', fontWeight: '700' }}>📷 Photo</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity onPress={completeArea} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#E8F5E9' }}>
+            <Text style={{ color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* lists */}
+      <FlatList
+        ListHeaderComponent={
+          <>
+            <Section title="To count" data={toCount} />
+            <Section title="Counted" data={counted} />
+          </>
+        }
+        data={[]} // just to enable scrolling; sections render in header
+        renderItem={null as any}
+        keyExtractor={() => 'x'}
+      />
+    </View>
+  );
+}

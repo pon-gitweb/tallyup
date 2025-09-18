@@ -1,0 +1,403 @@
+import React from 'react';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { db } from '../../services/firebase';
+
+type RouteParams = { venueId: string; departmentId: string; areaId: string };
+
+type Item = {
+  id: string;
+  name: string;
+  lastCount?: number;
+  lastCountAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+};
+
+export default function StockTakeAreaInventoryScreen() {
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const { venueId, departmentId, areaId } = (route?.params || {}) as RouteParams;
+
+  const [items, setItems] = React.useState<Item[]>([]);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+
+  // quick add state
+  const [newName, setNewName] = React.useState('');
+
+  // count modal state
+  const [countModalVisible, setCountModalVisible] = React.useState(false);
+  const [countModalItem, setCountModalItem] = React.useState<Item | null>(null);
+  const [countInput, setCountInput] = React.useState('');
+
+  // rename modal state (Android-safe)
+  const [renameModalVisible, setRenameModalVisible] = React.useState(false);
+  const [renameItemRef, setRenameItemRef] = React.useState<Item | null>(null);
+  const [renameInput, setRenameInput] = React.useState('');
+
+  // ---- Header (Bluetooth / Camera) stubs acting on selected item ----
+  React.useLayoutEffect(() => {
+    const requireSelected = (label: string, fn: (it: Item) => void) => {
+      const it = items.find(r => r.id === selectedId);
+      if (!it) {
+        Alert.alert(label, 'Select an item first (tap a row).');
+        return;
+      }
+      fn(it);
+    };
+
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity
+            onPress={() => requireSelected('Bluetooth', (it) => {
+              Alert.alert('Bluetooth', `Stub for “${it.name}”`);
+            })}
+            style={{ paddingHorizontal: 8 }}
+          >
+            <Text style={{ color: '#0A84FF', fontWeight: '700' }}>BT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => requireSelected('Photo', (it) => {
+              Alert.alert('Photo', `Stub for “${it.name}”`);
+            })}
+            style={{ paddingHorizontal: 8 }}
+          >
+            <Text style={{ color: '#0A84FF', fontWeight: '700' }}>📷</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation, items, selectedId]);
+
+  // ---- Subscribe (NO orderBy; sort client-side) ----
+  React.useEffect(() => {
+    if (!venueId || !departmentId || !areaId) return;
+    const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
+    const unsub = onSnapshot(colRef, snap => {
+      const rows: Item[] = [];
+      snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
+      rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setItems(rows);
+      if (selectedId && !rows.find(r => r.id === selectedId)) setSelectedId(null);
+    });
+    return () => unsub();
+  }, [venueId, departmentId, areaId, selectedId]);
+
+  // ---- Quick Add ----
+  const onQuickAdd = React.useCallback(async () => {
+    const name = newName.trim();
+    if (!name) {
+      Alert.alert('Name required', 'Please type an item name.');
+      return;
+    }
+    const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
+    await addDoc(colRef, {
+      name,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    setNewName('');
+  }, [newName, venueId, departmentId, areaId]);
+
+  // ---- Count interactions ----
+  const openCountModal = React.useCallback((it: Item) => {
+    setSelectedId(it.id);
+    setCountModalItem(it);
+    setCountInput(it.lastCount != null ? String(it.lastCount) : '');
+    setCountModalVisible(true);
+  }, []);
+
+  const applyCount = React.useCallback(async () => {
+    const it = countModalItem;
+    if (!it) return;
+    const parsed = parseFloat(countInput);
+    if (Number.isNaN(parsed)) {
+      Alert.alert('Invalid number', 'Enter a numeric count (e.g., 3 or 1.5).');
+      return;
+    }
+    try {
+      const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', it.id);
+      // RULES: only lastCount / lastCountAt for count-write
+      await updateDoc(ref, { lastCount: parsed, lastCountAt: serverTimestamp() });
+      setCountModalVisible(false);
+      setCountModalItem(null);
+      setCountInput('');
+    } catch (e: any) {
+      Alert.alert('Update failed', e?.message ?? String(e));
+    }
+  }, [countModalItem, countInput, venueId, departmentId, areaId]);
+
+  const cancelCount = React.useCallback(() => {
+    setCountModalVisible(false);
+    setCountModalItem(null);
+    setCountInput('');
+  }, []);
+
+  const onLongPressPlusOne = React.useCallback(async (it: Item) => {
+    try {
+      const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', it.id);
+      const next = (it.lastCount ?? 0) + 1;
+      await updateDoc(ref, { lastCount: next, lastCountAt: serverTimestamp() });
+    } catch (e: any) {
+      Alert.alert('Update failed', e?.message ?? String(e));
+    }
+  }, [venueId, departmentId, areaId]);
+
+  // ---- Rename / Delete ----
+  const openRename = React.useCallback((it: Item) => {
+    setRenameItemRef(it);
+    setRenameInput(it.name);
+    setRenameModalVisible(true);
+  }, []);
+
+  const applyRename = React.useCallback(async () => {
+    const it = renameItemRef;
+    const next = renameInput.trim();
+    if (!it) return;
+    if (!next) {
+      Alert.alert('Name required', 'Please enter a name.');
+      return;
+    }
+    try {
+      const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', it.id);
+      // RULES: rename uses name + updatedAt
+      await updateDoc(ref, { name: next, updatedAt: serverTimestamp() });
+      setRenameModalVisible(false);
+      setRenameItemRef(null);
+      setRenameInput('');
+    } catch (e: any) {
+      Alert.alert('Rename failed', e?.message ?? String(e));
+    }
+  }, [renameItemRef, renameInput, venueId, departmentId, areaId]);
+
+  const cancelRename = React.useCallback(() => {
+    setRenameModalVisible(false);
+    setRenameItemRef(null);
+    setRenameInput('');
+  }, []);
+
+  const deleteItem = React.useCallback((it: Item) => {
+    Alert.alert('Delete item', `Delete “${it.name}”?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', it.id);
+            await deleteDoc(ref);
+          } catch (e: any) {
+            Alert.alert('Delete failed', e?.message ?? String(e));
+          }
+        },
+      },
+    ]);
+  }, [venueId, departmentId, areaId]);
+
+  // ---- Sections ----
+  const uncounted = items.filter(i => !i.lastCountAt);
+  const counted = items.filter(i => !!i.lastCountAt);
+  const sections = [
+    { title: `To Count (${uncounted.length})`, data: uncounted },
+    { title: `Counted (${counted.length})`, data: counted },
+  ];
+
+  const Row = ({ item }: { item: Item }) => {
+    const selected = item.id === selectedId;
+    return (
+      <Pressable
+        onPress={() => { setSelectedId(item.id); openCountModal(item); }}
+        onLongPress={() => onLongPressPlusOne(item)}
+        style={({ pressed }) => [
+          styles.row,
+          selected && styles.rowSelected,
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name}>{item.name}</Text>
+          <Text style={styles.sub}>
+            {item.lastCount != null ? `Last count: ${item.lastCount}` : 'No count yet'}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => openRename(item)} style={styles.actionBtn}>
+          <Text style={styles.actionText}>Edit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => deleteItem(item)} style={styles.actionBtn}>
+          <Text style={[styles.actionText, { color: '#FF3B30' }]}>Delete</Text>
+        </TouchableOpacity>
+      </Pressable>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Quick Add */}
+      <View style={styles.quickAddRow}>
+        <TextInput
+          value={newName}
+          onChangeText={setNewName}
+          placeholder="New item name"
+          style={styles.input}
+          autoCapitalize="words"
+          returnKeyType="done"
+          onSubmitEditing={onQuickAdd}
+        />
+        <TouchableOpacity onPress={onQuickAdd} style={styles.addBtn}>
+          <Text style={styles.addBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* List */}
+      <SectionList
+        sections={sections}
+        keyExtractor={(it) => it.id}
+        renderItem={({ item }) => <Row item={item} />}
+        renderSectionHeader={({ section }) => (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{section.title}</Text>
+          </View>
+        )}
+        ItemSeparatorComponent={() => <View style={styles.sep} />}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        ListEmptyComponent={
+          <View style={{ padding: 24 }}>
+            <Text style={{ color: '#666' }}>
+              No items yet. Use “New item name” → Add to create your first one.
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Count Modal */}
+      <Modal visible={countModalVisible} transparent animationType="fade" onRequestClose={cancelCount}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              Set count{countModalItem ? ` for ${countModalItem.name}` : ''}
+            </Text>
+            <TextInput
+              value={countInput}
+              onChangeText={setCountInput}
+              keyboardType="numeric"
+              placeholder="e.g. 3, 1.5"
+              style={styles.modalInput}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={applyCount}
+            />
+            <View style={styles.modalBtns}>
+              <TouchableOpacity onPress={cancelCount} style={[styles.modalBtn, { backgroundColor: '#eee' }]}>
+                <Text style={[styles.modalBtnText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={applyCount} style={[styles.modalBtn, { backgroundColor: '#0A84FF' }]}>
+                <Text style={styles.modalBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename Modal */}
+      <Modal visible={renameModalVisible} transparent animationType="fade" onRequestClose={cancelRename}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              Rename{renameItemRef ? ` “${renameItemRef.name}”` : ''}
+            </Text>
+            <TextInput
+              value={renameInput}
+              onChangeText={setRenameInput}
+              placeholder="Item name"
+              style={styles.modalInput}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={applyRename}
+            />
+            <View style={styles.modalBtns}>
+              <TouchableOpacity onPress={cancelRename} style={[styles.modalBtn, { backgroundColor: '#eee' }]}>
+                <Text style={[styles.modalBtnText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={applyRename} style={[styles.modalBtn, { backgroundColor: '#0A84FF' }]}>
+                <Text style={styles.modalBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff' },
+
+  quickAddRow: {
+    flexDirection: 'row',
+    padding: 12,
+    gap: 8,
+    alignItems: 'center',
+  },
+  input: {
+    flex: 1,
+    borderColor: '#ddd',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  addBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#0A84FF',
+    borderRadius: 8,
+  },
+  addBtnText: { color: '#fff', fontWeight: '700' },
+
+  sectionHeader: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#F8F9FB' },
+  sectionTitle: { fontWeight: '800', color: '#333' },
+
+  sep: { height: 1, backgroundColor: '#eee', marginLeft: 12 },
+
+  row: { paddingHorizontal: 12, paddingVertical: 14, flexDirection: 'row', alignItems: 'center' },
+  rowSelected: { backgroundColor: '#F2F8FF' },
+  name: { fontSize: 16, fontWeight: '600', color: '#111' },
+  sub: { fontSize: 12, color: '#666', marginTop: 2 },
+  actionBtn: { paddingHorizontal: 10, paddingVertical: 8 },
+  actionText: { color: '#0A84FF', fontWeight: '700' },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', padding: 24 },
+  modalCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  modalInput: {
+    borderColor: '#ddd',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 12 },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
+  modalBtnText: { color: '#fff', fontWeight: '700' },
+});
