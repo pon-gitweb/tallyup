@@ -29,6 +29,11 @@ export default function DashboardScreen() {
       const sessionId = await ensureActiveSession(venueId);
       console.log('[TallyUp StartStockTake] navigating', { venueId, sessionId, uid, email });
       nav.navigate('DepartmentSelection', { venueId, sessionId });
+
+        {/* Stock Control (inserted) */}
+        <TouchableOpacity onPress={() => navigation.navigate('StockControl')} style={/* reuse same style block as the button above if you use styles.*; if inline, it's fine too */{ padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB', marginTop: 10 }}>
+          <Text style={{ fontSize: 16, fontWeight: '800', textAlign: 'center' }}>Stock Control</Text>
+        </TouchableOpacity>
     } catch (e: any) {
       console.warn('[TallyUp StartStockTake] Failed:', e?.message);
       Alert.alert('Setup issue', e?.message ?? 'Unknown error');
@@ -41,17 +46,10 @@ export default function DashboardScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>TallyUp</Text>
       <View style={styles.buttons}>
-        {/* Primary: Start / Return */}
         <TouchableOpacity style={styles.buttonPrimary} onPress={onStartStockTake} disabled={busy}>
           {busy ? <ActivityIndicator /> : <Text style={styles.buttonText}>Start / Return Stock Take</Text>}
         </TouchableOpacity>
 
-        {/* NEW: Stock Control — placed directly under the primary, matching your button style */}
-        <TouchableOpacity style={styles.button} onPress={() => nav.navigate('StockControl')}>
-          <Text style={styles.buttonText}>Stock Control</Text>
-        </TouchableOpacity>
-
-        {/* Existing actions */}
         <TouchableOpacity style={styles.button} onPress={() => nav.navigate('Settings')}>
           <Text style={styles.buttonText}>Settings</Text>
         </TouchableOpacity>
