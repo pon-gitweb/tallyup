@@ -1,15 +1,16 @@
+import './polyfills/firestorePaths'
 import React from 'react';
-import RootNavigator from './src/navigation/RootNavigator';
-import { VenueProvider } from './src/context/VenueProvider';
-import AppErrorBoundary from './src/components/AppErrorBoundary';
+import RootNavigator from './navigation/RootNavigator';
+import { VenueProvider } from './context/VenueProvider';
+import { ThemeProvider } from './theme/ThemeProvider';
 
 export default function App() {
   console.log('[TallyUp App] mount');
   return (
-    <VenueProvider>
-      <AppErrorBoundary>
+    <ThemeProvider>
+      <VenueProvider>
         <RootNavigator />
-      </AppErrorBoundary>
-    </VenueProvider>
+      </VenueProvider>
+    </ThemeProvider>
   );
 }
