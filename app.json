@@ -4,13 +4,13 @@
     "slug": "tallyup",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/brand/app-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/brand/logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0B132B"
     },
     "ios": {
       "supportsTablet": true
@@ -29,7 +29,10 @@
     "extra": {
       "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
       "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
-      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e"
+      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e",
+      "eas": {
+        "projectId": "f51fbba0-356b-46ef-9ef5-2017ee9ad59f"
+      }
     }
   }
 }
