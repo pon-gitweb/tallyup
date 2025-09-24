@@ -1,14 +1,13 @@
-import { logDev } from "../utils/log";
 import { useFocusEffect } from "@react-navigation/native";
-import useDebouncedValue from "../utils/useDebouncedValue";
+import useDebouncedValue from "../../utils/useDebouncedValue";
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
   collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore';
-import { db } from "../services/firebase";
-import { useVenueId } from "../context/VenueProvider";
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -57,7 +56,7 @@ export default function DepartmentSelectionScreen() {
       for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
       setDepartments(withStatuses);
     } catch (e) {
-      logDev('[Departments] reload error', (e as any)?.message);
+      console.log('[Departments] reload error', (e as any)?.message);
       setDepartments([]);
     } finally {
       setLoading(false);

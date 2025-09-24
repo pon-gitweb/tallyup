@@ -7,8 +7,8 @@ import { useNavigation } from '@react-navigation/native';
 import {
   collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore';
-import { db } from "../services/firebase";
-import { useVenueId } from "../context/VenueProvider";
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };

@@ -1,14 +1,11 @@
-import { logDev } from "../utils/log";
-import { useFocusEffect } from "@react-navigation/native";
-import useDebouncedValue from "../utils/useDebouncedValue";
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore';
-import { db } from "../services/firebase";
-import { useVenueId } from "../context/VenueProvider";
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -33,16 +30,16 @@ export default function DepartmentSelectionScreen() {
     const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     if (areasSnap.empty) return { ...dep, status: 'Not started' };
 
-    let anyStarted = false;
+    let anyProgress = false;  // progress = startedAt OR completedAt
     let allCompleted = true;
     areasSnap.forEach((d) => {
       const a = d.data() as AreaDoc;
-      if (a?.startedAt) anyStarted = true;
+      if (a?.startedAt || a?.completedAt) anyProgress = true;
       if (!a?.completedAt) allCompleted = false;
     });
 
     if (allCompleted) return { ...dep, status: 'Completed' };
-    if (anyStarted) return { ...dep, status: 'In progress' };
+    if (anyProgress) return { ...dep, status: 'In progress' };
     return { ...dep, status: 'Not started' };
   }
 
@@ -57,7 +54,7 @@ export default function DepartmentSelectionScreen() {
       for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
       setDepartments(withStatuses);
     } catch (e) {
-      logDev('[Departments] reload error', (e as any)?.message);
+      console.log('[Departments] reload error', (e as any)?.message);
       setDepartments([]);
     } finally {
       setLoading(false);
@@ -65,7 +62,9 @@ export default function DepartmentSelectionScreen() {
   }
   useEffect(() => { reload(); }, [venueId]);
 
-useFocusEffect(React.useCallback(() => { reload(); return () => {}; }, [venueId]));
+  // Refresh when returning to this screen
+  useFocusEffect(React.useCallback(() => { reload(); }, [venueId]));
+
   const filtered = useMemo(() => {
     const n = search.trim().toLowerCase();
     if (!n) return departments;

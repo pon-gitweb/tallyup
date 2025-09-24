@@ -12,9 +12,9 @@ import {
   orderBy, query, serverTimestamp, updateDoc
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { db } from "../../services/firebase";
+import { db } from 'src/services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from "../../context/VenueProvider";
+import { useVenueId } from 'src/context/VenueProvider';
 
 type Item = {
   id: string;
@@ -61,7 +61,6 @@ const { guard } = useTapGuard(900);
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState('');
   const [showExpected, setShowExpected] = useState(true);
-const debouncedFilter = useDebouncedValue(filter, 200);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);

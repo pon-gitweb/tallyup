@@ -1,5 +1,5 @@
-import { logDev } from "../../utils/log";
-import useDebouncedValue from "../../utils/useDebouncedValue";
+import { logDev } from "../utils/log";
+import useDebouncedValue from "../utils/useDebouncedValue";
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,

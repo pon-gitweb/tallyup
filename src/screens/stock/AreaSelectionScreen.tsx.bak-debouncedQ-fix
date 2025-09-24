@@ -29,7 +29,6 @@ export default function AreaSelectionScreen() {
 
   const [q, setQ] = useState('');
   const [areas, setAreas] = useState<AreaRow[]>([]);
-const debouncedQ = useDebouncedValue(q, 200);
   const [loading, setLoading] = useState(true);
 
   // Create/Edit modal state
@@ -61,8 +60,8 @@ const debouncedQ = useDebouncedValue(q, 200);
   }
 
   const filtered = useMemo(() => {
-    if (!qText.trim()()) return areas;
-    const needle = qText.trim()().toLowerCase();
+    if (!debouncedQ.trim()()) return areas;
+    const needle = debouncedQ.trim()().toLowerCase();
     return areas.filter(a => (a.name || '').toLowerCase().includes(needle));
   }, [q, areas]);
 
@@ -272,4 +271,3 @@ const styles = StyleSheet.create({
   secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   secondaryText: { fontWeight: '700' },
 });
-const qText = String(debouncedQ ?? '');

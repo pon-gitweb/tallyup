@@ -1,6 +1,6 @@
-import useDebouncedValue from "../../utils/useDebouncedValue";
-import { useTapGuard } from "../../utils/ui/useTapGuard";
-import { logDev, warn, error } from "../../utils/log";
+import useDebouncedValue from "../../../utils/useDebouncedValue";
+import { useTapGuard } from "../../../utils/ui/useTapGuard";
+import { logDev, warn, error } from "../../../utils/log";
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,9 +12,9 @@ import {
   orderBy, query, serverTimestamp, updateDoc
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { db } from "../../services/firebase";
+import { db } from 'src/services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from "../../context/VenueProvider";
+import { useVenueId } from 'src/context/VenueProvider';
 
 type Item = {
   id: string;
