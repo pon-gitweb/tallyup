@@ -1,5 +1,3 @@
-import { logDev } from "../../utils/log";
-import useDebouncedValue from "../../utils/useDebouncedValue";
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
@@ -29,7 +27,6 @@ export default function AreaSelectionScreen() {
 
   const [q, setQ] = useState('');
   const [areas, setAreas] = useState<AreaRow[]>([]);
-const debouncedQ = useDebouncedValue(q, 200);
   const [loading, setLoading] = useState(true);
 
   // Create/Edit modal state
@@ -53,7 +50,7 @@ const debouncedQ = useDebouncedValue(q, 200);
       const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as AreaRow[];
       setAreas(list);
     } catch (e: any) {
-      logDev('[Areas] load error', e?.message);
+      console.log('[Areas] load error', e?.message);
       setAreas([]);
     } finally {
       setLoading(false);
@@ -61,8 +58,8 @@ const debouncedQ = useDebouncedValue(q, 200);
   }
 
   const filtered = useMemo(() => {
-    if (!qText.trim()()) return areas;
-    const needle = qText.trim()().toLowerCase();
+    if (!q.trim()) return areas;
+    const needle = q.trim().toLowerCase();
     return areas.filter(a => (a.name || '').toLowerCase().includes(needle));
   }, [q, areas]);
 
@@ -272,4 +269,3 @@ const styles = StyleSheet.create({
   secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   secondaryText: { fontWeight: '700' },
 });
-const qText = String(debouncedQ ?? '');

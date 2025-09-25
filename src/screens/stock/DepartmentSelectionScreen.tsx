@@ -1,4 +1,3 @@
-import { logDev } from "../../utils/log";
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -55,7 +54,7 @@ export default function DepartmentSelectionScreen() {
       for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
       setDepartments(withStatuses);
     } catch (e) {
-      logDev('[Departments] reload error', (e as any)?.message);
+      console.log('[Departments] reload error', (e as any)?.message);
       setDepartments([]);
     } finally {
       setLoading(false);
