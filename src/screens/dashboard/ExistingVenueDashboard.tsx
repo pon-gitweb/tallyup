@@ -1,131 +1,131 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { auth } from 'src/services/firebase';
-import { DEV_DEFAULT_VENUE_ID } from 'src/config/devAuth';
-import { getUserVenueId, setUserVenueId } from 'src/services/userProfile';
-import { isMember, joinOpenSignup, createJoinAndSeedDevVenue } from 'src/services/venues';
+import { db } from '../../services/firebase';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+import { finalizeVenueCycle, getCycleDurationHours } from '../../services/finalization';
+
+type Stats = { totalAreas: number; inProgress: number; completed: number };
 
 export default function ExistingVenueDashboard() {
-  const nav = useNavigation();
-  const uid = auth.currentUser?.uid || '';
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<Stats>({ totalAreas: 0, inProgress: 0, completed: 0 });
+  const [sessionStatus, setSessionStatus] = useState<string>('idle');
 
-  const [loading, setLoading] = React.useState(true);
-  const [venueId, setVenueId] = React.useState<string | null>(null);
-  const [member, setMember] = React.useState<boolean>(false);
-
-  React.useEffect(() => {
-    let alive = true;
+  useEffect(() => {
+    let cancel = false;
     (async () => {
+      if (!venueId) { setLoading(false); return; }
       try {
-        const profileVenue = await getUserVenueId(uid);
-        const vId = profileVenue || DEV_DEFAULT_VENUE_ID || null;
-        if (!alive) return;
-        setVenueId(vId);
-        if (vId) {
-          const m = await isMember(vId, uid).catch(() => false);
-          if (!alive) return;
-          setMember(m);
+        const sref = doc(db, 'venues', venueId, 'sessions', 'current');
+        const ssnap = await getDoc(sref);
+        setSessionStatus((ssnap.data() as any)?.status || 'idle');
+
+        const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        let totalAreas = 0, inProg = 0, comp = 0;
+        for (const d of deps.docs) {
+          const areas = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas'));
+          areas.forEach(a => {
+            const ad: any = a.data();
+            totalAreas++;
+            if (ad?.completedAt) comp++;
+            else if (ad?.startedAt) inProg++;
+          });
         }
-      } finally {
-        if (alive) setLoading(false);
-      }
+        if (!cancel) setStats({ totalAreas, inProgress: inProg, completed: comp });
+      } catch (e: any) {
+        console.log('[TallyUp Dash] load error', JSON.stringify({ code: e?.code, message: e?.message }));
+      } finally { if (!cancel) setLoading(false); }
     })();
-    return () => { alive = false; };
-  }, [uid]);
+    return () => { cancel = true; };
+  }, [venueId]);
 
-  const onJoin = async () => {
+  const cta = useMemo(() => {
+    const { totalAreas, inProgress, completed } = stats;
+    const noneStarted = inProgress === 0 && completed === 0 && totalAreas > 0;
+    const someInProgress = inProgress > 0;
+    const allCompleted = totalAreas > 0 && completed === totalAreas;
+    let label = 'Start Stock Take';
+    let caption = '';
+    if (noneStarted) { label = 'Start New Stock Take'; caption = 'No areas started yet.'; }
+    else if (someInProgress) { label = 'Return to Stock Take'; caption = 'Stock take active in at least one area.'; }
+    else if (allCompleted) { label = 'Start New Stock Take'; caption = 'All areas are complete. Finalize and start a new cycle.'; }
+    else { label = 'Start / Return to Stock Take'; caption = 'Some departments complete, others not started.'; }
+    return { label, caption, allCompleted };
+  }, [stats]);
+
+  async function onPrimary() {
     if (!venueId) return;
-    try {
-      await joinOpenSignup(venueId, uid);
-      setMember(true);
-      Alert.alert('Joined', 'You now have access to this venue.');
-    } catch (e: any) {
-      console.warn('[ExistingVenueDashboard] join error', e);
-      Alert.alert('Join failed', e?.message ?? 'If this is a dev venue, set config.openSignup = true on the venue doc.');
+    if (cta.allCompleted) {
+      try {
+        const hours = await getCycleDurationHours(venueId);
+        if (hours != null && hours >= 24) {
+          let proceed = false;
+          await new Promise<void>((resolve) => {
+            Alert.alert(
+              'Long Cycle Warning',
+              `This stock take spanned about ${hours.toFixed(1)} hours.\n\nCounts may be less accurate. Finalize anyway?`,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
+                { text: 'Finalize', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
+              ]
+            );
+          });
+          if (!proceed) return;
+        }
+        await finalizeVenueCycle(venueId);
+        Alert.alert('Stock take finalized', 'Cycle marked complete.');
+      } catch (e: any) {
+        console.log('[TallyUp Dash] finalize/reset error', JSON.stringify({ code: e?.code, message: e?.message }));
+      }
     }
-  };
-
-  const onCreateNewDevVenue = async () => {
-    try {
-      const newId = await createJoinAndSeedDevVenue(uid);
-      await setUserVenueId(uid, newId);
-      setVenueId(newId);
-      setMember(true);
-      Alert.alert('Venue ready', 'New dev venue created, joined, and seeded.');
-    } catch (e: any) {
-      console.warn('[ExistingVenueDashboard] create venue error', e);
-      Alert.alert('Create failed', e?.message ?? 'Could not create dev venue.');
-    }
-  };
-
-  const onStartStockTake = () => {
-    if (!venueId) {
-      Alert.alert('No venue', 'Select or create a venue first.');
-      return;
-    }
-    // Navigate to DepartmentSelection (now registered in navigator)
-    nav.navigate('DepartmentSelection' as never, { venueId } as never);
-  };
+    // Navigate regardless — either starting new or returning
+    nav.navigate('Departments');
+  }
 
   if (loading) {
-    return (
-      <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
-        <Text>Loading venue…</Text>
-      </View>
-    );
-  }
-
-  if (!venueId) {
-    return (
-      <View style={{ flex:1, padding:20, justifyContent:'center' }}>
-        <Text style={{ fontSize:18, marginBottom:16 }}>No venue selected.</Text>
-        <TouchableOpacity onPress={onCreateNewDevVenue}
-          style={{ backgroundColor:'#2ecc71', padding:14, borderRadius:10, alignItems:'center' }}>
-          <Text style={{ color:'#fff', fontWeight:'700' }}>Create New Dev Venue</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!member) {
-    return (
-      <View style={{ flex:1, padding:20, justifyContent:'center' }}>
-        <Text style={{ fontSize:18, marginBottom:10 }}>You are not a member of this venue:</Text>
-        <Text style={{ color:'#555', marginBottom:16 }}>{venueId}</Text>
-        <TouchableOpacity onPress={onJoin}
-          style={{ backgroundColor:'#2ecc71', padding:14, borderRadius:10, alignItems:'center' }}>
-          <Text style={{ color:'#fff', fontWeight:'700' }}>Join Venue</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onCreateNewDevVenue}
-          style={{ backgroundColor:'#6c5ce7', padding:14, borderRadius:10, alignItems:'center', marginTop:12 }}>
-          <Text style={{ color:'#fff', fontWeight:'700' }}>Create New Dev Venue</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return (<View style={styles.center}><ActivityIndicator /><Text>Loading Dashboard…</Text></View>);
   }
 
   return (
-    <View style={{ flex:1, padding:20 }}>
-      <Text style={{ fontSize:22, fontWeight:'700', marginBottom:16 }}>Dashboard — Venue {venueId.slice(0,8)}…</Text>
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Dashboard</Text>
 
-      <TouchableOpacity
-        onPress={onStartStockTake}
-        style={{ backgroundColor:'#2d3436', padding:14, borderRadius:10, alignItems:'center', marginBottom:12 }}>
-        <Text style={{ color:'#fff', fontWeight:'700' }}>Start Stock Take</Text>
+      <TouchableOpacity style={styles.primaryBtn} onPress={onPrimary}>
+        <Text style={styles.primaryText}>{cta.label}</Text>
       </TouchableOpacity>
+      {cta.caption ? <Text style={styles.caption}>{cta.caption}</Text> : null}
 
-      <TouchableOpacity
-        onPress={() => Alert.alert('Settings', 'Settings stub')}
-        style={{ backgroundColor:'#0984e3', padding:14, borderRadius:10, alignItems:'center', marginBottom:12 }}>
-        <Text style={{ color:'#fff', fontWeight:'700' }}>Settings</Text>
-      </TouchableOpacity>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Status</Text>
+        <Text>Total areas: {stats.totalAreas}</Text>
+        <Text>Completed: {stats.completed}</Text>
+        <Text>In progress: {stats.inProgress}</Text>
+        <Text>Session: {sessionStatus}</Text>
+      </View>
 
-      <TouchableOpacity
-        onPress={() => Alert.alert('Reports', 'Reports stub')}
-        style={{ backgroundColor:'#6c5ce7', padding:14, borderRadius:10, alignItems:'center' }}>
-        <Text style={{ color:'#fff', fontWeight:'700' }}>Reports</Text>
-      </TouchableOpacity>
+      <View style={styles.row}>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('SetupWizard')}><Text style={styles.secondaryText}>Setup</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('Reports')}><Text style={styles.secondaryText}>Reports</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('Settings')}><Text style={styles.secondaryText}>Settings</Text></TouchableOpacity>
+      </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  wrap: { flex: 1, padding: 16, gap: 12 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  title: { fontSize: 24, fontWeight: '800' },
+  primaryBtn: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  primaryText: { color: 'white', fontWeight: '700' },
+  caption: { opacity: 0.7, marginTop: 6 },
+  card: { backgroundColor: '#F2F2F7', borderRadius: 12, padding: 12, gap: 6 },
+  cardTitle: { fontWeight: '800', marginBottom: 6 },
+  row: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
+  secondaryText: { fontWeight: '700' },
+});

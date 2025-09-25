@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "commonjs",
+    "moduleResolution": "node16",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["jest", "node"],
+    "noEmit": true,
+    "strict": false
+  },
+  "include": [
+    "src/utils/**/*.ts",
+    "src/utils/**/*.tsx",
+    "src/utils/**/__tests__/**/*.ts",
+    "src/utils/**/__tests__/**/*.tsx"
+  ]
+}

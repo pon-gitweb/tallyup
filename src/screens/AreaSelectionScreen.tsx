@@ -1,67 +1,72 @@
-import React from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from '../services/firebase';
 
 type RouteParams = { venueId: string; departmentId: string };
+type AreaRow = { id: string; name: string; started: boolean; complete: boolean };
 
 export default function AreaSelectionScreen() {
-  const nav = useNavigation();
-  const { venueId, departmentId } = (useRoute().params || {}) as RouteParams;
+  const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const { venueId, departmentId } = (route.params as RouteParams) ?? {};
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<AreaRow[]>([]);
 
-  const [loading, setLoading] = React.useState(true);
-  const [areas, setAreas] = React.useState<Array<{ id: string; name: string }>>([]);
-
-  React.useEffect(() => {
-    if (!venueId || !departmentId) return;
-    const unsub = onSnapshot(
-      collection(db, `venues/${venueId}/departments/${departmentId}/areas`),
-      (snap) => {
-        const next: Array<{ id: string; name: string }> = [];
-        snap.forEach((d) => next.push({ id: d.id, name: (d.data() as any)?.name || d.id }));
-        setAreas(next);
-        setLoading(false);
-      },
-      (err) => {
-        console.warn('[AreaSelection] load error', err);
-        Alert.alert('Load error', 'Could not load areas.');
-        setLoading(false);
-      }
-    );
+  useEffect(() => {
+    if (!venueId || !departmentId) { Alert.alert('Missing department'); nav.goBack(); return; }
+    setLoading(true);
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'), (as) => {
+      const list: AreaRow[] = [];
+      as.forEach(a => {
+        const d:any = a.data();
+        list.push({ id:a.id, name:d?.name??a.id, started:!!d?.startedAt, complete:!!d?.completedAt });
+      });
+      list.sort((a,b)=>{ if(a.complete&&!b.complete) return 1; if(!a.complete&&b.complete) return -1; return a.name.localeCompare(b.name); });
+      setRows(list);
+      setLoading(false);
+    }, (e)=>{ setLoading(false); Alert.alert('Load failed', e?.message??'Unknown'); });
     return () => unsub();
   }, [venueId, departmentId]);
 
-  const goInventory = (areaId: string) => {
-    nav.navigate('StockTakeAreaInventory' as never, { venueId, departmentId, areaId } as never);
+  const status = (r: AreaRow) => r.complete ? {t:'Complete', s:S.pillGreen}
+    : r.started ? {t:'In Progress', s:S.pillAmber} : {t:'Not Started', s:S.pillGray};
+
+  const onArea = (r: AreaRow) => {
+    if (r.complete) { Alert.alert(r.name,'Completed (read-only).'); return; }
+    nav.navigate('StockTakeAreaInventory', { venueId, departmentId, areaId: r.id });
   };
 
-  if (loading) {
-    return (
-      <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Loading areas…</Text>
-      </View>
-    );
-  }
-
+  if (loading) return <View style={S.center}><ActivityIndicator/></View>;
   return (
-    <View style={{ flex:1, padding:16 }}>
+    <View style={S.container}>
       <FlatList
-        data={areas}
-        keyExtractor={(a) => a.id}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => goInventory(item.id)}
-            style={{ padding:14, borderRadius:10, borderWidth:1, borderColor:'#ddd', marginBottom:12 }}>
-            <Text style={{ fontWeight:'700' }}>{item.name}</Text>
-            <Text style={{ color:'#555', marginTop:4 }}>{item.id}</Text>
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={
-          <Text style={{ textAlign:'center', color:'#777' }}>No areas yet.</Text>
-        }
+        data={rows}
+        keyExtractor={(r)=>r.id}
+        renderItem={({item})=>{
+          const st=status(item);
+          return (
+            <TouchableOpacity style={S.card} onPress={()=>onArea(item)}>
+              <Text style={S.name}>{item.name}</Text>
+              <View style={[S.pill,st.s]}><Text style={S.pillText}>{st.t}</Text></View>
+            </TouchableOpacity>
+          );
+        }}
+        ItemSeparatorComponent={()=> <View style={{height:10}}/>}
       />
     </View>
   );
 }
+
+const S = StyleSheet.create({
+  container:{flex:1,padding:16,backgroundColor:'#fff'},
+  center:{flex:1,alignItems:'center',justifyContent:'center'},
+  card:{backgroundColor:'#F3F4F6',padding:16,borderRadius:12,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
+  name:{fontSize:16,fontWeight:'700'},
+  pill:{paddingVertical:6,paddingHorizontal:10,borderRadius:999},
+  pillText:{color:'#111827',fontWeight:'700'},
+  pillGray:{backgroundColor:'#E5E7EB'},
+  pillAmber:{backgroundColor:'#FDE68A'},
+  pillGreen:{backgroundColor:'#BBF7D0'},
+});

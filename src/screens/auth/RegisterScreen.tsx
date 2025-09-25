@@ -1,58 +1,45 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { auth, db } from 'src/services/firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 
 export default function RegisterScreen() {
-  const nav = useNavigation();
+  const nav = useNavigation<any>();
+  const auth = getAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
   const onRegister = async () => {
+    setBusy(true);
     try {
-      setBusy(true);
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        email: cred.user.email,
-        createdAt: serverTimestamp(),
-      }, { merge: true });
-      // Go straight to venue setup path
-      nav.reset({ index: 0, routes: [{ name: 'CreateVenueDashboard' as never }] });
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      nav.replace('VenueSetup');
     } catch (e: any) {
-      console.warn('[Register] error', e);
-      Alert.alert('Registration failed', e?.message ?? 'Please try a different email/password.');
+      Alert.alert('Register failed', e?.message ?? 'Unknown error');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <View style={{ flex:1, padding: 20, justifyContent:'center' }}>
-      <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 16 }}>Create your account</Text>
-      <TextInput
-        placeholder="Email"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-        style={{ borderWidth:1, borderColor:'#ccc', borderRadius:8, padding:12, marginBottom:12 }}
-      />
-      <TextInput
-        placeholder="Password"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-        style={{ borderWidth:1, borderColor:'#ccc', borderRadius:8, padding:12, marginBottom:16 }}
-      />
-      <TouchableOpacity
-        onPress={onRegister}
-        disabled={busy}
-        style={{ backgroundColor:'#6c5ce7', padding:14, borderRadius:10, alignItems:'center' }}>
-        <Text style={{ color:'#fff', fontWeight:'700' }}>{busy ? 'Registering…' : 'Register'}</Text>
+    <View style={S.c}>
+      <Text style={S.h1}>Create your account</Text>
+      <TextInput placeholder="Email" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} style={S.input} />
+      <TextInput placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} style={S.input} />
+
+      <TouchableOpacity style={S.primary} onPress={onRegister} disabled={busy}>
+        {busy ? <ActivityIndicator /> : <Text style={S.btnText}>Continue</Text>}
       </TouchableOpacity>
     </View>
   );
 }
+
+const S = StyleSheet.create({
+  c: { flex: 1, padding: 24, justifyContent: 'center', gap: 12 },
+  h1: { fontSize: 22, fontWeight: '800', textAlign: 'center', marginBottom: 16 },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 12, padding: 12 },
+  primary: { backgroundColor: '#0A84FF', padding: 16, borderRadius: 12, alignItems: 'center' },
+  btnText: { color: '#fff', fontWeight: '700' },
+});

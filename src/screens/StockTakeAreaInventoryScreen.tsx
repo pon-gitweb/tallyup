@@ -1,219 +1,324 @@
+// @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView,
-  Platform, TouchableOpacity, SafeAreaView
+  Alert, FlatList, Keyboard, Modal, Pressable, SafeAreaView,
+  ScrollView, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, onSnapshot, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
+  orderBy, query, serverTimestamp, updateDoc
+} from 'firebase/firestore';
 import { db } from 'src/services/firebase';
-import { path } from 'src/services/firestorePaths';
-
-type RouteParams = {
-  venueId: string;
-  departmentId: string;
-  areaId: string;
-};
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { useVenueId } from 'src/context/VenueProvider';
 
 type Item = {
   id: string;
   name: string;
-  expectedQuantity?: number;
+  lastCount?: number;
+  lastCountAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
   unit?: string;
+  supplierId?: string;
+  costPrice?: number;
+  salePrice?: number;
+  parLevel?: number; // expected qty (PAR)
+  productId?: string;
+  productName?: string;
+};
+
+type AreaDoc = {
+  name: string;
+  createdAt?: any;
+  updatedAt?: any;
+  startedAt?: any;
+  completedAt?: any;
+};
+
+type RouteParams = {
+  venueId?: string;
+  departmentId: string;
+  areaId: string;
+  areaName?: string;
 };
 
 export default function StockTakeAreaInventoryScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
-  const { venueId, departmentId, areaId } = route.params as RouteParams;
+  const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const venueIdFromCtx = useVenueId();
+  const { departmentId, areaId, areaName, venueId: venueIdFromRoute } = (route.params ?? {}) as RouteParams;
+  const venueId = venueIdFromCtx || venueIdFromRoute;
 
-  const [loading, setLoading] = useState(true);
+  const itemsPathOk = !!venueId && !!departmentId && !!areaId;
+
   const [items, setItems] = useState<Item[]>([]);
-  const [counts, setCounts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-
-  const listRef = useRef<FlatList>(null);
+  const [filter, setFilter] = useState('');
+  const [addingName, setAddingName] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [localQty, setLocalQty] = useState<Record<string, string>>({});
+  const [showExpected, setShowExpected] = useState(true);
+  const nameInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    setLoading(true);
-    const unsub = onSnapshot(
-      collection(db, path.items(venueId, departmentId, areaId)),
-      (snap) => {
-        const next: Item[] = [];
-        snap.forEach((d) => {
-          const data = d.data() || {};
-          next.push({
-            id: d.id,
-            name: data.name ?? '(Unnamed item)',
-            expectedQuantity: typeof data.expectedQuantity === 'number' ? data.expectedQuantity : 0,
-            unit: data.unit ?? '',
-          });
-        });
-        setItems(next);
-        setCounts((prev) => {
-          const cloned = { ...prev };
-          next.forEach((it) => {
-            if (cloned[it.id] == null || cloned[it.id] === '') {
-              cloned[it.id] = String(it.expectedQuantity ?? 0);
-            }
-          });
-          return cloned;
-        });
-        setLoading(false);
-      },
-      (err) => {
-        console.warn('[StockTakeAreaInventory] onSnapshot error', err);
-        Alert.alert('Load Error', 'Could not load items for this area. Check your access and try again.');
-        setLoading(false);
-      }
+    if (!itemsPathOk) return;
+    const q = query(
+      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+      orderBy('name')
     );
+    const unsub = onSnapshot(q, (snap) => {
+      const rows: Item[] = [];
+      snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
+      setItems(rows);
+    });
     return () => unsub();
-  }, [venueId, departmentId, areaId]);
+  }, [itemsPathOk, venueId, departmentId, areaId]);
 
-  const totalItems = items.length;
-  const counted = useMemo(
-    () => items.filter(i => counts[i.id] != null && counts[i.id] !== '').length,
-    [items, counts]
-  );
-  const hasPartials = counted > 0 && counted < totalItems;
+  const filtered = useMemo(() => {
+    const base = !filter.trim()
+      ? items
+      : items.filter((it) => (it.name || '').toLowerCase().includes(filter.trim().toLowerCase()));
+    return base;
+  }, [items, filter]);
 
+  const { toCount, counted } = useMemo(() => {
+    const t: Item[] = [];
+    const c: Item[] = [];
+    for (const it of filtered) {
+      if (it.lastCountAt) c.push(it); else t.push(it);
+    }
+    return { toCount: t, counted: c };
+  }, [filtered]);
+
+  const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
+  const areaRef  = () => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId);
+  const areasCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas');
+
+  // ---------- CREATE ----------
+  const addQuickItem = async () => {
+    const trimmed = (addingName || '').trim();
+    if (!trimmed) return Alert.alert('Name required', 'Please enter a name.');
+    try {
+      await addDoc(itemsCol(), { name: trimmed, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setAddingName(''); nameInputRef.current?.blur(); Keyboard.dismiss();
+    } catch (e: any) { console.log('[QuickCreate:error]', e); Alert.alert('Could not add item', e?.message ?? String(e)); }
+  };
+
+  // ---------- LIFECYCLE ----------
   const ensureAreaStarted = async () => {
     try {
-      const areaRef = doc(db, path.area(venueId, departmentId, areaId));
-      await updateDoc(areaRef, { startedAt: serverTimestamp() }, { merge: true } as any);
-    } catch (e) {
-      console.log('ensureAreaStarted noop', e);
-    }
+      const a = await getDoc(areaRef());
+      const data = a.data() as AreaDoc | undefined;
+      if (!data?.startedAt) await updateDoc(areaRef(), { startedAt: serverTimestamp() });
+    } catch (e) { /* soft-fail */ }
   };
 
-  const onChangeCount = (itemId: string, val: string) => {
-    if (!val || Number.isNaN(Number(val))) {
-      setCounts(prev => ({ ...prev, [itemId]: '' }));
-    } else {
-      setCounts(prev => ({ ...prev, [itemId]: val }));
-      void ensureAreaStarted();
-    }
-  };
-
-  const commitArea = async () => {
-    if (totalItems > 0 && counted < totalItems) {
-      Alert.alert(
-        'Incomplete Counts',
-        `You have ${totalItems - counted} uncounted item(s). Skip them or go back to finish?`,
-        [
-          { text: 'Go Back', style: 'cancel' },
-          { text: 'Skip Uncounted', style: 'destructive', onPress: () => void doCommit(true) },
-        ]
-      );
-      return;
-    }
-    await doCommit(false);
-  };
-
-  const doCommit = async (skipUncounted: boolean) => {
+  // ---------- UPDATE: counts ----------
+  const saveCount = async (itemId: string, effectiveRaw: string) => {
+    const raw = (effectiveRaw ?? '').trim();
+    if (!/^\d+(\.\d+)?$/.test(raw)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5).');
+    const qty = parseFloat(raw);
     try {
-      setSaving(true);
+      await ensureAreaStarted();
+      await updateDoc(doc(itemsCol(), itemId), { lastCount: qty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setLocalQty((m) => ({ ...m, [itemId]: '' }));
+    } catch (e: any) { console.log('[CountSave:error]', e); Alert.alert('Could not save count', e?.message ?? String(e)); }
+  };
 
-      for (const it of items) {
-        const raw = counts[it.id];
-        if (raw == null || raw === '') {
-          if (skipUncounted) continue;
+  // ---------- UPDATE: rename ----------
+  const startRename = (item: Item) => { setEditingId(item.id); setEditingName(item.name); };
+  const commitRename = async () => {
+    const id = editingId; const nm = editingName.trim();
+    if (!id) return;
+    if (!nm) return Alert.alert('Name required', 'Item name cannot be empty.');
+    try { await updateDoc(doc(itemsCol(), id), { name: nm, updatedAt: serverTimestamp() }); setEditingId(null); setEditingName(''); }
+    catch (e: any) { console.log('[Rename:error]', e); Alert.alert('Could not rename', e?.message ?? String(e)); }
+  };
+
+  // ---------- DELETE ----------
+  const removeItem = async (itemId: string) => {
+    Alert.alert('Delete item', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try { await deleteDoc(doc(itemsCol(), itemId)); } 
+        catch (e: any) { console.log('[Delete:error]', e); Alert.alert('Could not delete', e?.message ?? String(e)); }
+      } }
+    ]);
+  };
+
+  // ---------- Finalization ----------
+  const completeArea = async () => {
+    const missing = items.filter((it) => !it.lastCountAt);
+    const perform = async () => {
+      try {
+        if (missing.length > 0) {
+          await Promise.all(missing.map((it) => updateDoc(doc(itemsCol(), it.id), { lastCount: 0, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() })));
         }
-        const qty = Number(raw ?? 0);
-        const itemRef = doc(db, path.item(venueId, departmentId, areaId, it.id));
-        await setDoc(itemRef, { lastCount: qty, lastCountAt: serverTimestamp() }, { merge: true });
-      }
+        await updateDoc(areaRef(), { completedAt: serverTimestamp() }); // lifecycle-only
+        // (optional full-finalization logic lives elsewhere; rules-compatible)
+        nav.goBack();
+      } catch (e: any) { console.log('[CompleteArea:error]', e); Alert.alert('Could not complete area', e?.message ?? String(e)); }
+    };
 
-      const areaRef = doc(db, path.area(venueId, departmentId, areaId));
-      await updateDoc(areaRef, { completedAt: serverTimestamp() }, { merge: true } as any);
-
-      const areasSnap = await getDocs(collection(db, path.areas(venueId, departmentId)));
-      const allDone = areasSnap.docs.every(d => {
-        const data = d.data() || {};
-        return !!data.completedAt;
-      });
-
-      if (allDone) {
-        await updateDoc(doc(db, path.department(venueId, departmentId)), {
-          completedAt: serverTimestamp(),
-        }, { merge: true } as any);
-      }
-
-      Alert.alert('Area Submitted', 'Counts saved. Thanks!');
-      navigation.goBack();
-    } catch (e: any) {
-      console.warn('[commitArea] error', e);
-      Alert.alert('Commit Error', e?.message ?? 'Failed to submit area.');
-    } finally {
-      setSaving(false);
+    if (missing.length > 0) {
+      Alert.alert('Incomplete counts',
+        `There are ${missing.length.toLocaleString()} item(s) without a count.\n\nContinue and record 0 for them, or go back to enter totals?`,
+        [{ text: 'Enter totals', style: 'cancel' }, { text: 'Continue with 0', onPress: perform }]
+      );
+    } else {
+      await perform();
     }
   };
 
-  if (loading) {
+  // ---------- stubs ----------
+  const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
+  const usePhotoFor     = (item: Item) => Alert.alert('Photo Count',     `Would take photo and OCR for "${item.name}" (stub).`);
+
+  // ---------- Row ----------
+  const Row = ({ item }: { item: Item }) => {
+    // DISPLAYED value logic:
+    // - If user has typed -> show localQty
+    // - Else if showExpected ON and parLevel exists -> show parLevel
+    // - Else -> empty
+    const typed = localQty[item.id];
+    const expected = (typeof item.parLevel === 'number') ? String(item.parLevel) : '';
+    const displayed = typed !== undefined && typed !== '' ? typed : (showExpected ? expected : '');
+
+    const placeholder = showExpected && expected ? `qty (expected ${expected})` : 'qty';
+
     return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Loading items…</Text>
+      <Pressable
+        style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1 }}>
+            {editingId === item.id ? (
+              <TextInput
+                value={editingName}
+                onChangeText={setEditingName}
+                onBlur={commitRename}
+                onSubmitEditing={commitRename}
+                autoFocus
+                placeholder="Item name"
+                style={{ paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, fontSize: 16 }}
+              />
+            ) : (
+              <TouchableOpacity onLongPress={() => startRename(item)}>
+                <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
+                <Text style={{ fontSize: 12, color: item.lastCountAt ? '#4CAF50' : '#999' }}>
+                  {item.lastCountAt ? `Counted: ${item.lastCount}` : 'Not counted'}
+                  {showExpected && typeof item.parLevel === 'number' ? `   •   Expected: ${item.parLevel}` : ''}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TextInput
+            value={displayed}
+            onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
+            placeholder={placeholder}
+            keyboardType="numeric"
+            inputMode="decimal"
+            maxLength={32}
+            returnKeyType="done"
+            blurOnSubmit={false}           // DON'T collapse after first digit
+            // no onSubmitEditing here; user taps Save explicitly
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }}
+          />
+
+          <TouchableOpacity
+            onPress={() => saveCount(item.id, displayed)}
+            style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Save</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => useBluetoothFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#E3F2FD' }}>
+            <Text style={{ color: '#0A84FF', fontWeight: '700' }}>BT</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => usePhotoFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FFF8E1' }}>
+            <Text style={{ color: '#FF6F00', fontWeight: '700' }}>Cam</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
+            <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
+          </TouchableOpacity>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const Section = ({ title, data }: { title: string; data: Item[] }) => (
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ marginHorizontal: 12, marginBottom: 6, fontWeight: '800', color: '#666' }}>{title} ({data.length})</Text>
+      <FlatList
+        data={data}
+        keyExtractor={(it) => it.id}
+        renderItem={({ item }) => <Row item={item} />}
+        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
+      />
+    </View>
+  );
+
+  if (!itemsPathOk) {
+    return (
+      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ fontSize: 16, textAlign: 'center' }}>Missing navigation params. Need venueId, departmentId and areaId.</Text>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1, paddingBottom: 8 }}
-      >
-        <FlatList
-          ref={listRef}
-          data={items}
-          keyExtractor={(i) => i.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-          renderItem={({ item }) => (
-            <View style={{
-              padding: 12, marginBottom: 12, borderRadius: 12, borderWidth: 1, borderColor: '#ddd'
-            }}>
-              <Text style={{ fontWeight: '600', marginBottom: 8 }}>{item.name}</Text>
-              <TextInput
-                value={counts[item.id] ?? ''}
-                onChangeText={(t) => onChangeCount(item.id, t)}
-                keyboardType="numeric"
-                placeholder="Enter quantity"
-                style={{
-                  borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10
-                }}
-              />
-              {typeof item.expectedQuantity === 'number' && (
-                <Text style={{ marginTop: 6, fontSize: 12, color: '#666' }}>
-                  Expected: {item.expectedQuantity} {item.unit ?? ''}
-                </Text>
-              )}
-            </View>
-          )}
-          ListFooterComponent={<View style={{ height: 80 }} />}
-        />
+      {/* Header */}
+      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
+        <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
 
-        <View style={{
-          paddingHorizontal: 16, paddingVertical: 10,
-          borderTopWidth: 1, borderColor: '#eee', backgroundColor: '#fff'
-        }}>
-          <TouchableOpacity
-            onPress={commitArea}
-            disabled={saving}
-            style={{
-              padding: 14, borderRadius: 10,
-              backgroundColor: hasPartials ? '#ff9f43' : '#2ecc71',
-              alignItems: 'center'
-            }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700' }}>
-              {saving ? 'Submitting…' : hasPartials ? 'Submit (Partially Counted)' : 'Submit Area'}
-            </Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TextInput
+            value={filter}
+            onChangeText={setFilter}
+            placeholder="Search items…"
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+          />
+          <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
+            <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
           </TouchableOpacity>
-          <Text style={{ marginTop: 8, textAlign: 'center', color: '#555' }}>
-            Counted {counted} of {totalItems} item(s)
-          </Text>
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Quick Add */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <TextInput
+            ref={nameInputRef}
+            value={addingName}
+            onChangeText={setAddingName}
+            placeholder="Quick add item name"
+            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+          />
+          <TouchableOpacity onPress={addQuickItem} style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Lists */}
+      <FlatList
+        ListHeaderComponent={<><Section title="To count" data={toCount} /><Section title="Counted" data={counted} /></>}
+        data={[]}
+        renderItem={null as any}
+        keyExtractor={() => 'x'}
+      />
+
+      {/* Sticky footer Submit */}
+      <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
+        <TouchableOpacity onPress={completeArea} style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
+          <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }

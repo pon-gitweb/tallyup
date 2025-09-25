@@ -1,69 +1,160 @@
-import { collection, doc, getDoc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import {
+  addDoc, collection, doc, getDoc, setDoc, updateDoc,
+  serverTimestamp, writeBatch
+} from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { db } from '../services/firebase';
 
-function genId() {
-  return 'v_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+type SeedDef = { department: string; areas: string[] };
+
+const SEEDS: SeedDef[] = [
+  { department: 'Bar',     areas: ['Front Bar', 'Back Bar', 'Fridge', 'Cellar'] },
+  { department: 'Kitchen', areas: ['Prep', 'Cookline', 'Freezer', 'Dry Store'] },
+];
+
+function logStep(step: string, ctx: Record<string, any> = {}) {
+  console.log('[TallyUp CreateVenue]', step, JSON.stringify(ctx));
 }
 
-export async function isMember(venueId: string, uid: string) {
-  if (!venueId || !uid) return false;
-  const mr = doc(db, `venues/${venueId}/members/${uid}`);
-  return (await getDoc(mr)).exists();
+function keysOnly(obj: any) {
+  return obj && typeof obj === 'object' ? Object.keys(obj).sort() : [];
 }
 
-export async function joinOpenSignup(venueId: string, uid: string) {
-  const mr = doc(db, `venues/${venueId}/members/${uid}`);
-  await setDoc(mr, { role: 'admin', createdAt: serverTimestamp() }, { merge: true });
-}
+/**
+ * Creates a first venue owned by the current user.
+ * ORDER IS CRITICAL (to satisfy security rules):
+ *  1) ensure user doc exists AND has venueId (null if new/missing)
+ *  2) create venues/{id} with {ownerUid}
+ *  3) set venues/{id}/members/{uid} (role: owner)
+ *  4) seed departments & areas
+ *  5) set sessions/current = {status: 'idle'}
+ *  6) update users/{uid}.venueId (first time only)
+ */
+export async function createVenueOwnedByCurrentUser(name: string): Promise<string> {
+  const auth = getAuth();
+  const user = auth.currentUser;
+  if (!user) {
+    const err = new Error('Not signed in');
+    (err as any).code = 'auth/not-signed-in';
+    throw err;
+  }
+  const uid = user.uid;
+  logStep('begin', { uid, name });
 
-export async function createJoinAndSeedDevVenue(uid: string): Promise<string> {
-  const venueId = genId();
-
-  // 1) Create venue with openSignup so rules allow joining
-  const vr = doc(db, `venues/${venueId}`);
-  await setDoc(vr, {
-    name: 'TallyUp Dev Venue',
-    createdAt: serverTimestamp(),
-    config: { openSignup: true },
-  }, { merge: true });
-
-  // 2) Join
-  await joinOpenSignup(venueId, uid);
-
-  // 3) Seed departments/areas/items if empty
-  const deptsSnap = await getDocs(collection(db, `venues/${venueId}/departments`));
-  if (deptsSnap.empty) {
-    const departments = [
-      { id: 'Bar', name: 'Bar' },
-      { id: 'Kitchen', name: 'Kitchen' },
-    ];
-    for (const d of departments) {
-      await setDoc(doc(db, `venues/${venueId}/departments/${d.id}`), {
-        name: d.name, createdAt: serverTimestamp()
-      }, { merge: true });
-
-      const areas = d.id === 'Bar'
-        ? [{ id: 'FrontBar', name: 'Front Bar' }, { id: 'BackBar', name: 'Back Bar' }]
-        : [{ id: 'Prep', name: 'Prep' }, { id: 'Pass', name: 'Pass' }];
-
-      for (const a of areas) {
-        await setDoc(doc(db, `venues/${venueId}/departments/${d.id}/areas/${a.id}`), {
-          name: a.name,
-          startedAt: null,
-          completedAt: null,
-          createdAt: serverTimestamp(),
-        }, { merge: true });
-
-        const defaultItems = [
-          { id: 'Coke330', name: 'Coke 330ml', expectedQuantity: 24, unit: 'bottles' },
-          { id: 'Lime', name: 'Lime', expectedQuantity: 30, unit: 'pcs' },
-        ];
-        for (const it of defaultItems) {
-          await setDoc(doc(db, `venues/${venueId}/departments/${d.id}/areas/${a.id}/items/${it.id}`), it, { merge: true });
-        }
+  // 1) Ensure users/{uid} exists AND has venueId field (explicit null if missing)
+  const userRef = doc(db, 'users', uid);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) {
+    const toWrite = { createdAt: serverTimestamp(), venueId: null };
+    logStep('write users/{uid}', { path: userRef.path, keys: keysOnly(toWrite) });
+    try {
+      await setDoc(userRef, toWrite, { merge: true });
+    } catch (e: any) {
+      logStep('fail users/{uid}', { path: userRef.path, code: e.code, message: e.message });
+      throw e;
+    }
+  } else {
+    const data = userSnap.data() || {};
+    const hasVenueIdField = Object.prototype.hasOwnProperty.call(data, 'venueId');
+    logStep('users/{uid} exists', { path: userRef.path, dataKeys: keysOnly(data), hasVenueIdField });
+    if (!hasVenueIdField) {
+      const patch = { venueId: null, touchedAt: serverTimestamp() };
+      logStep('patch users/{uid} venueId:null', { path: userRef.path, keys: keysOnly(patch) });
+      try {
+        await setDoc(userRef, patch, { merge: true });
+      } catch (e: any) {
+        logStep('fail users/{uid} patch', { path: userRef.path, code: e.code, message: e.message });
+        throw e;
       }
     }
   }
 
+  // 2) Create venue doc with ownerUid == uid
+  const venuesCol = collection(db, 'venues');
+  const venuePayload = {
+    name,
+    ownerUid: uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  logStep('create venues doc', { col: 'venues', keys: keysOnly(venuePayload) });
+
+  let venueId = '';
+  try {
+    const venueRef = await addDoc(venuesCol, venuePayload);
+    venueId = venueRef.id;
+    logStep('venues/{id} created', { venueId });
+  } catch (e: any) {
+    logStep('fail venues create', { code: e.code, message: e.message, keys: keysOnly(venuePayload) });
+    throw e;
+  }
+
+  // 3) Set membership doc for owner
+  const memberRef = doc(db, 'venues', venueId, 'members', uid);
+  const memberPayload = { role: 'owner', createdAt: serverTimestamp() };
+  logStep('write members/{uid}', { path: memberRef.path, keys: keysOnly(memberPayload) });
+  try {
+    await setDoc(memberRef, memberPayload, { merge: true });
+  } catch (e: any) {
+    logStep('fail members/{uid}', { path: memberRef.path, code: e.code, message: e.message, keys: keysOnly(memberPayload) });
+    throw e;
+  }
+
+  // 4) Seed departments & areas (batch per department)
+  for (const seed of SEEDS) {
+    const deptRef = doc(db, 'venues', venueId, 'departments', seed.department);
+    const deptPayload = {
+      name: seed.department,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    logStep('seed department', { path: deptRef.path, keys: keysOnly(deptPayload) });
+
+    const batch = writeBatch(db);
+    batch.set(deptRef, deptPayload, { merge: true });
+
+    for (const area of seed.areas) {
+      const areaRef = doc(db, 'venues', venueId, 'departments', seed.department, 'areas', area);
+      const areaPayload = {
+        name: area,
+        startedAt: null,
+        completedAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      logStep('seed area', { path: areaRef.path, keys: keysOnly(areaPayload) });
+      batch.set(areaRef, areaPayload, { merge: true });
+    }
+
+    try {
+      await batch.commit();
+    } catch (e: any) {
+      logStep('fail seed department batch', { dept: seed.department, code: e.code, message: e.message });
+      throw e;
+    }
+  }
+
+  // 5) Seed sessions/current = idle
+  const sessionRef = doc(db, 'venues', venueId, 'sessions', 'current');
+  const sessionPayload = { status: 'idle', createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  logStep('write sessions/current', { path: sessionRef.path, keys: keysOnly(sessionPayload) });
+  try {
+    await setDoc(sessionRef, sessionPayload, { merge: true });
+  } catch (e: any) {
+    logStep('fail sessions/current', { path: sessionRef.path, code: e.code, message: e.message });
+    throw e;
+  }
+
+  // 6) Update users/{uid}.venueId (first time only—rules enforce immutability after set)
+  const venueIdUpdate = { venueId };
+  logStep('update users/{uid}.venueId', { path: userRef.path, keys: keysOnly(venueIdUpdate) });
+  try {
+    await updateDoc(userRef, venueIdUpdate as any);
+  } catch (e: any) {
+    logStep('fail users/{uid}.venueId', { path: userRef.path, code: e.code, message: e.message });
+    throw e;
+  }
+
+  logStep('success', { venueId });
   return venueId;
 }

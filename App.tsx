@@ -1,11 +1,15 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import AppNavigator from 'src/navigation/AppNavigator';
+import RootNavigator from './src/navigation/RootNavigator';
+import { VenueProvider } from './src/context/VenueProvider';
+import AppErrorBoundary from './src/components/AppErrorBoundary';
 
 export default function App() {
+  console.log('[TallyUp App] mount');
   return (
-    <NavigationContainer>
-      <AppNavigator />
-    </NavigationContainer>
+    <VenueProvider>
+      <AppErrorBoundary>
+        <RootNavigator />
+      </AppErrorBoundary>
+    </VenueProvider>
   );
 }

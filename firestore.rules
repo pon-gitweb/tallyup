@@ -1,98 +1,136 @@
+// Firestore Rules — TallyUp (full, with Invoices + Budgets + future-proof subs)
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null && request.auth.uid != null;
-    }
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
 
-    // Venue doc: venues/{venueId}
-    function venueRef(venueId) {
-      return /databases/$(database)/documents/venues/$(venueId);
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(uid()));
     }
-
-    // Member doc: venues/{venueId}/members/{uid}
-    function memberRef(venueId) {
-      return /databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid);
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(uid()));
     }
-
+    function userVenueId() {
+      return userDocExists() && userDoc().data.keys().hasAny(['venueId'])
+        ? userDoc().data.venueId
+        : null;
+    }
     function hasVenueAccess(venueId) {
-      return isSignedIn() && exists(memberRef(venueId));
+      return isSignedIn() && (
+        (userDocExists() && userVenueId() == venueId)
+        || exists(/databases/$(database)/documents/venues/$(venueId)/members/$(uid()))
+      );
+    }
+    function canCreateFirstVenue() {
+      return isSignedIn() && (!userDocExists() || userVenueId() == null);
+    }
+    function isOwnerOfVenue(venueId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/venues/$(venueId))
+        && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == uid();
     }
 
-    // Admin/Manager roles (optional for future CRUD limits)
-    function roleOf(venueId) {
-      return hasVenueAccess(venueId) ? get(memberRef(venueId)).data.role : null;
-    }
-    function isAdmin(venueId) { return roleOf(venueId) == 'admin'; }
-    function isManagerOrAdmin(venueId) { return roleOf(venueId) in ['admin','manager']; }
-
-    // DEV: allow self-enrollment if venue.config.openSignup == true
-    function openSignup(venueId) {
-      return get(venueRef(venueId)).data.config.openSignup == true;
-    }
-
-    match /users/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create: if isSignedIn() && userId == uid();
+      allow update: if isSignedIn() && userId == uid() && (
+        !(request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId'])) ||
+        (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId']) &&
+          (!resource.data.keys().hasAny(['venueId']) || resource.data.venueId == null)
+        )
+      );
     }
 
     match /venues/{venueId} {
-      // DEV: allow creating the venue doc only if it declares config.openSignup=true
-      allow create: if isSignedIn() && request.resource.data.config.openSignup == true;
+      allow create: if canCreateFirstVenue()
+        && request.resource.data.keys().hasAll(['name','ownerUid'])
+        && request.resource.data.ownerUid == uid();
 
-      // Read venue if you are a member OR the venue is open for signup (so client can see it to enroll)
-      allow read: if hasVenueAccess(venueId) || (isSignedIn() && openSignup(venueId));
+      allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+      allow update: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
 
-      // Update venue config/status by managers/admins
-      allow update, delete: if isManagerOrAdmin(venueId);
+      match /sessions/{sessionId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+      }
 
-      match /members/{uid} {
-        // Read roster if you have access OR venue is openSignup (let client check their own status)
-        allow read: if hasVenueAccess(venueId) || (isSignedIn() && openSignup(venueId));
-
-        // DEV: allow a signed-in user to create their own membership when venue is openSignup
-        allow create: if isSignedIn()
-                      && request.auth.uid == uid
-                      && openSignup(venueId);
-
-        // Members can update only their non-privileged fields; admin can do anything
-        allow update, delete: if isAdmin(venueId);
+      match /members/{memberId} {
+        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow write: if (memberId == uid()) && (hasVenueAccess(venueId) || isOwnerOfVenue(venueId));
       }
 
       match /departments/{departmentId} {
-        allow read: if hasVenueAccess(venueId);
-        allow create, update, delete: if isManagerOrAdmin(venueId);
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+
+        match /session/{docId} {
+          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        }
 
         match /areas/{areaId} {
-          allow read: if hasVenueAccess(venueId);
-          allow create, update, delete: if isManagerOrAdmin(venueId);
+          allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
 
-          match /items/{itemId} {
-            allow read: if hasVenueAccess(venueId);
-            allow create, update, delete: if isManagerOrAdmin(venueId);
-
-            // Count fields can be updated by any member
-            allow update: if hasVenueAccess(venueId)
-                          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt']);
+          function isCycleReset() {
+            return request.resource.data.keys().hasAll(['cycleResetAt'])
+              && request.resource.data.startedAt == null
+              && request.resource.data.completedAt == null;
           }
 
-          match /status/{docId} {
-            allow read, write: if hasVenueAccess(venueId);
+          allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId)) && (
+            !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) ||
+            (
+              exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) &&
+              get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+            ) ||
+            isCycleReset()
+          );
+
+          match /items/{itemId} {
+            allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+            function isCountUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+                || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+            }
+            allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId))
+              && isCountUpdate()
+              && (
+                !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId))
+                || get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+              );
           }
         }
       }
 
-      match /sessions/{sessionId} {
-        allow read, write: if hasVenueAccess(venueId);
+      match /suppliers/{supplierId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
       }
 
-      match /submissions/{submissionId} {
-        allow read: if hasVenueAccess(venueId);
-        allow create, update: if hasVenueAccess(venueId);
-        allow delete: if isManagerOrAdmin(venueId);
+      match /products/{productId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /prices/{supplierId} {
+          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        }
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      match /orders/{orderId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        match /{sub=**}   { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      // NEW: invoices + lines
+      match /invoices/{invoiceId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      match /budgets/{budgetId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
       }
     }
-
-    match /{document=**} { allow read, write: if false; }
   }
 }

@@ -20,10 +20,16 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.anonymous.tallyup"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
+      "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
+      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e"
     }
   }
 }

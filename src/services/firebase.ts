@@ -1,24 +1,27 @@
-import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
-import { initializeAuth, getReactNativePersistence, Auth } from 'firebase/auth';
+import { initializeApp } from 'firebase/app';
+import {
+  getReactNativePersistence,
+  initializeAuth
+} from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCvDiUSXBCCP6LnBTP6nDkWzQIpj5vUGIM",
   authDomain: "tallyup-f1463.firebaseapp.com",
   projectId: "tallyup-f1463",
-  storageBucket: "tallyup-f1463.appspot.com",
+  storageBucket: "tallyup-f1463.firebasestorage.app",
   messagingSenderId: "596901666549",
+  appId: "1:596901666549:web:cadce20353a7b69665efbc"
 };
 
-export const app: FirebaseApp = getApps().length ? getApps()[0]! : initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig);
 
-declare global { var __TALLYUP_AUTH__: Auth | undefined; }
-if (!global.__TALLYUP_AUTH__) {
-  global.__TALLYUP_AUTH__ = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
-}
-export const auth = global.__TALLYUP_AUTH__ as Auth;
+// IMPORTANT: initializeAuth BEFORE any getAuth usage
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage),
+});
 
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+
+console.log('[TallyUp Firebase] Initialized: tallyup-f1463');
