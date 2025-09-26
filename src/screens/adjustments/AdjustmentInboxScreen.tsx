@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Modal, Text, TextInput,
-  TouchableOpacity, View
+  TouchableOpacity, View, ScrollView
 } from 'react-native';
 import { collection, onSnapshot, orderBy, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -12,6 +12,7 @@ import { throttleAction } from '../../utils/pressThrottle';
 import { approveAdjustment, denyAdjustment, AdjustmentRequest } from '../../services/adjustments';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
+import { useDepartments } from '../../hooks/useDepartments';
 
 type MemberDoc = { role?: string };
 
@@ -50,6 +51,10 @@ function AdjustmentInboxScreen() {
   const [denyFor, setDenyFor] = useState<AdjustmentRequest | null>(null);
   const [denyReason, setDenyReason] = useState('');
 
+  // Departments for filtering
+  const { items: departments } = useDepartments(venueId);
+  const [deptFilter, setDeptFilter] = useState<string | null>(null); // null = All
+
   useEffect(() => {
     if (!venueId) { setRows([]); setLoading(false); return; }
     setLoading(true);
@@ -71,6 +76,11 @@ function AdjustmentInboxScreen() {
     return () => unsub();
   }, [venueId]);
 
+  const filteredRows = useMemo(() => {
+    if (!deptFilter) return rows;
+    return rows.filter(r => r.departmentId === deptFilter);
+  }, [rows, deptFilter]);
+
   const approve = throttleAction(async (req: AdjustmentRequest) => {
     try { await approveAdjustment(req); }
     catch (e: any) { Alert.alert('Approve failed', e?.message || 'Unknown error'); }
@@ -91,6 +101,28 @@ function AdjustmentInboxScreen() {
     <View style={{ padding: 24, alignItems: 'center' }}>
       <Text style={{ color: '#6B7280' }}>No pending adjustment requests.</Text>
     </View>
+  );
+
+  const DeptChips = () => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6, gap: 8 }}>
+      <TouchableOpacity
+        onPress={() => setDeptFilter(null)}
+        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
+                 borderColor: deptFilter == null ? '#0A84FF' : '#E5E7EB', backgroundColor: deptFilter == null ? '#D6E9FF' : 'white' }}
+      >
+        <Text style={{ fontWeight: '700', color: '#0A84FF' }}>All</Text>
+      </TouchableOpacity>
+      {departments.map(d => (
+        <TouchableOpacity
+          key={d.id}
+          onPress={() => setDeptFilter(d.id === deptFilter ? null : d.id)}
+          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
+                   borderColor: d.id === deptFilter ? '#0A84FF' : '#E5E7EB', backgroundColor: d.id === deptFilter ? '#D6E9FF' : 'white' }}
+        >
+          <Text style={{ fontWeight: '700', color: '#0A84FF' }}>{d.name}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
   );
 
   const Card = ({ item }: { item: AdjustmentRequest }) => {
@@ -160,7 +192,8 @@ function AdjustmentInboxScreen() {
 
   return (
     <View style={{ flex: 1, padding: 16, backgroundColor: 'white' }}>
-      <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 12 }}>Adjustment Requests</Text>
+      <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>Adjustment Requests</Text>
+      <DeptChips />
       {loading ? (
         <View style={{ alignItems:'center', padding: 20 }}>
           <ActivityIndicator />
@@ -168,7 +201,7 @@ function AdjustmentInboxScreen() {
         </View>
       ) : (
         <FlatList
-          data={rows}
+          data={filteredRows}
           keyExtractor={(r) => r.id}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           renderItem={({ item }) => <Card item={item} />}
