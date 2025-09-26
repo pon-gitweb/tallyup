@@ -7,6 +7,7 @@ import {
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { throttleNav } from '../../utils/pressThrottle';
+import { dlog } from '../../utils/devlog';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -31,7 +32,7 @@ export default function DepartmentSelectionScreen() {
     const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     if (areasSnap.empty) return { ...dep, status: 'Not started' };
 
-    let anyProgress = false;  // progress = startedAt OR completedAt
+    let anyProgress = false;
     let allCompleted = true;
     areasSnap.forEach((d) => {
       const a = d.data() as AreaDoc;
@@ -55,15 +56,13 @@ export default function DepartmentSelectionScreen() {
       for (const dep of base) withStatuses.push(await computeDeptStatus(dep));
       setDepartments(withStatuses);
     } catch (e) {
-      console.log('[Departments] reload error', (e as any)?.message);
+      dlog('[Departments] reload error', (e as any)?.message);
       setDepartments([]);
     } finally {
       setLoading(false);
     }
   }
   useEffect(() => { reload(); }, [venueId]);
-
-  // Refresh when returning to this screen
   useFocusEffect(React.useCallback(() => { reload(); }, [venueId]));
 
   const filtered = useMemo(() => {
@@ -111,7 +110,6 @@ export default function DepartmentSelectionScreen() {
     catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
   }
 
-  // Throttled handler factory for navigation tap
   const makeGoToAreas = (departmentId: string) =>
     throttleNav(() => nav.navigate('Areas', { venueId, departmentId }));
 
@@ -123,10 +121,7 @@ export default function DepartmentSelectionScreen() {
     }[item.status];
 
     return (
-      <TouchableOpacity
-        style={styles.row}
-        onPress={makeGoToAreas(item.id)}
-      >
+      <TouchableOpacity style={styles.row} onPress={makeGoToAreas(item.id)}>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name}</Text>
         </View>

@@ -13,18 +13,17 @@ import { db } from 'src/services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from 'src/context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
+import { dlog } from '../../utils/devlog';
 
 type Item = {
   id: string;
   name: string;
   lastCount?: number;
   lastCountAt?: any;
-
   expectedQty?: number;
   incomingQty?: number;
   soldQty?: number;
   wastageQty?: number;
-
   unit?: string;
   supplierId?: string;
   costPrice?: number;
@@ -42,7 +41,7 @@ type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
 export default function StockTakeAreaInventoryScreen() {
-  console.log('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
+  dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
   const nav = useNavigation<any>();
   const route = useRoute<any>();
@@ -67,10 +66,8 @@ export default function StockTakeAreaInventoryScreen() {
   const [addingName, setAddingName] = useState('');
   const nameInputRef = useRef<TextInput>(null);
 
-  // area meta for cycle-aware logic
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
-  // ----- subscriptions -----
   useEffect(() => {
     if (!itemsPathOk) return;
     const q = query(
@@ -108,16 +105,13 @@ export default function StockTakeAreaInventoryScreen() {
     return () => unsub && unsub();
   }, [venueId, uid]);
 
-  // ----- helpers -----
   const startedAtMs = areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null);
-
   const countedInThisCycle = (it: Item): boolean => {
     const lcMs = it?.lastCountAt?.toMillis ? it.lastCountAt.toMillis() : (it?.lastCountAt?._seconds ? it.lastCountAt._seconds * 1000 : null);
     if (!lcMs || !startedAtMs) return false;
     return lcMs >= startedAtMs;
   };
 
-  // Expected is GUIDE ONLY (chip + placeholder). Never assigned to input value.
   const deriveExpected = (it: Item): number | null => {
     if (typeof it.expectedQty === 'number') return it.expectedQty;
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
@@ -145,7 +139,6 @@ export default function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
-  // ----- CRUD -----
   const addQuickItem = async () => {
     const nm = (addingName || '').trim(); if (!nm) return Alert.alert('Name required');
     try {
@@ -154,17 +147,13 @@ export default function StockTakeAreaInventoryScreen() {
     } catch (e: any) { Alert.alert('Could not add item', e?.message ?? String(e)); }
   };
 
-  // SAVE COUNT: rules-clean (ONLY lastCount & lastCountAt)
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
 
     const doWrite = async (qty: number) => {
       try {
         await ensureAreaStarted();
-        await updateDoc(itemRef(item.id), {
-          lastCount: qty,
-          lastCountAt: serverTimestamp(),
-        });
+        await updateDoc(itemRef(item.id), { lastCount: qty, lastCountAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
       } catch (e: any) { Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
@@ -199,7 +188,7 @@ export default function StockTakeAreaInventoryScreen() {
         type: 'stock-adjustment-request', status: 'pending',
         venueId, departmentId, areaId, itemId: it.id, itemName: it.name,
         fromQty: it.lastCount ?? null, proposedQty: parseFloat(qtyStr),
-        reason: adjReason.trim(), requestedBy: uid ?? null,
+        reason: adjReason.trim(), requestedBy: getAuth().currentUser?.uid ?? null,
         requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
       });
       setAdjModalFor(null);
@@ -221,10 +210,7 @@ export default function StockTakeAreaInventoryScreen() {
       try {
         if (missing.length > 0) {
           await Promise.all(missing.map((it) =>
-            updateDoc(itemRef(it.id), {
-              lastCount: 0,
-              lastCountAt: serverTimestamp(),
-            })
+            updateDoc(itemRef(it.id), { lastCount: 0, lastCountAt: serverTimestamp() })
           ));
         }
         await updateDoc(areaRef(), { completedAt: serverTimestamp() });
@@ -249,7 +235,6 @@ export default function StockTakeAreaInventoryScreen() {
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
-  // Throttled handler factories
   const makeSave = (item: Item) => throttleAction(() => saveCount(item));
   const onSubmitArea = throttleAction(completeArea);
 
@@ -257,13 +242,9 @@ export default function StockTakeAreaInventoryScreen() {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
-
     const countedNow = countedInThisCycle(item);
     const locked = countedNow && !isManager;
-
-    const placeholder = showExpected
-      ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available')
-      : 'enter count here';
+    const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
 
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
@@ -314,7 +295,6 @@ export default function StockTakeAreaInventoryScreen() {
             <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
           </TouchableOpacity>
 
-          {/* Request adj. — only when a current-cycle count exists, and user is not a manager */}
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => setAdjModalFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
@@ -341,11 +321,9 @@ export default function StockTakeAreaInventoryScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      {/* Header */}
       <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
 
-        {/* Search + Toggle */}
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TextInput
             value={filter}
@@ -358,7 +336,6 @@ export default function StockTakeAreaInventoryScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Quick Add */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TextInput
             ref={nameInputRef}
@@ -374,7 +351,6 @@ export default function StockTakeAreaInventoryScreen() {
         </View>
       </View>
 
-      {/* Single list */}
       <FlatList
         data={filtered}
         keyExtractor={(it) => it.id}
@@ -382,7 +358,6 @@ export default function StockTakeAreaInventoryScreen() {
         ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
       />
 
-      {/* Sticky footer Submit */}
       <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
         <TouchableOpacity onPress={onSubmitArea}
           style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
@@ -390,7 +365,6 @@ export default function StockTakeAreaInventoryScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
@@ -413,7 +387,18 @@ export default function StockTakeAreaInventoryScreen() {
               <TouchableOpacity onPress={() => setAdjModalFor(null)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
                 <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={submitAdjustment} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
+              <TouchableOpacity onPress={() => {
+                const it = adjModalFor!; const qtyStr = adjQty.trim();
+                if (!/^\d+(\.\d+)?$/.test(qtyStr)) return Alert.alert('Invalid number');
+                if (!adjReason.trim()) return Alert.alert('Reason required');
+                addDoc(collection(db, 'venues', venueId!, 'sessions'), {
+                  type: 'stock-adjustment-request', status: 'pending',
+                  venueId, departmentId, areaId, itemId: it.id, itemName: it.name,
+                  fromQty: it.lastCount ?? null, proposedQty: parseFloat(qtyStr),
+                  reason: adjReason.trim(), requestedBy: getAuth().currentUser?.uid ?? null,
+                  requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
+                }).then(() => setAdjModalFor(null)).catch((e) => Alert.alert('Could not submit request', e?.message ?? String(e)));
+              }} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
                 <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
               </TouchableOpacity>
             </View>
