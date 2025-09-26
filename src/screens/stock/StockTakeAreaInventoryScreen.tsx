@@ -15,6 +15,7 @@ import { useVenueId } from 'src/context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useDebouncedValue } from '../../utils/useDebouncedValue';
 
 type Item = {
   id: string; name: string;
@@ -45,6 +46,8 @@ function StockTakeAreaInventoryScreen() {
 
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState('');
+  const filterDebounced = useDebouncedValue(filter, 200);
+
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
@@ -112,9 +115,9 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const filtered = useMemo(() => {
-    const n = filter.trim().toLowerCase();
+    const n = filterDebounced.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
-  }, [items, filter]);
+  }, [items, filterDebounced]);
 
   const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
   const itemRef  = (id: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id);

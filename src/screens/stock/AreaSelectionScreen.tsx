@@ -13,6 +13,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { throttleNav } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useDebouncedValue } from '../../utils/useDebouncedValue';
 
 type RouteParams = { departmentId: string; departmentName?: string };
 type AreaRow = { id: string; name: string; startedAt?: any | null; completedAt?: any | null; };
@@ -24,6 +25,8 @@ function AreaSelectionScreen() {
   const venueId = useVenueId();
 
   const [q, setQ] = useState('');
+  const qDebounced = useDebouncedValue(q, 200);
+
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -51,10 +54,10 @@ function AreaSelectionScreen() {
   }
 
   const filtered = useMemo(() => {
-    if (!q.trim()) return areas;
-    const needle = q.trim().toLowerCase();
+    const needle = qDebounced.trim().toLowerCase();
+    if (!needle) return areas;
     return areas.filter(a => (a.name || '').toLowerCase().includes(needle));
-  }, [q, areas]);
+  }, [qDebounced, areas]);
 
   function openCreate() { setEditingId(null); setAreaName(''); setShowEdit(true); }
   function openEdit(row: AreaRow) { setEditingId(row.id); setAreaName(row.name || ''); setShowEdit(true); }

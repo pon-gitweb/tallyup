@@ -9,6 +9,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { throttleNav } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useDebouncedValue } from '../../utils/useDebouncedValue';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -21,6 +22,7 @@ function DepartmentSelectionScreen() {
   const [loading, setLoading] = useState(true);
   const [departments, setDepartments] = useState<DeptWithStatus[]>([]);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 200);
 
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -67,10 +69,10 @@ function DepartmentSelectionScreen() {
   useFocusEffect(React.useCallback(() => { reload(); }, [venueId]));
 
   const filtered = useMemo(() => {
-    const n = search.trim().toLowerCase();
+    const n = debouncedSearch.trim().toLowerCase();
     if (!n) return departments;
     return departments.filter(d => d.name.toLowerCase().includes(n));
-  }, [departments, search]);
+  }, [departments, debouncedSearch]);
 
   async function onAdd() {
     const name = newName.trim();
