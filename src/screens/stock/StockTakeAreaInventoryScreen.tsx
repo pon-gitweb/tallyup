@@ -14,25 +14,14 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from 'src/context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
+import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 type Item = {
-  id: string;
-  name: string;
-  lastCount?: number;
-  lastCountAt?: any;
-  expectedQty?: number;
-  incomingQty?: number;
-  soldQty?: number;
-  wastageQty?: number;
-  unit?: string;
-  supplierId?: string;
-  costPrice?: number;
-  salePrice?: number;
-  parLevel?: number;
-  productId?: string;
-  productName?: string;
-  createdAt?: any;
-  updatedAt?: any;
+  id: string; name: string;
+  lastCount?: number; lastCountAt?: any;
+  expectedQty?: number; incomingQty?: number; soldQty?: number; wastageQty?: number;
+  unit?: string; supplierId?: string; costPrice?: number; salePrice?: number; parLevel?: number;
+  productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
 };
 
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
@@ -40,7 +29,7 @@ type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
-export default function StockTakeAreaInventoryScreen() {
+function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
   const nav = useNavigation<any>();
@@ -387,18 +376,7 @@ export default function StockTakeAreaInventoryScreen() {
               <TouchableOpacity onPress={() => setAdjModalFor(null)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
                 <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => {
-                const it = adjModalFor!; const qtyStr = adjQty.trim();
-                if (!/^\d+(\.\d+)?$/.test(qtyStr)) return Alert.alert('Invalid number');
-                if (!adjReason.trim()) return Alert.alert('Reason required');
-                addDoc(collection(db, 'venues', venueId!, 'sessions'), {
-                  type: 'stock-adjustment-request', status: 'pending',
-                  venueId, departmentId, areaId, itemId: it.id, itemName: it.name,
-                  fromQty: it.lastCount ?? null, proposedQty: parseFloat(qtyStr),
-                  reason: adjReason.trim(), requestedBy: getAuth().currentUser?.uid ?? null,
-                  requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
-                }).then(() => setAdjModalFor(null)).catch((e) => Alert.alert('Could not submit request', e?.message ?? String(e)));
-              }} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
+              <TouchableOpacity onPress={submitAdjustment} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
                 <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
               </TouchableOpacity>
             </View>
@@ -408,3 +386,5 @@ export default function StockTakeAreaInventoryScreen() {
     </SafeAreaView>
   );
 }
+
+export default withErrorBoundary(StockTakeAreaInventoryScreen, 'Area Inventory');

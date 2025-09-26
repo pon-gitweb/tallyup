@@ -12,16 +12,12 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import { throttleNav } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
+import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 type RouteParams = { departmentId: string; departmentName?: string };
-type AreaRow = {
-  id: string;
-  name: string;
-  startedAt?: any | null;
-  completedAt?: any | null;
-};
+type AreaRow = { id: string; name: string; startedAt?: any | null; completedAt?: any | null; };
 
-export default function AreaSelectionScreen() {
+function AreaSelectionScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const { departmentId, departmentName }: RouteParams = route.params || {};
@@ -183,14 +179,12 @@ export default function AreaSelectionScreen() {
             <Text style={styles.modalTitle}>{editingId ? 'Rename area' : 'Add area'}</Text>
             <TextInput value={areaName} onChangeText={setAreaName} placeholder="Area name" style={styles.modalInput} autoFocus />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setShowEdit(false)}>
+              <Pressable style={styles.secondaryBtn} onPress={() => setShowEdit(false)}>
                 <Text style={styles.secondaryText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.primaryBtn, !areaName.trim() && { opacity: 0.6 }]} onPress={async () => {
-                await commitEdit();
-              }} disabled={!areaName.trim()}>
+              </Pressable>
+              <Pressable style={[styles.primaryBtn, !areaName.trim() && { opacity: 0.6 }]} onPress={async () => { await commitEdit(); }} disabled={!areaName.trim()}>
                 <Text style={styles.primaryText}>{editingId ? 'Save' : 'Add'}</Text>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           </View>
         </View>
@@ -198,6 +192,8 @@ export default function AreaSelectionScreen() {
     </View>
   );
 }
+
+export default withErrorBoundary(AreaSelectionScreen, 'Areas');
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: 'white' },

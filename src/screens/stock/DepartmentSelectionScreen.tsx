@@ -8,12 +8,13 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { throttleNav } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
+import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
 type DeptWithStatus = Dept & { status: 'Completed' | 'In progress' | 'Not started' };
 
-export default function DepartmentSelectionScreen() {
+function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
 
@@ -78,9 +79,7 @@ export default function DepartmentSelectionScreen() {
       if (!venueId) return;
       const now = serverTimestamp();
       await addDoc(collection(db, 'venues', venueId, 'departments'), { name, createdAt: now, updatedAt: now });
-      setNewName('');
-      setAdding(false);
-      await reload();
+      setNewName(''); setAdding(false); await reload();
     } catch (e: any) { Alert.alert('Create failed', e?.message ?? 'Unknown error'); }
   }
 
@@ -199,6 +198,8 @@ export default function DepartmentSelectionScreen() {
     </View>
   );
 }
+
+export default withErrorBoundary(DepartmentSelectionScreen, 'Departments');
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 16, backgroundColor: 'white' },
