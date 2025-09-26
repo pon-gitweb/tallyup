@@ -67,10 +67,17 @@ function StockTakeAreaInventoryScreen() {
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
-  // NEW: History modal state (read-only)
+  // History modal state (read-only)
   const [histFor, setHistFor] = useState<Item | null>(null);
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
+
+  // NEW: Save → Next refs
+  const inputRefs = useRef<Record<string, TextInput | null>>({});
+  const listRef = useRef<FlatList>(null);
+
+  // NEW: Low-stock filter state
+  const [onlyLow, setOnlyLow] = useState(false);
 
   useEffect(() => {
     if (!itemsPathOk) return;
@@ -126,10 +133,23 @@ function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
-  const filtered = useMemo(() => {
+  // Low stock predicate
+  const isLow = (it: Item) =>
+    typeof it.parLevel === 'number' &&
+    typeof it.lastCount === 'number' &&
+    it.lastCount < it.parLevel;
+
+  // Search filter first
+  const filteredBase = useMemo(() => {
     const n = filterDebounced.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
+
+  // Then apply low-stock chip (if on)
+  const filtered = useMemo(() => {
+    if (!onlyLow) return filteredBase;
+    return filteredBase.filter((it) => isLow(it));
+  }, [filteredBase, onlyLow]);
 
   const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
   const itemRef  = (id: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id);
@@ -151,6 +171,21 @@ function StockTakeAreaInventoryScreen() {
     } catch (e: any) { Alert.alert('Could not add item', e?.message ?? String(e)); }
   };
 
+  // Save → Next
+  const focusNext = (currentId: string) => {
+    const idx = filtered.findIndex((x) => x.id === currentId);
+    if (idx >= 0 && idx + 1 < filtered.length) {
+      const nextId = filtered[idx + 1].id;
+      try {
+        listRef.current?.scrollToIndex({ index: Math.min(idx + 1, filtered.length - 1), animated: true });
+      } catch {}
+      setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
+    } else {
+      // last item: dismiss keyboard
+      Keyboard.dismiss();
+    }
+  };
+
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
 
@@ -159,6 +194,7 @@ function StockTakeAreaInventoryScreen() {
         await ensureAreaStarted();
         await updateDoc(itemRef(item.id), { lastCount: qty, lastCountAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
+        focusNext(item.id); // NEW: move to next input after a successful save
       } catch (e: any) { Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
 
@@ -203,6 +239,7 @@ function StockTakeAreaInventoryScreen() {
                 reason: 'Inline approve (manager)',
               });
               setLocalQty((m) => ({ ...m, [item.id]: '' }));
+              focusNext(item.id); // also advance after approve
               Alert.alert('Saved', 'Count updated and audit logged.');
             } catch (e: any) {
               Alert.alert('Approve failed', e?.message ?? String(e));
@@ -276,6 +313,33 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // One-tap initialise (set all uncounted to 0 without submitting area)
+  const initAllZeros = async () => {
+    const noneCountedThisCycle = items.every((it) => !countedInThisCycle(it));
+    const msg = noneCountedThisCycle
+      ? 'This will initialise this area by saving ALL items as 0 now. Continue?'
+      : 'This will save any UNCOUNTED items as 0 now. Already counted items are untouched. Continue?';
+
+    const doIt = async () => {
+      try {
+        await ensureAreaStarted();
+        const toZero = items.filter((it) => !countedInThisCycle(it));
+        if (toZero.length === 0) { Alert.alert('Nothing to do', 'Everything already has a count.'); return; }
+        await Promise.all(toZero.map((it) =>
+          updateDoc(itemRef(it.id), { lastCount: 0, lastCountAt: serverTimestamp() })
+        ));
+        Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
+      } catch (e:any) {
+        Alert.alert('Failed', e?.message ?? String(e));
+      }
+    };
+
+    Alert.alert('Initialise with zeros', msg, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Confirm', style: 'destructive', onPress: throttleAction(doIt) }
+    ]);
+  };
+
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
@@ -283,7 +347,7 @@ function StockTakeAreaInventoryScreen() {
   const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
   const onSubmitArea = throttleAction(completeArea);
 
-  // NEW: open/close History modal and fetch audits (read-only)
+  // History modal loaders
   const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
     setHistFor(item);
@@ -291,7 +355,7 @@ function StockTakeAreaInventoryScreen() {
     try {
       const rows = await fetchRecentItemAudits(venueId, item.id, 10);
       setHistRows(rows);
-    } catch (e:any) {
+    } catch {
       setHistRows([]);
     } finally {
       setHistLoading(false);
@@ -299,7 +363,7 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  const Row = ({ item }: { item: Item }) => {
+  const Row = ({ item, index }: { item: Item; index: number }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -307,14 +371,25 @@ function StockTakeAreaInventoryScreen() {
     const locked = countedNow && !isManager;
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
 
+    const lowStock = isLow(item);
+
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
-            <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
-              {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
-            </Text>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+              <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
+                {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
+              </Text>
+              {lowStock ? (
+                <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
+                  <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
+                    Low: {item.lastCount ?? 0} &lt; {item.parLevel}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
           {showExpected && expectedStr ? (
             <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
@@ -325,6 +400,7 @@ function StockTakeAreaInventoryScreen() {
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TextInput
+            ref={(el) => { inputRefs.current[item.id] = el; }}
             value={typed}
             onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
             placeholder={placeholder}
@@ -334,6 +410,7 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
+            onSubmitEditing={() => makeSave(item)()} // enter → save (which advances)
             style={{
               flex: 1, paddingVertical: 8, paddingHorizontal: 12,
               borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
@@ -391,22 +468,62 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
+  // Header: search with clear (×) + expected toggle + NEW low-stock chip
+  const SearchRow = () => {
+    const anyPar = items.some((it) => typeof it.parLevel === 'number');
+    const anyLow = items.some((it) => isLow(it));
+    const showLowChip = anyPar && anyLow;
+
+    return (
+      <View style={{ gap: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
+          <View style={{ flex: 1, position: 'relative' }}>
+            <TextInput
+              value={filter}
+              onChangeText={setFilter}
+              placeholder="Search items…"
+              style={{ paddingVertical: 8, paddingHorizontal: filter ? 34 : 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+            />
+            {filter ? (
+              <TouchableOpacity
+                onPress={() => setFilter('')}
+                style={{ position: 'absolute', right: 8, top: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#EEEEEE' }}
+              >
+                <Text style={{ fontWeight:'800' }}>×</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
+            <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {showLowChip ? (
+          <View style={{ flexDirection:'row', gap:8 }}>
+            <TouchableOpacity
+              onPress={() => setOnlyLow(false)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
+            >
+              <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setOnlyLow(true)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
+            >
+              <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
 
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TextInput
-            value={filter}
-            onChangeText={setFilter}
-            placeholder="Search items…"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-          />
-          <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
-            <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
-          </TouchableOpacity>
-        </View>
+        <SearchRow />
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TextInput
@@ -424,20 +541,25 @@ function StockTakeAreaInventoryScreen() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={filtered}
         keyExtractor={(it) => it.id}
-        renderItem={({ item }) => <Row item={item} />}
+        renderItem={({ item, index }) => <Row item={item} index={index} />}
         ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
       />
 
-      <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
+      <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
         <TouchableOpacity onPress={onSubmitArea}
           style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
           <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
         </TouchableOpacity>
+        <TouchableOpacity onPress={throttleAction(initAllZeros)}
+          style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}>
+          <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>🟠 Initialise: set all uncounted to 0</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Request Adjustment Modal (unchanged) */}
+      {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
@@ -468,7 +590,7 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* NEW: History Modal (read-only) */}
+      {/* History Modal (read-only) */}
       <Modal visible={!!histFor} transparent animationType="fade" onRequestClose={closeHistory}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
           <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxHeight:'80%', padding:14 }}>
