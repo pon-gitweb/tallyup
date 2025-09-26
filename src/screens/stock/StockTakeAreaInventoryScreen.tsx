@@ -2,20 +2,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View
+  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
   orderBy, query, serverTimestamp, updateDoc
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { db } from 'src/services/firebase';
+import { db } from '../../services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from 'src/context/VenueProvider';
+import { useVenueId } from '../../context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
+
+// Manager inline-approve (flag + service)
+import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
+import { approveDirectCount } from '../../services/adjustmentsDirect';
+
+// Read-only audits for History modal
+import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 
 type Item = {
   id: string; name: string;
@@ -59,6 +66,11 @@ function StockTakeAreaInventoryScreen() {
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
+
+  // NEW: History modal state (read-only)
+  const [histFor, setHistFor] = useState<Item | null>(null);
+  const [histRows, setHistRows] = useState<AuditEntry[]>([]);
+  const [histLoading, setHistLoading] = useState(false);
 
   useEffect(() => {
     if (!itemsPathOk) return;
@@ -161,6 +173,46 @@ function StockTakeAreaInventoryScreen() {
     await doWrite(parseFloat(typed));
   };
 
+  // Manager inline-approve path (explicit audit)
+  const approveNow = async (item: Item) => {
+    const typed = (localQty[item.id] ?? '').trim();
+    if (!ENABLE_MANAGER_INLINE_APPROVE) return;
+    if (!isManager) return Alert.alert('Manager only', 'Only managers can approve directly.');
+    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5)');
+
+    const qty = parseFloat(typed);
+    Alert.alert(
+      'Approve now',
+      `Set “${item.name}” to ${qty}? This writes immediately and logs an audit.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve',
+          style: 'destructive',
+          onPress: throttleAction(async () => {
+            try {
+              await ensureAreaStarted();
+              await approveDirectCount({
+                venueId: venueId!,
+                departmentId,
+                areaId,
+                itemId: item.id,
+                itemName: item.name,
+                fromQty: item.lastCount ?? null,
+                toQty: qty,
+                reason: 'Inline approve (manager)',
+              });
+              setLocalQty((m) => ({ ...m, [item.id]: '' }));
+              Alert.alert('Saved', 'Count updated and audit logged.');
+            } catch (e: any) {
+              Alert.alert('Approve failed', e?.message ?? String(e));
+            }
+          })
+        }
+      ]
+    );
+  };
+
   const removeItem = async (itemId: string) => {
     Alert.alert('Delete item', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
@@ -228,7 +280,24 @@ function StockTakeAreaInventoryScreen() {
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
   const makeSave = (item: Item) => throttleAction(() => saveCount(item));
+  const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
   const onSubmitArea = throttleAction(completeArea);
+
+  // NEW: open/close History modal and fetch audits (read-only)
+  const openHistory = throttleAction(async (item: Item) => {
+    if (!venueId) return;
+    setHistFor(item);
+    setHistLoading(true);
+    try {
+      const rows = await fetchRecentItemAudits(venueId, item.id, 10);
+      setHistRows(rows);
+    } catch (e:any) {
+      setHistRows([]);
+    } finally {
+      setHistLoading(false);
+    }
+  });
+  const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
@@ -275,6 +344,17 @@ function StockTakeAreaInventoryScreen() {
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
             style={{ backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
+          </TouchableOpacity>
+
+          {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
+            <TouchableOpacity onPress={makeApproveNow(item)} disabled={locked}
+              style={{ backgroundColor: locked ? '#CFD8DC' : '#10B981', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
+              <Text style={{ color: 'white', fontWeight: '800' }}>Approve now</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
+            <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => useBluetoothFor(item)} disabled={locked}
@@ -357,6 +437,7 @@ function StockTakeAreaInventoryScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Request Adjustment Modal (unchanged) */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
@@ -383,6 +464,45 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* NEW: History Modal (read-only) */}
+      <Modal visible={!!histFor} transparent animationType="fade" onRequestClose={closeHistory}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
+          <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxHeight:'80%', padding:14 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>
+              History — {histFor?.name ?? 'Item'}
+            </Text>
+
+            {histLoading ? (
+              <View style={{ alignItems:'center', padding:12 }}>
+                <ActivityIndicator />
+                <Text style={{ marginTop:8, color:'#6B7280' }}>Loading…</Text>
+              </View>
+            ) : histRows.length === 0 ? (
+              <Text style={{ color:'#6B7280' }}>No recent audits for this item.</Text>
+            ) : (
+              <ScrollView contentContainerStyle={{ gap:8 }}>
+                {histRows.map(a => (
+                  <View key={a.id} style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
+                    <Text style={{ fontWeight:'800' }}>{a.type.replace(/-/g,' ')}</Text>
+                    <Text style={{ color:'#374151' }}>
+                      {a.fromQty != null ? `From ${a.fromQty} → ` : ''}{a.toQty != null ? `To ${a.toQty}` : ''}
+                    </Text>
+                    {a.decisionNote ? <Text style={{ color:'#6B7280', marginTop:2 }}>Note: {a.decisionNote}</Text> : null}
+                    <Text style={{ color:'#9CA3AF', fontSize:12, marginTop:4 }}>
+                      {a.createdAt?.toDate ? a.createdAt.toDate().toLocaleString() : '—'}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity onPress={closeHistory} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'700' }}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
