@@ -33,12 +33,20 @@ export default function SettingsScreen() {
       try {
         const vdoc = await getDoc(doc(db, 'venues', venueId));
         const ownerUid = (vdoc.data() as any)?.ownerUid;
-        if (ownerUid && ownerUid === u.uid) { setIsManager(true); return; }
+        if (ownerUid && ownerUid === u.uid) {
+          console.log('[Settings] role=owner', { uid: u.uid, venueId });
+          setIsManager(true);
+          return;
+        }
         unsubMember = onSnapshot(doc(db, 'venues', venueId, 'members', u.uid), (snap) => {
           const md = snap.data() as MemberDoc | undefined;
+          console.log('[Settings] member role snapshot', { role: md?.role, uid: u.uid, venueId });
           setIsManager(md?.role === 'manager');
         });
-      } catch { setIsManager(false); }
+      } catch (e:any) {
+        console.log('[Settings] role check error', e?.message);
+        setIsManager(false);
+      }
     });
     return () => { unsubAuth(); unsubMember && unsubMember(); };
   }, [venueId]);
@@ -134,19 +142,17 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Manager-only entry point with badge */}
-        {isManager ? (
-          <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
-              {pendingCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          </View>
-        ) : null}
+        {/* Always show Adjustments entry; screen itself will enforce manager rights */}
+        <View style={styles.row}>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            {isManager && pendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        </View>
 
         {/* NEW: light-blue stub pills */}
         <View style={styles.row}>

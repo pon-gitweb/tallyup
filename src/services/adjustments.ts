@@ -30,20 +30,33 @@ const sessionRef = (venueId: string, sessionId: string) =>
 export async function approveAdjustment(req: AdjustmentRequest, note?: string) {
   const uid = getAuth().currentUser?.uid ?? null;
 
-  // Defensive read to ensure doc still exists
+  // Re-read the session doc to ensure current data and requester identity
+  const sref = sessionRef(req.venueId, req.id);
+  const ssnap = await getDoc(sref);
+  if (!ssnap.exists()) throw new Error('Request no longer exists');
+
+  const fresh = ssnap.data() as AdjustmentRequest;
+  if (fresh.status !== 'pending') throw new Error('Request already resolved');
+
+  // SELF-APPROVAL GUARD
+  if (uid && fresh.requestedBy && uid === fresh.requestedBy) {
+    throw new Error('You cannot approve your own request. Another manager must approve.');
+  }
+
+  // Defensive read to ensure item still exists
   const iref = itemRef(req.venueId, req.departmentId, req.areaId, req.itemId);
   const itemSnap = await getDoc(iref);
   if (!itemSnap.exists()) throw new Error('Item no longer exists');
 
   // 1) Apply the new count
   await updateDoc(iref, {
-    lastCount: req.proposedQty,
+    lastCount: fresh.proposedQty,
     lastCountAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 
   // 2) Mark request resolved
-  await updateDoc(sessionRef(req.venueId, req.id), {
+  await updateDoc(sref, {
     status: 'approved',
     resolvedBy: uid,
     resolvedAt: serverTimestamp(),
@@ -56,8 +69,8 @@ export async function approveAdjustment(req: AdjustmentRequest, note?: string) {
     itemId: req.itemId,
     itemName: req.itemName ?? null,
     fromQty: req.fromQty ?? null,
-    toQty: req.proposedQty,
-    reason: req.reason,
+    toQty: fresh.proposedQty,
+    reason: fresh.reason,
     decisionNote: note || null,
     decidedBy: uid,
     decidedAt: serverTimestamp(),
@@ -72,7 +85,13 @@ export async function denyAdjustment(req: AdjustmentRequest, reason: string) {
   const uid = getAuth().currentUser?.uid ?? null;
   if (!reason?.trim()) throw new Error('Decision reason is required');
 
-  await updateDoc(sessionRef(req.venueId, req.id), {
+  const sref = sessionRef(req.venueId, req.id);
+  const ssnap = await getDoc(sref);
+  if (!ssnap.exists()) throw new Error('Request no longer exists');
+  const fresh = ssnap.data() as AdjustmentRequest;
+  if (fresh.status !== 'pending') throw new Error('Request already resolved');
+
+  await updateDoc(sref, {
     status: 'denied',
     resolvedBy: uid,
     resolvedAt: serverTimestamp(),
@@ -84,8 +103,8 @@ export async function denyAdjustment(req: AdjustmentRequest, reason: string) {
     itemId: req.itemId,
     itemName: req.itemName ?? null,
     fromQty: req.fromQty ?? null,
-    toQty: req.proposedQty,
-    requestReason: req.reason,
+    toQty: fresh.proposedQty,
+    requestReason: fresh.reason,
     decisionNote: reason.trim(),
     decidedBy: uid,
     decidedAt: serverTimestamp(),
