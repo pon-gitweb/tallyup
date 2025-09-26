@@ -21,6 +21,13 @@ import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
 // NEW report
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
 
+// Adjustments
+import AdjustmentInboxScreen from '../../screens/adjustments/AdjustmentInboxScreen';
+
+// V2 dev-only preview (guarded)
+import { ENABLE_V2_THEME } from '../../flags/v2Brand';
+import AboutScreen from '../../screens/AboutScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
@@ -42,20 +49,44 @@ export default function MainStack() {
 
       {/* Orders */}
       <Stack.Screen name="SuggestedOrder" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
-      <Stack.Screen name="Orders" component={OrdersScreen} options={({ navigation }) => ({ title: 'Orders', headerRight: () => (<Button title="New" onPress={() => navigation.navigate('NewOrder')} />) })} />
+      <Stack.Screen
+        name="Orders"
+        component={OrdersScreen}
+        options={({ navigation }) => ({
+          title: 'Orders',
+          headerRight: () => (<Button title="New" onPress={() => navigation.navigate('NewOrder')} />)
+        })}
+      />
       <Stack.Screen name="NewOrder" component={require('../../screens/orders/NewOrderScreen').default} options={{ title: 'New Order' }} />
-      <Stack.Screen name="OrderDetail" component={require('../../screens/orders/OrderDetailScreen.withHeader').default} options={{ title: 'Order Detail' }} options={({ route, navigation }) => ({
-  headerRight: () => (
-    <TouchableOpacity onPress={() => navigation.navigate("InvoiceEdit" as never, { orderId: (route.params as any)?.orderId, status: (route.params as any)?.status } as never)} style={{ paddingHorizontal: 12 }}>
-      <Text style={{ fontSize: 16, fontWeight: "600" }}>{((route.params as any)?.status === "received") ? "Log Invoice" : "Invoice"}</Text>
-    </TouchableOpacity>
-  ),
-})} />
+      <Stack.Screen
+        name="OrderDetail"
+        component={require('../../screens/orders/OrderDetailScreen.withHeader').default}
+        options={({ route, navigation }) => ({
+          title: 'Order Detail',
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => navigation.navigate("InvoiceEdit" as never, { orderId: (route.params as any)?.orderId, status: (route.params as any)?.status } as never)}
+              style={{ paddingHorizontal: 12 }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: "600" }}>
+                {((route.params as any)?.status === "received") ? "Log Invoice" : "Invoice"}
+              </Text>
+            </TouchableOpacity>
+          ),
+        })}
+      />
       <Stack.Screen name="Invoice" component={require('../../screens/orders/InvoiceScreen').default} options={{ title: 'Invoice' }} />
       <Stack.Screen name="ReceiveOrder" component={require('../../screens/orders/ReceiveOrderScreen').default} options={{ title: 'Receive Order' }} />
 
       {/* Reports */}
-      <Stack.Screen name="Reports" component={ReportsScreen} options={({navigation}) => ({ title: 'Reports', headerRight: () => (<Text onPress={() => navigation.navigate('Budgets')} style={{color:'#0A84FF',fontWeight:'800'}}>Budgets</Text>) })} />
+      <Stack.Screen
+        name="Reports"
+        component={ReportsScreen}
+        options={({navigation}) => ({
+          title: 'Reports',
+          headerRight: () => (<Text onPress={() => navigation.navigate('Budgets')} style={{color:'#0A84FF',fontWeight:'800'}}>Budgets</Text>)
+        })}
+      />
       <Stack.Screen name="LastCycleSummary" component={LastCycleSummaryScreen} options={{ title: 'Last Cycle Summary' }} />
       <Stack.Screen name="VarianceSnapshot" component={VarianceSnapshotScreen} options={{ title: 'Variance Snapshot' }} />
       <Stack.Screen name="Budgets" component={require('../../screens/reports/BudgetsScreen').default} options={{ title: 'Budgets' }} />
@@ -68,7 +99,19 @@ export default function MainStack() {
       <Stack.Screen name="ProductEdit" component={require('../../screens/setup/EditProductScreen').default} options={{ title: 'Edit Product' }} />
       <Stack.Screen name="VenueSetup" component={require('../../screens/setup/SetupWizard').default} options={{ title: 'Setup Wizard' }} />
       <Stack.Screen name="InvoiceEdit" component={require("../../screens/invoices/InvoiceEditScreen").default} options={{ title: "Invoice" }} />
-  <Stack.Screen name="Receive" component={require("../../screens/orders/ReceiveAlias").default} options={{ title: "Receive" }} />
-</Stack.Navigator>
+      <Stack.Screen name="Receive" component={require("../../screens/orders/ReceiveAlias").default} options={{ title: "Receive" }} />
+
+      {/* Adjustments */}
+      <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
+
+      {/* Dev-only: only visible when both dev mode and flag are on */}
+      {__DEV__ && ENABLE_V2_THEME ? (
+        <>
+          <Stack.Screen name="DevAbout" component={AboutScreen} options={{ title: 'About (Dev)' }} />
+          <Stack.Screen name="DevTerms" component={require('../../screens/legal/TermsScreen').default} options={{ title: 'Terms (Dev)' }} />
+          <Stack.Screen name="DevPrivacy" component={require('../../screens/legal/PrivacyScreen').default} options={{ title: 'Privacy (Dev)' }} />
+        </>
+      ) : null}
+    </Stack.Navigator>
   );
 }

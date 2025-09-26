@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { getAuth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import Constants from 'expo-constants';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetVenueCycle } from '../../services/session';
@@ -14,11 +14,32 @@ import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
 
+type MemberDoc = { role?: string };
+
 export default function SettingsScreen() {
   const nav = useNavigation<any>();
   const auth = getAuth();
   const user = auth.currentUser;
   const venueId = useVenueId();
+
+  const [isManager, setIsManager] = useState(false);
+
+  useEffect(() => {
+    let unsubMember: any;
+    const unsubAuth = onAuthStateChanged(auth, async (u) => {
+      if (!venueId || !u) { setIsManager(false); return; }
+      try {
+        const vdoc = await getDoc(doc(db, 'venues', venueId));
+        const ownerUid = (vdoc.data() as any)?.ownerUid;
+        if (ownerUid && ownerUid === u.uid) { setIsManager(true); return; }
+        unsubMember = onSnapshot(doc(db, 'venues', venueId, 'members', u.uid), (snap) => {
+          const md = snap.data() as MemberDoc | undefined;
+          setIsManager(md?.role === 'manager');
+        });
+      } catch { setIsManager(false); }
+    });
+    return () => { unsubAuth(); unsubMember && unsubMember(); };
+  }, [venueId]);
 
   const devVenueId =
     (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_DEV_VENUE_ID ||
@@ -27,13 +48,8 @@ export default function SettingsScreen() {
     undefined;
 
   async function doSignOut() {
-    try {
-      await auth.signOut();
-      console.log('[TallyUp Settings] signOut success');
-    } catch (e: any) {
-      console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
-      Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
-    }
+    try { await auth.signOut(); console.log('[TallyUp Settings] signOut success'); }
+    catch (e: any) { console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message })); Alert.alert('Sign Out Failed', e?.message || 'Unknown error'); }
   }
 
   async function doResetCycle() {
@@ -116,7 +132,16 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* NEW: light-blue stub pills (no-op) */}
+        {/* Manager-only entry point */}
+        {isManager ? (
+          <View style={styles.row}>
+            <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
+              <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {/* NEW: light-blue stub pills */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.stub}
@@ -149,7 +174,6 @@ export default function SettingsScreen() {
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
 
-        {/* Legal footer (flag OFF => no visible change) */}
         <View style={{ marginTop: 12 }}>
           <LegalFooter />
         </View>
@@ -164,15 +188,10 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 6 },
   heading: { fontWeight: '800', marginBottom: 4 },
   row: { flexDirection: 'row', gap: 10 },
-
-  /* Active pills (existing) */
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   btnText: { color: 'white', fontWeight: '700' },
-
-  /* Stub pills (lighter blue, non-verbal “coming soon”) */
   stub: { flex: 1, backgroundColor: '#D6E9FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#A9D2FF' },
   stubText: { color: '#0A84FF', fontWeight: '700' },
-
   devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   devBtnText: { fontWeight: '700' },
   signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
