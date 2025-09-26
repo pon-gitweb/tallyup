@@ -12,6 +12,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from 'src/services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from 'src/context/VenueProvider';
+import { throttleAction } from '../../utils/pressThrottle';
 
 type Item = {
   id: string;
@@ -248,6 +249,10 @@ export default function StockTakeAreaInventoryScreen() {
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
+  // Throttled handler factories
+  const makeSave = (item: Item) => throttleAction(() => saveCount(item));
+  const onSubmitArea = throttleAction(completeArea);
+
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
@@ -294,7 +299,7 @@ export default function StockTakeAreaInventoryScreen() {
             }}
           />
 
-          <TouchableOpacity onPress={() => saveCount(item)} disabled={locked}
+          <TouchableOpacity onPress={makeSave(item)} disabled={locked}
             style={{ backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
           </TouchableOpacity>
@@ -379,7 +384,7 @@ export default function StockTakeAreaInventoryScreen() {
 
       {/* Sticky footer Submit */}
       <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
-        <TouchableOpacity onPress={completeArea}
+        <TouchableOpacity onPress={onSubmitArea}
           style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
           <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
         </TouchableOpacity>

@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { throttleNav } from '../../utils/pressThrottle';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -110,6 +111,10 @@ export default function DepartmentSelectionScreen() {
     catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
   }
 
+  // Throttled handler factory for navigation tap
+  const makeGoToAreas = (departmentId: string) =>
+    throttleNav(() => nav.navigate('Areas', { venueId, departmentId }));
+
   function Row({ item }: { item: DeptWithStatus }) {
     const pill = {
       'Completed':  { bg: '#E8F5E9', fg: '#2E7D32' },
@@ -120,7 +125,7 @@ export default function DepartmentSelectionScreen() {
     return (
       <TouchableOpacity
         style={styles.row}
-        onPress={() => nav.navigate('Areas', { venueId, departmentId: item.id })}
+        onPress={makeGoToAreas(item.id)}
       >
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name}</Text>

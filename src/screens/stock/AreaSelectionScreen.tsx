@@ -10,6 +10,7 @@ import {
   doc, serverTimestamp
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { throttleNav } from '../../utils/pressThrottle';
 
 type RouteParams = { departmentId: string; departmentName?: string };
 type AreaRow = {
@@ -39,7 +40,6 @@ export default function AreaSelectionScreen() {
     load();
     return () => {};
   }, [venueId, departmentId]));
-
 
   async function load() {
     if (!venueId || !departmentId) { setAreas([]); setLoading(false); return; }
@@ -157,6 +157,10 @@ export default function AreaSelectionScreen() {
     return <Text style={[styles.pill, styles.pillIdle]}>Not started</Text>;
   }
 
+  // Throttled handler factory for navigation tap → AreaInventory
+  const makeGoToAreaInventory = (areaId: string, areaName: string) =>
+    throttleNav(() => nav.navigate('AreaInventory', { departmentId, areaId, areaName }));
+
   return (
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
@@ -188,7 +192,7 @@ export default function AreaSelectionScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity
               style={styles.row}
-              onPress={() => nav.navigate('AreaInventory', { departmentId, areaId: item.id, areaName: item.name })}
+              onPress={makeGoToAreaInventory(item.id, item.name)}
               onLongPress={() => openEdit(item)}
               delayLongPress={250}
             >
