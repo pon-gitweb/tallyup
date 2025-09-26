@@ -11,6 +11,7 @@ import { dlog } from '../../utils/devlog';
 import { throttleAction } from '../../utils/pressThrottle';
 import { approveAdjustment, denyAdjustment, AdjustmentRequest } from '../../services/adjustments';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { useNavigation } from '@react-navigation/native';
 
 type MemberDoc = { role?: string };
 
@@ -39,6 +40,7 @@ function useIsManager(venueId?: string | null) {
 }
 
 function AdjustmentInboxScreen() {
+  const nav = useNavigation<any>();
   const venueId = useVenueId();
   const isManager = useIsManager(venueId);
   const uid = getAuth().currentUser?.uid ?? null;
@@ -94,7 +96,21 @@ function AdjustmentInboxScreen() {
   const Card = ({ item }: { item: AdjustmentRequest }) => {
     const selfRequest = !!(uid && item.requestedBy && uid === item.requestedBy);
     return (
-      <View style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, gap: 6 }}>
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => nav.navigate('AdjustmentDetail', {
+          requestId: item.id,
+          itemId: item.itemId,
+          itemName: item.itemName,
+          departmentId: item.departmentId,
+          areaId: item.areaId,
+          proposedQty: item.proposedQty,
+          fromQty: item.fromQty ?? null,
+          reason: item.reason || '',
+          requestedBy: item.requestedBy || null,
+        })}
+        style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, gap: 6 }}
+      >
         <Text style={{ fontWeight: '800' }}>{item.itemName || 'Item'}</Text>
         <Text style={{ color: '#374151' }}>
           Proposed: <Text style={{ fontWeight: '800' }}>{item.proposedQty}</Text>{'  '}
@@ -130,7 +146,7 @@ function AdjustmentInboxScreen() {
             <Text style={{ color: '#111827', fontWeight: '800' }}>Deny</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 

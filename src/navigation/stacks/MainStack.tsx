@@ -23,6 +23,7 @@ import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen
 
 // Adjustments
 import AdjustmentInboxScreen from '../../screens/adjustments/AdjustmentInboxScreen';
+import AdjustmentDetailScreen from '../../screens/adjustments/AdjustmentDetailScreen';
 
 // V2 dev-only preview (guarded)
 import { ENABLE_V2_THEME } from '../../flags/v2Brand';
@@ -103,6 +104,7 @@ export default function MainStack() {
 
       {/* Adjustments */}
       <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
+      <Stack.Screen name="AdjustmentDetail" component={AdjustmentDetailScreen} options={{ title: 'Adjustment Detail' }} />
 
       {/* Dev-only: only visible when both dev mode and flag are on */}
       {__DEV__ && ENABLE_V2_THEME ? (
