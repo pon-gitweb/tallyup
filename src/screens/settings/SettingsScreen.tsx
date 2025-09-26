@@ -9,6 +9,11 @@ import { useVenueId } from '../../context/VenueProvider';
 import { resetVenueCycle } from '../../services/session';
 import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
 
+// V2 theme (flag-guarded)
+import LocalThemeGate from '../../theme/LocalThemeGate';
+import MaybeTText from '../../components/themed/MaybeTText';
+import LegalFooter from '../../components/LegalFooter';
+
 export default function SettingsScreen() {
   const nav = useNavigation<any>();
   const auth = getAuth();
@@ -73,76 +78,83 @@ export default function SettingsScreen() {
   }
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Settings</Text>
+    <LocalThemeGate>
+      <View style={styles.wrap}>
+        <MaybeTText style={styles.title}>Settings</MaybeTText>
 
-      <View style={styles.card}>
-        <Text style={styles.heading}>Account</Text>
-        <Text>Email: {user?.email || '—'}</Text>
-        <Text>UID: {user?.uid || '—'}</Text>
-        <Text>Venue: {venueId || '—'}</Text>
+        <View style={styles.card}>
+          <MaybeTText style={styles.heading}>Account</MaybeTText>
+          <Text>Email: {user?.email || '—'}</Text>
+          <Text>UID: {user?.uid || '—'}</Text>
+          <Text>Venue: {venueId || '—'}</Text>
+        </View>
+
+        <View style={styles.row}>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
+            <Text style={styles.btnText}>Open Setup Wizard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.btn} onPress={doResetCycle}>
+            <Text style={styles.btnText}>Reset Stock Take</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.row}>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Suppliers')}>
+            <Text style={styles.btnText}>Manage Suppliers</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Products')}>
+            <Text style={styles.btnText}>Manage Products</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.row}>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SuggestedOrder')}>
+            <Text style={styles.btnText}>Suggested Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Orders')}>
+            <Text style={styles.btnText}>Orders</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* NEW: light-blue stub pills (no-op) */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.stub}
+            onPress={() => Alert.alert('Coming soon', 'CSV uploads & integrations will land here.')}
+          >
+            <Text style={styles.stubText}>Data & Integrations (CSV)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.stub}
+            onPress={() => Alert.alert('Coming soon', 'Sales report imports will land here.')}
+          >
+            <Text style={styles.stubText}>Sales Reports (CSV)</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.card}>
+          <MaybeTText style={styles.heading}>Developer Utilities</MaybeTText>
+          <Text style={{ opacity: 0.7, marginBottom: 8 }}>
+            Dev venue ID: {devVenueId || 'not configured'}
+          </Text>
+          <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
+            <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.devBtn} onPress={doSeedDemo}>
+            <Text style={styles.devBtnText}>Seed Demo Suppliers & Products</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+
+        {/* Legal footer (flag OFF => no visible change) */}
+        <View style={{ marginTop: 12 }}>
+          <LegalFooter />
+        </View>
       </View>
-
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
-          <Text style={styles.btnText}>Open Setup Wizard</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.btn} onPress={doResetCycle}>
-          <Text style={styles.btnText}>Reset Stock Take</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Suppliers')}>
-          <Text style={styles.btnText}>Manage Suppliers</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Products')}>
-          <Text style={styles.btnText}>Manage Products</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SuggestedOrder')}>
-          <Text style={styles.btnText}>Suggested Orders</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Orders')}>
-          <Text style={styles.btnText}>Orders</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* NEW: light-blue stub pills (no-op) */}
-      <View style={styles.row}>
-        <TouchableOpacity
-          style={styles.stub}
-          onPress={() => Alert.alert('Coming soon', 'CSV uploads & integrations will land here.')}
-        >
-          <Text style={styles.stubText}>Data & Integrations (CSV)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.stub}
-          onPress={() => Alert.alert('Coming soon', 'Sales report imports will land here.')}
-        >
-          <Text style={styles.stubText}>Sales Reports (CSV)</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.heading}>Developer Utilities</Text>
-        <Text style={{ opacity: 0.7, marginBottom: 8 }}>
-          Dev venue ID: {devVenueId || 'not configured'}
-        </Text>
-        <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
-          <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.devBtn} onPress={doSeedDemo}>
-          <Text style={styles.devBtnText}>Seed Demo Suppliers & Products</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
-        <Text style={styles.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
-    </View>
+    </LocalThemeGate>
   );
 }
 
@@ -166,4 +178,3 @@ const styles = StyleSheet.create({
   signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   signOutText: { color: 'white', fontWeight: '800' },
 });
-
