@@ -8,6 +8,7 @@ import Constants from 'expo-constants';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetVenueCycle } from '../../services/session';
 import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
+import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 
 // V2 theme (flag-guarded)
 import LocalThemeGate from '../../theme/LocalThemeGate';
@@ -23,6 +24,7 @@ export default function SettingsScreen() {
   const venueId = useVenueId();
 
   const [isManager, setIsManager] = useState(false);
+  const { count: pendingCount } = usePendingAdjustmentsCount(venueId);
 
   useEffect(() => {
     let unsubMember: any;
@@ -132,11 +134,16 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Manager-only entry point */}
+        {/* Manager-only entry point with badge */}
         {isManager ? (
           <View style={styles.row}>
             <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
               <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+              {pendingCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+                </View>
+              ) : null}
             </TouchableOpacity>
           </View>
         ) : null}
@@ -188,7 +195,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 6 },
   heading: { fontWeight: '800', marginBottom: 4 },
   row: { flexDirection: 'row', gap: 10 },
-  btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', position: 'relative' },
   btnText: { color: 'white', fontWeight: '700' },
   stub: { flex: 1, backgroundColor: '#D6E9FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#A9D2FF' },
   stubText: { color: '#0A84FF', fontWeight: '700' },
@@ -196,4 +203,6 @@ const styles = StyleSheet.create({
   devBtnText: { fontWeight: '700' },
   signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   signOutText: { color: 'white', fontWeight: '800' },
+  badge: { position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'white' },
+  badgeText: { color: 'white', fontSize: 12, fontWeight: '800' },
 });
