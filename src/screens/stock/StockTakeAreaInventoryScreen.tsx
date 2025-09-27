@@ -22,7 +22,7 @@ import NetInfo from '@react-native-community/netinfo';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 
-// AsyncStorage (guarded) for dismissible legend
+// AsyncStorage (guarded) for dismissible legend & quick-add memory
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
 
@@ -37,7 +37,8 @@ type Item = {
   id: string; name: string;
   lastCount?: number; lastCountAt?: any;
   expectedQty?: number; incomingQty?: number; soldQty?: number; wastageQty?: number;
-  unit?: string; supplierId?: string; costPrice?: number; salePrice?: number; parLevel?: number;
+  unit?: string; supplierId?: string; supplierName?: string;
+  costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
 };
 
@@ -74,11 +75,17 @@ function StockTakeAreaInventoryScreen() {
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
+  // Collapse control (compact counted rows)
+  const [compactCounted, setCompactCounted] = useState(true);
+
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
+  // Quick add fields + memory
   const [addingName, setAddingName] = useState('');
+  const [addingUnit, setAddingUnit] = useState('');
+  const [addingSupplier, setAddingSupplier] = useState('');
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
@@ -112,6 +119,22 @@ function StockTakeAreaInventoryScreen() {
   const dismissLegend = async () => {
     setLegendDismissed(true);
     if (AS) try { await AS.setItem(legendKey, '1'); } catch {}
+  };
+
+  // Quick-add memory
+  useEffect(() => { (async () => {
+    if (!AS) return;
+    try {
+      const u = await AS.getItem('quickAdd:unit'); if (u) setAddingUnit(u);
+      const s = await AS.getItem('quickAdd:supplier'); if (s) setAddingSupplier(s);
+    } catch {}
+  })(); }, []);
+  const rememberQuickAdd = async (unit: string, supplier: string) => {
+    if (!AS) return;
+    try {
+      await AS.setItem('quickAdd:unit', unit || '');
+      await AS.setItem('quickAdd:supplier', supplier || '');
+    } catch {}
   };
 
   // Live items
@@ -190,19 +213,17 @@ function StockTakeAreaInventoryScreen() {
   // Counts for footer
   const countedCount = items.filter(countedInThisCycle).length;
 
-  // Save→Next: prefer next *uncounted* item in the *current filtered list*; otherwise fall back to next index
+  // Save→Next: prefer next *uncounted* in current filtered list
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx < 0) return Keyboard.dismiss();
 
-    // search forward for next UNCOUNTED in filtered
     const nextUncountedIdx = filtered.findIndex((x, i) => i > idx && !countedInThisCycle(x));
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
 
     if (targetIdx === -1) return Keyboard.dismiss();
     const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
-    // +1 because header is at index 0 when sticky; see FlatList below
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
   };
 
@@ -292,11 +313,20 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const addQuickItem = async () => {
-    const nm = (addingName || '').trim(); if (!nm) return Alert.alert('Name required');
+    const nm = (addingName || '').trim();
+    if (!nm) return Alert.alert('Name required');
     try {
-      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'),
-        { name: nm, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      setAddingName(''); nameInputRef.current?.blur(); Keyboard.dismiss();
+      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), {
+        name: nm,
+        unit: addingUnit || null,
+        supplierName: addingSupplier || null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setAddingName('');
+      await rememberQuickAdd(addingUnit, addingSupplier);
+      nameInputRef.current?.blur(); Keyboard.dismiss();
+      hapticSuccess();
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
   };
 
@@ -427,15 +457,57 @@ function StockTakeAreaInventoryScreen() {
     const lowStock = isLow(item);
     const unsaved = typed.trim() !== '';
 
+    // Compact layout when counted & user not manager & compactCounted is on
+    if (locked && compactCounted) {
+      return (
+        <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}>
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <View style={{ flex:1 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
+                {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
+                {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+                {lowStock ? (
+                  <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
+                    <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
+                      Low: {item.lastCount ?? 0} &lt; {item.parLevel}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+            {showExpected && expectedStr ? (
+              <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
+                <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+            <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
+              <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
+              <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    // Full row (default)
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
-            <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
               <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
                 {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
               </Text>
+              {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
+              {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
               {lowStock ? (
                 <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
                   <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
@@ -475,7 +547,7 @@ function StockTakeAreaInventoryScreen() {
 
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
             style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-            {unsaved ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
+            {typed.trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
           </TouchableOpacity>
 
@@ -524,7 +596,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky ListHeader (title + banners + legend + search/filters + quick-add)
+  // Sticky ListHeader (title + banners + legend + search/filters + quick-add + compact toggle)
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -593,17 +665,46 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TextInput
-              ref={nameInputRef}
-              value={addingName}
-              onChangeText={setAddingName}
-              placeholder="Quick add item name"
-              style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-            />
-            <TouchableOpacity onPress={addQuickItem}
-              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
-              <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+          {/* Quick add with memory (Unit, Supplier optional) */}
+          <View style={{ gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TextInput
+                ref={nameInputRef}
+                value={addingName}
+                onChangeText={setAddingName}
+                placeholder="Quick add item name"
+                style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+              />
+              <TouchableOpacity onPress={addQuickItem}
+                style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
+                <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TextInput
+                value={addingUnit}
+                onChangeText={setAddingUnit}
+                placeholder="Unit (e.g. bottles, kg)"
+                style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+              />
+              <TextInput
+                value={addingSupplier}
+                onChangeText={setAddingSupplier}
+                placeholder="Supplier"
+                style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+              />
+            </View>
+          </View>
+
+          {/* Compact counted toggle */}
+          <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4 }}>
+            <TouchableOpacity
+              onPress={()=>setCompactCounted((v)=>!v)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor: compactCounted ? '#E0F2FE' : '#F3F4F6', borderWidth:1, borderColor: compactCounted ? '#38BDF8' : '#E5E7EB' }}
+            >
+              <Text style={{ fontWeight:'800', color: compactCounted ? '#0369A1' : '#374151' }}>
+                {compactCounted ? '✓ Compact counted rows' : 'Show inputs on counted rows'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -625,7 +726,7 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
-  // Footer actions (unchanged)
+  // Footer actions
   const ListFooter = () => (
     <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
       <TouchableOpacity onPress={onSubmitArea}
