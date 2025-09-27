@@ -16,6 +16,11 @@ import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
+import NetInfo from '@react-native-community/netinfo';
+
+// NEW: Haptics (guarded)
+let Haptics: any = null;
+try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 
 // Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
@@ -36,6 +41,13 @@ type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any
 type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
+
+// Haptics helper
+const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
+
+// Delta confirm thresholds
+const DELTA_ABS_THRESHOLD = 5;       // require confirm if abs change >= 5
+const DELTA_RATIO_THRESHOLD = 0.5;   // ...and 50% or more vs previous
 
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
@@ -78,6 +90,13 @@ function StockTakeAreaInventoryScreen() {
 
   // Low-stock filter
   const [onlyLow, setOnlyLow] = useState(false);
+
+  // NEW: offline banner state
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
+    return () => unsub && unsub();
+  }, []);
 
   useEffect(() => {
     if (!itemsPathOk) return;
@@ -168,26 +187,48 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
+  // delta confirm helper
+  const needsDeltaConfirm = (prev: number | null | undefined, next: number) => {
+    const from = typeof prev === 'number' ? prev : 0;
+    const abs = Math.abs(next - from);
+    const ratio = from === 0 ? 1 : abs / Math.max(1, Math.abs(from));
+    return abs >= DELTA_ABS_THRESHOLD && ratio >= DELTA_RATIO_THRESHOLD;
+  };
+
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
+
     const doWrite = async (qty: number) => {
       try {
         await ensureAreaStarted();
         await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id),
           { lastCount: qty, lastCountAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
+        hapticSuccess();
         focusNext(item.id);
       } catch (e:any){ Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
-    if (typed === '') return Alert.alert('No quantity',`Save “${item.name}” as 0?`,[
-      {text:'Cancel',style:'cancel'},
-      {text:'Save as 0',onPress:()=>doWrite(0)}
-    ]);
+
+    const proceedWith = async (qty: number) => {
+      const mustConfirm = needsDeltaConfirm(item.lastCount ?? null, qty);
+      if (!mustConfirm) return doWrite(qty);
+      Alert.alert('Large change', `Change “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm', style: 'destructive', onPress: () => doWrite(qty) }
+      ]);
+    };
+
+    if (typed === '') {
+      return Alert.alert('No quantity',`Save “${item.name}” as 0?`,[
+        {text:'Cancel',style:'cancel'},
+        {text:'Save as 0',onPress:()=>proceedWith(0)}
+      ]);
+    }
     if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid','Enter number');
-    await doWrite(parseFloat(typed));
+    await proceedWith(parseFloat(typed));
   };
 
-  // Manager inline-approve path (explicit audit)
+  // Manager inline-approve path (explicit audit) with delta confirm
   const approveNow = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
     if (!ENABLE_MANAGER_INLINE_APPROVE) return;
@@ -195,37 +236,32 @@ function StockTakeAreaInventoryScreen() {
     if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5)');
 
     const qty = parseFloat(typed);
-    Alert.alert(
-      'Approve now',
-      `Set “${item.name}” to ${qty}? This writes immediately and logs an audit.`,
-      [
+    const doApprove = async () => {
+      try {
+        await ensureAreaStarted();
+        await approveDirectCount({
+          venueId: venueId!, departmentId, areaId,
+          itemId: item.id, itemName: item.name,
+          fromQty: item.lastCount ?? null, toQty: qty,
+          reason: 'Inline approve (manager)',
+        });
+        setLocalQty((m) => ({ ...m, [item.id]: '' }));
+        hapticSuccess();
+        focusNext(item.id);
+        Alert.alert('Saved', 'Count updated and audit logged.');
+      } catch (e: any) {
+        Alert.alert('Approve failed', e?.message ?? String(e));
+      }
+    };
+
+    if (needsDeltaConfirm(item.lastCount ?? null, qty)) {
+      Alert.alert('Large change', `Approve “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`, [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          style: 'destructive',
-          onPress: throttleAction(async () => {
-            try {
-              await ensureAreaStarted();
-              await approveDirectCount({
-                venueId: venueId!,
-                departmentId,
-                areaId,
-                itemId: item.id,
-                itemName: item.name,
-                fromQty: item.lastCount ?? null,
-                toQty: qty,
-                reason: 'Inline approve (manager)',
-              });
-              setLocalQty((m) => ({ ...m, [item.id]: '' }));
-              focusNext(item.id);
-              Alert.alert('Saved', 'Count updated and audit logged.');
-            } catch (e: any) {
-              Alert.alert('Approve failed', e?.message ?? String(e));
-            }
-          })
-        }
-      ]
-    );
+        { text: 'Approve', style: 'destructive', onPress: throttleAction(doApprove) }
+      ]);
+    } else {
+      await doApprove();
+    }
   };
 
   const addQuickItem = async () => {
@@ -318,6 +354,7 @@ function StockTakeAreaInventoryScreen() {
           updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
             { lastCount: 0, lastCountAt: serverTimestamp() })
         ));
+        hapticSuccess();
         Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
       } catch (e:any) {
         Alert.alert('Failed', e?.message ?? String(e));
@@ -418,7 +455,7 @@ function StockTakeAreaInventoryScreen() {
           {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
             <TouchableOpacity onPress={makeApproveNow(item)} disabled={locked}
               style={{ backgroundColor: locked ? '#CFD8DC' : '#10B981', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Approve now</Text>
+              <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -460,7 +497,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Header: search with clear (×) + expected toggle + low-stock chip
+  // Header: search with clear (×) + expected toggle + low-stock chip + OFFLINE BANNER
   const SearchRow = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -468,6 +505,13 @@ function StockTakeAreaInventoryScreen() {
 
     return (
       <View style={{ gap: 8 }}>
+        {offline ? (
+          <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
+            <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
+            <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
+          </View>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
           <View style={{ flex: 1, position: 'relative' }}>
             <TextInput
