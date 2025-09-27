@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView
+  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
@@ -22,14 +22,13 @@ import NetInfo from '@react-native-community/netinfo';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 
-// AsyncStorage (guarded) for dismissible legend & quick-add memory
+// AsyncStorage (guarded)
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
 
-// Gesture handler (guarded) — swipes temporarily disabled by design
+// Gesture handler (guarded) — swipes disabled intentionally (bypass)
 let GH: any = null;
 try { GH = require('react-native-gesture-handler'); } catch { GH = null; }
-// IMPORTANT: bypass swipes to avoid RNGH root issues
 const Swipeable = null;
 
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
@@ -43,7 +42,7 @@ type Item = {
   unit?: string; supplierId?: string; supplierName?: string;
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
-  note?: string; // NEW: per-item note
+  note?: string;
 };
 
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
@@ -55,6 +54,9 @@ const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selecti
 
 const DELTA_ABS_THRESHOLD = 5;
 const DELTA_RATIO_THRESHOLD = 0.5;
+
+// Common units for picker
+const COMMON_UNITS = ['bottles', 'cases', 'kg', 'g', 'L', 'ml', 'packs', 'units', 'keg'];
 
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
@@ -86,19 +88,10 @@ function StockTakeAreaInventoryScreen() {
   // Notes modal
   const [noteFor, setNoteFor] = useState<Item | null>(null);
   const [noteText, setNoteText] = useState('');
-  const openNote = (it: Item) => { setNoteFor(it); setNoteText(it.note ?? ''); };
-  const saveNote = throttleAction(async () => {
-    if (!noteFor) return;
-    try {
-      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',noteFor.id), {
-        note: noteText.trim() || null, updatedAt: serverTimestamp()
-      });
-      setNoteFor(null); setNoteText('');
-      hapticSuccess();
-    } catch (e:any) {
-      Alert.alert('Could not save note', e?.message ?? String(e));
-    }
-  });
+
+  // Unit modal
+  const [unitFor, setUnitFor] = useState<Item | null>(null);
+  const [unitText, setUnitText] = useState('');
 
   // Quick add fields + memory
   const [addingName, setAddingName] = useState('');
@@ -121,8 +114,9 @@ function StockTakeAreaInventoryScreen() {
   // Row overflow menu state
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
-  // Save→Next focus
+  // Save→Next focus + toolbar
   const inputRefs = useRef<Record<string, TextInput | null>>({});
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   // Low-stock filter
@@ -240,6 +234,24 @@ function StockTakeAreaInventoryScreen() {
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
 
+  // Focus navigation helpers
+  const indexOfId = (id: string) => filtered.findIndex((x) => x.id === id);
+  const idAt = (i: number) => (i >= 0 && i < filtered.length ? filtered[i]?.id : null);
+
+  const focusAtIndex = (idx: number) => {
+    const nextId = idAt(idx);
+    if (!nextId) return Keyboard.dismiss();
+    try { listRef.current?.scrollToIndex({ index: Math.min(filtered.length, idx + 1), animated: true }); } catch {}
+    setTimeout(() => inputRefs.current[nextId]?.focus?.(), 60);
+  };
+
+  const focusPrev = () => {
+    if (!focusedId) return;
+    const i = indexOfId(focusedId);
+    if (i <= 0) return;
+    focusAtIndex(i - 1);
+  };
+
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx < 0) return Keyboard.dismiss();
@@ -248,8 +260,8 @@ function StockTakeAreaInventoryScreen() {
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
 
     if (targetIdx === -1) return Keyboard.dismiss();
-    const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
+    const nextId = filtered[targetIdx].id;
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
   };
 
@@ -500,6 +512,36 @@ function StockTakeAreaInventoryScreen() {
   const openMenu = (item: Item) => setMenuFor(item);
   const closeMenu = () => setMenuFor(null);
 
+  // Notes
+  const openNote = (it: Item) => { setNoteFor(it); setNoteText(it.note ?? ''); };
+  const saveNote = throttleAction(async () => {
+    if (!noteFor) return;
+    try {
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',noteFor.id), {
+        note: noteText.trim() || null, updatedAt: serverTimestamp()
+      });
+      setNoteFor(null); setNoteText('');
+      hapticSuccess();
+    } catch (e:any) {
+      Alert.alert('Could not save note', e?.message ?? String(e));
+    }
+  });
+
+  // Units
+  const openUnit = (it: Item) => { setUnitFor(it); setUnitText(it.unit ?? ''); };
+  const saveUnit = throttleAction(async () => {
+    if (!unitFor) return;
+    try {
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',unitFor.id), {
+        unit: (unitText.trim() || null), updatedAt: serverTimestamp()
+      });
+      setUnitFor(null); setUnitText('');
+      hapticSuccess();
+    } catch (e:any) {
+      Alert.alert('Could not save unit', e?.message ?? String(e));
+    }
+  });
+
   const RowContent = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
@@ -585,6 +627,8 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
+            onFocus={() => setFocusedId(item.id)}
+            onBlur={() => { if (focusedId === item.id) setFocusedId(null); }}
             onSubmitEditing={()=>makeSave(item)()}
             style={{
               flexGrow: 1, minWidth: 160,
@@ -619,7 +663,7 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
-  // With swipes disabled, Row is just RowContent
+  // Row = content (swipes off)
   const Row = ({ item }: { item: Item }) => <RowContent item={item} />;
 
   if (!itemsPathOk) {
@@ -630,7 +674,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky header (adds progress chip)
+  // Sticky header (progress chip)
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -787,6 +831,42 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
+  // Keyboard toolbar (Prev / Next / Save)
+  const Toolbar = () => {
+    if (!focusedId) return null;
+    const idx = filtered.findIndex(x => x.id === focusedId);
+    const item = filtered[idx];
+    const canPrev = idx > 0;
+    const canNext = idx > -1 && idx + 1 < filtered.length;
+    return (
+      <View style={{
+        position:'absolute', left:0, right:0, bottom:0,
+        backgroundColor:'#111827', paddingVertical:8, paddingHorizontal:12,
+        flexDirection:'row', alignItems:'center', justifyContent:'space-between'
+      }}>
+        <TouchableOpacity disabled={!canPrev} onPress={focusPrev}
+          style={{ opacity: canPrev ? 1 : 0.4, padding:8, borderRadius:8, backgroundColor:'#374151' }}>
+          <Text style={{ color:'white', fontWeight:'800' }}>Prev</Text>
+        </TouchableOpacity>
+        <Text style={{ color:'#9CA3AF', fontWeight:'700' }}>
+          {idx + 1}/{filtered.length}
+        </Text>
+        <View style={{ flexDirection:'row', gap:8 }}>
+          <TouchableOpacity disabled={!canNext} onPress={()=>focusAtIndex(idx+1)}
+            style={{ opacity: canNext ? 1 : 0.4, padding:8, borderRadius:8, backgroundColor:'#374151' }}>
+            <Text style={{ color:'white', fontWeight:'800' }}>Next</Text>
+          </TouchableOpacity>
+          {item ? (
+            <TouchableOpacity onPress={makeSave(item)}
+              style={{ padding:8, borderRadius:8, backgroundColor:'#10B981' }}>
+              <Text style={{ color:'white', fontWeight:'800' }}>Save</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <FlatList
@@ -798,6 +878,7 @@ function StockTakeAreaInventoryScreen() {
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
+        keyboardShouldPersistTaps="handled"
       />
 
       {/* Request Adjustment Modal */}
@@ -889,6 +970,11 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ color:'#065F46', fontWeight:'800' }}>Edit note</Text>
               </TouchableOpacity>
 
+              <TouchableOpacity onPress={() => { setMenuFor(null); openUnit(menuFor!); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#E0F2FE' }}>
+                <Text style={{ color:'#0369A1', fontWeight:'800' }}>Edit unit</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity onPress={() => { setMenuFor(null); useBluetoothFor(menuFor!); }}
                 style={{ padding:12, borderRadius:10, backgroundColor:'#E3F2FD' }}>
                 <Text style={{ color:'#0A84FF', fontWeight:'800' }}>Bluetooth (stub)</Text>
@@ -937,36 +1023,43 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Bulk Add Modal */}
-      <Modal visible={bulkOpen} transparent animationType="slide" onRequestClose={()=>setBulkOpen(false)}>
+      {/* Unit Modal */}
+      <Modal visible={!!unitFor} transparent animationType="slide" onRequestClose={() => setUnitFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14, maxHeight:'80%' }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Bulk add items</Text>
-            <Text style={{ color:'#6B7280', marginBottom:8 }}>
-              Paste or type one item name per line. New items will use the Unit & Supplier set above (if provided).
-            </Text>
+          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14 }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:6 }}>Edit unit</Text>
+            <Text style={{ color:'#6B7280', marginBottom:8 }}>Item: {unitFor?.name}</Text>
+
+            <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:8 }}>
+              {COMMON_UNITS.map(u => (
+                <TouchableOpacity key={u} onPress={() => setUnitText(u)}
+                  style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:16, backgroundColor:'#E0F2FE', borderWidth:1, borderColor:'#93C5FD' }}>
+                  <Text style={{ color:'#0369A1', fontWeight:'800' }}>{u}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <TextInput
-              value={bulkText}
-              onChangeText={setBulkText}
-              placeholder={`e.g.\nHeineken Bottles 330ml\nCoke 1.5L\nLemons`}
-              multiline
-              style={{ minHeight:160, padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10, textAlignVertical:'top' }}
+              value={unitText}
+              onChangeText={setUnitText}
+              placeholder="Custom unit (optional)"
+              style={{ padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10 }}
             />
+
             <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
-              <TouchableOpacity onPress={()=>setBulkOpen(false)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+              <TouchableOpacity onPress={() => setUnitFor(null)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
                 <Text style={{ fontWeight:'700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={throttleAction(performBulkAdd)}
-                disabled={bulkBusy}
-                style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor: bulkBusy ? '#90CAF9' : '#0A84FF' }}
-              >
-                <Text style={{ color:'white', fontWeight:'800' }}>{bulkBusy ? 'Adding…' : 'Add all'}</Text>
+              <TouchableOpacity onPress={saveUnit} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#0A84FF' }}>
+                <Text style={{ color:'white', fontWeight:'800' }}>Save unit</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Keyboard Toolbar */}
+      <Toolbar />
     </SafeAreaView>
   );
 }
