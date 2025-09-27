@@ -72,11 +72,11 @@ function StockTakeAreaInventoryScreen() {
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
-  // NEW: Save → Next refs
+  // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
 
-  // NEW: Low-stock filter state
+  // Low-stock filter
   const [onlyLow, setOnlyLow] = useState(false);
 
   useEffect(() => {
@@ -123,6 +123,11 @@ function StockTakeAreaInventoryScreen() {
     return lcMs >= startedAtMs;
   };
 
+  const isLow = (it: Item) =>
+    typeof it.parLevel === 'number' &&
+    typeof it.lastCount === 'number' &&
+    it.lastCount < it.parLevel;
+
   const deriveExpected = (it: Item): number | null => {
     if (typeof it.expectedQty === 'number') return it.expectedQty;
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
@@ -133,79 +138,52 @@ function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
-  // Low stock predicate
-  const isLow = (it: Item) =>
-    typeof it.parLevel === 'number' &&
-    typeof it.lastCount === 'number' &&
-    it.lastCount < it.parLevel;
-
-  // Search filter first
+  // Filtered list
   const filteredBase = useMemo(() => {
     const n = filterDebounced.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
+  const filtered = useMemo(() => onlyLow ? filteredBase.filter(isLow) : filteredBase, [filteredBase, onlyLow]);
 
-  // Then apply low-stock chip (if on)
-  const filtered = useMemo(() => {
-    if (!onlyLow) return filteredBase;
-    return filteredBase.filter((it) => isLow(it));
-  }, [filteredBase, onlyLow]);
+  // Counts for footer
+  const countedCount = items.filter(countedInThisCycle).length;
 
-  const itemsCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items');
-  const itemRef  = (id: string) => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', id);
-  const areaRef  = () => doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId);
-  const areasCol = () => collection(db, 'venues', venueId!, 'departments', departmentId, 'areas');
-
-  const ensureAreaStarted = async () => {
-    try {
-      const a = await getDoc(areaRef()); const data = a.data() as AreaDoc | undefined;
-      if (!data?.startedAt) await updateDoc(areaRef(), { startedAt: serverTimestamp() });
-    } catch {}
-  };
-
-  const addQuickItem = async () => {
-    const nm = (addingName || '').trim(); if (!nm) return Alert.alert('Name required');
-    try {
-      await addDoc(itemsCol(), { name: nm, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      setAddingName(''); nameInputRef.current?.blur(); Keyboard.dismiss();
-    } catch (e: any) { Alert.alert('Could not add item', e?.message ?? String(e)); }
-  };
-
-  // Save → Next
+  // Save→Next
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx >= 0 && idx + 1 < filtered.length) {
       const nextId = filtered[idx + 1].id;
-      try {
-        listRef.current?.scrollToIndex({ index: Math.min(idx + 1, filtered.length - 1), animated: true });
-      } catch {}
+      try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
       setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
     } else {
-      // last item: dismiss keyboard
       Keyboard.dismiss();
     }
   };
 
+  const ensureAreaStarted = async () => {
+    try {
+      const a = await getDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId));
+      const data = a.data() as AreaDoc | undefined;
+      if (!data?.startedAt) await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { startedAt: serverTimestamp() });
+    } catch {}
+  };
+
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
-
     const doWrite = async (qty: number) => {
       try {
         await ensureAreaStarted();
-        await updateDoc(itemRef(item.id), { lastCount: qty, lastCountAt: serverTimestamp() });
+        await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id),
+          { lastCount: qty, lastCountAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
-        focusNext(item.id); // NEW: move to next input after a successful save
-      } catch (e: any) { Alert.alert('Could not save count', e?.message ?? String(e)); }
+        focusNext(item.id);
+      } catch (e:any){ Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
-
-    if (typed === '') {
-      Alert.alert('No quantity entered', `Save “${item.name}” as 0?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Save as 0', onPress: () => doWrite(0) }
-      ]);
-      return;
-    }
-    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5)');
+    if (typed === '') return Alert.alert('No quantity',`Save “${item.name}” as 0?`,[
+      {text:'Cancel',style:'cancel'},
+      {text:'Save as 0',onPress:()=>doWrite(0)}
+    ]);
+    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid','Enter number');
     await doWrite(parseFloat(typed));
   };
 
@@ -239,7 +217,7 @@ function StockTakeAreaInventoryScreen() {
                 reason: 'Inline approve (manager)',
               });
               setLocalQty((m) => ({ ...m, [item.id]: '' }));
-              focusNext(item.id); // also advance after approve
+              focusNext(item.id);
               Alert.alert('Saved', 'Count updated and audit logged.');
             } catch (e: any) {
               Alert.alert('Approve failed', e?.message ?? String(e));
@@ -250,11 +228,21 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
+  const addQuickItem = async () => {
+    const nm = (addingName || '').trim(); if (!nm) return Alert.alert('Name required');
+    try {
+      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'),
+        { name: nm, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setAddingName(''); nameInputRef.current?.blur(); Keyboard.dismiss();
+    } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
+  };
+
   const removeItem = async (itemId: string) => {
     Alert.alert('Delete item', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await deleteDoc(itemRef(itemId)); } catch (e: any) { Alert.alert('Could not delete', e?.message ?? String(e)); }
+        try { await deleteDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',itemId)); }
+        catch (e:any) { Alert.alert('Could not delete', e?.message ?? String(e)); }
       } },
     ]);
   };
@@ -278,7 +266,7 @@ function StockTakeAreaInventoryScreen() {
 
   const maybeFinalizeDepartment = async () => {
     try {
-      const snap = await getDocs(areasCol());
+      const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
       let allCompleted = true;
       snap.forEach((d) => { const a = d.data() as AreaDoc; if (!a?.completedAt) allCompleted = false; });
       if (allCompleted) Alert.alert('Department complete', 'All areas in this department are now submitted.');
@@ -291,10 +279,11 @@ function StockTakeAreaInventoryScreen() {
       try {
         if (missing.length > 0) {
           await Promise.all(missing.map((it) =>
-            updateDoc(itemRef(it.id), { lastCount: 0, lastCountAt: serverTimestamp() })
+            updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
+              { lastCount: 0, lastCountAt: serverTimestamp() })
           ));
         }
-        await updateDoc(areaRef(), { completedAt: serverTimestamp() });
+        await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { completedAt: serverTimestamp() });
         await maybeFinalizeDepartment();
         nav.goBack();
       } catch (e: any) { Alert.alert('Could not complete area', e?.message ?? String(e)); }
@@ -326,7 +315,8 @@ function StockTakeAreaInventoryScreen() {
         const toZero = items.filter((it) => !countedInThisCycle(it));
         if (toZero.length === 0) { Alert.alert('Nothing to do', 'Everything already has a count.'); return; }
         await Promise.all(toZero.map((it) =>
-          updateDoc(itemRef(it.id), { lastCount: 0, lastCountAt: serverTimestamp() })
+          updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
+            { lastCount: 0, lastCountAt: serverTimestamp() })
         ));
         Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
       } catch (e:any) {
@@ -343,7 +333,7 @@ function StockTakeAreaInventoryScreen() {
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
 
-  const makeSave = (item: Item) => throttleAction(() => saveCount(item));
+  const makeSave = (item:Item)=>throttleAction(()=>saveCount(item));
   const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
   const onSubmitArea = throttleAction(completeArea);
 
@@ -363,15 +353,15 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  const Row = ({ item, index }: { item: Item; index: number }) => {
+  const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
     const countedNow = countedInThisCycle(item);
     const locked = countedNow && !isManager;
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
-
     const lowStock = isLow(item);
+    const unsaved = typed.trim() !== '';
 
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
@@ -398,11 +388,11 @@ function StockTakeAreaInventoryScreen() {
           ) : null}
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <TextInput
-            ref={(el) => { inputRefs.current[item.id] = el; }}
+            ref={(el)=>inputRefs.current[item.id]=el}
             value={typed}
-            onChangeText={(t) => setLocalQty((m) => ({ ...m, [item.id]: t }))}
+            onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
             placeholder={placeholder}
             keyboardType="number-pad"
             inputMode="decimal"
@@ -410,16 +400,18 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
-            onSubmitEditing={() => makeSave(item)()} // enter → save (which advances)
+            onSubmitEditing={()=>makeSave(item)()} // enter → save (moves next)
             style={{
-              flex: 1, paddingVertical: 8, paddingHorizontal: 12,
+              flexGrow: 1, minWidth: 160,
+              paddingVertical: 8, paddingHorizontal: 12,
               borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
               backgroundColor: locked ? '#f7f7f7' : '#fff'
             }}
           />
 
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
-            style={{ backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
+            style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
+            {unsaved ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
           </TouchableOpacity>
 
@@ -445,7 +437,7 @@ function StockTakeAreaInventoryScreen() {
           </TouchableOpacity>
 
           {countedNow && !isManager ? (
-            <TouchableOpacity onPress={() => setAdjModalFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
+            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
           ) : (
@@ -468,7 +460,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Header: search with clear (×) + expected toggle + NEW low-stock chip
+  // Header: search with clear (×) + expected toggle + low-stock chip
   const SearchRow = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -544,7 +536,7 @@ function StockTakeAreaInventoryScreen() {
         ref={listRef}
         data={filtered}
         keyExtractor={(it) => it.id}
-        renderItem={({ item, index }) => <Row item={item} index={index} />}
+        renderItem={({ item }) => <Row item={item} />}
         ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
       />
 
@@ -557,6 +549,7 @@ function StockTakeAreaInventoryScreen() {
           style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}>
           <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>🟠 Initialise: set all uncounted to 0</Text>
         </TouchableOpacity>
+        <Text style={{ textAlign:'center', color:'#666' }}>{countedCount}/{items.length} items counted</Text>
       </View>
 
       {/* Request Adjustment Modal */}
