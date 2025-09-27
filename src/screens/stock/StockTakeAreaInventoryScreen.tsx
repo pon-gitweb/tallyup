@@ -114,6 +114,7 @@ function StockTakeAreaInventoryScreen() {
     if (AS) try { await AS.setItem(legendKey, '1'); } catch {}
   };
 
+  // Live items
   useEffect(() => {
     if (!itemsPathOk) return;
     const q = query(
@@ -128,6 +129,7 @@ function StockTakeAreaInventoryScreen() {
     return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
+  // Area meta
   useEffect(() => {
     if (!itemsPathOk) return;
     const unsub = onSnapshot(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), (d) => {
@@ -136,6 +138,7 @@ function StockTakeAreaInventoryScreen() {
     return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
+  // Role
   useEffect(() => {
     let unsub: any;
     (async () => {
@@ -178,21 +181,29 @@ function StockTakeAreaInventoryScreen() {
     const n = filterDebounced.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
-  const filtered = useMemo(() => onlyLow ? filteredBase.filter(isLow) : filteredBase, [filteredBase, onlyLow]);
+
+  const filtered = useMemo(
+    () => (onlyLow ? filteredBase.filter(isLow) : filteredBase),
+    [filteredBase, onlyLow]
+  );
 
   // Counts for footer
   const countedCount = items.filter(countedInThisCycle).length;
 
-  // Save→Next
+  // Save→Next: prefer next *uncounted* item in the *current filtered list*; otherwise fall back to next index
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
-    if (idx >= 0 && idx + 1 < filtered.length) {
-      const nextId = filtered[idx + 1].id;
-      try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
-      setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
-    } else {
-      Keyboard.dismiss();
-    }
+    if (idx < 0) return Keyboard.dismiss();
+
+    // search forward for next UNCOUNTED in filtered
+    const nextUncountedIdx = filtered.findIndex((x, i) => i > idx && !countedInThisCycle(x));
+    const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
+
+    if (targetIdx === -1) return Keyboard.dismiss();
+    const nextId = filtered[targetIdx].id;
+    try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
+    // +1 because header is at index 0 when sticky; see FlatList below
+    setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
   };
 
   const ensureAreaStarted = async () => {
@@ -513,76 +524,94 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Header: offline banner + legend nudge + search row + low-stock toggle
-  const SearchRow = () => {
+  // Sticky ListHeader (title + banners + legend + search/filters + quick-add)
+  const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
     const showLowChip = anyPar && anyLow;
 
     return (
-      <View style={{ gap: 8 }}>
-        {offline ? (
-          <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
-            <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
-            <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
-          </View>
-        ) : null}
+      <View style={{ backgroundColor: 'white', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+        <View style={{ padding: 12, gap: 8 }}>
+          <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
 
-        {!legendDismissed ? (
-          <View style={{ backgroundColor:'#EFF6FF', borderColor:'#93C5FD', borderWidth:1, padding:8, borderRadius:10 }}>
-            <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Tip</Text>
-            <Text style={{ color:'#1E3A8A' }}>
-              “Expected” is our guidance based on last count and movements. Type your **Count** and press **Save** (or **Approve now (Mgr)**).
-            </Text>
-            <TouchableOpacity onPress={dismissLegend} style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}>
-              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
+          {offline ? (
+            <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
+              <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
+              <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
+            </View>
+          ) : null}
 
-        <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
-          <View style={{ flex: 1, position: 'relative' }}>
-            <TextInput
-              value={filter}
-              onChangeText={setFilter}
-              placeholder="Search items…"
-              style={{ paddingVertical: 8, paddingHorizontal: filter ? 34 : 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-            />
-            {filter ? (
-              <TouchableOpacity
-                onPress={() => setFilter('')}
-                style={{ position: 'absolute', right: 8, top: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#EEEEEE' }}
-              >
-                <Text style={{ fontWeight:'800' }}>×</Text>
+          {!legendDismissed ? (
+            <View style={{ backgroundColor:'#EFF6FF', borderColor:'#93C5FD', borderWidth:1, padding:8, borderRadius:10 }}>
+              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Tip</Text>
+              <Text style={{ color:'#1E3A8A' }}>
+                “Expected” is our guidance based on last count and movements. Type your Count and press Save (or Approve now).
+              </Text>
+              <TouchableOpacity onPress={dismissLegend} style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}>
+                <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
               </TouchableOpacity>
-            ) : null}
-          </View>
-          <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
-            <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
-          </TouchableOpacity>
-        </View>
+            </View>
+          ) : null}
 
-        {showLowChip ? (
-          <View style={{ flexDirection:'row', gap:8 }}>
-            <TouchableOpacity
-              onPress={() => setOnlyLow(false)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setOnlyLow(true)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
+            <View style={{ flex: 1, position: 'relative' }}>
+              <TextInput
+                value={filter}
+                onChangeText={setFilter}
+                placeholder="Search items…"
+                style={{ paddingVertical: 8, paddingHorizontal: filter ? 34 : 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+              />
+              {filter ? (
+                <TouchableOpacity
+                  onPress={() => setFilter('')}
+                  style={{ position: 'absolute', right: 8, top: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#EEEEEE' }}
+                >
+                  <Text style={{ fontWeight:'800' }}>×</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
+              <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
             </TouchableOpacity>
           </View>
-        ) : null}
+
+          {showLowChip ? (
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TouchableOpacity
+                onPress={() => setOnlyLow(false)}
+                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
+              >
+                <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setOnlyLow(true)}
+                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
+              >
+                <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput
+              ref={nameInputRef}
+              value={addingName}
+              onChangeText={setAddingName}
+              placeholder="Quick add item name"
+              style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+            />
+            <TouchableOpacity onPress={addQuickItem}
+              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     );
   };
 
-  // Empty state component
+  // Empty state
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
@@ -596,47 +625,33 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
+  // Footer actions (unchanged)
+  const ListFooter = () => (
+    <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
+      <TouchableOpacity onPress={onSubmitArea}
+        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
+        <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={throttleAction(initAllZeros)}
+        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}>
+        <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>🟠 Initialise: set all uncounted to 0</Text>
+      </TouchableOpacity>
+      <Text style={{ textAlign:'center', color:'#666' }}>{countedCount}/{items.length} items counted</Text>
+    </View>
+  );
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
-        <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
-
-        <SearchRow />
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TextInput
-            ref={nameInputRef}
-            value={addingName}
-            onChangeText={setAddingName}
-            placeholder="Quick add item name"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
-          />
-          <TouchableOpacity onPress={addQuickItem}
-            style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
-            <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
       <FlatList
         ref={listRef}
         data={filtered}
         keyExtractor={(it) => it.id}
         renderItem={({ item }) => <Row item={item} />}
+        ListHeaderComponent={<ListHeader />}
+        ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
+        stickyHeaderIndices={[0]}
       />
-
-      <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
-        <TouchableOpacity onPress={onSubmitArea}
-          style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
-          <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={throttleAction(initAllZeros)}
-          style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}>
-          <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>🟠 Initialise: set all uncounted to 0</Text>
-        </TouchableOpacity>
-        <Text style={{ textAlign:'center', color:'#666' }}>{countedCount}/{items.length} items counted</Text>
-      </View>
 
       {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
