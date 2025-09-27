@@ -26,6 +26,11 @@ try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
 
+// Gesture handler (guarded) for swipe actions
+let GH: any = null;
+try { GH = require('react-native-gesture-handler'); } catch { GH = null; }
+const Swipeable = null;
+
 // Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
@@ -87,6 +92,11 @@ function StockTakeAreaInventoryScreen() {
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
   const nameInputRef = useRef<TextInput>(null);
+
+  // Bulk Add modal
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
@@ -241,6 +251,7 @@ function StockTakeAreaInventoryScreen() {
   // delta confirm helper
   const needsDeltaConfirm = (prev: number | null | undefined, next: number) => {
     const from = typeof prev === 'number' ? prev : 0;
+       // abs and ratio both considered
     const abs = Math.abs(next - from);
     const ratio = from === 0 ? 1 : abs / Math.max(1, Math.abs(from));
     return abs >= DELTA_ABS_THRESHOLD && ratio >= DELTA_RATIO_THRESHOLD;
@@ -331,6 +342,36 @@ function StockTakeAreaInventoryScreen() {
       nameInputRef.current?.blur(); Keyboard.dismiss();
       hapticSuccess();
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
+  };
+
+  // BULK ADD: newline-separated names, uses remembered Unit/Supplier
+  const performBulkAdd = async () => {
+    const names = (bulkText || '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (names.length === 0) return Alert.alert('Nothing to add', 'Paste or type one name per line.');
+    setBulkBusy(true);
+    try {
+      await ensureAreaStarted();
+      await Promise.all(names.map(nm =>
+        addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), {
+          name: nm,
+          unit: addingUnit || null,
+          supplierName: addingSupplier || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        })
+      ));
+      setBulkOpen(false);
+      setBulkText('');
+      hapticSuccess();
+      Alert.alert('Added', `${names.length} item(s) created.`);
+    } catch (e:any) {
+      Alert.alert('Bulk add failed', e?.message ?? String(e));
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const removeItem = async (itemId: string) => {
@@ -454,7 +495,8 @@ function StockTakeAreaInventoryScreen() {
   const openMenu = (item: Item) => setMenuFor(item);
   const closeMenu = () => setMenuFor(null);
 
-  const Row = ({ item }: { item: Item }) => {
+  // ---------- Row component ----------
+  const RowContent = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -464,7 +506,7 @@ function StockTakeAreaInventoryScreen() {
     const lowStock = isLow(item);
     const unsaved = typed.trim() !== '';
 
-    // Delta badge (from expected if present, else from lastCount)
+    // Delta badge
     let deltaTarget: number | null = null;
     if (showExpected && expectedNum != null) deltaTarget = expectedNum;
     else if (typeof item.lastCount === 'number') deltaTarget = item.lastCount;
@@ -598,6 +640,39 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
+  // Swipeable row wrapper (graceful if GH missing)
+  const Row = ({ item }: { item: Item }) => {
+    if (!Swipeable) return <RowContent item={item} />;
+
+    const typed = (localQty[item.id] ?? '').trim();
+    const canQuickSave = /^\d+(\.\d+)?$/.test(typed);
+
+    const LeftActions = () => (
+      <View style={{ flex:1, justifyContent:'center', backgroundColor: canQuickSave ? '#DCFCE7' : '#F3F4F6' }}>
+        <Text style={{ marginLeft:16, fontWeight:'800', color: canQuickSave ? '#166534' : '#6B7280' }}>
+          {canQuickSave ? 'Save' : 'Type a number'}
+        </Text>
+      </View>
+    );
+
+    const RightActions = () => (
+      <View style={{ flex:1, flexDirection:'row', justifyContent:'flex-end', alignItems:'center', backgroundColor:'#E5E7EB' }}>
+        <Text style={{ marginRight:16, fontWeight:'800', color:'#374151' }}>Menu</Text>
+      </View>
+    );
+
+    return (
+      <Swipeable
+        renderLeftActions={LeftActions}
+        renderRightActions={RightActions}
+        onSwipeableLeftOpen={() => { if (canQuickSave) makeSave(item)(); }}
+        onSwipeableRightOpen={() => openMenu(item)}
+      >
+        <RowContent item={item} />
+      </Swipeable>
+    );
+  };
+
   if (!itemsPathOk) {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -606,7 +681,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky ListHeader (title + banners + legend + search/filters + quick-add + compact toggle)
+  // Sticky ListHeader (title + banners + legend + search/filters + quick-add + compact toggle + bulk add)
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -706,7 +781,7 @@ function StockTakeAreaInventoryScreen() {
             </View>
           </View>
 
-          {/* Compact counted toggle */}
+          {/* Controls row: compact toggle + bulk add */}
           <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4 }}>
             <TouchableOpacity
               onPress={()=>setCompactCounted((v)=>!v)}
@@ -715,6 +790,13 @@ function StockTakeAreaInventoryScreen() {
               <Text style={{ fontWeight:'800', color: compactCounted ? '#0369A1' : '#374151' }}>
                 {compactCounted ? '✓ Compact counted rows' : 'Show inputs on counted rows'}
               </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={()=>setBulkOpen(true)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#E5E7EB', borderWidth:1, borderColor:'#D1D5DB' }}
+            >
+              <Text style={{ fontWeight:'800', color:'#374151' }}>Bulk add</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -867,6 +949,37 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={closeMenu} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'700' }}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bulk Add Modal */}
+      <Modal visible={bulkOpen} transparent animationType="slide" onRequestClose={()=>setBulkOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14, maxHeight:'80%' }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Bulk add items</Text>
+            <Text style={{ color:'#6B7280', marginBottom:8 }}>
+              Paste or type one item name per line. New items will use the Unit & Supplier set above (if provided).
+            </Text>
+            <TextInput
+              value={bulkText}
+              onChangeText={setBulkText}
+              placeholder={`e.g.\nHeineken Bottles 330ml\nCoke 1.5L\nLemons`}
+              multiline
+              style={{ minHeight:160, padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10, textAlignVertical:'top' }}
+            />
+            <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
+              <TouchableOpacity onPress={()=>setBulkOpen(false)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+                <Text style={{ fontWeight:'700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={throttleAction(performBulkAdd)}
+                disabled={bulkBusy}
+                style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor: bulkBusy ? '#90CAF9' : '#0A84FF' }}
+              >
+                <Text style={{ color:'white', fontWeight:'800' }}>{bulkBusy ? 'Adding…' : 'Add all'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
