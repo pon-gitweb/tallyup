@@ -26,16 +26,14 @@ try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
 
-// Gesture handler (guarded) for swipe actions
+// Gesture handler (guarded) — swipes temporarily disabled by design
 let GH: any = null;
 try { GH = require('react-native-gesture-handler'); } catch { GH = null; }
+// IMPORTANT: bypass swipes to avoid RNGH root issues
 const Swipeable = null;
 
-// Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
-
-// Read-only audits for History modal
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 
 type Item = {
@@ -45,6 +43,7 @@ type Item = {
   unit?: string; supplierId?: string; supplierName?: string;
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
+  note?: string; // NEW: per-item note
 };
 
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
@@ -52,12 +51,10 @@ type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
-// Haptics helper
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 
-// Delta confirm thresholds
-const DELTA_ABS_THRESHOLD = 5;       // require confirm if abs change >= 5
-const DELTA_RATIO_THRESHOLD = 0.5;   // ...and 50% or more vs previous
+const DELTA_ABS_THRESHOLD = 5;
+const DELTA_RATIO_THRESHOLD = 0.5;
 
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
@@ -80,12 +77,28 @@ function StockTakeAreaInventoryScreen() {
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
-  // Collapse control (compact counted rows)
   const [compactCounted, setCompactCounted] = useState(true);
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
+
+  // Notes modal
+  const [noteFor, setNoteFor] = useState<Item | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const openNote = (it: Item) => { setNoteFor(it); setNoteText(it.note ?? ''); };
+  const saveNote = throttleAction(async () => {
+    if (!noteFor) return;
+    try {
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',noteFor.id), {
+        note: noteText.trim() || null, updatedAt: serverTimestamp()
+      });
+      setNoteFor(null); setNoteText('');
+      hapticSuccess();
+    } catch (e:any) {
+      Alert.alert('Could not save note', e?.message ?? String(e));
+    }
+  });
 
   // Quick add fields + memory
   const [addingName, setAddingName] = useState('');
@@ -223,10 +236,10 @@ function StockTakeAreaInventoryScreen() {
     [filteredBase, onlyLow]
   );
 
-  // Counts for footer
+  // Counts for footer/header
   const countedCount = items.filter(countedInThisCycle).length;
+  const lowCount = items.filter(isLow).length;
 
-  // Save→Next: prefer next *uncounted* in current filtered list
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx < 0) return Keyboard.dismiss();
@@ -248,10 +261,8 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
-  // delta confirm helper
   const needsDeltaConfirm = (prev: number | null | undefined, next: number) => {
     const from = typeof prev === 'number' ? prev : 0;
-       // abs and ratio both considered
     const abs = Math.abs(next - from);
     const ratio = from === 0 ? 1 : abs / Math.max(1, Math.abs(from));
     return abs >= DELTA_ABS_THRESHOLD && ratio >= DELTA_RATIO_THRESHOLD;
@@ -290,7 +301,6 @@ function StockTakeAreaInventoryScreen() {
     await proceedWith(parseFloat(typed));
   };
 
-  // Manager inline-approve path (explicit audit) with delta confirm
   const approveNow = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
     if (!ENABLE_MANAGER_INLINE_APPROVE) return;
@@ -344,12 +354,9 @@ function StockTakeAreaInventoryScreen() {
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
   };
 
-  // BULK ADD: newline-separated names, uses remembered Unit/Supplier
   const performBulkAdd = async () => {
     const names = (bulkText || '')
-      .split('\n')
-      .map(s => s.trim())
-      .filter(Boolean);
+      .split('\n').map(s => s.trim()).filter(Boolean);
     if (names.length === 0) return Alert.alert('Nothing to add', 'Paste or type one name per line.');
     setBulkBusy(true);
     try {
@@ -439,7 +446,6 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
-  // One-tap initialise (set all uncounted to 0 without submitting area)
   const initAllZeros = async () => {
     const noneCountedThisCycle = items.every((it) => !countedInThisCycle(it));
     const msg = noneCountedThisCycle
@@ -491,11 +497,9 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  // Overflow menu actions
   const openMenu = (item: Item) => setMenuFor(item);
   const closeMenu = () => setMenuFor(null);
 
-  // ---------- Row component ----------
   const RowContent = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
@@ -506,7 +510,6 @@ function StockTakeAreaInventoryScreen() {
     const lowStock = isLow(item);
     const unsaved = typed.trim() !== '';
 
-    // Delta badge
     let deltaTarget: number | null = null;
     if (showExpected && expectedNum != null) deltaTarget = expectedNum;
     else if (typeof item.lastCount === 'number') deltaTarget = item.lastCount;
@@ -530,36 +533,6 @@ function StockTakeAreaInventoryScreen() {
       );
     };
 
-    // Compact layout when counted & user not manager & compactCounted is on
-    if (locked && compactCounted) {
-      return (
-        <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}>
-          <View style={{ flexDirection:'row', alignItems:'center' }}>
-            <TouchableOpacity style={{ flex:1 }} onLongPress={() => openMenu(item)}>
-              <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
-                {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-                {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-                {lowStock ? (
-                  <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
-                    <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-                      Low: {item.lastCount ?? 0} &lt; {item.parLevel}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </TouchableOpacity>
-            {/* Overflow trigger */}
-            <TouchableOpacity onPress={() => openMenu(item)} style={{ padding: 6, marginLeft: 6 }}>
-              <Text style={{ fontSize:18, fontWeight:'800' }}>⋮</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      );
-    }
-
-    // Full row (default)
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -571,6 +544,11 @@ function StockTakeAreaInventoryScreen() {
               </Text>
               {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
               {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+              {item.note ? (
+                <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#ECFDF5' }}>
+                  <Text style={{ color:'#065F46', fontWeight:'800', fontSize:11 }}>Note</Text>
+                </View>
+              ) : null}
               {lowStock ? (
                 <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
                   <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
@@ -579,6 +557,9 @@ function StockTakeAreaInventoryScreen() {
                 </View>
               ) : null}
             </View>
+            {item.note ? (
+              <Text style={{ marginTop:4, fontSize:12, color:'#065F46' }}>“{item.note}”</Text>
+            ) : null}
           </TouchableOpacity>
 
           {showExpected && expectedStr ? (
@@ -587,7 +568,6 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          {/* Overflow trigger */}
           <TouchableOpacity onPress={() => openMenu(item)} style={{ padding: 6, marginLeft: 6 }}>
             <Text style={{ fontSize:18, fontWeight:'800' }}>⋮</Text>
           </TouchableOpacity>
@@ -605,7 +585,7 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
-            onSubmitEditing={()=>makeSave(item)()} // enter → save (moves next)
+            onSubmitEditing={()=>makeSave(item)()}
             style={{
               flexGrow: 1, minWidth: 160,
               paddingVertical: 8, paddingHorizontal: 12,
@@ -614,7 +594,6 @@ function StockTakeAreaInventoryScreen() {
             }}
           />
 
-          {/* Delta badge (live while typing) */}
           <DeltaBadge />
 
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
@@ -640,38 +619,8 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
-  // Swipeable row wrapper (graceful if GH missing)
-  const Row = ({ item }: { item: Item }) => {
-    if (!Swipeable) return <RowContent item={item} />;
-
-    const typed = (localQty[item.id] ?? '').trim();
-    const canQuickSave = /^\d+(\.\d+)?$/.test(typed);
-
-    const LeftActions = () => (
-      <View style={{ flex:1, justifyContent:'center', backgroundColor: canQuickSave ? '#DCFCE7' : '#F3F4F6' }}>
-        <Text style={{ marginLeft:16, fontWeight:'800', color: canQuickSave ? '#166534' : '#6B7280' }}>
-          {canQuickSave ? 'Save' : 'Type a number'}
-        </Text>
-      </View>
-    );
-
-    const RightActions = () => (
-      <View style={{ flex:1, flexDirection:'row', justifyContent:'flex-end', alignItems:'center', backgroundColor:'#E5E7EB' }}>
-        <Text style={{ marginRight:16, fontWeight:'800', color:'#374151' }}>Menu</Text>
-      </View>
-    );
-
-    return (
-      <Swipeable
-        renderLeftActions={LeftActions}
-        renderRightActions={RightActions}
-        onSwipeableLeftOpen={() => { if (canQuickSave) makeSave(item)(); }}
-        onSwipeableRightOpen={() => openMenu(item)}
-      >
-        <RowContent item={item} />
-      </Swipeable>
-    );
-  };
+  // With swipes disabled, Row is just RowContent
+  const Row = ({ item }: { item: Item }) => <RowContent item={item} />;
 
   if (!itemsPathOk) {
     return (
@@ -681,7 +630,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky ListHeader (title + banners + legend + search/filters + quick-add + compact toggle + bulk add)
+  // Sticky header (adds progress chip)
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -690,7 +639,14 @@ function StockTakeAreaInventoryScreen() {
     return (
       <View style={{ backgroundColor: 'white', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
         <View style={{ padding: 12, gap: 8 }}>
-          <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
+          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
+            <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
+              <Text style={{ fontWeight:'800', color:'#374151' }}>
+                {countedCount}/{items.length} counted • {lowCount} low
+              </Text>
+            </View>
+          </View>
 
           {offline ? (
             <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
@@ -804,7 +760,6 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
-  // Empty state
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
@@ -818,7 +773,6 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
-  // Footer actions
   const ListFooter = () => (
     <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
       <TouchableOpacity onPress={onSubmitArea}
@@ -917,7 +871,7 @@ function StockTakeAreaInventoryScreen() {
       </Modal>
 
       {/* Overflow Menu */}
-      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={closeMenu}>
+      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
           <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxWidth:420, padding:14 }}>
             <Text style={{ fontSize:16, fontWeight:'800', marginBottom:10 }}>
@@ -925,30 +879,60 @@ function StockTakeAreaInventoryScreen() {
             </Text>
 
             <View style={{ gap:8 }}>
-              <TouchableOpacity onPress={() => { closeMenu(); openHistory(menuFor!); }}
+              <TouchableOpacity onPress={() => { setMenuFor(null); openHistory(menuFor!); }}
                 style={{ padding:12, borderRadius:10, backgroundColor:'#EEF2FF' }}>
                 <Text style={{ color:'#3730A3', fontWeight:'800' }}>History</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => { closeMenu(); useBluetoothFor(menuFor!); }}
+              <TouchableOpacity onPress={() => { setMenuFor(null); openNote(menuFor!); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#ECFDF5' }}>
+                <Text style={{ color:'#065F46', fontWeight:'800' }}>Edit note</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => { setMenuFor(null); useBluetoothFor(menuFor!); }}
                 style={{ padding:12, borderRadius:10, backgroundColor:'#E3F2FD' }}>
                 <Text style={{ color:'#0A84FF', fontWeight:'800' }}>Bluetooth (stub)</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => { closeMenu(); usePhotoFor(menuFor!); }}
+              <TouchableOpacity onPress={() => { setMenuFor(null); usePhotoFor(menuFor!); }}
                 style={{ padding:12, borderRadius:10, backgroundColor:'#FFF8E1' }}>
                 <Text style={{ color:'#FF6F00', fontWeight:'800' }}>Photo (stub)</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => { closeMenu(); removeItem(menuFor!.id); }}
+              <TouchableOpacity onPress={() => { const id = menuFor!.id; setMenuFor(null); removeItem(id); }}
                 style={{ padding:12, borderRadius:10, backgroundColor:'#FEE2E2' }}>
                 <Text style={{ color:'#B91C1C', fontWeight:'800' }}>Delete</Text>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity onPress={closeMenu} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+            <TouchableOpacity onPress={() => setMenuFor(null)} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'700' }}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Notes Modal */}
+      <Modal visible={!!noteFor} transparent animationType="slide" onRequestClose={() => setNoteFor(null)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14 }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:6 }}>Edit note</Text>
+            <Text style={{ color:'#6B7280', marginBottom:8 }}>Item: {noteFor?.name}</Text>
+            <TextInput
+              value={noteText}
+              onChangeText={setNoteText}
+              placeholder="e.g. broken case, partial keg, keep for promo"
+              multiline
+              style={{ minHeight:96, padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10, textAlignVertical:'top' }}
+            />
+            <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
+              <TouchableOpacity onPress={() => setNoteFor(null)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+                <Text style={{ fontWeight:'700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveNote} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#10B981' }}>
+                <Text style={{ color:'white', fontWeight:'800' }}>Save note</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
