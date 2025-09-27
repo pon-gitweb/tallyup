@@ -18,9 +18,13 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 
-// NEW: Haptics (guarded)
+// Haptics (guarded)
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
+
+// AsyncStorage (guarded) for dismissible legend
+let AS: any = null;
+try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
 
 // Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
@@ -91,12 +95,24 @@ function StockTakeAreaInventoryScreen() {
   // Low-stock filter
   const [onlyLow, setOnlyLow] = useState(false);
 
-  // NEW: offline banner state
+  // Offline banner state
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
+
+  // Dismissible legend
+  const [legendDismissed, setLegendDismissed] = useState(false);
+  const legendKey = `areaLegendDismissed:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
+  useEffect(() => { (async () => {
+    if (!AS) return;
+    try { const v = await AS.getItem(legendKey); setLegendDismissed(v === '1'); } catch {}
+  })(); }, [legendKey]);
+  const dismissLegend = async () => {
+    setLegendDismissed(true);
+    if (AS) try { await AS.setItem(legendKey, '1'); } catch {}
+  };
 
   useEffect(() => {
     if (!itemsPathOk) return;
@@ -497,7 +513,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Header: search with clear (×) + expected toggle + low-stock chip + OFFLINE BANNER
+  // Header: offline banner + legend nudge + search row + low-stock toggle
   const SearchRow = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -509,6 +525,18 @@ function StockTakeAreaInventoryScreen() {
           <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
             <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
             <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
+          </View>
+        ) : null}
+
+        {!legendDismissed ? (
+          <View style={{ backgroundColor:'#EFF6FF', borderColor:'#93C5FD', borderWidth:1, padding:8, borderRadius:10 }}>
+            <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Tip</Text>
+            <Text style={{ color:'#1E3A8A' }}>
+              “Expected” is our guidance based on last count and movements. Type your **Count** and press **Save** (or **Approve now (Mgr)**).
+            </Text>
+            <TouchableOpacity onPress={dismissLegend} style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}>
+              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -554,6 +582,20 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
+  // Empty state component
+  const EmptyState = () => (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
+      <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
+      <Text style={{ color: '#6B7280', textAlign:'center' }}>
+        Use “Quick add item name” above to create your first item for this area.
+      </Text>
+      <View style={{ height: 10 }} />
+      <TouchableOpacity onPress={() => nameInputRef.current?.focus()} style={{ paddingVertical:10, paddingHorizontal:14, backgroundColor:'#0A84FF', borderRadius:10 }}>
+        <Text style={{ color:'white', fontWeight:'800' }}>Add first item</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
@@ -581,7 +623,7 @@ function StockTakeAreaInventoryScreen() {
         data={filtered}
         keyExtractor={(it) => it.id}
         renderItem={({ item }) => <Row item={item} />}
-        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
+        ListEmptyComponent={<EmptyState />}
       />
 
       <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
