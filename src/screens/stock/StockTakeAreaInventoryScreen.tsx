@@ -95,6 +95,9 @@ function StockTakeAreaInventoryScreen() {
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
+  // Row overflow menu state
+  const [menuFor, setMenuFor] = useState<Item | null>(null);
+
   // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
@@ -447,6 +450,10 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
+  // Overflow menu actions
+  const openMenu = (item: Item) => setMenuFor(item);
+  const closeMenu = () => setMenuFor(null);
+
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
@@ -457,14 +464,38 @@ function StockTakeAreaInventoryScreen() {
     const lowStock = isLow(item);
     const unsaved = typed.trim() !== '';
 
+    // Delta badge (from expected if present, else from lastCount)
+    let deltaTarget: number | null = null;
+    if (showExpected && expectedNum != null) deltaTarget = expectedNum;
+    else if (typeof item.lastCount === 'number') deltaTarget = item.lastCount;
+    const typedNum = /^\d+(\.\d+)?$/.test(typed.trim()) ? parseFloat(typed) : null;
+    const hasDelta = typedNum != null && deltaTarget != null;
+    const delta = hasDelta ? (typedNum! - (deltaTarget!)) : 0;
+
+    const DeltaBadge = () => {
+      if (!hasDelta) return null;
+      const isZero = delta === 0;
+      const positive = delta > 0;
+      const bg = isZero ? '#F3F4F6' : (positive ? '#E0F2FE' : '#FEF3C7');
+      const col = isZero ? '#374151' : (positive ? '#0369A1' : '#92400E');
+      const labelBase = showExpected && expectedNum != null ? 'vs exp' : 'vs last';
+      return (
+        <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, backgroundColor: bg }}>
+          <Text style={{ color: col, fontWeight: '800', fontSize: 12 }}>
+            {delta > 0 ? `+${delta}` : `${delta}`} {labelBase}
+          </Text>
+        </View>
+      );
+    };
+
     // Compact layout when counted & user not manager & compactCounted is on
     if (locked && compactCounted) {
       return (
         <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}>
           <View style={{ flexDirection:'row', alignItems:'center' }}>
-            <View style={{ flex:1 }}>
+            <TouchableOpacity style={{ flex:1 }} onLongPress={() => openMenu(item)}>
               <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                 <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
                 {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
                 {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
@@ -476,20 +507,10 @@ function StockTakeAreaInventoryScreen() {
                   </View>
                 ) : null}
               </View>
-            </View>
-            {showExpected && expectedStr ? (
-              <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
-                <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
-            <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
-              <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
-              <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+            {/* Overflow trigger */}
+            <TouchableOpacity onPress={() => openMenu(item)} style={{ padding: 6, marginLeft: 6 }}>
+              <Text style={{ fontSize:18, fontWeight:'800' }}>⋮</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -500,7 +521,7 @@ function StockTakeAreaInventoryScreen() {
     return (
       <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1 }}>
+          <TouchableOpacity style={{ flex: 1 }} onLongPress={() => openMenu(item)}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
               <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
@@ -516,12 +537,18 @@ function StockTakeAreaInventoryScreen() {
                 </View>
               ) : null}
             </View>
-          </View>
+          </TouchableOpacity>
+
           {showExpected && expectedStr ? (
             <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
               <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
             </View>
           ) : null}
+
+          {/* Overflow trigger */}
+          <TouchableOpacity onPress={() => openMenu(item)} style={{ padding: 6, marginLeft: 6 }}>
+            <Text style={{ fontSize:18, fontWeight:'800' }}>⋮</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -545,9 +572,12 @@ function StockTakeAreaInventoryScreen() {
             }}
           />
 
+          {/* Delta badge (live while typing) */}
+          <DeltaBadge />
+
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
             style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-            {typed.trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
+            {unsaved ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
           </TouchableOpacity>
 
@@ -558,31 +588,11 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           ) : null}
 
-          <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
-            <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => useBluetoothFor(item)} disabled={locked}
-            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#ECEFF1' : '#E3F2FD' }}>
-            <Text style={{ color: locked ? '#90A4AE' : '#0A84FF', fontWeight: '700' }}>BT</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => usePhotoFor(item)} disabled={locked}
-            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#F5F5F5' : '#FFF8E1' }}>
-            <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
-          </TouchableOpacity>
-
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
-          ) : (
-            !locked && (
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
-                <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
-              </TouchableOpacity>
-            )
-          )}
+          ) : null}
         </View>
       </View>
     );
@@ -818,6 +828,43 @@ function StockTakeAreaInventoryScreen() {
             )}
 
             <TouchableOpacity onPress={closeHistory} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'700' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Overflow Menu */}
+      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={closeMenu}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
+          <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxWidth:420, padding:14 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:10 }}>
+              Actions — {menuFor?.name ?? 'Item'}
+            </Text>
+
+            <View style={{ gap:8 }}>
+              <TouchableOpacity onPress={() => { closeMenu(); openHistory(menuFor!); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#EEF2FF' }}>
+                <Text style={{ color:'#3730A3', fontWeight:'800' }}>History</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => { closeMenu(); useBluetoothFor(menuFor!); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#E3F2FD' }}>
+                <Text style={{ color:'#0A84FF', fontWeight:'800' }}>Bluetooth (stub)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => { closeMenu(); usePhotoFor(menuFor!); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#FFF8E1' }}>
+                <Text style={{ color:'#FF6F00', fontWeight:'800' }}>Photo (stub)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => { closeMenu(); removeItem(menuFor!.id); }}
+                style={{ padding:12, borderRadius:10, backgroundColor:'#FEE2E2' }}>
+                <Text style={{ color:'#B91C1C', fontWeight:'800' }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={closeMenu} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'700' }}>Close</Text>
             </TouchableOpacity>
           </View>
