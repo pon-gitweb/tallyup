@@ -60,8 +60,8 @@ type RouteParams = { venueId?: string; departmentId: string; areaId: string; are
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 
 // Delta confirm thresholds
-const DELTA_ABS_THRESHOLD = 5;       // require confirm if abs change >= 5
-const DELTA_RATIO_THRESHOLD = 0.5;   // ...and 50% or more vs previous
+const DELTA_ABS_THRESHOLD = 5;
+const DELTA_RATIO_THRESHOLD = 0.5;
 
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
@@ -107,7 +107,7 @@ function StockTakeAreaInventoryScreen() {
   // Long-press action sheet state
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
-  // NEW: More menu state
+  // “More” menu state
   const [moreOpen, setMoreOpen] = useState(false);
 
   // NEW: Edit item modal state
@@ -115,6 +115,9 @@ function StockTakeAreaInventoryScreen() {
   const [editName, setEditName] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [editSupplier, setEditSupplier] = useState('');
+
+  // NEW: Sort option (uncounted first)
+  const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
 
   // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
@@ -222,16 +225,32 @@ function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
-  // Filtered list
+  // Filtered list (search + low filter)
   const filteredBase = useMemo(() => {
     const n = filterDebounced.trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
 
-  const filtered = useMemo(
-    () => (onlyLow ? filteredBase.filter(isLow) : filteredBase),
-    [filteredBase, onlyLow]
-  );
+  // Apply low filter + optional sorting
+  const filtered = useMemo(() => {
+    const rows = (onlyLow ? filteredBase.filter(isLow) : filteredBase).slice();
+
+    if (sortUncountedFirst) {
+      rows.sort((a, b) => {
+        const au = countedInThisCycle(a) ? 1 : 0; // 0 = uncounted, 1 = counted
+        const bu = countedInThisCycle(b) ? 1 : 0;
+        if (au !== bu) return au - bu;
+        // fallback: by name (case-insensitive)
+        const an = (a.name || '').toLowerCase();
+        const bn = (b.name || '').toLowerCase();
+        if (an < bn) return -1;
+        if (an > bn) return 1;
+        return 0;
+      });
+    }
+
+    return rows;
+  }, [filteredBase, onlyLow, sortUncountedFirst, startedAtMs]);
 
   // Counts for header/footer
   const countedCount = items.filter(countedInThisCycle).length;
@@ -259,7 +278,6 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
-  // delta confirm helper
   const needsDeltaConfirm = (prev: number | null | undefined, next: number) => {
     const from = typeof prev === 'number' ? prev : 0;
     const abs = Math.abs(next - from);
@@ -300,7 +318,6 @@ function StockTakeAreaInventoryScreen() {
     await proceedWith(parseFloat(typed));
   };
 
-  // Manager inline-approve path (explicit audit) with delta confirm
   const approveNow = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
     if (!ENABLE_MANAGER_INLINE_APPROVE) return;
@@ -347,11 +364,11 @@ function StockTakeAreaInventoryScreen() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
-      setAddingName('');
-      await rememberQuickAdd(addingUnit, addingSupplier);
-      nameInputRef.current?.blur(); Keyboard.dismiss();
-      hapticSuccess();
-    } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
+    } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); return; }
+    setAddingName('');
+    await rememberQuickAdd(addingUnit, addingSupplier);
+    nameInputRef.current?.blur(); Keyboard.dismiss();
+    hapticSuccess();
   };
 
   const removeItem = async (itemId: string) => {
@@ -419,7 +436,6 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
-  // One-tap initialise (set all uncounted to 0 without submitting area)
   const initAllZeros = async () => {
     const noneCountedThisCycle = items.every((it) => !countedInThisCycle(it));
     const msg = noneCountedThisCycle
@@ -494,6 +510,80 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // ---------- CSV helpers ----------
+  const toCsv = (rows: Array<Record<string, any>>) => {
+    if (!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const safe = (v: any) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v).replace(/"/g, '""');
+      return `"${s}"`;
+    };
+    return [
+      headers.map(safe).join(','),
+      ...rows.map((r) => headers.map((h) => safe(r[h])).join(',')),
+    ].join('\n');
+  };
+
+  const exportCsvAll = throttleAction(async () => {
+    try {
+      const rows = filtered.map((it) => {
+        const expected = deriveExpected(it);
+        return {
+          name: it.name || '',
+          unit: it.unit || '',
+          lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
+          expectedQty: expected ?? '',
+          low: isLow(it) ? 'yes' : 'no',
+          supplier: it.supplierName || '',
+        };
+      });
+      const csv = toCsv(rows);
+      if (!csv) { Alert.alert('Nothing to export', 'No rows in the current view.'); return; }
+      if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
+      const fname = `tallyup-area-${areaId}-${Date.now()}.csv`;
+      const path = FS.cacheDirectory + fname;
+      await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
+      } else {
+        Alert.alert('Exported', `Saved to cache: ${fname}`);
+      }
+    } catch (e:any) {
+      Alert.alert('Export failed', e?.message ?? String(e));
+    }
+  });
+
+  // NEW: export only items counted in this cycle (respects current filter set)
+  const exportCsvChangesOnly = throttleAction(async () => {
+    try {
+      if (!areaStarted) { Alert.alert('Nothing to export', 'This area has not been started yet.'); return; }
+      const changed = filtered.filter(countedInThisCycle);
+      if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
+
+      const rows = changed.map((it) => ({
+        name: it.name || '',
+        unit: it.unit || '',
+        newCount: typeof it.lastCount === 'number' ? it.lastCount : '',
+        // include delta when expected available
+        expected: deriveExpected(it) ?? '',
+      }));
+
+      const csv = toCsv(rows);
+      if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
+      const fname = `tallyup-area-${areaId}-changes-${Date.now()}.csv`;
+      const path = FS.cacheDirectory + fname;
+      await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — changes only' });
+      } else {
+        Alert.alert('Exported', `Saved to cache: ${fname}`);
+      }
+    } catch (e:any) {
+      Alert.alert('Export failed', e?.message ?? String(e));
+    }
+  });
+
   // ---------- Row ----------
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
@@ -535,9 +625,7 @@ function StockTakeAreaInventoryScreen() {
               </View>
             ) : null}
           </View>
-
-          {/* trimmed inline actions for compact row — none (use long-press) */}
-          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }} />
+          {/* no inline actions in compact mode; use long-press */}
         </TouchableOpacity>
       );
     }
@@ -609,7 +697,7 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           ) : null}
 
-          {/* Keep inline request adjustment on counted & non-manager for speed */}
+          {/* Inline request adjustment for staff (kept) */}
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
@@ -630,7 +718,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky ListHeader (title + counts + More + banners + legend + search/filters + quick-add + compact toggle)
+  // Sticky ListHeader
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -950,43 +1038,21 @@ function StockTakeAreaInventoryScreen() {
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
             <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ try {
-              const rows = filtered.map((it) => {
-                const expected = deriveExpected(it);
-                return {
-                  name: it.name || '',
-                  unit: it.unit || '',
-                  lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
-                  expectedQty: expected ?? '',
-                  low: isLow(it) ? 'yes' : 'no',
-                  note: it.supplierName || '',
-                };
-              });
-              const toCsv = (rows:any[]) => {
-                if (!rows.length) return '';
-                const headers = Object.keys(rows[0]);
-                const safe = (v:any)=>{ if(v==null) return ''; const s=String(v).replace(/"/g,'""'); return `"${s}"`; };
-                return [headers.map(safe).join(','), ...rows.map(r=>headers.map(h=>safe(r[h])).join(','))].join('\n');
-              };
-              const csv = toCsv(rows);
-              if (!csv) { Alert.alert('Nothing to export', 'No rows in the current view.'); return; }
-              if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
-              const fname = `tallyup-area-${areaId}-${Date.now()}.csv`;
-              const path = FS.cacheDirectory + fname;
-              await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
-              if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
-              } else {
-                Alert.alert('Exported', `Saved to cache: ${fname}`);
-              }
-            } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsvAll(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (current view)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsvChangesOnly(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (changes only)</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = countedCount; const uncounted = total - counted; const low = lowCount; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=> setOnlyLow(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyLow ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: onlyLow ? '#1D4ED8' : '#111827' }}>{onlyLow ? '✓ ' : ''}Low only</Text>
+            </TouchableOpacity>
+            {/* NEW: sort toggle */}
+            <TouchableOpacity onPress={()=> setSortUncountedFirst(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: sortUncountedFirst ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color: sortUncountedFirst ? '#1D4ED8' : '#111827' }}>{sortUncountedFirst ? '✓ ' : ''}Sort uncounted first</Text>
             </TouchableOpacity>
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
