@@ -110,6 +110,12 @@ function StockTakeAreaInventoryScreen() {
   // NEW: More menu state
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // NEW: Edit item modal state
+  const [editFor, setEditFor] = useState<Item | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUnit, setEditUnit] = useState('');
+  const [editSupplier, setEditSupplier] = useState('');
+
   // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
@@ -193,6 +199,8 @@ function StockTakeAreaInventoryScreen() {
   }, [venueId, uid]);
 
   const startedAtMs = areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null);
+  const areaStarted = !!startedAtMs;
+
   const countedInThisCycle = (it: Item): boolean => {
     const lcMs = it?.lastCountAt?.toMillis ? it.lastCountAt.toMillis() : (it?.lastCountAt?._seconds ? it.lastCountAt._seconds * 1000 : null);
     if (!lcMs || !startedAtMs) return false;
@@ -463,75 +471,28 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  // ---------- Utility for CSV ----------
-  const toCsv = (rows: Array<Record<string, any>>) => {
-    if (!rows.length) return '';
-    const headers = Object.keys(rows[0]);
-    const safe = (v: any) => {
-      if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""');
-      return `"${s}"`;
-    };
-    return [
-      headers.map(safe).join(','),
-      ...rows.map((r) => headers.map((h) => safe(r[h])).join(',')),
-    ].join('\n');
+  // edit item helpers
+  const openEditItem = (item: Item) => {
+    setEditFor(item);
+    setEditName(item.name || '');
+    setEditUnit(item.unit || '');
+    setEditSupplier(item.supplierName || '');
   };
-
-  // ---------- Actions for More menu ----------
-  const exportCsv = throttleAction(async () => {
+  const saveEditItem = async () => {
+    if (!editFor) return;
     try {
-      const rows = filtered.map((it) => {
-        const expected = deriveExpected(it);
-        return {
-          name: it.name || '',
-          unit: it.unit || '',
-          lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
-          expectedQty: expected ?? '',
-          low: isLow(it) ? 'yes' : 'no',
-          note: it.supplierName || '',
-        };
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',editFor.id), {
+        name: (editName || '').trim() || editFor.name || '',
+        unit: (editUnit || '').trim() || null,
+        supplierName: (editSupplier || '').trim() || null,
+        updatedAt: serverTimestamp(),
       });
-      const csv = toCsv(rows);
-      if (!csv) { Alert.alert('Nothing to export', 'No rows in the current view.'); return; }
-
-      if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
-      const fname = `tallyup-area-${areaId}-${Date.now()}.csv`;
-      const path = FS.cacheDirectory + fname;
-      await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
-
-      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
-      } else {
-        Alert.alert('Exported', `Saved to cache: ${fname}`);
-      }
-    } catch (e:any) {
-      Alert.alert('Export failed', e?.message ?? String(e));
-    }
-  });
-
-  const copySummary = throttleAction(async () => {
-    const total = items.length;
-    const counted = countedCount;
-    const uncounted = total - counted;
-    const low = lowCount;
-
-    const lines = [
-      `TallyUp — ${areaName ?? 'Area'} summary`,
-      `Counted: ${counted}/${total} (${uncounted} remaining)`,
-      `Low stock items: ${low}`,
-    ];
-
-    const text = lines.join('\n');
-
-    if (Clipboard?.setStringAsync) {
-      await Clipboard.setStringAsync(text);
+      setEditFor(null);
       hapticSuccess();
-      Alert.alert('Copied', 'Summary copied to clipboard.');
-    } else {
-      Alert.alert('Copy unavailable', 'Clipboard not available.');
+    } catch (e:any) {
+      Alert.alert('Update failed', e?.message ?? String(e));
     }
-  });
+  };
 
   // ---------- Row ----------
   const Row = ({ item }: { item: Item }) => {
@@ -567,21 +528,16 @@ function StockTakeAreaInventoryScreen() {
                 ) : null}
               </View>
             </View>
-            {showExpected && expectedStr ? (
+            {/* Expected chip only if area started */}
+            {areaStarted && showExpected && expectedStr ? (
               <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
                 <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
               </View>
             ) : null}
           </View>
 
-          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
-            <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
-              <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
-              <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
-            </TouchableOpacity>
-          </View>
+          {/* trimmed inline actions for compact row — none (use long-press) */}
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }} />
         </TouchableOpacity>
       );
     }
@@ -611,7 +567,8 @@ function StockTakeAreaInventoryScreen() {
               ) : null}
             </View>
           </View>
-          {showExpected && expectedStr ? (
+          {/* Expected chip only if area started */}
+          {areaStarted && showExpected && expectedStr ? (
             <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
               <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
             </View>
@@ -652,31 +609,14 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           ) : null}
 
-          <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
-            <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => useBluetoothFor(item)} disabled={locked}
-            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#ECEFF1' : '#E3F2FD' }}>
-            <Text style={{ color: locked ? '#90A4AE' : '#0A84FF', fontWeight: '700' }}>BT</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => usePhotoFor(item)} disabled={locked}
-            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#F5F5F5' : '#FFF8E1' }}>
-            <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
-          </TouchableOpacity>
-
+          {/* Keep inline request adjustment on counted & non-manager for speed */}
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
-          ) : (
-            !locked && (
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
-                <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
-              </TouchableOpacity>
-            )
-          )}
+          ) : null}
+
+          {/* Inline History / BT / Cam / Del removed — available via long-press menu */}
         </View>
       </TouchableOpacity>
     );
@@ -949,6 +889,15 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ fontWeight:'800', color:'#166534' }}>Approve now (manager)</Text>
               </TouchableOpacity>
             ) : null}
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); useBluetoothFor(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#E3F2FD', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#0A84FF' }}>Bluetooth (BT)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); usePhotoFor(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFF8E1', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#9A3412' }}>Camera (Cam)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openEditItem(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Edit item</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const id = menuFor!.id; setMenuFor(null); removeItem(id); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEE2E2', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#991B1B' }}>Delete item</Text>
             </TouchableOpacity>
@@ -961,15 +910,79 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
+      {/* Edit item modal */}
+      <Modal visible={!!editFor} animationType="slide" transparent onRequestClose={()=>setEditFor(null)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:10 }}>Edit item</Text>
+            <View style={{ gap:10 }}>
+              <View>
+                <Text style={{ fontWeight:'700', marginBottom:4 }}>Name</Text>
+                <TextInput value={editName} onChangeText={setEditName} placeholder="Name"
+                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ccc', borderRadius:10 }} />
+              </View>
+              <View>
+                <Text style={{ fontWeight:'700', marginBottom:4 }}>Unit</Text>
+                <TextInput value={editUnit} onChangeText={setEditUnit} placeholder="e.g. bottles, kg"
+                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ccc', borderRadius:10 }} />
+              </View>
+              <View>
+                <Text style={{ fontWeight:'700', marginBottom:4 }}>Supplier</Text>
+                <TextInput value={editSupplier} onChangeText={setEditSupplier} placeholder="Supplier"
+                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ccc', borderRadius:10 }} />
+              </View>
+            </View>
+
+            <View style={{ flexDirection:'row', gap:10, marginTop:14 }}>
+              <TouchableOpacity onPress={()=>setEditFor(null)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveEditItem} style={{ padding:12, borderRadius:10, backgroundColor:'#0A84FF', flex:1 }}>
+                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Save changes</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ⋯ More menu */}
       <Modal visible={moreOpen} animationType="fade" transparent onRequestClose={()=>setMoreOpen(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
             <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsv(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ try {
+              const rows = filtered.map((it) => {
+                const expected = deriveExpected(it);
+                return {
+                  name: it.name || '',
+                  unit: it.unit || '',
+                  lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
+                  expectedQty: expected ?? '',
+                  low: isLow(it) ? 'yes' : 'no',
+                  note: it.supplierName || '',
+                };
+              });
+              const toCsv = (rows:any[]) => {
+                if (!rows.length) return '';
+                const headers = Object.keys(rows[0]);
+                const safe = (v:any)=>{ if(v==null) return ''; const s=String(v).replace(/"/g,'""'); return `"${s}"`; };
+                return [headers.map(safe).join(','), ...rows.map(r=>headers.map(h=>safe(r[h])).join(','))].join('\n');
+              };
+              const csv = toCsv(rows);
+              if (!csv) { Alert.alert('Nothing to export', 'No rows in the current view.'); return; }
+              if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
+              const fname = `tallyup-area-${areaId}-${Date.now()}.csv`;
+              const path = FS.cacheDirectory + fname;
+              await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
+              if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
+              } else {
+                Alert.alert('Exported', `Saved to cache: ${fname}`);
+              }
+            } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (current view)</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); copySummary(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = countedCount; const uncounted = total - counted; const low = lowCount; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=> setOnlyLow(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyLow ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
