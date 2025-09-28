@@ -22,9 +22,9 @@ import NetInfo from '@react-native-community/netinfo';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 
-// AsyncStorage (guarded) for dismissible legend & quick-add memory
+// AsyncStorage (guarded)
 let AS: any = null;
-try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
+try { AS = require('@react-native-async-storage/async-storage').default; } catch {}
 
 // Clipboard (guarded)
 let Clipboard: any = null;
@@ -56,10 +56,8 @@ type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
-// Haptics helper
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 
-// Delta confirm thresholds
 const DELTA_ABS_THRESHOLD = 5;
 const DELTA_RATIO_THRESHOLD = 0.5;
 
@@ -84,14 +82,23 @@ function StockTakeAreaInventoryScreen() {
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
-  // Collapse control (compact counted rows)
+  // Compact counted rows
   const [compactCounted, setCompactCounted] = useState(true);
+
+  // NEW: Only uncounted (persist per area)
+  const [onlyUncounted, setOnlyUncounted] = useState(false);
+  const onlyUncKey = `onlyUncounted:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
+  useEffect(() => { (async () => {
+    if (!AS) return;
+    try { const v = await AS.getItem(onlyUncKey); setOnlyUncounted(v === '1'); } catch {}
+  })(); }, [onlyUncKey]);
+  const rememberOnlyUnc = async (on: boolean) => { if (AS) try { await AS.setItem(onlyUncKey, on ? '1' : '0'); } catch {} };
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
-  // Quick add fields + memory
+  // Quick add
   const [addingName, setAddingName] = useState('');
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
@@ -99,51 +106,45 @@ function StockTakeAreaInventoryScreen() {
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
-  // History modal state (read-only)
+  // History modal
   const [histFor, setHistFor] = useState<Item | null>(null);
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
-  // Long-press action sheet state
+  // Long-press menu
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
-  // “More” menu state
+  // ⋯ More menu
   const [moreOpen, setMoreOpen] = useState(false);
 
-  // NEW: Edit item modal state
+  // Edit item modal
   const [editFor, setEditFor] = useState<Item | null>(null);
   const [editName, setEditName] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [editSupplier, setEditSupplier] = useState('');
 
-  // NEW: Sort option (uncounted first)
+  // Sort option (uncounted first)
   const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
 
-  // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
 
-  // Low-stock filter
   const [onlyLow, setOnlyLow] = useState(false);
 
-  // Offline banner state
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
 
-  // Dismissible legend
+  // Legend
   const [legendDismissed, setLegendDismissed] = useState(false);
   const legendKey = `areaLegendDismissed:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
   useEffect(() => { (async () => {
     if (!AS) return;
     try { const v = await AS.getItem(legendKey); setLegendDismissed(v === '1'); } catch {}
   })(); }, [legendKey]);
-  const dismissLegend = async () => {
-    setLegendDismissed(true);
-    if (AS) try { await AS.setItem(legendKey, '1'); } catch {}
-  };
+  const dismissLegend = async () => { setLegendDismissed(true); if (AS) try { await AS.setItem(legendKey, '1'); } catch {} };
 
   // Quick-add memory
   useEffect(() => { (async () => {
@@ -225,45 +226,36 @@ function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
-  // Filtered list (search + low filter)
+  // Filtered + sorted list
   const filteredBase = useMemo(() => {
-    const n = filterDebounced.trim().toLowerCase();
+    const n = (filterDebounced || '').trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
 
-  // Apply low filter + optional sorting
   const filtered = useMemo(() => {
-    const rows = (onlyLow ? filteredBase.filter(isLow) : filteredBase).slice();
-
+    let rows = filteredBase;
+    if (onlyLow) rows = rows.filter(isLow);
+    if (onlyUncounted) rows = rows.filter((it) => !countedInThisCycle(it));
     if (sortUncountedFirst) {
-      rows.sort((a, b) => {
-        const au = countedInThisCycle(a) ? 1 : 0; // 0 = uncounted, 1 = counted
+      rows = rows.slice().sort((a, b) => {
+        const au = countedInThisCycle(a) ? 1 : 0;
         const bu = countedInThisCycle(b) ? 1 : 0;
         if (au !== bu) return au - bu;
-        // fallback: by name (case-insensitive)
-        const an = (a.name || '').toLowerCase();
-        const bn = (b.name || '').toLowerCase();
-        if (an < bn) return -1;
-        if (an > bn) return 1;
-        return 0;
+        const an = (a.name || '').toLowerCase(); const bn = (b.name || '').toLowerCase();
+        return an < bn ? -1 : an > bn ? 1 : 0;
       });
     }
-
     return rows;
-  }, [filteredBase, onlyLow, sortUncountedFirst, startedAtMs]);
+  }, [filteredBase, onlyLow, onlyUncounted, sortUncountedFirst, startedAtMs]);
 
-  // Counts for header/footer
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
 
-  // Save→Next: prefer next *uncounted* in current filtered list
   const focusNext = (currentId: string) => {
     const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx < 0) return Keyboard.dismiss();
-
     const nextUncountedIdx = filtered.findIndex((x, i) => i > idx && !countedInThisCycle(x));
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
-
     if (targetIdx === -1) return Keyboard.dismiss();
     const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
@@ -322,7 +314,7 @@ function StockTakeAreaInventoryScreen() {
     const typed = (localQty[item.id] ?? '').trim();
     if (!ENABLE_MANAGER_INLINE_APPROVE) return;
     if (!isManager) return Alert.alert('Manager only', 'Only managers can approve directly.');
-    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5)');
+    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity');
 
     const qty = parseFloat(typed);
     const doApprove = async () => {
@@ -487,7 +479,6 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  // edit item helpers
   const openEditItem = (item: Item) => {
     setEditFor(item);
     setEditName(item.name || '');
@@ -510,7 +501,7 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
-  // ---------- CSV helpers ----------
+  // CSV helpers (already present)
   const toCsv = (rows: Array<Record<string, any>>) => {
     if (!rows.length) return '';
     const headers = Object.keys(rows[0]);
@@ -554,21 +545,17 @@ function StockTakeAreaInventoryScreen() {
     }
   });
 
-  // NEW: export only items counted in this cycle (respects current filter set)
   const exportCsvChangesOnly = throttleAction(async () => {
     try {
       if (!areaStarted) { Alert.alert('Nothing to export', 'This area has not been started yet.'); return; }
       const changed = filtered.filter(countedInThisCycle);
       if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
-
       const rows = changed.map((it) => ({
         name: it.name || '',
         unit: it.unit || '',
         newCount: typeof it.lastCount === 'number' ? it.lastCount : '',
-        // include delta when expected available
         expected: deriveExpected(it) ?? '',
       }));
-
       const csv = toCsv(rows);
       if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
       const fname = `tallyup-area-${areaId}-changes-${Date.now()}.csv`;
@@ -594,7 +581,6 @@ function StockTakeAreaInventoryScreen() {
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
     const lowStock = isLow(item);
 
-    // Compact layout when counted & user not manager & compactCounted is on
     if (locked && compactCounted) {
       return (
         <TouchableOpacity
@@ -618,19 +604,16 @@ function StockTakeAreaInventoryScreen() {
                 ) : null}
               </View>
             </View>
-            {/* Expected chip only if area started */}
             {areaStarted && showExpected && expectedStr ? (
               <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
                 <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
               </View>
             ) : null}
           </View>
-          {/* no inline actions in compact mode; use long-press */}
         </TouchableOpacity>
       );
     }
 
-    // Full row (default)
     return (
       <TouchableOpacity
         activeOpacity={0.9}
@@ -655,7 +638,6 @@ function StockTakeAreaInventoryScreen() {
               ) : null}
             </View>
           </View>
-          {/* Expected chip only if area started */}
           {areaStarted && showExpected && expectedStr ? (
             <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
               <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
@@ -675,7 +657,7 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
-            onSubmitEditing={()=>makeSave(item)()} // enter → save (moves next)
+            onSubmitEditing={()=>makeSave(item)()}
             style={{
               flexGrow: 1, minWidth: 160,
               paddingVertical: 8, paddingHorizontal: 12,
@@ -697,14 +679,11 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           ) : null}
 
-          {/* Inline request adjustment for staff (kept) */}
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
           ) : null}
-
-          {/* Inline History / BT / Cam / Del removed — available via long-press menu */}
         </View>
       </TouchableOpacity>
     );
@@ -718,7 +697,6 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky ListHeader
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -800,7 +778,7 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          {/* Quick add with memory (Unit, Supplier optional) */}
+          {/* Quick add */}
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TextInput
@@ -847,7 +825,6 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
-  // Empty state
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
@@ -861,7 +838,6 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
-  // Footer actions
   const ListFooter = () => (
     <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
       <TouchableOpacity onPress={onSubmitArea}
@@ -920,7 +896,7 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* History Modal (read-only) */}
+      {/* History Modal */}
       <Modal visible={!!histFor} transparent animationType="fade" onRequestClose={closeHistory}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
           <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxHeight:'80%', padding:14 }}>
@@ -1044,15 +1020,18 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsvChangesOnly(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (changes only)</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = countedCount; const uncounted = total - counted; const low = lowCount; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
+            {/* NEW: Only uncounted toggle */}
+            <TouchableOpacity onPress={()=>{ const nv = !onlyUncounted; setOnlyUncounted(nv); rememberOnlyUnc(nv); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyUncounted ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color: onlyUncounted ? '#1D4ED8' : '#111827' }}>{onlyUncounted ? '✓ ' : ''}Show only uncounted</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=> setOnlyLow(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyLow ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: onlyLow ? '#1D4ED8' : '#111827' }}>{onlyLow ? '✓ ' : ''}Low only</Text>
             </TouchableOpacity>
-            {/* NEW: sort toggle */}
             <TouchableOpacity onPress={()=> setSortUncountedFirst(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: sortUncountedFirst ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: sortUncountedFirst ? '#1D4ED8' : '#111827' }}>{sortUncountedFirst ? '✓ ' : ''}Sort uncounted first</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = countedCount; const uncounted = total - counted; const low = lowCount; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
             </TouchableOpacity>
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
