@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform
+  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
@@ -22,26 +22,24 @@ import NetInfo from '@react-native-community/netinfo';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
 
-// AsyncStorage (guarded)
+// AsyncStorage (guarded) for dismissible legend & quick-add memory
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch { AS = null; }
-
-// Sharing & FS (guarded)
-let FS: any = null, Sharing: any = null;
-try { FS = require('expo-file-system'); } catch {}
-try { Sharing = require('expo-sharing'); } catch {}
 
 // Clipboard (guarded)
 let Clipboard: any = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
 
-// Gesture handler (guarded) — swipes disabled intentionally (bypass)
-let GH: any = null;
-try { GH = require('react-native-gesture-handler'); } catch { GH = null; }
-const Swipeable = null;
+// FileSystem & Sharing (guarded)
+let FS: any = null, Sharing: any = null;
+try { FS = require('expo-file-system'); } catch {}
+try { Sharing = require('expo-sharing'); } catch {}
 
+// Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
+
+// Read-only audits for History modal
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 
 type Item = {
@@ -51,7 +49,6 @@ type Item = {
   unit?: string; supplierId?: string; supplierName?: string;
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
-  note?: string;
 };
 
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
@@ -59,27 +56,12 @@ type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
+// Haptics helper
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 
-const DELTA_ABS_THRESHOLD = 5;
-const DELTA_RATIO_THRESHOLD = 0.5;
-
-// Common units for picker
-const COMMON_UNITS = ['bottles', 'cases', 'kg', 'g', 'L', 'ml', 'packs', 'units', 'keg'];
-
-// CSV util (local, tiny)
-const toCsv = (rows: Array<Record<string, any>>) => {
-  if (!rows.length) return '';
-  const headers = Object.keys(rows[0]);
-  const safe = (v: any) => {
-    if (v == null) return '';
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
-  const lines = [headers.join(',')];
-  rows.forEach(r => lines.push(headers.map(h => safe(r[h])).join(',')));
-  return lines.join('\n');
-};
+// Delta confirm thresholds
+const DELTA_ABS_THRESHOLD = 5;       // require confirm if abs change >= 5
+const DELTA_RATIO_THRESHOLD = 0.5;   // ...and 50% or more vs previous
 
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
@@ -102,34 +84,18 @@ function StockTakeAreaInventoryScreen() {
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
 
+  // Collapse control (compact counted rows)
   const [compactCounted, setCompactCounted] = useState(true);
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
-  // Notes modal
-  const [noteFor, setNoteFor] = useState<Item | null>(null);
-  const [noteText, setNoteText] = useState('');
-
-  // Unit modal
-  const [unitFor, setUnitFor] = useState<Item | null>(null);
-  const [unitText, setUnitText] = useState('');
-
-  // Par modal (manager-only)
-  const [parFor, setParFor] = useState<Item | null>(null);
-  const [parText, setParText] = useState('');
-
   // Quick add fields + memory
   const [addingName, setAddingName] = useState('');
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
   const nameInputRef = useRef<TextInput>(null);
-
-  // Bulk Add modal
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkText, setBulkText] = useState('');
-  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
@@ -138,20 +104,18 @@ function StockTakeAreaInventoryScreen() {
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
-  // Row overflow menu state
+  // Long-press action sheet state
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
-  // Save→Next focus + toolbar
+  // NEW: More menu state
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Save→Next focus
   const inputRefs = useRef<Record<string, TextInput | null>>({});
-  const [focusedId, setFocusedId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   // Low-stock filter
   const [onlyLow, setOnlyLow] = useState(false);
-
-  // Sorting
-  type SortMode = 'alpha' | 'uncounted' | 'low';
-  const [sortMode, setSortMode] = useState<SortMode>('alpha');
 
   // Offline banner state
   const [offline, setOffline] = useState(false);
@@ -256,64 +220,26 @@ function StockTakeAreaInventoryScreen() {
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, filterDebounced]);
 
-  const onlyLowApplied = useMemo(
+  const filtered = useMemo(
     () => (onlyLow ? filteredBase.filter(isLow) : filteredBase),
     [filteredBase, onlyLow]
   );
 
-  // Sorters
-  const sorted = useMemo(() => {
-    const list = [...onlyLowApplied];
-    if (sortMode === 'alpha') {
-      list.sort((a,b) => (a.name||'').localeCompare(b.name||''));
-    } else if (sortMode === 'uncounted') {
-      list.sort((a,b) => {
-        const ac = countedInThisCycle(a) ? 1 : 0;
-        const bc = countedInThisCycle(b) ? 1 : 0;
-        if (ac !== bc) return ac - bc; // 0 first
-        return (a.name||'').localeCompare(b.name||'');
-      });
-    } else if (sortMode === 'low') {
-      list.sort((a,b) => {
-        const al = isLow(a) ? 0 : 1;
-        const bl = isLow(b) ? 0 : 1;
-        if (al !== bl) return al - bl; // low first
-        return (a.name||'').localeCompare(b.name||'');
-      });
-    }
-    return list;
-  }, [onlyLowApplied, sortMode]);
-
-  // Counts for footer/header
+  // Counts for header/footer
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
 
-  // Focus navigation helpers
-  const indexOfId = (id: string) => sorted.findIndex((x) => x.id === id);
-  const idAt = (i: number) => (i >= 0 && i < sorted.length ? sorted[i]?.id : null);
-
-  const focusAtIndex = (idx: number) => {
-    const nextId = idAt(idx);
-    if (!nextId) return Keyboard.dismiss();
-    try { listRef.current?.scrollToIndex({ index: Math.min(sorted.length, idx + 1), animated: true }); } catch {}
-    setTimeout(() => inputRefs.current[nextId]?.focus?.(), 60);
-  };
-
-  const focusPrev = () => {
-    if (!focusedId) return;
-    const i = indexOfId(focusedId);
-    if (i <= 0) return;
-    focusAtIndex(i - 1);
-  };
-
+  // Save→Next: prefer next *uncounted* in current filtered list
   const focusNext = (currentId: string) => {
-    const idx = sorted.findIndex((x) => x.id === currentId);
+    const idx = filtered.findIndex((x) => x.id === currentId);
     if (idx < 0) return Keyboard.dismiss();
-    const nextUncountedIdx = sorted.findIndex((x, i) => i > idx && !countedInThisCycle(x));
-    const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < sorted.length ? idx + 1 : -1);
+
+    const nextUncountedIdx = filtered.findIndex((x, i) => i > idx && !countedInThisCycle(x));
+    const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
+
     if (targetIdx === -1) return Keyboard.dismiss();
+    const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
-    const nextId = sorted[targetIdx].id;
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
   };
 
@@ -325,10 +251,11 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
+  // delta confirm helper
   const needsDeltaConfirm = (prev: number | null | undefined, next: number) => {
     const from = typeof prev === 'number' ? prev : 0;
     const abs = Math.abs(next - from);
-       const ratio = from === 0 ? 1 : abs / Math.max(1, Math.abs(from));
+    const ratio = from === 0 ? 1 : abs / Math.max(1, Math.abs(from));
     return abs >= DELTA_ABS_THRESHOLD && ratio >= DELTA_RATIO_THRESHOLD;
   };
 
@@ -365,6 +292,7 @@ function StockTakeAreaInventoryScreen() {
     await proceedWith(parseFloat(typed));
   };
 
+  // Manager inline-approve path (explicit audit) with delta confirm
   const approveNow = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
     if (!ENABLE_MANAGER_INLINE_APPROVE) return;
@@ -416,33 +344,6 @@ function StockTakeAreaInventoryScreen() {
       nameInputRef.current?.blur(); Keyboard.dismiss();
       hapticSuccess();
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); }
-  };
-
-  const performBulkAdd = async () => {
-    const names = (bulkText || '')
-      .split('\n').map(s => s.trim()).filter(Boolean);
-    if (names.length === 0) return Alert.alert('Nothing to add', 'Paste or type one name per line.');
-    setBulkBusy(true);
-    try {
-      await ensureAreaStarted();
-      await Promise.all(names.map(nm =>
-        addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), {
-          name: nm,
-          unit: addingUnit || null,
-          supplierName: addingSupplier || null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        })
-      ));
-      setBulkOpen(false);
-      setBulkText('');
-      hapticSuccess();
-      Alert.alert('Added', `${names.length} item(s) created.`);
-    } catch (e:any) {
-      Alert.alert('Bulk add failed', e?.message ?? String(e));
-    } finally {
-      setBulkBusy(false);
-    }
   };
 
   const removeItem = async (itemId: string) => {
@@ -510,6 +411,7 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // One-tap initialise (set all uncounted to 0 without submitting area)
   const initAllZeros = async () => {
     const noneCountedThisCycle = items.every((it) => !countedInThisCycle(it));
     const msg = noneCountedThisCycle
@@ -561,79 +463,33 @@ function StockTakeAreaInventoryScreen() {
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  const openMenu = (item: Item) => setMenuFor(item);
-  const closeMenu = () => setMenuFor(null);
-
-  // Notes
-  const openNote = (it: Item) => { setNoteFor(it); setNoteText(it.note ?? ''); };
-  const saveNote = throttleAction(async () => {
-    if (!noteFor) return;
-    try {
-      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',noteFor.id), {
-        note: noteText.trim() || null, updatedAt: serverTimestamp()
-      });
-      setNoteFor(null); setNoteText('');
-      hapticSuccess();
-    } catch (e:any) {
-      Alert.alert('Could not save note', e?.message ?? String(e));
-    }
-  });
-
-  // Units
-  const openUnit = (it: Item) => { setUnitFor(it); setUnitText(it.unit ?? ''); };
-  const saveUnit = throttleAction(async () => {
-    if (!unitFor) return;
-    try {
-      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',unitFor.id), {
-        unit: (unitText.trim() || null), updatedAt: serverTimestamp()
-      });
-      setUnitFor(null); setUnitText('');
-      hapticSuccess();
-    } catch (e:any) {
-      Alert.alert('Could not save unit', e?.message ?? String(e));
-    }
-  });
-
-  // Par level (manager)
-  const openPar = (it: Item) => {
-    if (!isManager) return Alert.alert('Manager only', 'Only managers can edit par levels.');
-    setParFor(it);
-    setParText(typeof it.parLevel === 'number' ? String(it.parLevel) : '');
+  // ---------- Utility for CSV ----------
+  const toCsv = (rows: Array<Record<string, any>>) => {
+    if (!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const safe = (v: any) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v).replace(/"/g, '""');
+      return `"${s}"`;
+    };
+    return [
+      headers.map(safe).join(','),
+      ...rows.map((r) => headers.map((h) => safe(r[h])).join(',')),
+    ].join('\n');
   };
-  const savePar = throttleAction(async () => {
-    if (!parFor) return;
-    const raw = parText.trim();
-    if (raw !== '' && !/^\d+(\.\d+)?$/.test(raw)) return Alert.alert('Invalid number', 'Enter a positive number or leave blank to clear.');
-    const num = raw === '' ? null : parseFloat(raw);
-    try {
-      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',parFor.id), {
-        parLevel: num, updatedAt: serverTimestamp()
-      });
-      setParFor(null); setParText('');
-      hapticSuccess();
-    } catch (e:any) {
-      Alert.alert('Could not save par level', e?.message ?? String(e));
-    }
-  });
 
-  // CSV Export (current filtered + sorted view)
+  // ---------- Actions for More menu ----------
   const exportCsv = throttleAction(async () => {
     try {
-      const rows = sorted.map((it) => {
+      const rows = filtered.map((it) => {
         const expected = deriveExpected(it);
-        const last = typeof it.lastCount === 'number' ? it.lastCount : '';
-        const typed = (localQty[it.id] ?? '').trim();
-        const typedNum = /^\d+(\.\d+)?$/.test(typed) ? parseFloat(typed) : null;
-        const deltaTarget = expected != null ? expected : (typeof it.lastCount === 'number' ? it.lastCount : null);
-        const delta = typedNum != null && deltaTarget != null ? (typedNum - deltaTarget) : '';
         return {
           name: it.name || '',
           unit: it.unit || '',
-          lastCount: last,
+          lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
           expectedQty: expected ?? '',
-          delta,
           low: isLow(it) ? 'yes' : 'no',
-          note: it.note || '',
+          note: it.supplierName || '',
         };
       });
       const csv = toCsv(rows);
@@ -654,35 +510,31 @@ function StockTakeAreaInventoryScreen() {
     }
   });
 
-  // Copy summary (current area, respects filters/sort)
   const copySummary = throttleAction(async () => {
     const total = items.length;
     const counted = countedCount;
     const uncounted = total - counted;
     const low = lowCount;
 
-    // show top 10 low items (by name) from the current *sorted* view
-    const lowNames = sorted.filter(isLow).map(it => it.name || '').filter(Boolean).slice(0, 10);
-    const moreLow = Math.max(0, low - lowNames.length);
-
     const lines = [
       `TallyUp — ${areaName ?? 'Area'} summary`,
       `Counted: ${counted}/${total} (${uncounted} remaining)`,
       `Low stock items: ${low}`,
-      low ? `Low list: ${lowNames.join(', ')}${moreLow ? ` … +${moreLow} more` : ''}` : '',
-    ].filter(Boolean);
+    ];
 
     const text = lines.join('\n');
 
     if (Clipboard?.setStringAsync) {
-      try { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); }
-      catch { Alert.alert('Copy failed', 'Could not copy to clipboard.'); }
+      await Clipboard.setStringAsync(text);
+      hapticSuccess();
+      Alert.alert('Copied', 'Summary copied to clipboard.');
     } else {
-      Alert.alert('Clipboard unavailable', text);
+      Alert.alert('Copy unavailable', 'Clipboard not available.');
     }
   });
 
-  const RowContent = ({ item }: { item: Item }) => {
+  // ---------- Row ----------
+  const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -690,48 +542,66 @@ function StockTakeAreaInventoryScreen() {
     const locked = countedNow && !isManager;
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
     const lowStock = isLow(item);
-    const unsaved = typed.trim() !== '';
 
-    let deltaTarget: number | null = null;
-    if (showExpected && expectedNum != null) deltaTarget = expectedNum;
-    else if (typeof item.lastCount === 'number') deltaTarget = item.lastCount;
-    const typedNum = /^\d+(\.\d+)?$/.test(typed.trim()) ? parseFloat(typed) : null;
-    const hasDelta = typedNum != null && deltaTarget != null;
-    const delta = hasDelta ? (typedNum! - (deltaTarget!)) : 0;
-
-    const DeltaBadge = () => {
-      if (!hasDelta) return null;
-      const isZero = delta === 0;
-      const positive = delta > 0;
-      const bg = isZero ? '#F3F4F6' : (positive ? '#E0F2FE' : '#FEF3C7');
-      const col = isZero ? '#374151' : (positive ? '#0369A1' : '#92400E');
-      const labelBase = showExpected && expectedNum != null ? 'vs exp' : 'vs last';
+    // Compact layout when counted & user not manager & compactCounted is on
+    if (locked && compactCounted) {
       return (
-        <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 10, backgroundColor: bg }}>
-          <Text style={{ color: col, fontWeight: '800', fontSize: 12 }}>
-            {delta > 0 ? `+${delta}` : `${delta}`} {labelBase}
-          </Text>
-        </View>
-      );
-    };
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onLongPress={() => setMenuFor(item)}
+          style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
+        >
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <View style={{ flex:1 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
+                {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
+                {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+                {lowStock ? (
+                  <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
+                    <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
+                      Low: {item.lastCount ?? 0} &lt; {item.parLevel}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+            {showExpected && expectedStr ? (
+              <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
+                <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
+              </View>
+            ) : null}
+          </View>
 
+          <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+            <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
+              <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
+              <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // Full row (default)
     return (
-      <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}>
-        <View style={{ flexDirection: 'row,', alignItems: 'center' }}>
-          <TouchableOpacity style={{ flex: 1 }} onLongPress={() => openMenu(item)}>
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onLongPress={() => setMenuFor(item)}
+        style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
               <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
                 {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
               </Text>
               {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-              {typeof item.parLevel === 'number' ? <Text style={{ fontSize:12, color:'#6B7280' }}>• Par {item.parLevel}</Text> : null}
               {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-              {item.note ? (
-                <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#ECFDF5' }}>
-                  <Text style={{ color:'#065F46', fontWeight:'800', fontSize:11 }}>Note</Text>
-                </View>
-              ) : null}
               {lowStock ? (
                 <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
                   <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
@@ -740,26 +610,18 @@ function StockTakeAreaInventoryScreen() {
                 </View>
               ) : null}
             </View>
-            {item.note ? (
-              <Text style={{ marginTop:4, fontSize:12, color:'#065F46' }}>“{item.note}”</Text>
-            ) : null}
-          </TouchableOpacity>
-
+          </View>
           {showExpected && expectedStr ? (
             <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
               <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
             </View>
           ) : null}
-
-          <TouchableOpacity onPress={() => openMenu(item)} style={{ padding: 6, marginLeft: 6 }}>
-            <Text style={{ fontSize:18, fontWeight:'800' }}>⋮</Text>
-          </TouchableOpacity>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <TextInput
             ref={(el)=>inputRefs.current[item.id]=el}
-            value={typed}
+            value={localQty[item.id] ?? ''}
             onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
             placeholder={placeholder}
             keyboardType="number-pad"
@@ -768,9 +630,7 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
-            onFocus={() => setFocusedId(item.id)}
-            onBlur={() => { if (focusedId === item.id) setFocusedId(null); }}
-            onSubmitEditing={()=>makeSave(item)()}
+            onSubmitEditing={()=>makeSave(item)()} // enter → save (moves next)
             style={{
               flexGrow: 1, minWidth: 160,
               paddingVertical: 8, paddingHorizontal: 12,
@@ -779,11 +639,9 @@ function StockTakeAreaInventoryScreen() {
             }}
           />
 
-          <DeltaBadge />
-
           <TouchableOpacity onPress={makeSave(item)} disabled={locked}
             style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-            {unsaved ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
+            {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
             <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
           </TouchableOpacity>
 
@@ -794,18 +652,35 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           ) : null}
 
+          <TouchableOpacity onPress={() => openHistory(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#EEF2FF' }}>
+            <Text style={{ color: '#3730A3', fontWeight: '700' }}>History</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => useBluetoothFor(item)} disabled={locked}
+            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#ECEFF1' : '#E3F2FD' }}>
+            <Text style={{ color: locked ? '#90A4AE' : '#0A84FF', fontWeight: '700' }}>BT</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => usePhotoFor(item)} disabled={locked}
+            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: locked ? '#F5F5F5' : '#FFF8E1' }}>
+            <Text style={{ color: locked ? '#BDBDBD' : '#FF6F00', fontWeight: '700' }}>Cam</Text>
+          </TouchableOpacity>
+
           {countedNow && !isManager ? (
             <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
               <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
             </TouchableOpacity>
-          ) : null}
+          ) : (
+            !locked && (
+              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ padding: 6 }}>
+                <Text style={{ color: '#D32F2F', fontWeight: '800' }}>Del</Text>
+              </TouchableOpacity>
+            )
+          )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
-
-  // Row = content (swipes off)
-  const Row = ({ item }: { item: Item }) => <RowContent item={item} />;
 
   if (!itemsPathOk) {
     return (
@@ -815,7 +690,7 @@ function StockTakeAreaInventoryScreen() {
     );
   }
 
-  // Sticky header (progress chip + sort + export + copy summary)
+  // Sticky ListHeader (title + counts + More + banners + legend + search/filters + quick-add + compact toggle)
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
     const anyLow = items.some((it) => isLow(it));
@@ -832,13 +707,9 @@ function StockTakeAreaInventoryScreen() {
                   {countedCount}/{items.length} counted • {lowCount} low
                 </Text>
               </View>
-              <TouchableOpacity onPress={exportCsv}
-                style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#E0E7FF' }}>
-                <Text style={{ color:'#3730A3', fontWeight:'800' }}>Export CSV</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={copySummary}
-                style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#E8F5E9' }}>
-                <Text style={{ color:'#2E7D32', fontWeight:'800' }}>Copy summary</Text>
+              <TouchableOpacity onPress={() => setMoreOpen(true)}
+                style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#EFF6FF' }}>
+                <Text style={{ color:'#1D4ED8', fontWeight:'800' }}>⋯ More</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -862,7 +733,6 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          {/* Search + expected toggle */}
           <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
             <View style={{ flex: 1, position: 'relative' }}>
               <TextInput
@@ -885,46 +755,24 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Sort + Low filter */}
-          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
-            <TouchableOpacity
-              onPress={() => setSortMode('alpha')}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortMode==='alpha' ? '#0A84FF' : '#E5E7EB', backgroundColor: sortMode==='alpha' ? '#D6E9FF' : 'white' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#0A84FF' }}>A–Z</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setSortMode('uncounted')}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortMode==='uncounted' ? '#0A84FF' : '#E5E7EB', backgroundColor: sortMode==='uncounted' ? '#D6E9FF' : 'white' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#0A84FF' }}>Uncounted first</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setSortMode('low')}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortMode==='low' ? '#DC2626' : '#E5E7EB', backgroundColor: sortMode==='low' ? '#FEE2E2' : 'white' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low first</Text>
-            </TouchableOpacity>
+          {showLowChip ? (
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TouchableOpacity
+                onPress={() => setOnlyLow(false)}
+                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
+              >
+                <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setOnlyLow(true)}
+                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
+              >
+                <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
-            {items.some((it)=>typeof it.parLevel==='number' && typeof it.lastCount==='number') ? (
-              <View style={{ flexDirection:'row', gap:8, marginLeft:'auto' }}>
-                <TouchableOpacity
-                  onPress={() => setOnlyLow(false)}
-                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
-                >
-                  <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setOnlyLow(true)}
-                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
-                >
-                  <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Quick add with memory */}
+          {/* Quick add with memory (Unit, Supplier optional) */}
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TextInput
@@ -955,7 +803,7 @@ function StockTakeAreaInventoryScreen() {
             </View>
           </View>
 
-          {/* Controls row: compact toggle + bulk add */}
+          {/* Compact counted toggle */}
           <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4 }}>
             <TouchableOpacity
               onPress={()=>setCompactCounted((v)=>!v)}
@@ -965,19 +813,13 @@ function StockTakeAreaInventoryScreen() {
                 {compactCounted ? '✓ Compact counted rows' : 'Show inputs on counted rows'}
               </Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={()=>setBulkOpen(true)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#E5E7EB', borderWidth:1, borderColor:'#D1D5DB' }}
-            >
-              <Text style={{ fontWeight:'800', color:'#374151' }}>Bulk add</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </View>
     );
   };
 
+  // Empty state
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
@@ -991,6 +833,7 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
+  // Footer actions
   const ListFooter = () => (
     <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
       <TouchableOpacity onPress={onSubmitArea}
@@ -1005,54 +848,17 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
-  // Keyboard toolbar (Prev / Next / Save)
-  const Toolbar = () => {
-    if (!focusedId) return null;
-    const idx = sorted.findIndex(x => x.id === focusedId);
-    const item = sorted[idx];
-    const canPrev = idx > 0;
-    const canNext = idx > -1 && idx + 1 < sorted.length;
-    return (
-      <View style={{
-        position:'absolute', left:0, right:0, bottom:0,
-        backgroundColor:'#111827', paddingVertical:8, paddingHorizontal:12,
-        flexDirection:'row', alignItems:'center', justifyContent:'space-between'
-      }}>
-        <TouchableOpacity disabled={!canPrev} onPress={focusPrev}
-          style={{ opacity: canPrev ? 1 : 0.4, padding:8, borderRadius:8, backgroundColor:'#374151' }}>
-          <Text style={{ color:'white', fontWeight:'800' }}>Prev</Text>
-        </TouchableOpacity>
-        <Text style={{ color:'#9CA3AF', fontWeight:'700' }}>
-          {idx + 1}/{sorted.length}
-        </Text>
-        <View style={{ flexDirection:'row', gap:8 }}>
-          <TouchableOpacity disabled={!canNext} onPress={()=>focusAtIndex(idx+1)}
-            style={{ opacity: canNext ? 1 : 0.4, padding:8, borderRadius:8, backgroundColor:'#374151' }}>
-            <Text style={{ color:'white', fontWeight:'800' }}>Next</Text>
-          </TouchableOpacity>
-          {item ? (
-            <TouchableOpacity onPress={makeSave(item)}
-              style={{ padding:8, borderRadius:8, backgroundColor:'#10B981' }}>
-              <Text style={{ color:'white', fontWeight:'800' }}>Save</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
-    );
-  };
-
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <FlatList
         ref={listRef}
-        data={sorted}
+        data={filtered}
         keyExtractor={(it) => it.id}
         renderItem={({ item }) => <Row item={item} />}
         ListHeaderComponent={<ListHeader />}
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
-        keyboardShouldPersistTaps="handled"
       />
 
       {/* Request Adjustment Modal */}
@@ -1125,148 +931,58 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Overflow Menu */}
-      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
-          <View style={{ backgroundColor:'white', borderRadius:16, width:'100%', maxWidth:420, padding:14 }}>
-            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:10 }}>
-              Actions — {menuFor?.name ?? 'Item'}
+      {/* Long-press action sheet */}
+      <Modal visible={!!menuFor} animationType="fade" transparent onRequestClose={()=>setMenuFor(null)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
+          <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }} numberOfLines={1}>
+              {menuFor?.name ?? 'Item'}
             </Text>
-
-            <View style={{ gap:8 }}>
-              <TouchableOpacity onPress={() => { setMenuFor(null); openHistory(menuFor!); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#EEF2FF' }}>
-                <Text style={{ color:'#3730A3', fontWeight:'800' }}>History</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { setMenuFor(null); openNote(menuFor!); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#ECFDF5' }}>
-                <Text style={{ color:'#065F46', fontWeight:'800' }}>Edit note</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { setMenuFor(null); openUnit(menuFor!); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#E0F2FE' }}>
-                <Text style={{ color:'#0369A1', fontWeight:'800' }}>Edit unit</Text>
-              </TouchableOpacity>
-
-              {isManager ? (
-                <TouchableOpacity onPress={() => { setMenuFor(null); openPar(menuFor!); }}
-                  style={{ padding:12, borderRadius:10, backgroundColor:'#FFE4E6' }}>
-                  <Text style={{ color:'#BE123C', fontWeight:'800' }}>Edit par (Mgr)</Text>
-                </TouchableOpacity>
-              ) : null}
-
-              <TouchableOpacity onPress={() => { setMenuFor(null); useBluetoothFor(menuFor!); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#E3F2FD' }}>
-                <Text style={{ color:'#0A84FF', fontWeight:'800' }}>Bluetooth (stub)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { setMenuFor(null); usePhotoFor(menuFor!); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#FFF8E1' }}>
-                <Text style={{ color:'#FF6F00', fontWeight:'800' }}>Photo (stub)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { const id = menuFor!.id; setMenuFor(null); removeItem(id); }}
-                style={{ padding:12, borderRadius:10, backgroundColor:'#FEE2E2' }}>
-                <Text style={{ color:'#B91C1C', fontWeight:'800' }}>Delete</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity onPress={() => setMenuFor(null)} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
-              <Text style={{ fontWeight:'700' }}>Close</Text>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openHistory(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EEF2FF', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#3730A3' }}>History</Text>
             </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Notes Modal */}
-      <Modal visible={!!noteFor} transparent animationType="slide" onRequestClose={() => setNoteFor(null)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14 }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:6 }}>Edit note</Text>
-            <Text style={{ color:'#6B7280', marginBottom:8 }}>Item: {noteFor?.name}</Text>
-            <TextInput
-              value={noteText}
-              onChangeText={setNoteText}
-              placeholder="e.g. broken case, partial keg, keep for promo"
-              multiline
-              style={{ minHeight:96, padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10, textAlignVertical:'top' }}
-            />
-            <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
-              <TouchableOpacity onPress={() => setNoteFor(null)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
-                <Text style={{ fontWeight:'700' }}>Cancel</Text>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openAdjustment(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3E5F5', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#6A1B9A' }}>Request adjustment</Text>
+            </TouchableOpacity>
+            {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
+              <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); makeApproveNow(it)(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DCFCE7', marginBottom:8 }}>
+                <Text style={{ fontWeight:'800', color:'#166534' }}>Approve now (manager)</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={saveNote} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#10B981' }}>
-                <Text style={{ color:'white', fontWeight:'800' }}>Save note</Text>
+            ) : null}
+            <TouchableOpacity onPress={()=>{ const id = menuFor!.id; setMenuFor(null); removeItem(id); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEE2E2', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#991B1B' }}>Delete item</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+              <TouchableOpacity onPress={()=>setMenuFor(null)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Unit Modal */}
-      <Modal visible={!!unitFor} transparent animationType="slide" onRequestClose={() => setUnitFor(null)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14 }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:6 }}>Edit unit</Text>
-            <Text style={{ color:'#6B7280', marginBottom:8 }}>Item: {unitFor?.name}</Text>
-
-            <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginBottom:8 }}>
-              {COMMON_UNITS.map(u => (
-                <TouchableOpacity key={u} onPress={() => setUnitText(u)}
-                  style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:16, backgroundColor:'#E0F2FE', borderWidth:1, borderColor:'#93C5FD' }}>
-                  <Text style={{ color:'#0369A1', fontWeight:'800' }}>{u}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <TextInput
-              value={unitText}
-              onChangeText={setUnitText}
-              placeholder="Custom unit (optional)"
-              style={{ padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10 }}
-            />
-
-            <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
-              <TouchableOpacity onPress={() => setUnitFor(null)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
-                <Text style={{ fontWeight:'700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={saveUnit} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#0A84FF' }}>
-                <Text style={{ color:'white', fontWeight:'800' }}>Save unit</Text>
+      {/* ⋯ More menu */}
+      <Modal visible={moreOpen} animationType="fade" transparent onRequestClose={()=>setMoreOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
+          <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsv(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (current view)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); copySummary(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=> setOnlyLow(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyLow ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color: onlyLow ? '#1D4ED8' : '#111827' }}>{onlyLow ? '✓ ' : ''}Low only</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+              <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-
-      {/* Par Modal (manager) */}
-      <Modal visible={!!parFor} transparent animationType="slide" onRequestClose={() => setParFor(null)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'white', borderTopLeftRadius:16, borderTopRightRadius:16, padding:14 }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:6 }}>Edit par (Manager)</Text>
-            <Text style={{ color:'#6B7280', marginBottom:8 }}>Item: {parFor?.name}</Text>
-            <TextInput
-              value={parText}
-              onChangeText={setParText}
-              placeholder="e.g. 24 (blank to clear)"
-              keyboardType="number-pad"
-              inputMode="decimal"
-              style={{ padding:10, borderWidth:1, borderColor:'#DDD', borderRadius:10 }}
-            />
-            <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
-              <TouchableOpacity onPress={() => setParFor(null)} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
-                <Text style={{ fontWeight:'700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={savePar} style={{ paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#DC2626' }}>
-                <Text style={{ color:'white', fontWeight:'800' }}>Save par</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Keyboard Toolbar */}
-      <Toolbar />
     </SafeAreaView>
   );
 }
