@@ -18,28 +18,18 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 
-// Haptics (guarded)
 let Haptics: any = null;
-try { Haptics = require('expo-haptics'); } catch { Haptics = null; }
-
-// AsyncStorage (guarded)
+try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
 try { AS = require('@react-native-async-storage/async-storage').default; } catch {}
-
-// Clipboard (guarded)
 let Clipboard: any = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
-
-// FileSystem & Sharing (guarded)
 let FS: any = null, Sharing: any = null;
 try { FS = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
 
-// Manager inline-approve (flag + service)
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
-
-// Read-only audits for History modal
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 
 type Item = {
@@ -50,14 +40,12 @@ type Item = {
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
 };
-
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
 type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
 
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
-
 const DELTA_ABS_THRESHOLD = 5;
 const DELTA_RATIO_THRESHOLD = 0.5;
 
@@ -81,24 +69,16 @@ function StockTakeAreaInventoryScreen() {
 
   const [showExpected, setShowExpected] = useState(true);
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
-
-  // Compact counted rows
   const [compactCounted, setCompactCounted] = useState(true);
-
-  // NEW: Only uncounted (persist per area)
   const [onlyUncounted, setOnlyUncounted] = useState(false);
   const onlyUncKey = `onlyUncounted:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
-  useEffect(() => { (async () => {
-    if (!AS) return;
-    try { const v = await AS.getItem(onlyUncKey); setOnlyUncounted(v === '1'); } catch {}
-  })(); }, [onlyUncKey]);
+  useEffect(() => { (async () => { if (!AS) return; try { const v = await AS.getItem(onlyUncKey); setOnlyUncounted(v === '1'); } catch {} })(); }, [onlyUncKey]);
   const rememberOnlyUnc = async (on: boolean) => { if (AS) try { await AS.setItem(onlyUncKey, on ? '1' : '0'); } catch {} };
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
-  // Quick add
   const [addingName, setAddingName] = useState('');
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
@@ -106,87 +86,56 @@ function StockTakeAreaInventoryScreen() {
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
-  // History modal
   const [histFor, setHistFor] = useState<Item | null>(null);
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
-  // Long-press menu
   const [menuFor, setMenuFor] = useState<Item | null>(null);
-
-  // ⋯ More menu
   const [moreOpen, setMoreOpen] = useState(false);
 
-  // Edit item modal
   const [editFor, setEditFor] = useState<Item | null>(null);
   const [editName, setEditName] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [editSupplier, setEditSupplier] = useState('');
+  const [editPar, setEditPar] = useState<string>(''); // manager-only
+  const [editFocusPar, setEditFocusPar] = useState(false);
+  const editParRef = useRef<TextInput>(null);
 
-  // Sort option (uncounted first)
   const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
 
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
 
   const [onlyLow, setOnlyLow] = useState(false);
-
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
 
-  // Legend
   const [legendDismissed, setLegendDismissed] = useState(false);
   const legendKey = `areaLegendDismissed:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
-  useEffect(() => { (async () => {
-    if (!AS) return;
-    try { const v = await AS.getItem(legendKey); setLegendDismissed(v === '1'); } catch {}
-  })(); }, [legendKey]);
+  useEffect(() => { (async () => { if (!AS) return; try { const v = await AS.getItem(legendKey); setLegendDismissed(v === '1'); } catch {} })(); }, [legendKey]);
   const dismissLegend = async () => { setLegendDismissed(true); if (AS) try { await AS.setItem(legendKey, '1'); } catch {} };
 
-  // Quick-add memory
-  useEffect(() => { (async () => {
-    if (!AS) return;
-    try {
-      const u = await AS.getItem('quickAdd:unit'); if (u) setAddingUnit(u);
-      const s = await AS.getItem('quickAdd:supplier'); if (s) setAddingSupplier(s);
-    } catch {}
-  })(); }, []);
-  const rememberQuickAdd = async (unit: string, supplier: string) => {
-    if (!AS) return;
-    try {
-      await AS.setItem('quickAdd:unit', unit || '');
-      await AS.setItem('quickAdd:supplier', supplier || '');
-    } catch {}
-  };
+  useEffect(() => { (async () => { if (!AS) return; try { const u = await AS.getItem('quickAdd:unit'); if (u) setAddingUnit(u); const s = await AS.getItem('quickAdd:supplier'); if (s) setAddingSupplier(s); } catch {} })(); }, []);
+  const rememberQuickAdd = async (unit: string, supplier: string) => { if (!AS) return; try { await AS.setItem('quickAdd:unit', unit || ''); await AS.setItem('quickAdd:supplier', supplier || ''); } catch {} };
 
-  // Live items
   useEffect(() => {
     if (!itemsPathOk) return;
-    const q = query(
-      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-      orderBy('name')
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const rows: Item[] = [];
-      snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) }));
-      setItems(rows);
-    });
-    return () => unsub();
+    const qy = query(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'), orderBy('name'));
+    const unsub = onSnapshot(qy, (snap) => {
+      const rows: Item[] = []; snap.forEach((d) => rows.push({ id: d.id, ...(d.data() as any) })); setItems(rows);
+    }); return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
-  // Area meta
   useEffect(() => {
     if (!itemsPathOk) return;
     const unsub = onSnapshot(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), (d) => {
       setAreaMeta((d.data() as AreaDoc) || null);
-    });
-    return () => unsub();
+    }); return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
-  // Role
   useEffect(() => {
     let unsub: any;
     (async () => {
@@ -195,8 +144,7 @@ function StockTakeAreaInventoryScreen() {
       const ownerUid = (ven.data() as VenueDoc | undefined)?.ownerUid;
       if (ownerUid && ownerUid === uid) { setIsManager(true); return; }
       unsub = onSnapshot(doc(db, 'venues', venueId, 'members', uid), (d) => {
-        const md = d.data() as MemberDoc | undefined;
-        setIsManager(md?.role === 'manager');
+        const md = d.data() as MemberDoc | undefined; setIsManager(md?.role === 'manager');
       });
     })();
     return () => unsub && unsub();
@@ -226,7 +174,6 @@ function StockTakeAreaInventoryScreen() {
     return base + incoming - sold - wastage;
   };
 
-  // Filtered + sorted list
   const filteredBase = useMemo(() => {
     const n = (filterDebounced || '').trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
@@ -250,13 +197,17 @@ function StockTakeAreaInventoryScreen() {
 
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
+  const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
 
-  const focusNext = (currentId: string) => {
-    const idx = filtered.findIndex((x) => x.id === currentId);
-    if (idx < 0) return Keyboard.dismiss();
-    const nextUncountedIdx = filtered.findIndex((x, i) => i > idx && !countedInThisCycle(x));
-    const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : (idx + 1 < filtered.length ? idx + 1 : -1);
-    if (targetIdx === -1) return Keyboard.dismiss();
+  const focusNext = (currentId?: string) => {
+    let startIdx = 0;
+    if (currentId) {
+      const idx = filtered.findIndex((x) => x.id === currentId);
+      startIdx = idx >= 0 ? idx : 0;
+    }
+    const nextUncountedIdx = filtered.findIndex((x, i) => i >= startIdx && !countedInThisCycle(x));
+    const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : -1;
+    if (targetIdx === -1) { Keyboard.dismiss(); return; }
     const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
@@ -277,8 +228,30 @@ function StockTakeAreaInventoryScreen() {
     return abs >= DELTA_ABS_THRESHOLD && ratio >= DELTA_RATIO_THRESHOLD;
   };
 
+  const [undoToast, setUndoToast] = useState<{visible: boolean; itemId: string|null; prevQty: number|null; prevAt: any|null; timer?: any}>({visible:false,itemId:null,prevQty:null,prevAt:null});
+  const showUndo = (itemId: string, prevQty: number|null, prevAt: any|null) => {
+    if (undoToast.timer) clearTimeout(undoToast.timer);
+    const t = setTimeout(() => setUndoToast({visible:false,itemId:null,prevQty:null,prevAt:null}), 10000);
+    setUndoToast({ visible:true, itemId, prevQty, prevAt, timer: t });
+  };
+  const undoLast = async () => {
+    const { itemId, prevQty, prevAt, timer } = undoToast;
+    if (timer) clearTimeout(timer);
+    setUndoToast({visible:false,itemId:null,prevQty:null,prevAt:null});
+    if (!itemId) return;
+    try {
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',itemId), {
+        lastCount: prevQty ?? null,
+        lastCountAt: prevAt ?? serverTimestamp()
+      });
+      hapticSuccess();
+    } catch (e:any) { Alert.alert('Undo failed', e?.message ?? String(e)); }
+  };
+
   const saveCount = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
+    const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
+    const prevAt = item.lastCountAt ?? null;
 
     const doWrite = async (qty: number) => {
       try {
@@ -287,6 +260,7 @@ function StockTakeAreaInventoryScreen() {
           { lastCount: qty, lastCountAt: serverTimestamp() });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
         hapticSuccess();
+        showUndo(item.id, prevQty, prevAt);
         focusNext(item.id);
       } catch (e:any){ Alert.alert('Could not save count', e?.message ?? String(e)); }
     };
@@ -317,6 +291,9 @@ function StockTakeAreaInventoryScreen() {
     if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity');
 
     const qty = parseFloat(typed);
+    const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
+    const prevAt = item.lastCountAt ?? null;
+
     const doApprove = async () => {
       try {
         await ensureAreaStarted();
@@ -328,6 +305,7 @@ function StockTakeAreaInventoryScreen() {
         });
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
         hapticSuccess();
+        showUndo(item.id, prevQty, prevAt);
         focusNext(item.id);
         Alert.alert('Saved', 'Count updated and audit logged.');
       } catch (e: any) {
@@ -340,9 +318,7 @@ function StockTakeAreaInventoryScreen() {
         { text: 'Cancel', style: 'cancel' },
         { text: 'Approve', style: 'destructive', onPress: throttleAction(doApprove) }
       ]);
-    } else {
-      await doApprove();
-    }
+    } else { await doApprove(); }
   };
 
   const addQuickItem = async () => {
@@ -350,17 +326,12 @@ function StockTakeAreaInventoryScreen() {
     if (!nm) return Alert.alert('Name required');
     try {
       await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), {
-        name: nm,
-        unit: addingUnit || null,
-        supplierName: addingSupplier || null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        name: nm, unit: addingUnit || null, supplierName: addingSupplier || null,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp()
       });
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); return; }
-    setAddingName('');
-    await rememberQuickAdd(addingUnit, addingSupplier);
-    nameInputRef.current?.blur(); Keyboard.dismiss();
-    hapticSuccess();
+    setAddingName(''); await rememberQuickAdd(addingUnit, addingSupplier);
+    nameInputRef.current?.blur(); Keyboard.dismiss(); hapticSuccess();
   };
 
   const removeItem = async (itemId: string) => {
@@ -410,8 +381,7 @@ function StockTakeAreaInventoryScreen() {
           ));
         }
         await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { completedAt: serverTimestamp() });
-        await maybeFinalizeDepartment();
-        nav.goBack();
+        await maybeFinalizeDepartment(); nav.goBack();
       } catch (e: any) { Alert.alert('Could not complete area', e?.message ?? String(e)); }
     };
 
@@ -420,12 +390,9 @@ function StockTakeAreaInventoryScreen() {
         ? 'No items have been counted yet this cycle. Continue and save all as 0?'
         : `Not all items have a count for this cycle. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
       Alert.alert('Incomplete counts', msg, [
-        { text: 'Go back', style: 'cancel' },
-        { text: 'Continue', onPress: perform }
+        { text: 'Go back', style: 'cancel' }, { text: 'Continue', onPress: perform }
       ]);
-    } else {
-      await perform();
-    }
+    } else { await perform(); }
   };
 
   const initAllZeros = async () => {
@@ -443,11 +410,8 @@ function StockTakeAreaInventoryScreen() {
           updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
             { lastCount: 0, lastCountAt: serverTimestamp() })
         ));
-        hapticSuccess();
-        Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
-      } catch (e:any) {
-        Alert.alert('Failed', e?.message ?? String(e));
-      }
+        hapticSuccess(); Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
+      } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
     };
 
     Alert.alert('Initialise with zeros', msg, [
@@ -463,57 +427,52 @@ function StockTakeAreaInventoryScreen() {
   const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
   const onSubmitArea = throttleAction(completeArea);
 
-  // History modal loaders
   const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
-    setHistFor(item);
-    setHistLoading(true);
-    try {
-      const rows = await fetchRecentItemAudits(venueId, item.id, 10);
-      setHistRows(rows);
-    } catch {
-      setHistRows([]);
-    } finally {
-      setHistLoading(false);
-    }
+    setHistFor(item); setHistLoading(true);
+    try { const rows = await fetchRecentItemAudits(venueId, item.id, 10); setHistRows(rows); }
+    catch { setHistRows([]); }
+    finally { setHistLoading(false); }
   });
   const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
 
-  const openEditItem = (item: Item) => {
+  const openEditItem = (item: Item, focusPar?: boolean) => {
     setEditFor(item);
     setEditName(item.name || '');
     setEditUnit(item.unit || '');
     setEditSupplier(item.supplierName || '');
+    setEditPar(typeof item.parLevel === 'number' ? String(item.parLevel) : '');
+    setEditFocusPar(!!focusPar);
   };
+  useEffect(() => {
+    if (editFor && editFocusPar) {
+      setTimeout(() => editParRef.current?.focus?.(), 100);
+      setEditFocusPar(false);
+    }
+  }, [editFor, editFocusPar]);
+
   const saveEditItem = async () => {
     if (!editFor) return;
+    const par = (editPar ?? '').trim();
+    const parNum = par === '' ? null : Number(par);
+    if (par !== '' && !/^\d+(\.\d+)?$/.test(par)) return Alert.alert('Invalid par', 'Par level must be a number');
     try {
       await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',editFor.id), {
         name: (editName || '').trim() || editFor.name || '',
         unit: (editUnit || '').trim() || null,
         supplierName: (editSupplier || '').trim() || null,
+        parLevel: parNum,
         updatedAt: serverTimestamp(),
       });
-      setEditFor(null);
-      hapticSuccess();
-    } catch (e:any) {
-      Alert.alert('Update failed', e?.message ?? String(e));
-    }
+      setEditFor(null); hapticSuccess();
+    } catch (e:any) { Alert.alert('Update failed', e?.message ?? String(e)); }
   };
 
-  // CSV helpers (already present)
   const toCsv = (rows: Array<Record<string, any>>) => {
     if (!rows.length) return '';
     const headers = Object.keys(rows[0]);
-    const safe = (v: any) => {
-      if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""');
-      return `"${s}"`;
-    };
-    return [
-      headers.map(safe).join(','),
-      ...rows.map((r) => headers.map((h) => safe(r[h])).join(',')),
-    ].join('\n');
+    const safe = (v: any) => { if (v === null || v === undefined) return ''; const s = String(v).replace(/"/g, '""'); return `"${s}"`; };
+    return [ headers.map(safe).join(','), ...rows.map((r) => headers.map((h) => safe(r[h])).join(',')) ].join('\n');
   };
 
   const exportCsvAll = throttleAction(async () => {
@@ -537,12 +496,8 @@ function StockTakeAreaInventoryScreen() {
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
-      } else {
-        Alert.alert('Exported', `Saved to cache: ${fname}`);
-      }
-    } catch (e:any) {
-      Alert.alert('Export failed', e?.message ?? String(e));
-    }
+      } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
+    } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
   });
 
   const exportCsvChangesOnly = throttleAction(async () => {
@@ -551,8 +506,7 @@ function StockTakeAreaInventoryScreen() {
       const changed = filtered.filter(countedInThisCycle);
       if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
       const rows = changed.map((it) => ({
-        name: it.name || '',
-        unit: it.unit || '',
+        name: it.name || '', unit: it.unit || '',
         newCount: typeof it.lastCount === 'number' ? it.lastCount : '',
         expected: deriveExpected(it) ?? '',
       }));
@@ -563,15 +517,10 @@ function StockTakeAreaInventoryScreen() {
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — changes only' });
-      } else {
-        Alert.alert('Exported', `Saved to cache: ${fname}`);
-      }
-    } catch (e:any) {
-      Alert.alert('Export failed', e?.message ?? String(e));
-    }
+      } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
+    } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
   });
 
-  // ---------- Row ----------
   const Row = ({ item }: { item: Item }) => {
     const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
@@ -580,6 +529,17 @@ function StockTakeAreaInventoryScreen() {
     const locked = countedNow && !isManager;
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
     const lowStock = isLow(item);
+
+    const LowBadge = lowStock ? (
+      <TouchableOpacity
+        onPress={() => openEditItem(item, true)}
+        style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
+      >
+        <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
+          Low: {item.lastCount ?? 0} &lt; {item.parLevel}
+        </Text>
+      </TouchableOpacity>
+    ) : null;
 
     if (locked && compactCounted) {
       return (
@@ -595,13 +555,7 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
                 {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
                 {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-                {lowStock ? (
-                  <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
-                    <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-                      Low: {item.lastCount ?? 0} &lt; {item.parLevel}
-                    </Text>
-                  </View>
-                ) : null}
+                {LowBadge}
               </View>
             </View>
             {areaStarted && showExpected && expectedStr ? (
@@ -629,13 +583,7 @@ function StockTakeAreaInventoryScreen() {
               </Text>
               {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
               {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-              {lowStock ? (
-                <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}>
-                  <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-                    Low: {item.lastCount ?? 0} &lt; {item.parLevel}
-                  </Text>
-                </View>
-              ) : null}
+              {LowBadge}
             </View>
           </View>
           {areaStarted && showExpected && expectedStr ? (
@@ -710,7 +658,7 @@ function StockTakeAreaInventoryScreen() {
             <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
               <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>
-                  {countedCount}/{items.length} counted • {lowCount} low
+                  {countedCount}/{items.length} • {lowCount} low • {progressPct}%
                 </Text>
               </View>
               <TouchableOpacity onPress={() => setMoreOpen(true)}
@@ -778,7 +726,6 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          {/* Quick add */}
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TextInput
@@ -809,7 +756,6 @@ function StockTakeAreaInventoryScreen() {
             </View>
           </View>
 
-          {/* Compact counted toggle */}
           <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4 }}>
             <TouchableOpacity
               onPress={()=>setCompactCounted((v)=>!v)}
@@ -974,7 +920,7 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Edit item modal */}
+      {/* Edit item modal (manager-only par field) */}
       <Modal visible={!!editFor} animationType="slide" transparent onRequestClose={()=>setEditFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
@@ -995,6 +941,20 @@ function StockTakeAreaInventoryScreen() {
                 <TextInput value={editSupplier} onChangeText={setEditSupplier} placeholder="Supplier"
                   style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ccc', borderRadius:10 }} />
               </View>
+              {isManager ? (
+                <View>
+                  <Text style={{ fontWeight:'700', marginBottom:4 }}>Par level</Text>
+                  <TextInput
+                    ref={editParRef}
+                    value={editPar}
+                    onChangeText={setEditPar}
+                    placeholder="e.g. 24"
+                    keyboardType="number-pad"
+                    inputMode="decimal"
+                    style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ccc', borderRadius:10 }}
+                  />
+                </View>
+              ) : null}
             </View>
 
             <View style={{ flexDirection:'row', gap:10, marginTop:14 }}>
@@ -1020,7 +980,6 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsvChangesOnly(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (changes only)</Text>
             </TouchableOpacity>
-            {/* NEW: Only uncounted toggle */}
             <TouchableOpacity onPress={()=>{ const nv = !onlyUncounted; setOnlyUncounted(nv); rememberOnlyUnc(nv); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyUncounted ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: onlyUncounted ? '#1D4ED8' : '#111827' }}>{onlyUncounted ? '✓ ' : ''}Show only uncounted</Text>
             </TouchableOpacity>
@@ -1041,6 +1000,25 @@ function StockTakeAreaInventoryScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Bottom snackbar */}
+      {undoToast.visible ? (
+        <View style={{ position:'absolute', left:12, right:12, bottom:76, backgroundColor:'#111827', paddingVertical:10, paddingHorizontal:12, borderRadius:12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+          <Text style={{ color:'white', fontWeight:'800' }}>Saved</Text>
+          <TouchableOpacity onPress={undoLast} style={{ paddingVertical:4, paddingHorizontal:10, backgroundColor:'#374151', borderRadius:8 }}>
+            <Text style={{ color:'#93C5FD', fontWeight:'900' }}>Undo</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* Next Uncounted FAB */}
+      <TouchableOpacity
+        onPress={() => focusNext()}
+        style={{ position:'absolute', right:16, bottom:16, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
+        activeOpacity={0.9}
+      >
+        <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
