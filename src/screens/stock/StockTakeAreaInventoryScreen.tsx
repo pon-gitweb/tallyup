@@ -39,6 +39,7 @@ type Item = {
   unit?: string; supplierId?: string; supplierName?: string;
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
+  flagRecount?: boolean;
 };
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
 type MemberDoc = { role?: string };
@@ -74,24 +75,30 @@ function StockTakeAreaInventoryScreen() {
   const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
   const [onlyUncounted, setOnlyUncounted] = useState(false);
   const [onlyLow, setOnlyLow] = useState(false);
-  const [showSteppers, setShowSteppers] = useState(false); // optional steppers
+  const [showSteppers, setShowSteppers] = useState(false);
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
+
+  // More menu
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Persist/restore view prefs
   useEffect(() => { (async () => {
     if (!AS) return;
     try {
-      const [exp, comp, sort, unc, stp] = await Promise.all([
+      const [exp, comp, sort, unc, stp, flg] = await Promise.all([
         AS.getItem(prefKey('showExpected')),
         AS.getItem(prefKey('compactCounted')),
         AS.getItem(prefKey('sortUncountedFirst')),
         AS.getItem(prefKey('onlyUncounted')),
         AS.getItem(prefKey('showSteppers')),
+        AS.getItem(prefKey('onlyFlagged')),
       ]);
       if (exp != null) setShowExpected(exp === '1');
       if (comp != null) setCompactCounted(comp === '1');
       if (sort != null) setSortUncountedFirst(sort === '1');
       if (unc != null) setOnlyUncounted(unc === '1');
       if (stp != null) setShowSteppers(stp === '1');
+      if (flg != null) setOnlyFlagged(flg === '1');
     } catch {}
   })(); }, [venueId, areaId]);
   useEffect(() => { if (!AS) return; AS.setItem(prefKey('showExpected'), showExpected ? '1' : '0').catch(()=>{}); }, [showExpected, venueId, areaId]);
@@ -99,6 +106,7 @@ function StockTakeAreaInventoryScreen() {
   useEffect(() => { if (!AS) return; AS.setItem(prefKey('sortUncountedFirst'), sortUncountedFirst ? '1' : '0').catch(()=>{}); }, [sortUncountedFirst, venueId, areaId]);
   useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyUncounted'), onlyUncounted ? '1' : '0').catch(()=>{}); }, [onlyUncounted, venueId, areaId]);
   useEffect(() => { if (!AS) return; AS.setItem(prefKey('showSteppers'), showSteppers ? '1' : '0').catch(()=>{}); }, [showSteppers, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyFlagged'), onlyFlagged ? '1' : '0').catch(()=>{}); }, [onlyFlagged, venueId, areaId]);
 
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
@@ -117,18 +125,19 @@ function StockTakeAreaInventoryScreen() {
   const [histLoading, setHistLoading] = useState(false);
 
   const [menuFor, setMenuFor] = useState<Item | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
 
   const [editFor, setEditFor] = useState<Item | null>(null);
   const [editName, setEditName] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [editSupplier, setEditSupplier] = useState('');
-  const [editPar, setEditPar] = useState<string>(''); // manager-only
+  const [editPar, setEditPar] = useState<string>('');
   const [editFocusPar, setEditFocusPar] = useState(false);
   const editParRef = useRef<TextInput>(null);
 
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
+
+  const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
 
   const [offline, setOffline] = useState(false);
   useEffect(() => {
@@ -188,7 +197,7 @@ function StockTakeAreaInventoryScreen() {
     it.lastCount < it.parLevel;
 
   const deriveExpected = (it: Item): number | null => {
-    if (!areaStarted) return null; // hide expected before start
+    if (!areaStarted) return null;
     if (typeof it.expectedQty === 'number') return it.expectedQty;
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
     const incoming = typeof it.incomingQty === 'number' ? it.incomingQty : 0;
@@ -207,6 +216,7 @@ function StockTakeAreaInventoryScreen() {
     let rows = filteredBase;
     if (onlyLow) rows = rows.filter(isLow);
     if (onlyUncounted) rows = rows.filter((it) => !countedInThisCycle(it));
+    if (onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
     if (sortUncountedFirst) {
       rows = rows.slice().sort((a, b) => {
         const au = countedInThisCycle(a) ? 1 : 0;
@@ -217,10 +227,11 @@ function StockTakeAreaInventoryScreen() {
       });
     }
     return rows;
-  }, [filteredBase, onlyLow, onlyUncounted, sortUncountedFirst, startedAtMs]);
+  }, [filteredBase, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs]);
 
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
+  const flaggedCount = items.filter((it)=>!!it.flagRecount).length;
   const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
 
   const focusNext = (currentId?: string) => {
@@ -231,7 +242,7 @@ function StockTakeAreaInventoryScreen() {
     }
     const nextUncountedIdx = filtered.findIndex((x, i) => i >= startIdx && !countedInThisCycle(x));
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : -1;
-    if (targetIdx === -1) { Keyboard.dismiss(); return; }
+    if (targetIdx === -1) { Keyboard.dismiss(); setFocusedInputId(null); return; }
     const nextId = filtered[targetIdx].id;
     try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
@@ -394,15 +405,17 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
-  // Pre-Submit Review modal
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
   const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
+  const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
   const openReview = () => {
     const counted = items.filter(countedInThisCycle);
     const missing = items.filter((it) => !countedInThisCycle(it));
+    const flagged = items.filter((it) => !!it.flagRecount);
     setReviewCounted(counted);
     setReviewMissing(missing);
+    setReviewFlagged(flagged);
     setReviewOpen(true);
   };
   const jumpToItem = (id: string) => {
@@ -529,6 +542,7 @@ function StockTakeAreaInventoryScreen() {
           expectedQty: expected ?? '',
           low: isLow(it) ? 'yes' : 'no',
           supplier: it.supplierName || '',
+          flagged: it.flagRecount ? 'yes' : 'no',
         };
       });
       const csv = toCsv(rows);
@@ -552,6 +566,7 @@ function StockTakeAreaInventoryScreen() {
         name: it.name || '', unit: it.unit || '',
         newCount: typeof it.lastCount === 'number' ? it.lastCount : '',
         expected: deriveExpected(it) ?? '',
+        flagged: it.flagRecount ? 'yes' : 'no',
       }));
       const csv = toCsv(rows);
       if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
@@ -566,6 +581,17 @@ function StockTakeAreaInventoryScreen() {
 
   const clampNonNegative = (n:number) => (isNaN(n) ? 0 : Math.max(0, n));
 
+  const toggleFlagRecount = async (item: Item) => {
+    try {
+      await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id), {
+        flagRecount: !item.flagRecount,
+        updatedAt: serverTimestamp(),
+      });
+      hapticSuccess();
+    } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
+  };
+
+  // Row
   const Row = ({ item }: { item: Item }) => {
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -574,11 +600,8 @@ function StockTakeAreaInventoryScreen() {
     const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
     const lowStock = isLow(item);
 
-    // -------- FIXED STEPPER LOGIC --------
-    // Single interval for auto-repeat; direction kept in ref; always cleared.
     const repeatTimerRef = useRef<any>(null);
     const repeatDirRef = useRef<1 | -1 | 0>(0);
-
     const adjustTyped = (delta: number) => {
       setLocalQty(prev => {
         const raw = (prev[item.id] ?? '').trim();
@@ -588,29 +611,22 @@ function StockTakeAreaInventoryScreen() {
         return { ...prev, [item.id]: String(v) };
       });
     };
-
     const startRepeat = (delta: 1 | -1) => {
       stopRepeat();
       repeatDirRef.current = delta;
-      // small delay before repeat to avoid double-step with onPress
-      repeatTimerRef.current = setInterval(() => {
-        adjustTyped(repeatDirRef.current);
-      }, 120);
+      repeatTimerRef.current = setInterval(() => { adjustTyped(repeatDirRef.current); }, 120);
     };
-
     const stopRepeat = () => {
-      if (repeatTimerRef.current) {
-        clearInterval(repeatTimerRef.current);
-        repeatTimerRef.current = null;
-      }
+      if (repeatTimerRef.current) { clearInterval(repeatTimerRef.current); repeatTimerRef.current = null; }
       repeatDirRef.current = 0;
     };
+    useEffect(() => () => stopRepeat(), []);
 
-    useEffect(() => {
-      // cleanup if row unmounts while repeating
-      return () => stopRepeat();
-    }, []);
-    // ------------------------------------
+    const FlagBadge = item.flagRecount ? (
+      <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEF3C7' }}>
+        <Text style={{ color:'#92400E', fontWeight:'800', fontSize:11 }}>Recount</Text>
+      </View>
+    ) : null;
 
     const LowBadge = lowStock ? (
       <TouchableOpacity
@@ -633,10 +649,11 @@ function StockTakeAreaInventoryScreen() {
           <View style={{ flexDirection:'row', alignItems:'center' }}>
             <View style={{ flex:1 }}>
               <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                 <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
                 {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
                 {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+                {FlagBadge}
                 {LowBadge}
               </View>
             </View>
@@ -665,6 +682,7 @@ function StockTakeAreaInventoryScreen() {
               </Text>
               {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
               {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+              {FlagBadge}
               {LowBadge}
             </View>
           </View>
@@ -676,7 +694,6 @@ function StockTakeAreaInventoryScreen() {
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* Steppers: optional, only when not locked */}
           {showSteppers && !locked ? (
             <TouchableOpacity
               onPress={() => adjustTyped(-1)}
@@ -699,6 +716,8 @@ function StockTakeAreaInventoryScreen() {
             returnKeyType="done"
             blurOnSubmit={false}
             editable={!locked}
+            onFocus={()=>setFocusedInputId(item.id)}
+            onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
             onSubmitEditing={()=>makeSave(item)()}
             style={{
               flexGrow: 1, minWidth: 160,
@@ -763,12 +782,12 @@ function StockTakeAreaInventoryScreen() {
             <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
               <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>
-                  {countedCount}/{items.length} • {lowCount} low • {progressPct}%
+                  {countedCount}/{items.length} • {lowCount} low • {flaggedCount} flag • {progressPct}%
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setMoreOpen(true)}
-                style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#EFF6FF' }}>
-                <Text style={{ color:'#1D4ED8', fontWeight:'800' }}>⋯ More</Text>
+              {/* ⋯ More button */}
+              <TouchableOpacity onPress={()=>setMoreOpen(true)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#E5E7EB' }}>
+                <Text style={{ fontWeight:'900' }}>⋯</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -792,7 +811,7 @@ function StockTakeAreaInventoryScreen() {
             </View>
           ) : null}
 
-          <View style={{ flexDirection: 'row', gap: 8, alignItems:'center' }}>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems:'center', flexWrap:'wrap' }}>
             <View style={{ flex: 1, position: 'relative' }}>
               <TextInput
                 value={filter}
@@ -814,23 +833,35 @@ function StockTakeAreaInventoryScreen() {
             </TouchableOpacity>
           </View>
 
-          {showLowChip ? (
-            <View style={{ flexDirection:'row', gap:8 }}>
-              <TouchableOpacity
-                onPress={() => setOnlyLow(false)}
-                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
-              >
-                <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setOnlyLow(true)}
-                style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
-              >
-                <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
+          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
+            {showLowChip ? (
+              <>
+                <TouchableOpacity
+                  onPress={() => setOnlyLow(false)}
+                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
+                >
+                  <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setOnlyLow(true)}
+                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
+                >
+                  <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
 
+            <TouchableOpacity
+              onPress={() => setOnlyFlagged(v=>!v)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}
+            >
+              <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>
+                {onlyFlagged ? '✓ Recount only' : 'Recount only'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Quick add */}
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TextInput
@@ -922,6 +953,7 @@ function StockTakeAreaInventoryScreen() {
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
+        keyboardShouldPersistTaps="handled"
       />
 
       {/* Request Adjustment Modal */}
@@ -994,7 +1026,7 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Long-press action sheet (includes "Use Expected") */}
+      {/* Long-press action sheet */}
       <Modal visible={!!menuFor} animationType="fade" transparent onRequestClose={()=>setMenuFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
@@ -1016,6 +1048,12 @@ function StockTakeAreaInventoryScreen() {
             >
               <Text style={{ fontWeight:'800', color: deriveExpected(menuFor || ({} as Item)) == null ? '#9CA3AF' : '#0A5FFF' }}>
                 Use Expected
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); setTimeout(()=>toggleFlagRecount(it), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEF3C7', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#92400E' }}>
+                {menuFor?.flagRecount ? 'Unflag “Recount”' : 'Flag for recount'}
               </Text>
             </TouchableOpacity>
 
@@ -1051,13 +1089,57 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Bottom snackbar */}
-      {/* unchanged; shows Undo after save/approve */}
+      {/* Bottom snackbar — Undo */}
+      {undoToast.visible ? (
+        <View style={{ position:'absolute', left:12, right:12, bottom:16, backgroundColor:'#111827', borderRadius:12, padding:12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+          <Text style={{ color:'white', fontWeight:'700' }}>Saved</Text>
+          <TouchableOpacity onPress={undoLast} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#374151', borderRadius:8 }}>
+            <Text style={{ color:'#93C5FD', fontWeight:'800' }}>Undo</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* Keyboard Accessory */}
+      {showSteppers && focusedInputId ? (
+        <View style={{ position:'absolute', left:12, right:12, bottom:16, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
+          <TouchableOpacity onPress={() => {
+            setLocalQty(prev => {
+              const raw = (prev[focusedInputId] ?? '').trim();
+              let v = raw === '' ? 0 : parseFloat(raw);
+              if (isNaN(v)) v = 0;
+              v = clampNonNegative(v - 1);
+              return { ...prev, [focusedInputId]: String(v) };
+            });
+          }} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFFFFF', borderWidth:1, borderColor:'#E5E7EB' }}>
+            <Text style={{ fontWeight:'900' }}>−1</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => {
+            setLocalQty(prev => {
+              const raw = (prev[focusedInputId] ?? '').trim();
+              let v = raw === '' ? 0 : parseFloat(raw);
+              if (isNaN(v)) v = 0;
+              v = clampNonNegative(v + 1);
+              return { ...prev, [focusedInputId]: String(v) };
+            });
+          }} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFFFFF', borderWidth:1, borderColor:'#E5E7EB' }}>
+            <Text style={{ fontWeight:'900' }}>+1</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setLocalQty(prev => ({ ...prev, [focusedInputId]: '' }))} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFFFFF', borderWidth:1, borderColor:'#E5E7EB' }}>
+            <Text style={{ fontWeight:'800' }}>Clear</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => focusNext(focusedInputId)} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#0A84FF' }}>
+            <Text style={{ fontWeight:'900', color:'white' }}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* Next Uncounted FAB */}
       <TouchableOpacity
         onPress={() => focusNext()}
-        style={{ position:'absolute', right:16, bottom:16, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
+        style={{ position:'absolute', right:16, bottom: showSteppers && focusedInputId ? 72 : 16, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
         activeOpacity={0.9}
       >
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
@@ -1102,6 +1184,18 @@ function StockTakeAreaInventoryScreen() {
                   </>
                 )}
               </View>
+
+              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
+                <Text style={{ fontWeight:'800', marginBottom:6 }}>Flagged for recount ({reviewFlagged.length})</Text>
+                {reviewFlagged.length === 0 ? (
+                  <Text style={{ color:'#6B7280' }}>No items are flagged.</Text>
+                ) : reviewFlagged.map((it) => (
+                  <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                    <Text style={{ fontWeight:'700' }}>{it.name}</Text>
+                    <Text style={{ color:'#92400E' }}>Marked “Recount”</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </ScrollView>
 
             <View style={{ flexDirection:'row', gap:10, marginTop:12 }}>
@@ -1110,6 +1204,53 @@ function StockTakeAreaInventoryScreen() {
               </TouchableOpacity>
               <TouchableOpacity onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }} style={{ padding:12, borderRadius:10, backgroundColor:'#16A34A', flex:1 }}>
                 <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Submit now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ⋯ More action sheet */}
+      <Modal visible={moreOpen} animationType="fade" transparent onRequestClose={()=>setMoreOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
+          <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
+
+            <TouchableOpacity onPress={()=>{ setShowSteppers(v=>!v); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#E0F2FE', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#0369A1' }}>
+                {showSteppers ? '✓ Steppers & keyboard bar (on)' : 'Enable steppers & keyboard bar'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — current view</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={exportCsvChangesOnly} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DBEAFE', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — changes only</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={()=>setCompactCounted(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>
+                {compactCounted ? '✓ Compact counted rows' : 'Compact counted rows'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={()=>setSortUncountedFirst(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>
+                {sortUncountedFirst ? '✓ Sort uncounted first' : 'Sort uncounted first'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={()=>setShowExpected(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F1F8E9', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#14532D' }}>
+                {showExpected ? '✓ Show expected (on)' : 'Show expected (off)'}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+              <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
