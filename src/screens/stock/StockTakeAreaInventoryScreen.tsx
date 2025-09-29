@@ -67,14 +67,45 @@ function StockTakeAreaInventoryScreen() {
   const [filter, setFilter] = useState('');
   const filterDebounced = useDebouncedValue(filter, 200);
 
+  // View prefs (per-area)
+  const prefKey = (k: string) => `view:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}:${k}`;
   const [showExpected, setShowExpected] = useState(true);
-  const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [compactCounted, setCompactCounted] = useState(true);
+  const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
   const [onlyUncounted, setOnlyUncounted] = useState(false);
-  const onlyUncKey = `onlyUncounted:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
-  useEffect(() => { (async () => { if (!AS) return; try { const v = await AS.getItem(onlyUncKey); setOnlyUncounted(v === '1'); } catch {} })(); }, [onlyUncKey]);
-  const rememberOnlyUnc = async (on: boolean) => { if (AS) try { await AS.setItem(onlyUncKey, on ? '1' : '0'); } catch {} };
+  const [onlyLow, setOnlyLow] = useState(false);
 
+  // Persist/restore view prefs
+  useEffect(() => { (async () => {
+    if (!AS) return;
+    try {
+      const [exp, comp, sort, unc] = await Promise.all([
+        AS.getItem(prefKey('showExpected')),
+        AS.getItem(prefKey('compactCounted')),
+        AS.getItem(prefKey('sortUncountedFirst')),
+        AS.getItem(prefKey('onlyUncounted')),
+      ]);
+      if (exp != null) setShowExpected(exp === '1');
+      if (comp != null) setCompactCounted(comp === '1');
+      if (sort != null) setSortUncountedFirst(sort === '1');
+      if (unc != null) setOnlyUncounted(unc === '1');
+    } catch {}
+  })(); }, [venueId, areaId]);
+
+  useEffect(() => { if (!AS) return;
+    AS.setItem(prefKey('showExpected'), showExpected ? '1' : '0').catch(()=>{});
+  }, [showExpected, venueId, areaId]);
+  useEffect(() => { if (!AS) return;
+    AS.setItem(prefKey('compactCounted'), compactCounted ? '1' : '0').catch(()=>{});
+  }, [compactCounted, venueId, areaId]);
+  useEffect(() => { if (!AS) return;
+    AS.setItem(prefKey('sortUncountedFirst'), sortUncountedFirst ? '1' : '0').catch(()=>{});
+  }, [sortUncountedFirst, venueId, areaId]);
+  useEffect(() => { if (!AS) return;
+    AS.setItem(prefKey('onlyUncounted'), onlyUncounted ? '1' : '0').catch(()=>{});
+  }, [onlyUncounted, venueId, areaId]);
+
+  const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
@@ -101,12 +132,9 @@ function StockTakeAreaInventoryScreen() {
   const [editFocusPar, setEditFocusPar] = useState(false);
   const editParRef = useRef<TextInput>(null);
 
-  const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
-
   const inputRefs = useRef<Record<string, TextInput | null>>({});
   const listRef = useRef<FlatList>(null);
 
-  const [onlyLow, setOnlyLow] = useState(false);
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
@@ -370,6 +398,26 @@ function StockTakeAreaInventoryScreen() {
     } catch {}
   };
 
+  // Pre-Submit Review modal
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
+  const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
+  const openReview = () => {
+    const counted = items.filter(countedInThisCycle);
+    const missing = items.filter((it) => !countedInThisCycle(it));
+    setReviewCounted(counted);
+    setReviewMissing(missing);
+    setReviewOpen(true);
+  };
+  const jumpToItem = (id: string) => {
+    setReviewOpen(false);
+    const idx = filtered.findIndex((x) => x.id === id);
+    if (idx > -1) {
+      try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
+      setTimeout(() => inputRefs.current[id]?.focus?.(), 80);
+    }
+  };
+
   const completeArea = async () => {
     const missing = items.filter((it) => !countedInThisCycle(it));
     const perform = async () => {
@@ -425,7 +473,6 @@ function StockTakeAreaInventoryScreen() {
 
   const makeSave = (item:Item)=>throttleAction(()=>saveCount(item));
   const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
-  const onSubmitArea = throttleAction(completeArea);
 
   const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
@@ -522,7 +569,6 @@ function StockTakeAreaInventoryScreen() {
   });
 
   const Row = ({ item }: { item: Item }) => {
-    const typed = localQty[item.id] ?? '';
     const expectedNum = deriveExpected(item);
     const expectedStr = expectedNum != null ? String(expectedNum) : '';
     const countedNow = countedInThisCycle(item);
@@ -756,13 +802,21 @@ function StockTakeAreaInventoryScreen() {
             </View>
           </View>
 
-          <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4 }}>
+          <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
             <TouchableOpacity
               onPress={()=>setCompactCounted((v)=>!v)}
               style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor: compactCounted ? '#E0F2FE' : '#F3F4F6', borderWidth:1, borderColor: compactCounted ? '#38BDF8' : '#E5E7EB' }}
             >
               <Text style={{ fontWeight:'800', color: compactCounted ? '#0369A1' : '#374151' }}>
                 {compactCounted ? '✓ Compact counted rows' : 'Show inputs on counted rows'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={()=>setSortUncountedFirst(v=>!v)}
+              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor: sortUncountedFirst ? '#DBEAFE' : '#F3F4F6', borderWidth:1, borderColor: sortUncountedFirst ? '#1D4ED8' : '#E5E7EB' }}
+            >
+              <Text style={{ fontWeight:'800', color: sortUncountedFirst ? '#1D4ED8' : '#374151' }}>
+                {sortUncountedFirst ? '✓ Sort uncounted first' : 'Sort A–Z'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -784,9 +838,10 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
+  // Footer: Submit now opens Pre-Submit Review
   const ListFooter = () => (
     <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
-      <TouchableOpacity onPress={onSubmitArea}
+      <TouchableOpacity onPress={openReview}
         style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
         <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
       </TouchableOpacity>
@@ -980,7 +1035,7 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={()=>{ setMoreOpen(false); exportCsvChangesOnly(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Export CSV (changes only)</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ const nv = !onlyUncounted; setOnlyUncounted(nv); rememberOnlyUnc(nv); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyUncounted ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=> setOnlyUncounted(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyUncounted ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: onlyUncounted ? '#1D4ED8' : '#111827' }}>{onlyUncounted ? '✓ ' : ''}Show only uncounted</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=> setOnlyLow(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: onlyLow ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
@@ -989,7 +1044,7 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={()=> setSortUncountedFirst(v => !v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: sortUncountedFirst ? '#DBEAFE' : '#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color: sortUncountedFirst ? '#1D4ED8' : '#111827' }}>{sortUncountedFirst ? '✓ ' : ''}Sort uncounted first</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = countedCount; const uncounted = total - counted; const low = lowCount; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); (async()=>{ const total = items.length; const counted = items.filter(countedInThisCycle).length; const uncounted = total - counted; const low = items.filter(isLow).length; const text = [`TallyUp — ${areaName ?? 'Area'} summary`,`Counted: ${counted}/${total} (${uncounted} remaining)`,`Low stock items: ${low}`].join('\n'); if (Clipboard?.setStringAsync) { await Clipboard.setStringAsync(text); hapticSuccess(); Alert.alert('Copied', 'Summary copied to clipboard.'); } else { Alert.alert('Copy unavailable', 'Clipboard not available.'); } })(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy area summary</Text>
             </TouchableOpacity>
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
@@ -1019,6 +1074,59 @@ function StockTakeAreaInventoryScreen() {
       >
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
       </TouchableOpacity>
+
+      {/* Pre-Submit Review Modal */}
+      <Modal visible={reviewOpen} animationType="slide" transparent onRequestClose={()=>setReviewOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16, maxHeight:'80%' }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Review before submit</Text>
+
+            <ScrollView contentContainerStyle={{ gap:10 }}>
+              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
+                <Text style={{ fontWeight:'800', marginBottom:6 }}>Counted this cycle ({reviewCounted.length})</Text>
+                {reviewCounted.length === 0 ? (
+                  <Text style={{ color:'#6B7280' }}>No items have been counted yet.</Text>
+                ) : reviewCounted.map((it) => (
+                  <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                    <Text style={{ fontWeight:'700' }}>{it.name}</Text>
+                    <Text style={{ color:'#374151' }}>Saved: {typeof it.lastCount === 'number' ? it.lastCount : '—'}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
+                <Text style={{ fontWeight:'800', marginBottom:6 }}>Will be saved as 0</Text>
+                {reviewMissing.length === 0 ? (
+                  <Text style={{ color:'#6B7280' }}>None — all items have been counted.</Text>
+                ) : (
+                  <>
+                    {reviewMissing.slice(0, 3).map((it) => (
+                      <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                        <Text style={{ fontWeight:'700' }}>{it.name}</Text>
+                        <Text style={{ color:'#6B7280' }}>Tap to jump to it</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {reviewMissing.length > 3 ? (
+                      <Text style={{ color:'#6B7280', marginTop:4 }}>
+                        and {reviewMissing.length - 3} more…
+                      </Text>
+                    ) : null}
+                  </>
+                )}
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection:'row', gap:10, marginTop:12 }}>
+              <TouchableOpacity onPress={()=>setReviewOpen(false)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'700' }}>Back to counting</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }} style={{ padding:12, borderRadius:10, backgroundColor:'#16A34A', flex:1 }}>
+                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Submit now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
