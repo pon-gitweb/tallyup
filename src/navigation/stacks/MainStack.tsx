@@ -12,6 +12,9 @@ import SetupWizard from '../../screens/setup/SetupWizard';
 
 import ReportsScreen from '../../screens/reports/ReportsScreen';
 import LastCycleSummaryScreen from '../../screens/reports/LastCycleSummaryScreen';
+import ReportsIndexScreen from "../../screens/reports/ReportsIndexScreen";
+import DepartmentVarianceScreen from "../../screens/reports/DepartmentVarianceScreen";
+import CountActivityScreen from "../../screens/reports/CountActivityScreen";
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
 import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
 
@@ -41,6 +44,9 @@ export default function MainStack() {
 
     { name: 'Reports', component: ReportsScreen, options: { title: 'Reports' } },
     { name: 'LastCycleSummary', component: LastCycleSummaryScreen, options: { title: 'Last Cycle Summary' } },
+    { name: 'ReportsIndex', component: ReportsIndexScreen, options: { title: 'Reports' } },
+    { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
+    { name: 'CountActivity', component: CountActivityScreen, options: { title: 'Count Activity' } },
     { name: 'VarianceSnapshot', component: VarianceSnapshotScreen, options: { title: 'Variance Snapshot' } },
     { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
     { name: 'Budgets', component: BudgetsScreen, options: { title: 'Budgets' } },
