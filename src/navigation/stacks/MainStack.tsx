@@ -47,17 +47,3 @@ export default function MainStack() {
     { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
     { name: 'CountActivity', component: CountActivityScreen, options: { title: 'Count Activity' } },
     { name: 'VarianceSnapshot', component: VarianceSnapshotScreen, options: { title: 'Variance Snapshot' } },
-    { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
-    { name: 'Budgets', component: BudgetsScreen, options: { title: 'Budgets' } },
-    { name: 'Suppliers', component: SuppliersScreen, options: { title: 'Suppliers' } },
-    { name: 'Products', component: ProductsScreen, options: { title: 'Products' } },
-  ] as const;
-
-  return (
-    <Stack.Navigator>
-      {routes.map(r => (
-        <Stack.Screen key={r.name} name={r.name as string} component={r.component as any} options={r.options as any} />
-      ))}
-    </Stack.Navigator>
-  );
-}
