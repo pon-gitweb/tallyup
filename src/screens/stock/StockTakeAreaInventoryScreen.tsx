@@ -1195,7 +1195,9 @@ function StockTakeAreaInventoryScreen() {
             <TouchableOpacity onPress={()=>{ const id = menuFor!.id; setMenuFor(null); removeItem(id); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEE2E2', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#991B1B' }}>Delete item</Text>
             </TouchableOpacity>
-            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+            <TouchableOpacity onPress={() => { try { nav.navigate('ReportsIndex', { venueId, departmentId }); } catch (e) {} }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F8FAFC', marginBottom:8 }}><Text style={{ fontWeight:'800', color:'#111827' }}>Open Reports…</Text></TouchableOpacity>
+
+<View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TouchableOpacity onPress={()=>setMenuFor(null)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
@@ -1434,7 +1436,9 @@ function StockTakeAreaInventoryScreen() {
               </Text>
             </TouchableOpacity>
 
-            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+            <TouchableOpacity onPress={() => { try { nav.navigate('ReportsIndex', { venueId, departmentId }); } catch (e) {} }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F8FAFC', marginBottom:8 }}><Text style={{ fontWeight:'800', color:'#111827' }}>Open Reports…</Text></TouchableOpacity>
+
+<View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
