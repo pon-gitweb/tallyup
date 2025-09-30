@@ -16,7 +16,6 @@ import ReportsIndexScreen from "../../screens/reports/ReportsIndexScreen";
 import DepartmentVarianceScreen from "../../screens/reports/DepartmentVarianceScreen";
 import CountActivityScreen from "../../screens/reports/CountActivityScreen";
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
-import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
 
 const InvoiceScreen = require('../../screens/orders/InvoiceScreen').default;
 const ReceiveOrderScreen = require('../../screens/orders/ReceiveOrderScreen').default;
