@@ -1026,6 +1026,70 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
+      {/* Edit Item Modal (NEW) */}
+      <Modal visible={!!editFor} animationType="slide" transparent onRequestClose={()=>setEditFor(null)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Edit item</Text>
+
+            <View style={{ gap:10 }}>
+              <View>
+                <Text style={{ fontWeight:'600', marginBottom:4 }}>Name</Text>
+                <TextInput
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Item name"
+                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                />
+              </View>
+
+              <View style={{ flexDirection:'row', gap:8 }}>
+                <View style={{ flex:1 }}>
+                  <Text style={{ fontWeight:'600', marginBottom:4 }}>Unit</Text>
+                  <TextInput
+                    value={editUnit}
+                    onChangeText={setEditUnit}
+                    placeholder="e.g. bottles, kg"
+                    style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                  />
+                </View>
+                <View style={{ flex:1 }}>
+                  <Text style={{ fontWeight:'600', marginBottom:4 }}>Supplier</Text>
+                  <TextInput
+                    value={editSupplier}
+                    onChangeText={setEditSupplier}
+                    placeholder="Supplier name"
+                    style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                  />
+                </View>
+              </View>
+
+              <View>
+                <Text style={{ fontWeight:'600', marginBottom:4 }}>Par level</Text>
+                <TextInput
+                  ref={editParRef}
+                  value={editPar}
+                  onChangeText={setEditPar}
+                  placeholder="e.g. 24"
+                  keyboardType="number-pad"
+                  inputMode="decimal"
+                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                />
+              </View>
+            </View>
+
+            <View style={{ flexDirection:'row', gap:10, marginTop:14 }}>
+              <TouchableOpacity onPress={()=>setEditFor(null)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
+                <Text style={{ textAlign:'center', fontWeight:'700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveEditItem} style={{ padding:12, borderRadius:10, backgroundColor:'#0A84FF', flex:1 }}>
+                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Long-press action sheet */}
       <Modal visible={!!menuFor} animationType="fade" transparent onRequestClose={()=>setMenuFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
@@ -1145,11 +1209,14 @@ function StockTakeAreaInventoryScreen() {
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
       </TouchableOpacity>
 
-      {/* Pre-Submit Review Modal */}
+      {/* Pre-Submit Review Modal (polished) */}
       <Modal visible={reviewOpen} animationType="slide" transparent onRequestClose={()=>setReviewOpen(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16, maxHeight:'80%' }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Review before submit</Text>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:4 }}>Review before submit</Text>
+            <Text style={{ color:'#374151', marginBottom:10 }}>
+              {countedCount}/{items.length} counted • {lowCount} low • {flaggedCount} flagged • {progressPct}%
+            </Text>
 
             <ScrollView contentContainerStyle={{ gap:10 }}>
               <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
@@ -1206,6 +1273,12 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Submit now</Text>
               </TouchableOpacity>
             </View>
+
+            {countedCount > 0 ? (
+              <TouchableOpacity onPress={exportCsvChangesOnly} style={{ marginTop:10, padding:10, borderRadius:10, backgroundColor:'#DBEAFE' }}>
+                <Text style={{ textAlign:'center', color:'#1E40AF', fontWeight:'800' }}>Export changes only (CSV)</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </Modal>
