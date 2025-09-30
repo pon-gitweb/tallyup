@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView
+  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
@@ -17,6 +17,7 @@ import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
+import { useDensity } from '../../hooks/useDensity';
 
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
@@ -63,6 +64,22 @@ function StockTakeAreaInventoryScreen() {
 
   const uid = getAuth().currentUser?.uid;
   const [isManager, setIsManager] = useState(false);
+
+  // [PAIR2] global density
+  const { density, setDensity, isCompact } = useDensity();
+  const D = isCompact ? 0.78 : 1;                   // tighten ~22% in compact
+  const dens = <T extends number>(v: T) => Math.round(v * D);
+
+  // Export toast (non-blocking)
+  const [exportToast, setExportToast] = useState<string | null>(null);
+  const showExportToast = (msg = 'Export ready') => {
+    setExportToast(msg);
+    setTimeout(() => setExportToast(null), 1500);
+  };
+
+  // Learn/Info modals
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [learnOpen, setLearnOpen] = useState(false);
 
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState('');
@@ -233,6 +250,16 @@ function StockTakeAreaInventoryScreen() {
   const lowCount = items.filter(isLow).length;
   const flaggedCount = items.filter((it)=>!!it.flagRecount).length;
   const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
+
+  // [PAIR3] compute last activity
+  const lastActivityDate: Date | null = useMemo(() => {
+    let last: Date | null = null;
+    for (const it of items) {
+      const ts = it?.lastCountAt?.toDate ? it.lastCountAt.toDate() : (it?.lastCountAt?._seconds ? new Date(it.lastCountAt._seconds * 1000) : null);
+      if (ts && (!last || ts > last)) last = ts;
+    }
+    return last;
+  }, [items]);
 
   const focusNext = (currentId?: string) => {
     let startIdx = 0;
@@ -533,6 +560,7 @@ function StockTakeAreaInventoryScreen() {
 
   const exportCsvAll = throttleAction(async () => {
     try {
+      showExportToast('Export ready'); // non-blocking info
       const rows = filtered.map((it) => {
         const expected = deriveExpected(it);
         return {
@@ -552,13 +580,14 @@ function StockTakeAreaInventoryScreen() {
       const path = FS.cacheDirectory + fname;
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV' });
+        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Current view' });
       } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
   });
 
   const exportCsvChangesOnly = throttleAction(async () => {
     try {
+      showExportToast('Export ready'); // non-blocking info
       if (!areaStarted) { Alert.alert('Nothing to export', 'This area has not been started yet.'); return; }
       const changed = filtered.filter(countedInThisCycle);
       if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
@@ -574,7 +603,7 @@ function StockTakeAreaInventoryScreen() {
       const path = FS.cacheDirectory + fname;
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — changes only' });
+        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Changes only' });
       } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
   });
@@ -644,11 +673,11 @@ function StockTakeAreaInventoryScreen() {
         <TouchableOpacity
           activeOpacity={0.9}
           onLongPress={() => setMenuFor(item)}
-          style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
+          style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
         >
           <View style={{ flexDirection:'row', alignItems:'center' }}>
             <View style={{ flex:1 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.name}</Text>
+              <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '700' }}>{item.name}</Text>
               <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                 <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
                 {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
@@ -671,11 +700,11 @@ function StockTakeAreaInventoryScreen() {
       <TouchableOpacity
         activeOpacity={0.9}
         onLongPress={() => setMenuFor(item)}
-        style={{ paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
+        style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 16, fontWeight: '600' }}>{item.name}</Text>
+            <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
               <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
                 {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
@@ -721,9 +750,11 @@ function StockTakeAreaInventoryScreen() {
             onSubmitEditing={()=>makeSave(item)()}
             style={{
               flexGrow: 1, minWidth: 160,
-              paddingVertical: 8, paddingHorizontal: 12,
+              paddingVertical: Math.max(8, dens(8)), paddingHorizontal: dens(12),
               borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
-              backgroundColor: locked ? '#f7f7f7' : '#fff'
+              height: Math.max(40, dens(40)),
+              backgroundColor: locked ? '#f7f7f7' : '#fff',
+              fontSize: isCompact ? 14 : 15
             }}
           />
 
@@ -774,11 +805,27 @@ function StockTakeAreaInventoryScreen() {
     const anyLow = items.some((it) => isLow(it));
     const showLowChip = anyPar && anyLow;
 
+    // started/last-activity caption formatter
+    const startedAt = areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null);
+    const fmt = (d: Date | null) => d ? d.toLocaleString() : '—';
+
     return (
-      <View style={{ backgroundColor: 'white', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-        <View style={{ padding: 12, gap: 8 }}>
+      <View style={{ backgroundColor: 'white', paddingBottom: dens(8), borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+        <View style={{ padding: dens(12), gap: 8 }}>
           <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
-            <Text style={{ fontSize: 18, fontWeight: '800' }}>{areaName ?? 'Area Inventory'}</Text>
+            <View style={{ flexShrink: 1 }}>
+              <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight: '800' }} numberOfLines={1}>{areaName ?? 'Area Inventory'}</Text>
+              {/* [PAIR3] Started/Last activity caption with info button */}
+              <View style={{ flexDirection:'row', alignItems:'center', marginTop: 4 }}>
+                <Text style={{ opacity: 0.7, fontSize: 12 }} numberOfLines={1}>
+                  Started at: {fmt(startedAt)} • Last activity: {fmt(lastActivityDate)}
+                </Text>
+                <TouchableOpacity onPress={() => setInfoOpen(true)} style={{ marginLeft: 8, padding: 4 }}>
+                  <Text style={{ fontSize: 12 }}>ℹ️</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
               <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>
@@ -817,7 +864,7 @@ function StockTakeAreaInventoryScreen() {
                 value={filter}
                 onChangeText={setFilter}
                 placeholder="Search items…"
-                style={{ paddingVertical: 8, paddingHorizontal: filter ? 34 : 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+                style={{ paddingVertical: dens(8), paddingHorizontal: filter ? 34 : dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
               />
               {filter ? (
                 <TouchableOpacity
@@ -828,7 +875,7 @@ function StockTakeAreaInventoryScreen() {
                 </TouchableOpacity>
               ) : null}
             </View>
-            <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F1F8E9' }}>
+            <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}>
               <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
             </TouchableOpacity>
           </View>
@@ -869,7 +916,7 @@ function StockTakeAreaInventoryScreen() {
                 value={addingName}
                 onChangeText={setAddingName}
                 placeholder="Quick add item name"
-                style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 12 }}
+                style={{ flex: 1, paddingVertical: dens(8), paddingHorizontal: dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
               />
               <TouchableOpacity onPress={addQuickItem}
                 style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
@@ -917,19 +964,23 @@ function StockTakeAreaInventoryScreen() {
 
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
-      <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items yet</Text>
-      <Text style={{ color: '#6B7280', textAlign:'center' }}>
-        Use “Quick add item name” above to create your first item for this area.
+      <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items in this area yet</Text>
+      <Text style={{ color: '#6B7280', textAlign:'center', marginBottom: 12 }}>
+        Add your first product to start counting. You can also import later from invoices or suppliers.
       </Text>
-      <View style={{ height: 10 }} />
-      <TouchableOpacity onPress={() => nameInputRef.current?.focus()} style={{ paddingVertical:10, paddingHorizontal:14, backgroundColor:'#0A84FF', borderRadius:10 }}>
-        <Text style={{ color:'white', fontWeight:'800' }}>Add first item</Text>
-      </TouchableOpacity>
+      <View style={{ flexDirection:'row', gap:12 }}>
+        <TouchableOpacity onPress={() => nameInputRef.current?.focus()} style={{ paddingVertical:10, paddingHorizontal:14, backgroundColor:'#0A84FF', borderRadius:10 }}>
+          <Text style={{ color:'white', fontWeight:'800' }}>Add product</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setLearnOpen(true)} style={{ paddingVertical:10, paddingHorizontal:12 }}>
+          <Text style={{ color:'#0B132B' }}>Learn more</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
   const ListFooter = () => (
-    <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
+    <View style={{ padding: dens(12), borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
       <TouchableOpacity onPress={openReview}
         style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
         <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
@@ -1026,7 +1077,7 @@ function StockTakeAreaInventoryScreen() {
         </View>
       </Modal>
 
-      {/* Edit Item Modal (NEW) */}
+      {/* Edit Item Modal */}
       <Modal visible={!!editFor} animationType="slide" transparent onRequestClose={()=>setEditFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
@@ -1163,6 +1214,16 @@ function StockTakeAreaInventoryScreen() {
         </View>
       ) : null}
 
+      {/* [PAIR2] Export toast */}
+      {exportToast ? (
+        <View style={{
+          position: 'absolute', left: 16, right: 16, bottom: Platform.select({ ios: 24, android: 16 }),
+          backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center'
+        }}>
+          <Text style={{ color: 'white', fontWeight: '600' }}>{exportToast}</Text>
+        </View>
+      ) : null}
+
       {/* Keyboard Accessory */}
       {showSteppers && focusedInputId ? (
         <View style={{ position:'absolute', left:12, right:12, bottom:16, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
@@ -1276,9 +1337,48 @@ function StockTakeAreaInventoryScreen() {
 
             {countedCount > 0 ? (
               <TouchableOpacity onPress={exportCsvChangesOnly} style={{ marginTop:10, padding:10, borderRadius:10, backgroundColor:'#DBEAFE' }}>
-                <Text style={{ textAlign:'center', color:'#1E40AF', fontWeight:'800' }}>Export changes only (CSV)</Text>
+                <Text style={{ textAlign:'center', color:'#1E40AF', fontWeight:'800' }}>Export CSV — Changes only</Text>
               </TouchableOpacity>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Info explainer (timestamps) */}
+      <Modal visible={infoOpen} animationType="fade" transparent onRequestClose={() => setInfoOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, width: '84%' }}>
+            <Text style={{ fontWeight: '600', fontSize: 16, marginBottom: 8 }}>
+              What does “Started at” mean?
+            </Text>
+            <Text style={{ fontSize: 14, lineHeight: 20 }}>
+              “Started at” is when this area’s stock take was first opened.
+              “Last activity” is the most recent count update for any item in this area.
+              This helps Managers see timing and progress at a glance.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14 }}>
+              <TouchableOpacity onPress={() => setInfoOpen(false)} style={{ padding: 10 }}>
+                <Text style={{ color: '#0B132B', fontWeight: '600' }}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Learn more explainer (empty state) */}
+      <Modal visible={learnOpen} animationType="slide" transparent onRequestClose={() => setLearnOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, width: '90%' }}>
+            <Text style={{ fontWeight: '700', fontSize: 16, marginBottom: 8 }}>How to get started</Text>
+            <Text style={{ fontSize: 14, lineHeight: 20, marginBottom: 12 }}>
+              Add your products manually, or scan barcodes and attach suppliers later.
+              You’ll see “Expected” values once PARs are set, and the Review panel shows changes before submit.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <TouchableOpacity onPress={() => setLearnOpen(false)} style={{ padding: 10 }}>
+                <Text style={{ color: '#0B132B', fontWeight: '600' }}>Got it</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1289,18 +1389,31 @@ function StockTakeAreaInventoryScreen() {
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
             <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
 
+            {/* Density toggle — global */}
+            <TouchableOpacity onPress={()=>setDensity('comfortable')} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>
+                {isCompact ? 'Density: Comfortable' : 'Density: Comfortable ✓'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setDensity('compact')} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>
+                {isCompact ? 'Density: Compact ✓' : 'Density: Compact'}
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={()=>{ setShowSteppers(v=>!v); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#E0F2FE', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#0369A1' }}>
                 {showSteppers ? '✓ Steppers & keyboard bar (on)' : 'Enable steppers & keyboard bar'}
               </Text>
             </TouchableOpacity>
 
+            {/* Standardized export labels */}
             <TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — current view</Text>
+              <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — Current view</Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={exportCsvChangesOnly} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DBEAFE', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — changes only</Text>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Changes only</Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={()=>setCompactCounted(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
