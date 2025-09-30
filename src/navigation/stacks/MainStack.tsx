@@ -12,11 +12,16 @@ import SetupWizard from '../../screens/setup/SetupWizard';
 
 import ReportsScreen from '../../screens/reports/ReportsScreen';
 import LastCycleSummaryScreen from '../../screens/reports/LastCycleSummaryScreen';
-import ReportsIndexScreen from "../../screens/reports/ReportsIndexScreen";
-import DepartmentVarianceScreen from "../../screens/reports/DepartmentVarianceScreen";
-import CountActivityScreen from "../../screens/reports/CountActivityScreen";
+
+// NEW reports (registered once, no duplicates)
+import ReportsIndexScreen from '../../screens/reports/ReportsIndexScreen';
+import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
+import CountActivityScreen from '../../screens/reports/CountActivityScreen';
+
+// Existing extra report
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
 
+// Lazy/require screens kept as they were in your file
 const InvoiceScreen = require('../../screens/orders/InvoiceScreen').default;
 const ReceiveOrderScreen = require('../../screens/orders/ReceiveOrderScreen').default;
 const BudgetsScreen = require('../../screens/reports/BudgetsScreen').default;
@@ -26,23 +31,45 @@ const ProductsScreen = require('../../screens/setup/ProductsScreen').default;
 const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
-  const routes = [
-    { name: 'Dashboard', component: DashboardScreen, options: { title: 'Dashboard' } },
-    { name: 'DepartmentSelection', component: DepartmentSelectionScreen, options: { title: 'Departments' } },
-    { name: 'AreaSelection', component: AreaSelectionScreen, options: { title: 'Areas' } },
-    { name: 'Areas', component: AreaSelectionScreen, options: { title: 'Areas' } },
-    { name: 'StockTakeAreaInventory', component: StockTakeAreaInventoryScreen, options: { title: 'Area Inventory' } },
-    { name: 'AreaInventory', component: StockTakeAreaInventoryScreen, options: { title: 'Area Inventory' } },
-    { name: 'StockControl', component: StockControlScreen, options: { title: 'Stock Control' } },
+  return (
+    <Stack.Navigator>
+      {/* Core app */}
+      <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
+      <Stack.Screen name="DepartmentSelection" component={DepartmentSelectionScreen} options={{ title: 'Departments' }} />
+      <Stack.Screen name="AreaSelection" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
+      {/* keep alias routes that other code may navigate to */}
+      <Stack.Screen name="Areas" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
 
-    { name: 'Settings', component: SettingsScreen, options: { title: 'Settings' } },
-    { name: 'SetupWizard', component: SetupWizard, options: { title: 'Setup Wizard' } },
+      {/* Stock */}
+      <Stack.Screen name="StockTakeAreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Area Inventory' }} />
+      {/* alias kept */}
+      <Stack.Screen name="AreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Area Inventory' }} />
+      <Stack.Screen name="StockControl" component={StockControlScreen} options={{ title: 'Stock Control' }} />
 
-    { name: 'Invoice', component: InvoiceScreen, options: { title: 'Invoice' } },
-    { name: 'ReceiveOrder', component: ReceiveOrderScreen, options: { title: 'Receive Order' } },
+      {/* Settings / Setup */}
+      <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen name="SetupWizard" component={SetupWizard} options={{ title: 'Setup Wizard' }} />
 
-    { name: 'Reports', component: ReportsScreen, options: { title: 'Reports' } },
-    { name: 'LastCycleSummary', component: LastCycleSummaryScreen, options: { title: 'Last Cycle Summary' } },
-    { name: 'ReportsIndex', component: ReportsIndexScreen, options: { title: 'Reports' } },
-    { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
-    { name: 'CountActivity', component: CountActivityScreen, options: { title: 'Count Activity' } },
+      {/* Orders */}
+      <Stack.Screen name="Invoice" component={InvoiceScreen} options={{ title: 'Invoice' }} />
+      <Stack.Screen name="ReceiveOrder" component={ReceiveOrderScreen} options={{ title: 'Receive Order' }} />
+
+      {/* Existing Reports entry points */}
+      <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
+      <Stack.Screen name="LastCycleSummary" component={LastCycleSummaryScreen} options={{ title: 'Last Cycle Summary' }} />
+
+      {/* NEW Reports suite (single registration each) */}
+      <Stack.Screen name="ReportsIndex" component={ReportsIndexScreen} options={{ title: 'Reports' }} />
+      <Stack.Screen name="DepartmentVariance" component={DepartmentVarianceScreen} options={{ title: 'Department Variance' }} />
+      <Stack.Screen name="CountActivity" component={CountActivityScreen} options={{ title: 'Count Activity' }} />
+
+      {/* Other report(s) you already had imported */}
+      <Stack.Screen name="VarianceSnapshot" component={VarianceSnapshotScreen} options={{ title: 'Variance Snapshot' }} />
+
+      {/* Setup data screens already required in this stack */}
+      <Stack.Screen name="Budgets" component={BudgetsScreen} options={{ title: 'Budgets' }} />
+      <Stack.Screen name="Suppliers" component={SuppliersScreen} options={{ title: 'Suppliers' }} />
+      <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
+    </Stack.Navigator>
+  );
+}
