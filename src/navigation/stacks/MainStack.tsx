@@ -46,4 +46,3 @@ export default function MainStack() {
     { name: 'ReportsIndex', component: ReportsIndexScreen, options: { title: 'Reports' } },
     { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
     { name: 'CountActivity', component: CountActivityScreen, options: { title: 'Count Activity' } },
-    { name: 'VarianceSnapshot', component: VarianceSnapshotScreen, options: { title: 'Variance Snapshot' } },
