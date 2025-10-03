@@ -6,6 +6,7 @@ import { db } from '../../services/firebase';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
+import { usePersistedState } from '../../hooks/usePersistedState';
 
 let FileSystem: any = null, Sharing: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
@@ -24,8 +25,8 @@ function DepartmentVarianceScreen() {
   const { isCompact } = useDensity();
 
   const [rows, setRows] = useState<Row[]>([]);
-  const [onlyVariance, setOnlyVariance] = useState(false);
-  const [sortByMagnitude, setSortByMagnitude] = useState(true);
+  const [onlyVariance, setOnlyVariance] = usePersistedState<boolean>('ui:reports:deptVar:onlyVariance', false);
+  const [sortByMagnitude, setSortByMagnitude] = usePersistedState<boolean>('ui:reports:deptVar:sortByMagnitude', true);
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -84,6 +85,16 @@ function DepartmentVarianceScreen() {
     return r;
   }, [rows, onlyVariance, sortByMagnitude]);
 
+  const summary = useMemo(() => {
+    const totalAreas = rows.length;
+    const withExpected = rows.filter(r => r.expectedSum != null).length;
+    const nonZero = rows.filter(r => (r.variance ?? 0) !== 0).length;
+    const absVar = rows.reduce((acc, r) => acc + (r.variance != null ? Math.abs(r.variance) : 0), 0);
+    return { totalAreas, withExpected, nonZero, absVar };
+  }, [rows]);
+
+  const anyFilter = onlyVariance || !sortByMagnitude; // we treat A–Z as alternate sort, not a filter
+
   const exportCsv = async (mode: 'current'|'changes') => {
     try {
       const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
@@ -127,7 +138,8 @@ function DepartmentVarianceScreen() {
           </TouchableOpacity>
         </View>
         <Text style={{ color:'#6B7280', marginBottom:10 }}>Sums Expected vs Counted for each area in this department. Variance = Counted − Expected.</Text>
-        <View style={{ flexDirection:'row', gap:8, marginBottom:10, flexWrap:'wrap' }}>
+
+        <View style={{ flexDirection:'row', gap:8, marginBottom:8, flexWrap:'wrap' }}>
           <TouchableOpacity onPress={()=>setOnlyVariance(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyVariance ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyVariance ? '#DBEAFE' : 'white' }}>
             <Text style={{ fontWeight:'800', color: onlyVariance ? '#1D4ED8' : '#374151' }}>{onlyVariance ? '✓ Non-zero variance' : 'Non-zero variance'}</Text>
           </TouchableOpacity>
@@ -140,7 +152,17 @@ function DepartmentVarianceScreen() {
           <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
             <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
           </TouchableOpacity>
+          {anyFilter ? (
+            <TouchableOpacity onPress={()=>{ setOnlyVariance(false); setSortByMagnitude(true); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+              <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
+
+        {/* Summary line */}
+        <Text style={{ color:'#6B7280', marginBottom:10 }}>
+          Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)}
+        </Text>
 
         {rows.length === 0 ? (
           <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>

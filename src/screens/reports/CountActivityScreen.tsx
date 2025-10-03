@@ -6,6 +6,7 @@ import { db } from '../../services/firebase';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
+import { usePersistedState } from '../../hooks/usePersistedState';
 
 let FileSystem: any = null, Sharing: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
@@ -35,9 +36,9 @@ function CountActivityScreen() {
   const { isCompact } = useDensity();
 
   const [rows, setRows] = useState<Row[]>([]);
-  const [onlyThisCycle, setOnlyThisCycle] = useState(false);
-  const [onlyFlagged, setOnlyFlagged] = useState(false);
-  const [onlyBelowPar, setOnlyBelowPar] = useState(false);
+  const [onlyThisCycle, setOnlyThisCycle] = usePersistedState<boolean>('ui:reports:countAct:onlyThisCycle', false);
+  const [onlyFlagged, setOnlyFlagged] = usePersistedState<boolean>('ui:reports:countAct:onlyFlagged', false);
+  const [onlyBelowPar, setOnlyBelowPar] = usePersistedState<boolean>('ui:reports:countAct:onlyBelowPar', false);
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -94,6 +95,16 @@ function CountActivityScreen() {
     return r;
   }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar]);
 
+  const counts = useMemo(() => {
+    const total = rows.length;
+    const flagged = rows.filter(x=>x.flagged).length;
+    const below = rows.filter(x=>x.belowPar).length;
+    const cycle = rows.filter(x=>x.countedThisCycle).length;
+    return { total, flagged, below, cycle };
+  }, [rows]);
+
+  const anyFilter = onlyThisCycle || onlyFlagged || onlyBelowPar;
+
   const exportCsv = async (mode:'current'|'changes') => {
     try {
       const dataset = mode === 'changes'
@@ -141,7 +152,8 @@ function CountActivityScreen() {
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
           Recent counts across areas and items. Filter by cycle, flags, or below-par; exports match your current view or changes only.
         </Text>
-        <View style={{ flexDirection:'row', gap:8, marginBottom:10, flexWrap:'wrap' }}>
+
+        <View style={{ flexDirection:'row', gap:8, marginBottom:8, flexWrap:'wrap' }}>
           <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
             <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
           </TouchableOpacity>
@@ -157,7 +169,17 @@ function CountActivityScreen() {
           <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
             <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
           </TouchableOpacity>
+          {anyFilter ? (
+            <TouchableOpacity onPress={()=>{ setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+              <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
+
+        {/* Summary line */}
+        <Text style={{ color:'#6B7280', marginBottom:10 }}>
+          Rows: {counts.total} • Flagged: {counts.flagged} • Below par: {counts.below} • This cycle: {counts.cycle}
+        </Text>
 
         {rows.length === 0 ? (
           <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
