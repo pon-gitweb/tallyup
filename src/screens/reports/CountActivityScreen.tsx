@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -23,15 +23,18 @@ function CountActivityScreen() {
   const route = useRoute<any>();
   const { venueId, departmentId } = (route.params ?? {}) as RouteParams;
   const { isCompact } = useDensity();
+
   const [rows, setRows] = useState<Row[]>([]);
   const [onlyThisCycle, setOnlyThisCycle] = useState(false);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [exportToast, setExportToast] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
   const D = isCompact ? 0.86 : 1;
-  const showToast = (m='Export ready') => { setExportToast(m); setTimeout(()=>setExportToast(null), 1500); };
+  const showToast = (m='Export ready') => { setExportToast(m); setTimeout(()=>setExportToast(null), 1400); };
   const parseTs = (v:any): Date|null => v?.toDate ? v.toDate() : (v?._seconds ? new Date(v._seconds*1000) : (isNaN(new Date(v).getTime()) ? null : new Date(v)));
 
-  useEffect(() => { (async () => {
+  const load = useCallback(async () => {
     if (!venueId || !departmentId) return;
     const areasSnap = await getDocs(collection(db,'venues',venueId,'departments',departmentId,'areas'));
     const out: Row[] = [];
@@ -48,7 +51,15 @@ function CountActivityScreen() {
       });
     }
     setRows(out);
-  })().catch(e=>Alert.alert('Error', e?.message ?? String(e))); }, [venueId, departmentId]);
+  }, [venueId, departmentId]);
+
+  useEffect(() => { load().catch(e=>Alert.alert('Error', e?.message ?? String(e))); }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await load(); } catch (e:any) { Alert.alert('Refresh failed', e?.message ?? String(e)); }
+    setRefreshing(false);
+  }, [load]);
 
   const viewRows = useMemo(() => {
     let r = rows.slice();
@@ -58,12 +69,15 @@ function CountActivityScreen() {
     return r;
   }, [rows, onlyThisCycle, onlyFlagged]);
 
-  const exportCsv = async () => {
+  const exportCsv = async (mode:'current'|'changes') => {
     try {
+      const dataset = mode === 'changes'
+        ? rows.filter(x => x.countedThisCycle || x.flagged)
+        : viewRows;
       showToast('Export ready');
       const headers = ['Area','Item','Last Count','Last Count At','Flagged','Counted this cycle'];
       const lines = [headers.join(',')];
-      for (const r of viewRows) {
+      for (const r of dataset) {
         const row = [ r.areaName, r.itemName, r.lastCount ?? '', r.lastCountAt ? r.lastCountAt.toISOString() : '', r.flagged ? 'yes' : '', r.countedThisCycle ? 'yes' : '' ]
           .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
           .join(',');
@@ -72,7 +86,7 @@ function CountActivityScreen() {
       const csv = lines.join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-count-activity-${ts}.csv`;
+      const fname = `tallyup-count-activity-${mode}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
@@ -98,10 +112,14 @@ function CountActivityScreen() {
           <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}>
             <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>{onlyFlagged ? '✓ Flagged only' : 'Flagged only'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={exportCsv} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
+          <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
             <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
           </TouchableOpacity>
+          <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
+            <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
+          </TouchableOpacity>
         </View>
+
         {rows.length === 0 ? (
           <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
             <Text style={{ fontWeight:'700' }}>No data yet</Text>
@@ -111,6 +129,7 @@ function CountActivityScreen() {
           <FlatList
             data={viewRows}
             keyExtractor={(r)=>r.id}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
               <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
                 <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>{item.areaName} • {item.itemName}</Text>
@@ -125,6 +144,7 @@ function CountActivityScreen() {
           />
         )}
       </View>
+
       {exportToast ? (
         <View style={{ position:'absolute', left:16, right:16, bottom: Platform.select({ ios:24, android:16 }), backgroundColor:'rgba(0,0,0,0.85)', borderRadius:12, paddingVertical:10, paddingHorizontal:14, alignItems:'center' }}>
           <Text style={{ color:'white', fontWeight:'600' }}>{exportToast}</Text>
