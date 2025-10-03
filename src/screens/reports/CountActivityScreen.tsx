@@ -8,10 +8,11 @@ import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
 import { usePersistedState } from '../../hooks/usePersistedState';
 
-let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null, Clipboard: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
 try { Haptics = require('expo-haptics'); } catch {}
+try { Clipboard = require('expo-clipboard'); } catch {}
 
 type RouteParams = { venueId: string; departmentId: string };
 type AreaDoc = { name: string; startedAt?: any };
@@ -43,6 +44,7 @@ function CountActivityScreen() {
   const [onlyFlagged, setOnlyFlagged] = usePersistedState<boolean>('ui:reports:countAct:onlyFlagged', false);
   const [onlyBelowPar, setOnlyBelowPar] = usePersistedState<boolean>('ui:reports:countAct:onlyBelowPar', false);
   const [search, setSearch] = usePersistedState<string>('ui:reports:countAct:search', '');
+  const [sortAZ, setSortAZ] = usePersistedState<boolean>('ui:reports:countAct:sortAZ', false);
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -97,9 +99,10 @@ function CountActivityScreen() {
     if (onlyThisCycle) r = r.filter(x=>x.countedThisCycle);
     if (onlyFlagged) r = r.filter(x=>x.flagged);
     if (onlyBelowPar) r = r.filter(x=>x.belowPar);
-    r.sort((a,b)=>(b.lastCountAt?.getTime() ?? 0) - (a.lastCountAt?.getTime() ?? 0));
+    if (sortAZ) r.sort((a,b)=> (a.areaName.localeCompare(b.areaName)) || a.itemName.localeCompare(b.itemName));
+    else r.sort((a,b)=>(b.lastCountAt?.getTime() ?? 0) - (a.lastCountAt?.getTime() ?? 0));
     return r;
-  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar, search]);
+  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar, search, sortAZ]);
 
   const counts = useMemo(() => {
     const total = rows.length;
@@ -109,7 +112,43 @@ function CountActivityScreen() {
     return { total, flagged, below, cycle };
   }, [rows]);
 
-  const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar;
+  const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar || sortAZ;
+
+  const buildCsvLines = (dataset: Row[]) => {
+    const headers = ['Area','Item','Par','Last Count','Below Par','Last Count At','Flagged','Counted this cycle'];
+    const lines = [headers.join(',')];
+    for (const r of dataset) {
+      const row = [
+        r.areaName,
+        r.itemName,
+        r.par ?? '',
+        r.lastCount ?? '',
+        r.belowPar ? 'yes' : '',
+        r.lastCountAt ? r.lastCountAt.toISOString() : '',
+        r.flagged ? 'yes' : '',
+        r.countedThisCycle ? 'yes' : '',
+      ]
+      .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
+      .join(',');
+      lines.push(row);
+    }
+    return lines;
+  };
+
+  const copyCsv = async (mode:'current'|'changes') => {
+    try {
+      const dataset = mode === 'changes'
+        ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
+        : viewRows;
+      if (!dataset.length) { Alert.alert('Nothing to copy', 'No rows to copy.'); return; }
+      const csv = buildCsvLines(dataset).join('\n');
+      if (!Clipboard?.setStringAsync) { Alert.alert('Copy unavailable', 'Clipboard not available on this device.'); return; }
+      await Clipboard.setStringAsync(csv);
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+      setExportToast('Copied CSV');
+      setTimeout(()=>setExportToast(null), 1200);
+    } catch(e:any){ Alert.alert('Copy failed', e?.message ?? String(e)); }
+  };
 
   const exportCsv = async (mode:'current'|'changes') => {
     try {
@@ -118,33 +157,36 @@ function CountActivityScreen() {
         ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
         : viewRows;
       if (!dataset.length) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
-      showToast('Export ready');
-      const headers = ['Area','Item','Par','Last Count','Below Par','Last Count At','Flagged','Counted this cycle'];
-      const lines = [headers.join(',')];
-      for (const r of dataset) {
-        const row = [
-          r.areaName,
-          r.itemName,
-          r.par ?? '',
-          r.lastCount ?? '',
-          r.belowPar ? 'yes' : '',
-          r.lastCountAt ? r.lastCountAt.toISOString() : '',
-          r.flagged ? 'yes' : '',
-          r.countedThisCycle ? 'yes' : '',
-        ]
-        .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
-        .join(',');
-        lines.push(row);
-      }
-      const csv = lines.join('\n');
+      const csv = buildCsvLines(dataset).join('\n');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
       const fname = `tallyup-count-activity-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      setExportToast('Export ready');
+      setTimeout(()=>setExportToast(null), 1400);
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
       else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
+  };
+
+  const copyRow = async (r: Row) => {
+    try {
+      const parts = [
+        `${r.areaName} • ${r.itemName}`,
+        `Par:${r.par ?? '—'}`,
+        `Last:${r.lastCount ?? '—'}`,
+        `At:${r.lastCountAt ? r.lastCountAt.toLocaleString() : '—'}`,
+        r.belowPar ? 'Below Par' : '',
+        r.flagged ? 'Recount' : '',
+        r.countedThisCycle ? 'This cycle' : '',
+      ].filter(Boolean);
+      const line = parts.join(' — ');
+      if (!Clipboard?.setStringAsync) { return; }
+      await Clipboard.setStringAsync(line);
+      setExportToast('Copied');
+      setTimeout(()=>setExportToast(null), 900);
+    } catch {}
   };
 
   return (
@@ -188,14 +230,23 @@ function CountActivityScreen() {
             <TouchableOpacity onPress={()=>setOnlyBelowPar(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyBelowPar ? '#DC2626' : '#E5E7EB', backgroundColor: onlyBelowPar ? '#FEE2E2' : 'white' }}>
               <Text style={{ fontWeight:'800', color: onlyBelowPar ? '#991B1B' : '#374151' }}>{onlyBelowPar ? '✓ Below Par' : 'Below Par'}</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setSortAZ(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortAZ ? '#059669' : '#E5E7EB', backgroundColor: sortAZ ? '#D1FAE5' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: sortAZ ? '#065F46' : '#374151' }}>{sortAZ ? '✓ Sort A–Z' : 'Sort by newest'}</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
               <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
               <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={()=>copyCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F8FAFC', borderWidth:1, borderColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>copyCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F9FAFB', borderWidth:1, borderColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Changes only</Text>
+            </TouchableOpacity>
             {anyFilter ? (
-              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); setSortAZ(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
               </TouchableOpacity>
             ) : null}
@@ -220,19 +271,21 @@ function CountActivityScreen() {
             keyExtractor={(r)=>r.id}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
-              <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
-                <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>
-                  {item.areaName} • {item.itemName}
-                </Text>
-                <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap', marginTop:4 }}>
-                  <Text style={{ color:'#374151' }}>Par: {item.par ?? '—'}</Text>
-                  <Text style={{ color:'#374151' }}>Last: {item.lastCount ?? '—'}</Text>
-                  <Text style={{ color:'#374151' }}>At: {item.lastCountAt ? item.lastCountAt.toLocaleString() : '—'}</Text>
-                  {item.belowPar ? <Text style={{ color:'#991B1B' }}>Below Par</Text> : null}
-                  {item.flagged ? <Text style={{ color:'#92400E' }}>Recount</Text> : null}
-                  {item.countedThisCycle ? <Text style={{ color:'#065F46' }}>This cycle</Text> : null}
+              <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
+                <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
+                  <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>
+                    {item.areaName} • {item.itemName}
+                  </Text>
+                  <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap', marginTop:4 }}>
+                    <Text style={{ color:'#374151' }}>Par: {item.par ?? '—'}</Text>
+                    <Text style={{ color:'#374151' }}>Last: {item.lastCount ?? '—'}</Text>
+                    <Text style={{ color:'#374151' }}>At: {item.lastCountAt ? item.lastCountAt.toLocaleString() : '—'}</Text>
+                    {item.belowPar ? <Text style={{ color:'#991B1B' }}>Below Par</Text> : null}
+                    {item.flagged ? <Text style={{ color:'#92400E' }}>Recount</Text> : null}
+                    {item.countedThisCycle ? <Text style={{ color:'#065F46' }}>This cycle</Text> : null}
+                  </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             )}
           />
         )}

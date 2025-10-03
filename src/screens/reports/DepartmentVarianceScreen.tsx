@@ -8,10 +8,11 @@ import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
 import { usePersistedState } from '../../hooks/usePersistedState';
 
-let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null, Clipboard: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
 try { Haptics = require('expo-haptics'); } catch {}
+try { Clipboard = require('expo-clipboard'); } catch {}
 
 type RouteParams = { venueId: string; departmentId: string };
 type AreaDoc = { name: string; startedAt?: any; completedAt?: any };
@@ -101,38 +102,66 @@ function DepartmentVarianceScreen() {
 
   const anyFilter = !!search.trim() || onlyVariance || !sortByMagnitude;
 
+  const buildCsvLines = (dataset: Row[]) => {
+    const headers = ['Area','Items','Expected (sum)','Counted (sum)','Variance'];
+    const lines = [headers.join(',')];
+    for (const r of dataset) {
+      const row = [
+        r.areaName,
+        String(r.items),
+        r.expectedSum == null ? '' : r.expectedSum.toFixed(2),
+        r.countedSum.toFixed(2),
+        r.variance == null ? '' : r.variance.toFixed(2)
+      ]
+      .map(s => {
+        const str = String(s ?? '');
+        return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str;
+      })
+      .join(',');
+      lines.push(row);
+    }
+    return lines;
+  };
+
+  const copyCsv = async (mode: 'current'|'changes') => {
+    try {
+      const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
+      if (!dataset.length) { Alert.alert('Nothing to copy', 'No rows to copy.'); return; }
+      const csv = buildCsvLines(dataset).join('\n');
+      if (!Clipboard?.setStringAsync) { Alert.alert('Copy unavailable', 'Clipboard not available on this device.'); return; }
+      await Clipboard.setStringAsync(csv);
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+      setExportToast('Copied CSV');
+      setTimeout(()=>setExportToast(null), 1200);
+    } catch(e:any){ Alert.alert('Copy failed', e?.message ?? String(e)); }
+  };
+
   const exportCsv = async (mode: 'current'|'changes') => {
     try {
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
       const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
-      showToast('Export ready');
-      const headers = ['Area','Items','Expected (sum)','Counted (sum)','Variance'];
-      const lines = [headers.join(',')];
-      for (const r of dataset) {
-        const row = [
-          r.areaName,
-          String(r.items),
-          r.expectedSum == null ? '' : r.expectedSum.toFixed(2),
-          r.countedSum.toFixed(2),
-          r.variance == null ? '' : r.variance.toFixed(2)
-        ]
-        .map(s => {
-          const str = String(s ?? '');
-          return (str.includes(',') || str.includes('"')) ? `"${str.replace(/"/g,'""')}"` : str;
-        })
-        .join(',');
-        lines.push(row);
-      }
-      const csv = lines.join('\n');
+      const csv = buildCsvLines(dataset).join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
       const fname = `tallyup-dept-variance-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      setExportToast('Export ready');
+      setTimeout(()=>setExportToast(null), 1400);
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
       else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
+  };
+
+  const copyRow = async (r: Row) => {
+    try {
+      const line = `${r.areaName} — Items:${r.items} • Expected:${r.expectedSum==null?'—':r.expectedSum.toFixed(2)} • Counted:${r.countedSum.toFixed(2)} • Variance:${r.variance==null?'—':r.variance.toFixed(2)}`;
+      if (!Clipboard?.setStringAsync) { return; }
+      await Clipboard.setStringAsync(line);
+      setExportToast('Copied');
+      setTimeout(()=>setExportToast(null), 900);
+    } catch {}
   };
 
   return (
@@ -177,6 +206,12 @@ function DepartmentVarianceScreen() {
             <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
               <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={()=>copyCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F8FAFC', borderWidth:1, borderColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>copyCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F9FAFB', borderWidth:1, borderColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Changes only</Text>
+            </TouchableOpacity>
             {anyFilter ? (
               <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyVariance(false); setSortByMagnitude(true); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
@@ -203,17 +238,19 @@ function DepartmentVarianceScreen() {
             keyExtractor={(r)=>r.id}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
-              <View style={{ paddingVertical: 12 * D, paddingHorizontal: 12 * D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
-                <Text style={{ fontSize: isCompact ? 15 : 16, fontWeight:'800' }}>{item.areaName}</Text>
-                <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginTop:4 }}>
-                  <Text style={{ color:'#374151' }}>Items: {item.items}</Text>
-                  <Text style={{ color:'#374151' }}>Expected: {item.expectedSum == null ? '—' : item.expectedSum.toFixed(2)}</Text>
-                  <Text style={{ color:'#374151' }}>Counted: {item.countedSum.toFixed(2)}</Text>
-                  <Text style={{ color: item.variance == null ? '#6B7280' : item.variance === 0 ? '#6B7280' : (item.variance > 0 ? '#065F46' : '#991B1B') }}>
-                    Variance: {item.variance == null ? '—' : item.variance.toFixed(2)}
-                  </Text>
+              <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
+                <View style={{ paddingVertical: 12 * D, paddingHorizontal: 12 * D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
+                  <Text style={{ fontSize: isCompact ? 15 : 16, fontWeight:'800' }}>{item.areaName}</Text>
+                  <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8, marginTop:4 }}>
+                    <Text style={{ color:'#374151' }}>Items: {item.items}</Text>
+                    <Text style={{ color:'#374151' }}>Expected: {item.expectedSum == null ? '—' : item.expectedSum.toFixed(2)}</Text>
+                    <Text style={{ color:'#374151' }}>Counted: {item.countedSum.toFixed(2)}</Text>
+                    <Text style={{ color: item.variance == null ? '#6B7280' : item.variance === 0 ? '#6B7280' : (item.variance > 0 ? '#065F46' : '#991B1B') }}>
+                      Variance: {item.variance == null ? '—' : item.variance.toFixed(2)}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             )}
           />
         )}

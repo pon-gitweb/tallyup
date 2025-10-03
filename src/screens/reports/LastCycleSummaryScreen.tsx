@@ -4,10 +4,11 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useLastCycleSummary } from '../../hooks/reports/useLastCycleSummary';
 import { useDensity } from '../../hooks/useDensity';
 
-let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null, Clipboard: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
 try { Haptics = require('expo-haptics'); } catch {}
+try { Clipboard = require('expo-clipboard'); } catch {}
 
 const slug = (s?: string) => (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
@@ -26,29 +27,45 @@ function LastCycleSummaryScreen() {
 
   const showToast = (msg='Export ready') => { setExportToast(msg); setTimeout(()=>setExportToast(null), 1400); };
 
+  const buildCsv = () => {
+    const headers = ['Venue','Departments','Areas (total)','Areas Completed','Areas In Progress','Session Status','Generated At'];
+    const lines = [headers.join(',')];
+    const row = [
+      data?.venueId ?? '',
+      data?.departments ?? '',
+      data?.areasTotal ?? '',
+      data?.areasCompleted ?? '',
+      data?.areasInProgress ?? '',
+      data?.sessionStatus ?? '',
+      new Date().toISOString(),
+    ].map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; }).join(',');
+    lines.push(row);
+    return lines.join('\n');
+  };
+
+  const copyCsv = async () => {
+    try {
+      const csv = buildCsv();
+      if (!csv) { Alert.alert('Nothing to copy', 'No data to copy.'); return; }
+      if (!Clipboard?.setStringAsync) { Alert.alert('Copy unavailable', 'Clipboard not available on this device.'); return; }
+      await Clipboard.setStringAsync(csv);
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+      setExportToast('Copied CSV');
+      setTimeout(()=>setExportToast(null), 1200);
+    } catch(e:any){ Alert.alert('Copy failed', e?.message ?? String(e)); }
+  };
+
   const exportCsv = async () => {
     try {
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-      const headers = ['Venue','Departments','Areas (total)','Areas Completed','Areas In Progress','Session Status','Generated At'];
-      const lines = [headers.join(',')];
-      const row = [
-        data?.venueId ?? '',
-        data?.departments ?? '',
-        data?.areasTotal ?? '',
-        data?.areasCompleted ?? '',
-        data?.areasInProgress ?? '',
-        data?.sessionStatus ?? '',
-        new Date().toISOString(),
-      ].map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')) ? `"${str.replace(/"/g,'""')}"` : str; }).join(',');
-      lines.push(row);
-      const csv = lines.join('\n');
+      const csv = buildCsv();
       if (!csv) { Alert.alert('Nothing to export', 'No data to export.'); return; }
-      showToast('Export ready');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
       const fname = `tallyup-last-cycle-summary-${slug(data?.venueId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      showToast('Export ready');
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
       else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
@@ -65,6 +82,9 @@ function LastCycleSummaryScreen() {
           <View style={{ flexDirection:'row', gap:8 }}>
             <TouchableOpacity onPress={exportCsv} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
               <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={copyCsv} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F9FAFB', borderWidth:1, borderColor:'#E5E7EB' }}>
+              <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Current view</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => generateNow().catch((e:any)=>Alert.alert('Generate failed', e?.message ?? String(e)))} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#ECFDF5', borderWidth:1, borderColor:'#D1FAE5' }}>
               <Text style={{ fontWeight:'800', color:'#065F46' }}>Generate now</Text>
