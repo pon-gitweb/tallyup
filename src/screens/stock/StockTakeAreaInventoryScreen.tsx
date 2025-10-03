@@ -962,6 +962,8 @@ function StockTakeAreaInventoryScreen() {
     );
   };
 
+  const [emptyLearnMoreOpen, setEmptyLearnMoreOpen] = useState(false);
+
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items in this area yet</Text>
@@ -1381,6 +1383,19 @@ function StockTakeAreaInventoryScreen() {
                 <Text style={{ color: '#0B132B', fontWeight: '600' }}>Got it</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Empty-state Learn More modal */}
+      <Modal visible={emptyLearnMoreOpen} animationType="fade" transparent onRequestClose={() => setEmptyLearnMoreOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', alignItems:'center' }}>
+          <View style={{ backgroundColor:'#fff', margin:24, borderRadius:12, padding:16, maxWidth:420 }}>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>How to start this area</Text>
+            <Text style={{ color:'#374151', marginBottom:12 }}>Add your first item with “Quick add item name”. Then enter a Count and Save. You can edit items (par/supplier) to improve “Expected”, and request adjustments if needed.</Text>
+            <TouchableOpacity onPress={() => setEmptyLearnMoreOpen(false)} style={{ alignSelf:'center', paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DBEAFE' }}>
+              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
