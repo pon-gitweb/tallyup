@@ -24,6 +24,7 @@ import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen
 // Lazy/require screens kept as they were in your file
 const InvoiceScreen = require('../../screens/orders/InvoiceScreen').default;
 const ReceiveOrderScreen = require('../../screens/orders/ReceiveOrderScreen').default;
+const SuggestedOrderScreen = require("../../screens/orders/SuggestedOrderScreen").default;
 const BudgetsScreen = require('../../screens/reports/BudgetsScreen').default;
 const SuppliersScreen = require('../../screens/setup/SuppliersScreen').default;
 const ProductsScreen = require('../../screens/setup/ProductsScreen').default;
