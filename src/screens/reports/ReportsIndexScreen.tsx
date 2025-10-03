@@ -31,7 +31,6 @@ function ReportsIndexScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-        {/* Header: left block flexes, button stays visible */}
         <View style={{ flexDirection:'row', alignItems:'flex-start', marginBottom: 4 }}>
           <View style={{ flex: 1, paddingRight: 12 }}>
             <Text style={{ fontSize: isCompact ? 18 : 20, fontWeight: '900' }}>Reports (this department)</Text>
@@ -49,7 +48,7 @@ function ReportsIndexScreen() {
         />
         <Card
           title="Count Activity"
-          subtitle="Recent item counts with timestamps"
+          subtitle="Recent item counts; filter flags, cycle & below par"
           onPress={() => !disabled && nav.navigate('CountActivity', { venueId, departmentId })}
         />
 
@@ -62,7 +61,6 @@ function ReportsIndexScreen() {
         ) : null}
       </ScrollView>
 
-      {/* Explainer modal (local only) */}
       <Modal visible={showInfo} animationType="fade" transparent onRequestClose={()=>setShowInfo(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center' }}>
           <View style={{ width:'86%', borderRadius:16, backgroundColor:'#FFFFFF', padding:16 }}>
@@ -71,7 +69,7 @@ function ReportsIndexScreen() {
               • <Text style={{ fontWeight:'700' }}>Department Variance</Text> shows Expected vs Counted totals per area. Use “Non-zero variance” and export just the changes.
             </Text>
             <Text style={{ color:'#374151', marginBottom:10 }}>
-              • <Text style={{ fontWeight:'700' }}>Count Activity</Text> lists recent item counts with timestamps. Filter to “This cycle only” or “Flagged only”, then export.
+              • <Text style={{ fontWeight:'700' }}>Count Activity</Text> lists recent item counts with timestamps. Filters include “This cycle only”, “Flagged only”, and <Text style={{ fontWeight:'700' }}>“Below Par”</Text>.
             </Text>
             <Text style={{ color:'#6B7280' }}>Tip: the density toggle (More → Density) applies here too for tighter spacing.</Text>
             <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:12 }}>

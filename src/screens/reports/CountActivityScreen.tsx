@@ -13,9 +13,19 @@ try { Sharing = require('expo-sharing'); } catch {}
 
 type RouteParams = { venueId: string; departmentId: string };
 type AreaDoc = { name: string; startedAt?: any };
-type ItemDoc = { name?: string; lastCount?: number; lastCountAt?: any; flagRecount?: boolean };
+type ItemDoc = { name?: string; lastCount?: number; lastCountAt?: any; flagRecount?: boolean; par?: number };
 
-type Row = { id: string; areaName: string; itemName: string; lastCount: number | null; lastCountAt: Date | null; flagged: boolean; countedThisCycle: boolean; };
+type Row = {
+  id: string;
+  areaName: string;
+  itemName: string;
+  lastCount: number | null;
+  lastCountAt: Date | null;
+  flagged: boolean;
+  countedThisCycle: boolean;
+  par: number | null;
+  belowPar: boolean;
+};
 
 function CountActivityScreen() {
   dlog('[TallyUp Reports] CountActivityScreen');
@@ -27,6 +37,7 @@ function CountActivityScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [onlyThisCycle, setOnlyThisCycle] = useState(false);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [onlyBelowPar, setOnlyBelowPar] = useState(false);
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -47,7 +58,20 @@ function CountActivityScreen() {
         const it = i.data() as ItemDoc;
         const lastAt = parseTs(it.lastCountAt);
         const countedThisCycle = (startedAt && lastAt) ? lastAt >= startedAt : false;
-        out.push({ id: `${a.id}:${i.id}`, areaName: ad?.name || 'Unnamed area', itemName: it?.name || 'Unnamed item', lastCount: typeof it.lastCount === 'number' ? it.lastCount : null, lastCountAt: lastAt, flagged: !!it.flagRecount, countedThisCycle });
+        const par = typeof it.par === 'number' ? it.par : null;
+        const lastVal = typeof it.lastCount === 'number' ? it.lastCount : null;
+        const belowPar = par != null && lastVal != null ? lastVal < par : false;
+        out.push({
+          id: `${a.id}:${i.id}`,
+          areaName: ad?.name || 'Unnamed area',
+          itemName: it?.name || 'Unnamed item',
+          lastCount: lastVal,
+          lastCountAt: lastAt,
+          flagged: !!it.flagRecount,
+          countedThisCycle,
+          par,
+          belowPar,
+        });
       });
     }
     setRows(out);
@@ -65,26 +89,36 @@ function CountActivityScreen() {
     let r = rows.slice();
     if (onlyThisCycle) r = r.filter(x=>x.countedThisCycle);
     if (onlyFlagged) r = r.filter(x=>x.flagged);
+    if (onlyBelowPar) r = r.filter(x=>x.belowPar);
     r.sort((a,b)=>(b.lastCountAt?.getTime() ?? 0) - (a.lastCountAt?.getTime() ?? 0));
     return r;
-  }, [rows, onlyThisCycle, onlyFlagged]);
+  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar]);
 
   const exportCsv = async (mode:'current'|'changes') => {
     try {
       const dataset = mode === 'changes'
-        ? rows.filter(x => x.countedThisCycle || x.flagged)
+        ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
         : viewRows;
+      if (!dataset.length) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       showToast('Export ready');
-      const headers = ['Area','Item','Last Count','Last Count At','Flagged','Counted this cycle'];
+      const headers = ['Area','Item','Par','Last Count','Below Par','Last Count At','Flagged','Counted this cycle'];
       const lines = [headers.join(',')];
       for (const r of dataset) {
-        const row = [ r.areaName, r.itemName, r.lastCount ?? '', r.lastCountAt ? r.lastCountAt.toISOString() : '', r.flagged ? 'yes' : '', r.countedThisCycle ? 'yes' : '' ]
-          .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
-          .join(',');
+        const row = [
+          r.areaName,
+          r.itemName,
+          r.par ?? '',
+          r.lastCount ?? '',
+          r.belowPar ? 'yes' : '',
+          r.lastCountAt ? r.lastCountAt.toISOString() : '',
+          r.flagged ? 'yes' : '',
+          r.countedThisCycle ? 'yes' : '',
+        ]
+        .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
+        .join(',');
         lines.push(row);
       }
       const csv = lines.join('\n');
-      if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
       const fname = `tallyup-count-activity-${mode}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
@@ -104,13 +138,18 @@ function CountActivityScreen() {
             <Text style={{ fontWeight:'700' }}>Back</Text>
           </TouchableOpacity>
         </View>
-        <Text style={{ color:'#6B7280', marginBottom:10 }}>Recent counts across areas and items. Use filters to focus your review; export matches the current view.</Text>
+        <Text style={{ color:'#6B7280', marginBottom:10 }}>
+          Recent counts across areas and items. Filter by cycle, flags, or below-par; exports match your current view or changes only.
+        </Text>
         <View style={{ flexDirection:'row', gap:8, marginBottom:10, flexWrap:'wrap' }}>
           <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
             <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#D97706' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#FEF3C7' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#92400E' : '#374151' }}>{onlyThisCycle ? '✓ Flagged only' : 'Flagged only'}</Text>
+          <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}>
+            <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>{onlyFlagged ? '✓ Flagged only' : 'Flagged only'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={()=>setOnlyBelowPar(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyBelowPar ? '#DC2626' : '#E5E7EB', backgroundColor: onlyBelowPar ? '#FEE2E2' : 'white' }}>
+            <Text style={{ fontWeight:'800', color: onlyBelowPar ? '#991B1B' : '#374151' }}>{onlyBelowPar ? '✓ Below Par' : 'Below Par'}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
             <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
@@ -132,10 +171,14 @@ function CountActivityScreen() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
               <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
-                <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>{item.areaName} • {item.itemName}</Text>
+                <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>
+                  {item.areaName} • {item.itemName}
+                </Text>
                 <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap', marginTop:4 }}>
+                  <Text style={{ color:'#374151' }}>Par: {item.par ?? '—'}</Text>
                   <Text style={{ color:'#374151' }}>Last: {item.lastCount ?? '—'}</Text>
                   <Text style={{ color:'#374151' }}>At: {item.lastCountAt ? item.lastCountAt.toLocaleString() : '—'}</Text>
+                  {item.belowPar ? <Text style={{ color:'#991B1B' }}>Below Par</Text> : null}
                   {item.flagged ? <Text style={{ color:'#92400E' }}>Recount</Text> : null}
                   {item.countedThisCycle ? <Text style={{ color:'#065F46' }}>This cycle</Text> : null}
                 </View>
