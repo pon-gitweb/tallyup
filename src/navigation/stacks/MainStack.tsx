@@ -25,6 +25,7 @@ import CountActivityScreen from '../../screens/reports/CountActivityScreen';
 /** Orders (require style kept to match project) **/
 const InvoiceScreen = require('../../screens/orders/InvoiceScreen').default;
 const ReceiveOrderScreen = require('../../screens/orders/ReceiveOrderScreen').default;
+const OrdersScreen = require("../../screens/orders/OrdersScreen.tsx").default;
 const SuggestedOrderScreen = require('../../screens/orders/SuggestedOrderScreen').default;
 
 /** Data setup (require style as in project) **/
@@ -56,6 +57,7 @@ export default function MainStack() {
       {/* Orders */}
       <Stack.Screen name="Invoice" component={InvoiceScreen} options={{ title: 'Invoice' }} />
       <Stack.Screen name="ReceiveOrder" component={ReceiveOrderScreen} options={{ title: 'Receive Order' }} />
+      <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
       <Stack.Screen name="SuggestedOrder" component={SuggestedOrderScreen} options={{ title: 'Suggested Order' }} />
 
       {/* Reports (existing) */}
