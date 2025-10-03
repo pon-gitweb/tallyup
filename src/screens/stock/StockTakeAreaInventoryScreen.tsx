@@ -7,9 +7,9 @@ import {
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
   orderBy, query, serverTimestamp, updateDoc
-} from 'firebase/firestore';
+, updateDoc, serverTimestamp} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { db } from '../../services/firebase';
+import {  db , auth } from '../../services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
@@ -159,7 +159,25 @@ function StockTakeAreaInventoryScreen() {
   const [offline, setOffline] = useState(false);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
-    return () => unsub && unsub();
+    const toggleRecountFlag = async (areaId: string, itemId: string, nextVal: boolean) => {
+  try {
+    const uid = (auth?.currentUser?.uid) || 'unknown';
+    const itemRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', itemId);
+    const payload: any = { flagRecount: nextVal, flagRecountBy: uid, flagRecountAt: serverTimestamp() };
+    if (typeof throttleAction === 'function') {
+      await throttleAction('toggleRecount:'+itemId, () => updateDoc(itemRef, payload));
+    } else {
+      await updateDoc(itemRef, payload);
+    }
+  } catch (e: any) {
+    const msg = (e?.code === 'permission-denied')
+      ? 'Only managers can clear recount flags on this venue. Ask a manager to unflag, or sign in with manager role.'
+      : (e?.message || String(e));
+    Alert.alert('Cannot update recount flag', msg);
+  }
+};
+
+return () => unsub && unsub();
   }, []);
 
   const [legendDismissed, setLegendDismissed] = useState(false);
