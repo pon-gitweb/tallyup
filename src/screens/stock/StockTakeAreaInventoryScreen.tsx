@@ -1451,3 +1451,5 @@ function StockTakeAreaInventoryScreen() {
 }
 
 export default withErrorBoundary(StockTakeAreaInventoryScreen, 'Area Inventory');
+
+// TODO: Snackbar overlap with Next FAB — when FAB visible, increase snackbar bottom offset (~+72) so Undo stays tappable.

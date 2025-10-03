@@ -1,36 +1,85 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { ensureDevMembership } from '../services/devBootstrap';
 
 export default function ReportsScreen() {
   const nav = useNavigation<any>();
-
-  const openLastCycle = async () => {
-    // Reuse dev bootstrap to get the current venue
-    const { venueId } = await ensureDevMembership();
-    nav.navigate('LastCycleSummary', { venueId });
-  };
+  const soon = (title: string) => Alert.alert(title, 'Coming soon');
 
   return (
-    <View style={S.c}>
-      <Text style={S.h1}>Reports</Text>
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Reports</Text>
 
-      <TouchableOpacity style={S.card} onPress={openLastCycle}>
-        <Text style={S.cardTitle}>Last Completed Cycle Summary</Text>
-        <Text style={S.cardDesc}>Per-department completion and CSV export.</Text>
-      </TouchableOpacity>
+      {/* Uniform pill grid (placeholders only) */}
+      <View style={styles.pillGrid}>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Ask "Izzy" Reports')}>
+          <Text style={styles.pillTitle}>Ask "Izzy" Reports</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Invoices')}>
+          <Text style={styles.pillTitle}>Invoices</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Wastage')}>
+          <Text style={styles.pillTitle}>Wastage</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Stock Value')}>
+          <Text style={styles.pillTitle}>Stock Value</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Exports')}>
+          <Text style={styles.pillTitle}>Exports</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.pillTile} onPress={() => soon('Budgets (Summary)')}>
+          <Text style={styles.pillTitle}>Budgets</Text>
+        </TouchableOpacity>
+      </View>
 
-      <View style={S.card}><Text>Variance by Department (stub)</Text></View>
-      <View style={S.card}><Text>Item Movement (stub)</Text></View>
+      <View style={styles.grid}>
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('VarianceSnapshot')}>
+          <Text style={styles.btnText}>Variance Snapshot</Text>
+          <Text style={styles.blurb}>Shortages / Excess vs par with value impact.</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('LastCycleSummary')}>
+          <Text style={styles.btnText}>Last Cycle Summary</Text>
+          <Text style={styles.blurb}>High-level recap of the latest stock take.</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.btn, { backgroundColor:'#475569' }]} onPress={() => nav.navigate('ReportsIndex')}>
+          <Text style={styles.btnText}>Operational Reports (this department)</Text>
+          <Text style={styles.blurb}>Open the department-scoped reports (variance & activity).</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
-const S = StyleSheet.create({
-  c:{ flex:1, padding:16, backgroundColor:'#fff' },
-  h1:{ fontSize:22, fontWeight:'700', marginBottom:12 },
-  card:{ padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginBottom:10 },
-  cardTitle:{ fontWeight:'700' },
-  cardDesc:{ color:'#444', marginTop:2 },
+const styles = StyleSheet.create({
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#fff' },
+  title: { fontSize: 22, fontWeight: '800' },
+
+  pillGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 8,
+  },
+  pillTile: {
+    width: '48%',
+    minHeight: 44,
+    backgroundColor: '#EFEFF4',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  pillTitle: {
+    color: '#111',
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  grid: { gap: 10, marginTop: 6 },
+  btn: { backgroundColor: '#0A84FF', padding: 14, borderRadius: 12 },
+  btnText: { color: 'white', fontWeight: '800' },
+  blurb: { color: 'white', opacity: 0.9, marginTop: 4 },
 });
