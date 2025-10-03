@@ -4,10 +4,7 @@ import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
   Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform
 } from 'react-native';
-import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc
-, updateDoc, serverTimestamp} from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import {  db , auth } from '../../services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
