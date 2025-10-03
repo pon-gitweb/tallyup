@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl } from 'react-native';
+import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -8,14 +8,17 @@ import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
 import { usePersistedState } from '../../hooks/usePersistedState';
 
-let FileSystem: any = null, Sharing: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
+try { Haptics = require('expo-haptics'); } catch {}
 
 type RouteParams = { venueId: string; departmentId: string };
 type AreaDoc = { name: string; startedAt?: any; completedAt?: any };
 type ItemDoc = { name?: string; lastCount?: number; lastCountAt?: any; expectedQty?: number; incomingQty?: number; soldQty?: number; wastageQty?: number; };
 type Row = { id: string; areaName: string; expectedSum: number | null; countedSum: number; variance: number | null; items: number; };
+
+const slug = (s?: string) => (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 function DepartmentVarianceScreen() {
   dlog('[TallyUp Reports] DepartmentVarianceScreen');
@@ -27,6 +30,7 @@ function DepartmentVarianceScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [onlyVariance, setOnlyVariance] = usePersistedState<boolean>('ui:reports:deptVar:onlyVariance', false);
   const [sortByMagnitude, setSortByMagnitude] = usePersistedState<boolean>('ui:reports:deptVar:sortByMagnitude', true);
+  const [search, setSearch] = usePersistedState<string>('ui:reports:deptVar:search', '');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -79,11 +83,13 @@ function DepartmentVarianceScreen() {
   }, [load]);
 
   const viewRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
     let r = rows.slice();
+    if (q) r = r.filter(x => x.areaName?.toLowerCase().includes(q));
     if (onlyVariance) r = r.filter(x => (x.variance ?? 0) !== 0);
     if (sortByMagnitude) r.sort((a,b)=>Math.abs((b.variance ?? 0)) - Math.abs((a.variance ?? 0))); else r.sort((a,b)=>a.areaName.localeCompare(b.areaName));
     return r;
-  }, [rows, onlyVariance, sortByMagnitude]);
+  }, [rows, onlyVariance, sortByMagnitude, search]);
 
   const summary = useMemo(() => {
     const totalAreas = rows.length;
@@ -93,10 +99,11 @@ function DepartmentVarianceScreen() {
     return { totalAreas, withExpected, nonZero, absVar };
   }, [rows]);
 
-  const anyFilter = onlyVariance || !sortByMagnitude; // we treat A–Z as alternate sort, not a filter
+  const anyFilter = !!search.trim() || onlyVariance || !sortByMagnitude;
 
   const exportCsv = async (mode: 'current'|'changes') => {
     try {
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
       const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
       showToast('Export ready');
       const headers = ['Area','Items','Expected (sum)','Counted (sum)','Variance'];
@@ -119,7 +126,7 @@ function DepartmentVarianceScreen() {
       const csv = lines.join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-dept-variance-${mode}-${ts}.csv`;
+      const fname = `tallyup-dept-variance-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
@@ -139,24 +146,43 @@ function DepartmentVarianceScreen() {
         </View>
         <Text style={{ color:'#6B7280', marginBottom:10 }}>Sums Expected vs Counted for each area in this department. Variance = Counted − Expected.</Text>
 
-        <View style={{ flexDirection:'row', gap:8, marginBottom:8, flexWrap:'wrap' }}>
-          <TouchableOpacity onPress={()=>setOnlyVariance(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyVariance ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyVariance ? '#DBEAFE' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyVariance ? '#1D4ED8' : '#374151' }}>{onlyVariance ? '✓ Non-zero variance' : 'Non-zero variance'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>setSortByMagnitude(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortByMagnitude ? '#059669' : '#E5E7EB', backgroundColor: sortByMagnitude ? '#D1FAE5' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: sortByMagnitude ? '#065F46' : '#374151' }}>{sortByMagnitude ? '✓ Sort by largest variance' : 'Sort A–Z'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
-            <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
-            <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
-          </TouchableOpacity>
-          {anyFilter ? (
-            <TouchableOpacity onPress={()=>{ setOnlyVariance(false); setSortByMagnitude(true); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
-              <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+        {/* Search + Chips */}
+        <View style={{ gap:8, marginBottom:8 }}>
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search areas…"
+              placeholderTextColor="#9CA3AF"
+              style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, backgroundColor:'#F9FAFB' }}
+              returnKeyType="search"
+            />
+            {search ? (
+              <TouchableOpacity onPress={()=>setSearch('')} style={{ marginLeft:8, paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontWeight:'700' }}>Clear</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
+            <TouchableOpacity onPress={()=>setOnlyVariance(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyVariance ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyVariance ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: onlyVariance ? '#1D4ED8' : '#374151' }}>{onlyVariance ? '✓ Non-zero variance' : 'Non-zero variance'}</Text>
             </TouchableOpacity>
-          ) : null}
+            <TouchableOpacity onPress={()=>setSortByMagnitude(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortByMagnitude ? '#059669' : '#E5E7EB', backgroundColor: sortByMagnitude ? '#D1FAE5' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: sortByMagnitude ? '#065F46' : '#374151' }}>{sortByMagnitude ? '✓ Sort by largest variance' : 'Sort A–Z'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
+              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
+            </TouchableOpacity>
+            {anyFilter ? (
+              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyVariance(false); setSortByMagnitude(true); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {/* Summary line */}
@@ -164,10 +190,12 @@ function DepartmentVarianceScreen() {
           Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)}
         </Text>
 
-        {rows.length === 0 ? (
+        {viewRows.length === 0 ? (
           <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
-            <Text style={{ fontWeight:'700' }}>No data yet</Text>
-            <Text style={{ color:'#6B7280' }}>This department doesn’t have any areas/items loaded. Add items and counts to see variance.</Text>
+            <Text style={{ fontWeight:'700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
+            <Text style={{ color:'#6B7280' }}>
+              {search ? 'Broaden your search or clear filters.' : 'This department doesn’t have any areas/items loaded. Add items and counts to see variance.'}
+            </Text>
           </View>
         ) : (
           <FlatList

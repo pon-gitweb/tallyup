@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl } from 'react-native';
+import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -8,9 +8,10 @@ import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
 import { usePersistedState } from '../../hooks/usePersistedState';
 
-let FileSystem: any = null, Sharing: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
+try { Haptics = require('expo-haptics'); } catch {}
 
 type RouteParams = { venueId: string; departmentId: string };
 type AreaDoc = { name: string; startedAt?: any };
@@ -28,6 +29,8 @@ type Row = {
   belowPar: boolean;
 };
 
+const slug = (s?: string) => (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
 function CountActivityScreen() {
   dlog('[TallyUp Reports] CountActivityScreen');
   const nav = useNavigation<any>();
@@ -39,6 +42,7 @@ function CountActivityScreen() {
   const [onlyThisCycle, setOnlyThisCycle] = usePersistedState<boolean>('ui:reports:countAct:onlyThisCycle', false);
   const [onlyFlagged, setOnlyFlagged] = usePersistedState<boolean>('ui:reports:countAct:onlyFlagged', false);
   const [onlyBelowPar, setOnlyBelowPar] = usePersistedState<boolean>('ui:reports:countAct:onlyBelowPar', false);
+  const [search, setSearch] = usePersistedState<string>('ui:reports:countAct:search', '');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -87,13 +91,15 @@ function CountActivityScreen() {
   }, [load]);
 
   const viewRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
     let r = rows.slice();
+    if (q) r = r.filter(x => x.itemName?.toLowerCase().includes(q) || x.areaName?.toLowerCase().includes(q));
     if (onlyThisCycle) r = r.filter(x=>x.countedThisCycle);
     if (onlyFlagged) r = r.filter(x=>x.flagged);
     if (onlyBelowPar) r = r.filter(x=>x.belowPar);
     r.sort((a,b)=>(b.lastCountAt?.getTime() ?? 0) - (a.lastCountAt?.getTime() ?? 0));
     return r;
-  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar]);
+  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar, search]);
 
   const counts = useMemo(() => {
     const total = rows.length;
@@ -103,10 +109,11 @@ function CountActivityScreen() {
     return { total, flagged, below, cycle };
   }, [rows]);
 
-  const anyFilter = onlyThisCycle || onlyFlagged || onlyBelowPar;
+  const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar;
 
   const exportCsv = async (mode:'current'|'changes') => {
     try {
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
       const dataset = mode === 'changes'
         ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
         : viewRows;
@@ -131,7 +138,7 @@ function CountActivityScreen() {
       }
       const csv = lines.join('\n');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-count-activity-${mode}-${ts}.csv`;
+      const fname = `tallyup-count-activity-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
@@ -150,30 +157,49 @@ function CountActivityScreen() {
           </TouchableOpacity>
         </View>
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
-          Recent counts across areas and items. Filter by cycle, flags, or below-par; exports match your current view or changes only.
+          Recent counts across areas and items. Filter by search, cycle, flags, or below-par; exports match your current view or changes only.
         </Text>
 
-        <View style={{ flexDirection:'row', gap:8, marginBottom:8, flexWrap:'wrap' }}>
-          <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>{onlyFlagged ? '✓ Flagged only' : 'Flagged only'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>setOnlyBelowPar(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyBelowPar ? '#DC2626' : '#E5E7EB', backgroundColor: onlyBelowPar ? '#FEE2E2' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyBelowPar ? '#991B1B' : '#374151' }}>{onlyBelowPar ? '✓ Below Par' : 'Below Par'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
-            <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
-            <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
-          </TouchableOpacity>
-          {anyFilter ? (
-            <TouchableOpacity onPress={()=>{ setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
-              <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+        {/* Search + chips */}
+        <View style={{ gap:8, marginBottom:8 }}>
+          <View style={{ flexDirection:'row', alignItems:'center' }}>
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search items or areas…"
+              placeholderTextColor="#9CA3AF"
+              style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, backgroundColor:'#F9FAFB' }}
+              returnKeyType="search"
+            />
+            {search ? (
+              <TouchableOpacity onPress={()=>setSearch('')} style={{ marginLeft:8, paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontWeight:'700' }}>Clear</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
+            <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
             </TouchableOpacity>
-          ) : null}
+            <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>{onlyFlagged ? '✓ Flagged only' : 'Flagged only'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setOnlyBelowPar(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyBelowPar ? '#DC2626' : '#E5E7EB', backgroundColor: onlyBelowPar ? '#FEE2E2' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: onlyBelowPar ? '#991B1B' : '#374151' }}>{onlyBelowPar ? '✓ Below Par' : 'Below Par'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
+              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
+            </TouchableOpacity>
+            {anyFilter ? (
+              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {/* Summary line */}
@@ -181,10 +207,12 @@ function CountActivityScreen() {
           Rows: {counts.total} • Flagged: {counts.flagged} • Below par: {counts.below} • This cycle: {counts.cycle}
         </Text>
 
-        {rows.length === 0 ? (
+        {viewRows.length === 0 ? (
           <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
-            <Text style={{ fontWeight:'700' }}>No data yet</Text>
-            <Text style={{ color:'#6B7280' }}>Add items and counts first, then return to see activity.</Text>
+            <Text style={{ fontWeight:'700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
+            <Text style={{ color:'#6B7280' }}>
+              {search ? 'Broaden your search or clear filters.' : 'Add items and counts first, then return to see activity.'}
+            </Text>
           </View>
         ) : (
           <FlatList

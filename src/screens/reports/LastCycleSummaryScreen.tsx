@@ -4,9 +4,12 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useLastCycleSummary } from '../../hooks/reports/useLastCycleSummary';
 import { useDensity } from '../../hooks/useDensity';
 
-let FileSystem: any = null, Sharing: any = null;
+let FileSystem: any = null, Sharing: any = null, Haptics: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
 try { Sharing = require('expo-sharing'); } catch {}
+try { Haptics = require('expo-haptics'); } catch {}
+
+const slug = (s?: string) => (s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 function LastCycleSummaryScreen() {
   const { loading, data, generateNow, refresh } = useLastCycleSummary();
@@ -25,6 +28,7 @@ function LastCycleSummaryScreen() {
 
   const exportCsv = async () => {
     try {
+      Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
       const headers = ['Venue','Departments','Areas (total)','Areas Completed','Areas In Progress','Session Status','Generated At'];
       const lines = [headers.join(',')];
       const row = [
@@ -41,7 +45,7 @@ function LastCycleSummaryScreen() {
       if (!csv) { Alert.alert('Nothing to export', 'No data to export.'); return; }
       showToast('Export ready');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-last-cycle-summary-${ts}.csv`;
+      const fname = `tallyup-last-cycle-summary-${slug(data?.venueId)}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
