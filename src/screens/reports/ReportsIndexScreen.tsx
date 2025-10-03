@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { dlog } from '../../utils/devlog';
 import { useDensity } from '../../hooks/useDensity';
 
-type RouteParams = { venueId?: string; departmentId: string };
+type RouteParams = { venueId?: string; departmentId?: string };
 
 function ReportsIndexScreen() {
   dlog('[TallyUp Reports] ReportsIndexScreen');
@@ -13,7 +13,10 @@ function ReportsIndexScreen() {
   const route = useRoute<any>();
   const { venueId, departmentId } = (route.params ?? {}) as RouteParams;
   const { isCompact } = useDensity();
+  const [showInfo, setShowInfo] = useState(false);
   const D = isCompact ? 0.86 : 1;
+
+  const disabled = useMemo(() => !venueId || !departmentId, [venueId, departmentId]);
 
   const Card: React.FC<{ title: string; subtitle: string; onPress: () => void }> = ({ title, subtitle, onPress }) => (
     <TouchableOpacity
@@ -25,15 +28,18 @@ function ReportsIndexScreen() {
     </TouchableOpacity>
   );
 
-  const disabled = useMemo(() => !venueId || !departmentId, [venueId, departmentId]);
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-        <Text style={{ fontSize: isCompact ? 18 : 20, fontWeight: '900', marginBottom: 6 }}>Reports</Text>
-        <Text style={{ color: '#6B7280', marginBottom: 8 }}>
-          Explore area-level variance and count activity. Exports match the CSV behavior in stock.
-        </Text>
+        <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+          <View>
+            <Text style={{ fontSize: isCompact ? 18 : 20, fontWeight: '900' }}>Reports</Text>
+            <Text style={{ color: '#6B7280', marginTop: 2 }}>Variance and activity views for your current department.</Text>
+          </View>
+          <TouchableOpacity onPress={() => setShowInfo(true)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
+            <Text style={{ fontWeight:'800', color:'#3730A3' }}>Learn more</Text>
+          </TouchableOpacity>
+        </View>
 
         <Card
           title="Department Variance"
@@ -54,6 +60,27 @@ function ReportsIndexScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* Explainer modal (local only, no network) */}
+      <Modal visible={showInfo} animationType="fade" transparent onRequestClose={()=>setShowInfo(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center' }}>
+          <View style={{ width:'86%', borderRadius:16, backgroundColor:'#FFFFFF', padding:16 }}>
+            <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight:'900', marginBottom: 6 }}>About Reports</Text>
+            <Text style={{ color:'#374151', marginBottom:10 }}>
+              • <Text style={{ fontWeight:'700' }}>Department Variance</Text> shows Expected vs Counted totals per area. Use “Non-zero variance” to focus review and export just the changes.
+            </Text>
+            <Text style={{ color:'#374151', marginBottom:10 }}>
+              • <Text style={{ fontWeight:'700' }}>Count Activity</Text> lists recent item counts with timestamps. Filter to “This cycle only” or “Flagged only”, then export your current view or only the changes.
+            </Text>
+            <Text style={{ color:'#6B7280' }}>Tip: the density toggle (More → Density) applies here too for tighter spacing.</Text>
+            <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:12 }}>
+              <TouchableOpacity onPress={()=>setShowInfo(false)} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontWeight:'700' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
