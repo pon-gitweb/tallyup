@@ -47,7 +47,7 @@ function CountActivityScreen() {
         const it = i.data() as ItemDoc;
         const lastAt = parseTs(it.lastCountAt);
         const countedThisCycle = (startedAt && lastAt) ? lastAt >= startedAt : false;
-        out.push({ id: \`\${a.id}:\${i.id}\`, areaName: ad?.name || 'Unnamed area', itemName: it?.name || 'Unnamed item', lastCount: typeof it.lastCount === 'number' ? it.lastCount : null, lastCountAt: lastAt, flagged: !!it.flagRecount, countedThisCycle });
+        out.push({ id: `${a.id}:${i.id}`, areaName: ad?.name || 'Unnamed area', itemName: it?.name || 'Unnamed item', lastCount: typeof it.lastCount === 'number' ? it.lastCount : null, lastCountAt: lastAt, flagged: !!it.flagRecount, countedThisCycle });
       });
     }
     setRows(out);
@@ -79,19 +79,19 @@ function CountActivityScreen() {
       const lines = [headers.join(',')];
       for (const r of dataset) {
         const row = [ r.areaName, r.itemName, r.lastCount ?? '', r.lastCountAt ? r.lastCountAt.toISOString() : '', r.flagged ? 'yes' : '', r.countedThisCycle ? 'yes' : '' ]
-          .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? \`"\${str.replace(/"/g,'""')}"\` : str; })
+          .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
           .join(',');
         lines.push(row);
       }
       const csv = lines.join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = \`tallyup-count-activity-\${mode}-\${ts}.csv\`;
+      const fname = `tallyup-count-activity-${mode}-${ts}.csv`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
-      else { Alert.alert('Exported', \`Saved to cache: \${fname}\`); }
+      else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
   };
 
@@ -109,8 +109,8 @@ function CountActivityScreen() {
           <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
             <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}>
-            <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>{onlyFlagged ? '✓ Flagged only' : 'Flagged only'}</Text>
+          <TouchableOpacity onPress={()=>setOnlyFlagged(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#D97706' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#FEF3C7' : 'white' }}>
+            <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#92400E' : '#374151' }}>{onlyThisCycle ? '✓ Flagged only' : 'Flagged only'}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
             <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
