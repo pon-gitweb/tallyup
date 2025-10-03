@@ -1,130 +1,102 @@
-import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, FlatList } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Platform } from 'react-native';
+import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useLastCycleSummary } from '../../hooks/reports/useLastCycleSummary';
-import { Timestamp } from 'firebase/firestore';
+import { useDensity } from '../../hooks/useDensity';
 
-function fmt(ts: any) {
-  try {
-    if (ts && typeof ts?.toDate === 'function') return ts.toDate().toLocaleString();
-    if (ts instanceof Date) return ts.toLocaleString();
-  } catch {}
-  return '—';
-}
+let FileSystem: any = null, Sharing: any = null;
+try { FileSystem = require('expo-file-system'); } catch {}
+try { Sharing = require('expo-sharing'); } catch {}
 
-export default function LastCycleSummaryScreen() {
+function LastCycleSummaryScreen() {
   const { loading, data, generateNow, refresh } = useLastCycleSummary();
+  const { isCompact } = useDensity();
+  const [exportToast, setExportToast] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const D = isCompact ? 0.9 : 1;
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await refresh(); } catch (e:any) { Alert.alert('Refresh failed', e?.message ?? String(e)); }
+    setRefreshing(false);
+  }, [refresh]);
+
+  const showToast = (msg='Export ready') => { setExportToast(msg); setTimeout(()=>setExportToast(null), 1400); };
+
+  const exportCsv = async () => {
+    try {
+      const headers = ['Venue','Departments','Areas (total)','Areas Completed','Areas In Progress','Session Status','Generated At'];
+      const lines = [headers.join(',')];
+      const row = [
+        data?.venueId ?? '',
+        data?.departments ?? '',
+        data?.areasTotal ?? '',
+        data?.areasCompleted ?? '',
+        data?.areasInProgress ?? '',
+        data?.sessionStatus ?? '',
+        new Date().toISOString(),
+      ].map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')) ? `"${str.replace(/"/g,'""')}"` : str; }).join(',');
+      lines.push(row);
+      const csv = lines.join('\n');
+      if (!csv) { Alert.alert('Nothing to export', 'No data to export.'); return; }
+      showToast('Export ready');
+      const ts = new Date().toISOString().replace(/[:.]/g,'-');
+      const fname = `tallyup-last-cycle-summary-${ts}.csv`;
+      if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
+      const path = FileSystem.cacheDirectory + fname;
+      await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
+      else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
+    } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
+  };
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Last Cycle Summary</Text>
-
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.primary} onPress={generateNow}>
-          <Text style={styles.primaryText}>Generate / Refresh</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.secondary} onPress={refresh}>
-          <Text style={styles.secondaryText}>Reload</Text>
-        </TouchableOpacity>
-      </View>
-
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator />
-          <Text>Loading…</Text>
-        </View>
-      ) : !data ? (
-        <View style={[styles.card, styles.warn]}>
-          <Text style={styles.warnText}>No snapshot yet. Tap “Generate / Refresh”.</Text>
-        </View>
-      ) : (
-        <>
-          <View style={styles.grid}>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>Generated</Text>
-              <Text style={styles.kpiValue}>{fmt((data as any).generatedAt)}</Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>Departments</Text>
-              <Text style={styles.kpiValue}>{data.departments}</Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>Areas</Text>
-              <Text style={styles.kpiValue}>{data.areasCompleted}/{data.areasTotal}</Text>
-              <Text style={styles.sub}>Completed / Total</Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>In Progress</Text>
-              <Text style={styles.kpiValue}>{data.areasInProgress}</Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>Items Counted</Text>
-              <Text style={styles.kpiValue}>{data.itemsCounted}</Text>
-            </View>
-            <View style={styles.card}>
-              <Text style={styles.kpiLabel}>Shortages / Excess</Text>
-              <Text style={styles.kpiValue}>{data.shortages} / {data.excesses}</Text>
-            </View>
-            <View style={styles.cardWide}>
-              <Text style={styles.kpiLabel}>Value Impact (abs.)</Text>
-              <Text style={styles.kpiValue}>${data.valueImpact?.toFixed(2)}</Text>
-            </View>
+    <SafeAreaView style={{ flex:1, backgroundColor:'#FFFFFF' }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 16 }}
+        refreshControl={<RefreshControl refreshing={refreshing || loading} onRefresh={onRefresh} />}
+      >
+        <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <Text style={{ fontSize: isCompact ? 18 : 20, fontWeight:'900' }}>Last Cycle Summary</Text>
+          <View style={{ flexDirection:'row', gap:8 }}>
+            <TouchableOpacity onPress={exportCsv} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => generateNow().catch((e:any)=>Alert.alert('Generate failed', e?.message ?? String(e)))} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#ECFDF5', borderWidth:1, borderColor:'#D1FAE5' }}>
+              <Text style={{ fontWeight:'800', color:'#065F46' }}>Generate now</Text>
+            </TouchableOpacity>
           </View>
+        </View>
 
-          <View style={[styles.card, { marginTop: 12 }]}>
-            <Text style={styles.sectionTitle}>Top Variances</Text>
-            <FlatList
-              style={{ marginTop: 6 }}
-              data={data.topVariances}
-              keyExtractor={(r, i) => `${r.productId}-${i}`}
-              ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-              renderItem={({ item }) => (
-                <View style={styles.rowLine}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.lineName}>{item.name}</Text>
-                    <Text style={styles.sub}>
-                      variance {item.variance > 0 ? '+' : ''}{item.variance}
-                      {item.unitCost != null ? ` · $${Number(item.unitCost).toFixed(2)}` : ''}
-                    </Text>
-                  </View>
-                  <Text style={[styles.kpiValue, { fontSize: 16 }]}>
-                    {item.valueImpact != null ? `$${Number(item.valueImpact).toFixed(2)}` : '—'}
-                  </Text>
-                </View>
-              )}
-              ListEmptyComponent={<Text>No variances calculated.</Text>}
-            />
-          </View>
-        </>
-      )}
+        <Text style={{ color:'#6B7280', marginBottom:12 }}>
+          A quick recap of your most recent stock cycle. Pull down to refresh or “Generate now” to recompute.
+        </Text>
+
+        <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, padding:12 }}>
+          <Row label="Departments" value={String(data?.departments ?? '—')} />
+          <Row label="Areas (total)" value={String(data?.areasTotal ?? '—')} />
+          <Row label="Areas completed" value={String(data?.areasCompleted ?? '—')} />
+          <Row label="Areas in progress" value={String(data?.areasInProgress ?? '—')} />
+          <Row label="Session status" value={String(data?.sessionStatus ?? '—')} />
+        </View>
+      </ScrollView>
+
+      {exportToast ? (
+        <View style={{ position:'absolute', left:16, right:16, bottom: Platform.select({ ios:24, android:16 }), backgroundColor:'rgba(0,0,0,0.85)', borderRadius:12, paddingVertical:10, paddingHorizontal:14, alignItems:'center' }}>
+          <Text style={{ color:'white', fontWeight:'600' }}>{exportToast}</Text>
+        </View>
+      ) : null}
+    </SafeAreaView>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:8 }}>
+      <Text style={{ fontWeight:'800' }}>{label}</Text>
+      <Text style={{ color:'#111827' }}>{value}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '800' },
-
-  center: { paddingVertical: 40, alignItems: 'center', gap: 8 },
-
-  row: { flexDirection: 'row', gap: 10 },
-  primary: { backgroundColor: '#0A84FF', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-  primaryText: { color: '#fff', fontWeight: '800' },
-  secondary: { backgroundColor: '#E5E7EB', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-  secondaryText: { color: '#111827', fontWeight: '700' },
-
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, width: '48%', gap: 4 },
-  cardWide: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, width: '100%', gap: 4 },
-
-  kpiLabel: { fontSize: 12, opacity: 0.7 },
-  kpiValue: { fontSize: 18, fontWeight: '900' },
-  sub: { fontSize: 12, opacity: 0.7 },
-
-  sectionTitle: { fontSize: 16, fontWeight: '800' },
-  rowLine: { flexDirection: 'row', alignItems: 'center' },
-
-  warn: { backgroundColor: '#FFF4E5', padding: 12, borderRadius: 12 },
-  warnText: { color: '#8A5200' },
-
-  lineName: { fontWeight: '700' },
-});
+export default withErrorBoundary(LastCycleSummaryScreen, 'Last Cycle Summary');
