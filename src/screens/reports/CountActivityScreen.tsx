@@ -208,6 +208,14 @@ function CountActivityScreen() {
     } catch {}
   };
 
+  const SummarySticky = () => (
+    <View style={{ backgroundColor:'#FFFFFF', paddingVertical:8, borderBottomWidth:1, borderBottomColor:'#E5E7EB' }}>
+      <Text style={{ color:'#6B7280' }}>
+        Rows: {counts.total} • Flagged: {counts.flagged} • Below par: {counts.below} • This cycle: {counts.cycle}
+      </Text>
+    </View>
+  );
+
   return (
     <SafeAreaView style={{ flex:1, backgroundColor:'#FFFFFF' }}>
       <View style={{ padding:16 }}>
@@ -295,12 +303,7 @@ function CountActivityScreen() {
           </View>
         </View>
 
-        {/* Summary */}
-        <Text style={{ color:'#6B7280', marginBottom:10 }}>
-          Rows: {counts.total} • Flagged: {counts.flagged} • Below par: {counts.below} • This cycle: {counts.cycle}
-        </Text>
-
-        {/* List */}
+        {/* LIST (with sticky summary header) */}
         <FlatList
           ref={listRef}
           data={viewRows}
@@ -308,6 +311,8 @@ function CountActivityScreen() {
           onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => setShowTop(e.nativeEvent.contentOffset.y > 300)}
           scrollEventThrottle={16}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          ListHeaderComponent={<SummarySticky />}
+          stickyHeaderIndices={[0]}
           renderItem={({ item }) => (
             <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
               <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
@@ -324,6 +329,14 @@ function CountActivityScreen() {
                 </View>
               </View>
             </TouchableOpacity>
+          )}
+          ListEmptyComponent={(
+            <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
+              <Text style={{ fontWeight:'700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
+              <Text style={{ color:'#6B7280' }}>
+                {search ? 'Broaden your search or clear filters.' : 'This department doesn’t have any areas/items loaded. Add items and counts to see activity.'}
+              </Text>
+            </View>
           )}
         />
       </View>

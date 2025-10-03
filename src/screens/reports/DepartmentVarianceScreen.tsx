@@ -216,6 +216,15 @@ function DepartmentVarianceScreen() {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
 
+  // Sticky summary header
+  const SummarySticky = () => (
+    <View style={{ backgroundColor:'#FFFFFF', paddingVertical:8, borderBottomWidth:1, borderBottomColor:'#E5E7EB' }}>
+      <Text style={{ color:'#6B7280' }}>
+        Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)} • Counted Σ: {summary.counted.toFixed(2)} • Expected Σ: {summary.expected.toFixed(2)} • Net: {summary.netVariance.toFixed(2)}
+      </Text>
+    </View>
+  );
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <View style={{ padding: 16 }}>
@@ -304,49 +313,44 @@ function DepartmentVarianceScreen() {
           </View>
         </View>
 
-        {/* Summary */}
-        <Text style={{ color: '#6B7280', marginBottom: 10 }}>
-          Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)} •
-          {' '}Counted Σ: {summary.counted.toFixed(2)} • Expected Σ: {summary.expected.toFixed(2)} • Net: {summary.netVariance.toFixed(2)}
-        </Text>
-
-        {/* List */}
-        {viewRows.length === 0 ? (
-          <View style={{ padding: 16, borderRadius: 12, backgroundColor: '#F3F4F6' }}>
-            <Text style={{ fontWeight: '700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
-            <Text style={{ color: '#6B7280' }}>
-              {search ? 'Broaden your search or clear filters.' : 'This department doesn’t have any areas/items loaded. Add items and counts to see variance.'}
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={viewRows}
-            keyExtractor={(r) => r.id}
-            onScroll={onScroll}
-            scrollEventThrottle={16}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            renderItem={({ item }) => (
-              <TouchableOpacity onLongPress={() => copyRow(item)} activeOpacity={0.9}>
-                <View style={{ paddingVertical: 12 * D, paddingHorizontal: 12 * D, borderBottomWidth: 1, borderBottomColor: '#EEE' }}>
-                  <Text style={{ fontSize: isCompact ? 15 : 16, fontWeight: '800' }}>{item.areaName}</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                    <Text style={{ color: '#374151' }}>Items: {item.items}</Text>
-                    <Text style={{ color: '#374151' }}>Expected: {item.expectedSum == null ? '—' : item.expectedSum.toFixed(2)}</Text>
-                    <Text style={{ color: '#374151' }}>Counted: {item.countedSum.toFixed(2)}</Text>
-                    <Text style={{
-                      color: item.variance == null ? '#6B7280'
-                        : item.variance === 0 ? '#6B7280'
-                        : (item.variance > 0 ? '#065F46' : '#991B1B')
-                    }}>
-                      Variance: {item.variance == null ? '—' : item.variance.toFixed(2)}
-                    </Text>
-                  </View>
+        {/* LIST (with sticky summary header) */}
+        <FlatList
+          ref={listRef}
+          data={viewRows}
+          keyExtractor={(r) => r.id}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          ListHeaderComponent={<SummarySticky />}
+          stickyHeaderIndices={[0]}
+          renderItem={({ item }) => (
+            <TouchableOpacity onLongPress={() => copyRow(item)} activeOpacity={0.9}>
+              <View style={{ paddingVertical: 12 * D, paddingHorizontal: 12 * D, borderBottomWidth: 1, borderBottomColor: '#EEE' }}>
+                <Text style={{ fontSize: isCompact ? 15 : 16, fontWeight: '800' }}>{item.areaName}</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                  <Text style={{ color: '#374151' }}>Items: {item.items}</Text>
+                  <Text style={{ color: '#374151' }}>Expected: {item.expectedSum == null ? '—' : item.expectedSum.toFixed(2)}</Text>
+                  <Text style={{ color: '#374151' }}>Counted: {item.countedSum.toFixed(2)}</Text>
+                  <Text style={{
+                    color: item.variance == null ? '#6B7280'
+                      : item.variance === 0 ? '#6B7280'
+                      : (item.variance > 0 ? '#065F46' : '#991B1B')
+                  }}>
+                    Variance: {item.variance == null ? '—' : item.variance.toFixed(2)}
+                  </Text>
                 </View>
-              </TouchableOpacity>
-            )}
-          />
-        )}
+              </View>
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={(
+            <View style={{ padding: 16, borderRadius: 12, backgroundColor: '#F3F4F6' }}>
+              <Text style={{ fontWeight: '700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
+              <Text style={{ color: '#6B7280' }}>
+                {search ? 'Broaden your search or clear filters.' : 'This department doesn’t have any areas/items loaded. Add items and counts to see variance.'}
+              </Text>
+            </View>
+          )}
+        />
       </View>
 
       {/* Floating "Top" pill */}
