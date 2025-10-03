@@ -1,85 +1,70 @@
-import React, { useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
+import React, { useMemo } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { dlog } from '../../utils/devlog';
+import { usePersistedState } from '../../hooks/usePersistedState';
 import { useDensity } from '../../hooks/useDensity';
 
-type RouteParams = { venueId?: string; departmentId?: string };
+type Params = { venueId?: string; departmentId?: string };
 
 function ReportsIndexScreen() {
   dlog('[TallyUp Reports] ReportsIndexScreen');
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { venueId, departmentId } = (route.params ?? {}) as RouteParams;
+  const { venueId, departmentId } = (route.params ?? {}) as Params;
   const { isCompact } = useDensity();
-  const [showInfo, setShowInfo] = useState(false);
-  const D = isCompact ? 0.86 : 1;
 
-  const disabled = useMemo(() => !venueId || !departmentId, [venueId, departmentId]);
+  const [lastOpened] = usePersistedState<string>('ui:reports:lastOpened', '');
+  const lastMeta = useMemo(() => {
+    if (!lastOpened) return null;
+    const label =
+      lastOpened === 'DepartmentVariance' ? 'Department Variance'
+      : lastOpened === 'CountActivity' ? 'Count Activity'
+      : lastOpened === 'LastCycleSummary' ? 'Last Cycle Summary'
+      : null;
+    if (!label) return null;
+    return { name: lastOpened, label };
+  }, [lastOpened]);
 
-  const Card: React.FC<{ title: string; subtitle: string; onPress: () => void }> = ({ title, subtitle, onPress }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      style={{ paddingVertical: 14 * D, paddingHorizontal: 16 * D, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FFFFFF' }}
-    >
-      <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight: '800', marginBottom: 4 }}>{title}</Text>
-      <Text style={{ color: '#6B7280' }}>{subtitle}</Text>
-    </TouchableOpacity>
-  );
+  const D = isCompact ? 0.92 : 1;
+
+  const go = (name: string) => nav.navigate(name as never, { venueId, departmentId });
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-        <View style={{ flexDirection:'row', alignItems:'flex-start', marginBottom: 4 }}>
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={{ fontSize: isCompact ? 18 : 20, fontWeight: '900' }}>Reports (this department)</Text>
-            <Text style={{ color: '#6B7280', marginTop: 2 }}>Variance and activity views scoped to the current department.</Text>
-          </View>
-          <TouchableOpacity onPress={() => setShowInfo(true)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
-            <Text style={{ fontWeight:'800', color:'#3730A3' }}>Learn more</Text>
-          </TouchableOpacity>
-        </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+      <View style={{ padding: 16 }}>
+        <Text style={{ fontSize: isCompact ? 20 : 22, fontWeight: '900', marginBottom: 8 }}>Reports</Text>
+        <Text style={{ color: '#6B7280', marginBottom: 12 }}>
+          Choose a report. These respect your current venue{departmentId ? ` and department` : ''}.
+        </Text>
 
-        <Card
-          title="Department Variance"
-          subtitle="Compare Expected vs Counted per area"
-          onPress={() => !disabled && nav.navigate('DepartmentVariance', { venueId, departmentId })}
-        />
-        <Card
-          title="Count Activity"
-          subtitle="Recent item counts; filter flags, cycle & below par"
-          onPress={() => !disabled && nav.navigate('CountActivity', { venueId, departmentId })}
-        />
-
-        {disabled ? (
-          <View style={{ marginTop: 4, padding: 12, borderRadius: 10, backgroundColor: '#FEF3C7', borderColor: '#F59E0B', borderWidth: 1 }}>
-            <Text style={{ color: '#92400E', fontWeight: '700' }}>
-              Missing venue/department context. Open Reports from an Area to auto-fill context.
-            </Text>
+        {lastMeta ? (
+          <View style={{ marginBottom: 12, padding: 12, borderRadius: 12, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' }}>
+            <Text style={{ fontWeight: '800', marginBottom: 8 }}>Last opened</Text>
+            <TouchableOpacity onPress={() => go(lastMeta.name)} style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderRadius: 10, backgroundColor: '#111827' }}>
+              <Text style={{ color: 'white', fontWeight: '800' }}>{lastMeta.label}</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
-      </ScrollView>
 
-      <Modal visible={showInfo} animationType="fade" transparent onRequestClose={()=>setShowInfo(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center' }}>
-          <View style={{ width:'86%', borderRadius:16, backgroundColor:'#FFFFFF', padding:16 }}>
-            <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight:'900', marginBottom: 6 }}>About Operational Reports</Text>
-            <Text style={{ color:'#374151', marginBottom:10 }}>
-              • <Text style={{ fontWeight:'700' }}>Department Variance</Text> shows Expected vs Counted totals per area. Use “Non-zero variance” and export just the changes.
-            </Text>
-            <Text style={{ color:'#374151', marginBottom:10 }}>
-              • <Text style={{ fontWeight:'700' }}>Count Activity</Text> lists recent item counts with timestamps. Filters include “This cycle only”, “Flagged only”, and <Text style={{ fontWeight:'700' }}>“Below Par”</Text>.
-            </Text>
-            <Text style={{ color:'#6B7280' }}>Tip: the density toggle (More → Density) applies here too for tighter spacing.</Text>
-            <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:12 }}>
-              <TouchableOpacity onPress={()=>setShowInfo(false)} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6' }}>
-                <Text style={{ fontWeight:'700' }}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+        <View style={{ gap: 10 }}>
+          <TouchableOpacity onPress={() => go('DepartmentVariance')} style={{ padding: 14*D, borderRadius: 12, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#DBEAFE' }}>
+            <Text style={{ fontWeight: '800', color: '#1E40AF' }}>Department Variance</Text>
+            <Text style={{ color: '#1E3A8A' }}>Expected vs Counted per area; filter & export.</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => go('CountActivity')} style={{ padding: 14*D, borderRadius: 12, backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#D1FAE5' }}>
+            <Text style={{ fontWeight: '800', color: '#065F46' }}>Count Activity</Text>
+            <Text style={{ color: '#065F46' }}>Recent counts with flags / below-par; filter & export.</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => go('LastCycleSummary')} style={{ padding: 14*D, borderRadius: 12, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB' }}>
+            <Text style={{ fontWeight: '800', color: '#111827' }}>Last Cycle Summary</Text>
+            <Text style={{ color: '#374151' }}>Top-level progress snapshot; export.</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
+      </View>
     </SafeAreaView>
   );
 }

@@ -28,6 +28,10 @@ function DepartmentVarianceScreen() {
   const { venueId, departmentId } = (route.params ?? {}) as RouteParams;
   const { isCompact } = useDensity();
 
+  // Remember this as last opened report
+  const [, setLastOpened] = usePersistedState<string>('ui:reports:lastOpened', '');
+  useEffect(() => { setLastOpened('DepartmentVariance'); }, [setLastOpened]);
+
   const [rows, setRows] = useState<Row[]>([]);
   const [onlyVariance, setOnlyVariance] = usePersistedState<boolean>('ui:reports:deptVar:onlyVariance', false);
   const [sortByMagnitude, setSortByMagnitude] = usePersistedState<boolean>('ui:reports:deptVar:sortByMagnitude', true);
@@ -39,7 +43,6 @@ function DepartmentVarianceScreen() {
   const listRef = useRef<FlatList<Row>>(null);
 
   const D = isCompact ? 0.86 : 1;
-  const showToast = (msg = 'Export ready') => { setExportToast(msg); setTimeout(()=>setExportToast(null), 1400); };
 
   const parseTs = (v: any): Date | null =>
     v?.toDate ? v.toDate() : (v?._seconds ? new Date(v._seconds*1000) : (isNaN(new Date(v).getTime()) ? null : new Date(v)));
@@ -175,14 +178,13 @@ function DepartmentVarianceScreen() {
     } catch {}
   };
 
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setShowTop(e.nativeEvent.contentOffset.y > 300);
-  };
+  const [exportToast, setExportToast] = useState<string | null>(null);
 
-  const scrollToTop = () => {
-    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
-  };
+  const [delimiter, setDelimiter] = usePersistedState<'comma'|'tab'>('ui:reports:csvDelimiter', 'comma');
+
+  const [listRefresh, setListRefresh] = useState(false);
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => setShowTop(e.nativeEvent.contentOffset.y > 300);
+  const scrollToTop = () => { Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{}); listRef.current?.scrollToOffset({ offset: 0, animated: true }); };
 
   return (
     <SafeAreaView style={{ flex:1, backgroundColor:'#FFFFFF' }}>
@@ -229,6 +231,7 @@ function DepartmentVarianceScreen() {
               <Text style={{ fontWeight:'800', color: delimiter==='tab' ? '#1E40AF' : '#374151' }}>{delimiter==='tab' ? '✓ TSV (tab)' : 'TSV (tab)'}</Text>
             </TouchableOpacity>
 
+            {/* Export / Copy */}
             <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
               <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export — Current view</Text>
             </TouchableOpacity>
@@ -241,11 +244,6 @@ function DepartmentVarianceScreen() {
             <TouchableOpacity onPress={()=>copyCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F9FAFB', borderWidth:1, borderColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Changes only</Text>
             </TouchableOpacity>
-            {anyFilter ? (
-              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyVariance(false); setSortByMagnitude(true); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
-                <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
         </View>
 

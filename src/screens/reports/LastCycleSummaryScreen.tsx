@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, ScrollView, RefreshControl, Alert, Platform } from 'react-native';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useLastCycleSummary } from '../../hooks/reports/useLastCycleSummary';
 import { useDensity } from '../../hooks/useDensity';
+import { usePersistedState } from '../../hooks/usePersistedState';
 
 let FileSystem: any = null, Sharing: any = null, Haptics: any = null, Clipboard: any = null;
 try { FileSystem = require('expo-file-system'); } catch {}
@@ -18,6 +19,10 @@ function LastCycleSummaryScreen() {
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const D = isCompact ? 0.9 : 1;
+
+  // Remember this as last opened report
+  const [, setLastOpened] = usePersistedState<string>('ui:reports:lastOpened', '');
+  useEffect(() => { setLastOpened('LastCycleSummary'); }, [setLastOpened]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

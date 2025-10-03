@@ -39,6 +39,10 @@ function CountActivityScreen() {
   const { venueId, departmentId } = (route.params ?? {}) as RouteParams;
   const { isCompact } = useDensity();
 
+  // Remember this as last opened report
+  const [, setLastOpened] = usePersistedState<string>('ui:reports:lastOpened', '');
+  useEffect(() => { setLastOpened('CountActivity'); }, [setLastOpened]);
+
   const [rows, setRows] = useState<Row[]>([]);
   const [onlyThisCycle, setOnlyThisCycle] = usePersistedState<boolean>('ui:reports:countAct:onlyThisCycle', false);
   const [onlyFlagged, setOnlyFlagged] = usePersistedState<boolean>('ui:reports:countAct:onlyFlagged', false);
@@ -46,13 +50,13 @@ function CountActivityScreen() {
   const [search, setSearch] = usePersistedState<string>('ui:reports:countAct:search', '');
   const [sortAZ, setSortAZ] = usePersistedState<boolean>('ui:reports:countAct:sortAZ', false);
   const [delimiter, setDelimiter] = usePersistedState<'comma'|'tab'>('ui:reports:csvDelimiter', 'comma');
+  const [dateRange, setDateRange] = usePersistedState<'all'|'7d'|'30d'>('ui:reports:countAct:dateRange', 'all');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showTop, setShowTop] = useState(false);
   const listRef = useRef<FlatList<Row>>(null);
 
   const D = isCompact ? 0.86 : 1;
-  const showToast = (m='Export ready') => { setExportToast(m); setTimeout(()=>setExportToast(null), 1400); };
   const parseTs = (v:any): Date|null => v?.toDate ? v.toDate() : (v?._seconds ? new Date(v._seconds*1000) : (isNaN(new Date(v).getTime()) ? null : new Date(v)));
 
   const load = useCallback(async () => {
@@ -95,6 +99,9 @@ function CountActivityScreen() {
     setRefreshing(false);
   }, [load]);
 
+  const now = Date.now();
+  const cutoff = useMemo(() => dateRange === '7d' ? (now - 7*86400000) : dateRange === '30d' ? (now - 30*86400000) : null, [now, dateRange]);
+
   const viewRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     let r = rows.slice();
@@ -102,10 +109,11 @@ function CountActivityScreen() {
     if (onlyThisCycle) r = r.filter(x=>x.countedThisCycle);
     if (onlyFlagged) r = r.filter(x=>x.flagged);
     if (onlyBelowPar) r = r.filter(x=>x.belowPar);
+    if (cutoff != null) r = r.filter(x => (x.lastCountAt?.getTime() ?? 0) >= cutoff);
     if (sortAZ) r.sort((a,b)=> (a.areaName.localeCompare(b.areaName)) || a.itemName.localeCompare(b.itemName));
     else r.sort((a,b)=>(b.lastCountAt?.getTime() ?? 0) - (a.lastCountAt?.getTime() ?? 0));
     return r;
-  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar, search, sortAZ]);
+  }, [rows, onlyThisCycle, onlyFlagged, onlyBelowPar, search, sortAZ, cutoff]);
 
   const counts = useMemo(() => {
     const total = rows.length;
@@ -115,7 +123,7 @@ function CountActivityScreen() {
     return { total, flagged, below, cycle };
   }, [rows]);
 
-  const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar || sortAZ;
+  const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar || sortAZ || dateRange !== 'all';
 
   const fieldToCsv = (val: any, delim: string) => {
     const str = String(val ?? '');
@@ -200,15 +208,6 @@ function CountActivityScreen() {
     } catch {}
   };
 
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setShowTop(e.nativeEvent.contentOffset.y > 300);
-  };
-
-  const scrollToTop = () => {
-    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
-  };
-
   return (
     <SafeAreaView style={{ flex:1, backgroundColor:'#FFFFFF' }}>
       <View style={{ padding:16 }}>
@@ -219,7 +218,7 @@ function CountActivityScreen() {
           </TouchableOpacity>
         </View>
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
-          Recent counts across areas and items. Filter by search, cycle, flags, below-par; exports match your current view or changes only.
+          Recent counts across areas and items. Filter by date window, cycle, flags, below-par; exports match your current view or changes only.
         </Text>
 
         {/* Search + chips */}
@@ -241,6 +240,18 @@ function CountActivityScreen() {
           </View>
 
           <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
+            {/* Date window */}
+            <TouchableOpacity onPress={()=>setDateRange('all')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: dateRange==='all' ? '#1E40AF' : '#E5E7EB', backgroundColor: dateRange==='all' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: dateRange==='all' ? '#1E40AF' : '#374151' }}>{dateRange==='all' ? '✓ All time' : 'All time'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setDateRange('7d')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: dateRange==='7d' ? '#1E40AF' : '#E5E7EB', backgroundColor: dateRange==='7d' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: dateRange==='7d' ? '#1E40AF' : '#374151' }}>{dateRange==='7d' ? '✓ Last 7 days' : 'Last 7 days'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setDateRange('30d')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: dateRange==='30d' ? '#1E40AF' : '#E5E7EB', backgroundColor: dateRange==='30d' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: dateRange==='30d' ? '#1E40AF' : '#374151' }}>{dateRange==='30d' ? '✓ Last 30 days' : 'Last 30 days'}</Text>
+            </TouchableOpacity>
+
+            {/* Flags */}
             <TouchableOpacity onPress={()=>setOnlyThisCycle(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyThisCycle ? '#1D4ED8' : '#E5E7EB', backgroundColor: onlyThisCycle ? '#DBEAFE' : 'white' }}>
               <Text style={{ fontWeight:'800', color: onlyThisCycle ? '#1D4ED8' : '#374151' }}>{onlyThisCycle ? '✓ This cycle only' : 'This cycle only'}</Text>
             </TouchableOpacity>
@@ -254,7 +265,7 @@ function CountActivityScreen() {
               <Text style={{ fontWeight:'800', color: sortAZ ? '#065F46' : '#374151' }}>{sortAZ ? '✓ Sort A–Z' : 'Sort by newest'}</Text>
             </TouchableOpacity>
 
-            {/* Delimiter toggle */}
+            {/* Export delimiter */}
             <TouchableOpacity onPress={()=>setDelimiter('comma')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: delimiter==='comma' ? '#1E40AF' : '#E5E7EB', backgroundColor: delimiter==='comma' ? '#DBEAFE' : 'white' }}>
               <Text style={{ fontWeight:'800', color: delimiter==='comma' ? '#1E40AF' : '#374151' }}>{delimiter==='comma' ? '✓ CSV (,)' : 'CSV (,)'}</Text>
             </TouchableOpacity>
@@ -262,6 +273,7 @@ function CountActivityScreen() {
               <Text style={{ fontWeight:'800', color: delimiter==='tab' ? '#1E40AF' : '#374151' }}>{delimiter==='tab' ? '✓ TSV (tab)' : 'TSV (tab)'}</Text>
             </TouchableOpacity>
 
+            {/* Export / Copy */}
             <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
               <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export — Current view</Text>
             </TouchableOpacity>
@@ -274,53 +286,46 @@ function CountActivityScreen() {
             <TouchableOpacity onPress={()=>copyCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F9FAFB', borderWidth:1, borderColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Changes only</Text>
             </TouchableOpacity>
+
             {anyFilter ? (
-              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); setSortAZ(false); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
+              <TouchableOpacity onPress={()=>{ setSearch(''); setOnlyThisCycle(false); setOnlyFlagged(false); setOnlyBelowPar(false); setSortAZ(false); setDateRange('all'); }} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6' }}>
                 <Text style={{ fontWeight:'800', color:'#374151' }}>Clear filters</Text>
               </TouchableOpacity>
             ) : null}
           </View>
         </View>
 
-        {/* Summary line */}
+        {/* Summary */}
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
           Rows: {counts.total} • Flagged: {counts.flagged} • Below par: {counts.below} • This cycle: {counts.cycle}
         </Text>
 
-        {viewRows.length === 0 ? (
-          <View style={{ padding:16, borderRadius:12, backgroundColor:'#F3F4F6' }}>
-            <Text style={{ fontWeight:'700' }}>{search ? `No matches for “${search}”` : 'No data yet'}</Text>
-            <Text style={{ color:'#6B7280' }}>
-              {search ? 'Broaden your search or clear filters.' : 'Add items and counts first, then return to see activity.'}
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={viewRows}
-            keyExtractor={(r)=>r.id}
-            onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => setShowTop(e.nativeEvent.contentOffset.y > 300)}
-            scrollEventThrottle={16}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            renderItem={({ item }) => (
-              <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
-                <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
-                  <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>
-                    {item.areaName} • {item.itemName}
-                  </Text>
-                  <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap', marginTop:4 }}>
-                    <Text style={{ color:'#374151' }}>Par: {item.par ?? '—'}</Text>
-                    <Text style={{ color:'#374151' }}>Last: {item.lastCount ?? '—'}</Text>
-                    <Text style={{ color:'#374151' }}>At: {item.lastCountAt ? item.lastCountAt.toLocaleString() : '—'}</Text>
-                    {item.belowPar ? <Text style={{ color:'#991B1B' }}>Below Par</Text> : null}
-                    {item.flagged ? <Text style={{ color:'#92400E' }}>Recount</Text> : null}
-                    {item.countedThisCycle ? <Text style={{ color:'#065F46' }}>This cycle</Text> : null}
-                  </View>
+        {/* List */}
+        <FlatList
+          ref={listRef}
+          data={viewRows}
+          keyExtractor={(r)=>r.id}
+          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => setShowTop(e.nativeEvent.contentOffset.y > 300)}
+          scrollEventThrottle={16}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          renderItem={({ item }) => (
+            <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
+              <View style={{ paddingVertical: 10*D, paddingHorizontal: 12*D, borderBottomWidth:1, borderBottomColor:'#EEE' }}>
+                <Text style={{ fontWeight:'800', fontSize: isCompact ? 14 : 15 }}>
+                  {item.areaName} • {item.itemName}
+                </Text>
+                <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap', marginTop:4 }}>
+                  <Text style={{ color:'#374151' }}>Par: {item.par ?? '—'}</Text>
+                  <Text style={{ color:'#374151' }}>Last: {item.lastCount ?? '—'}</Text>
+                  <Text style={{ color:'#374151' }}>At: {item.lastCountAt ? item.lastCountAt.toLocaleString() : '—'}</Text>
+                  {item.belowPar ? <Text style={{ color:'#991B1B' }}>Below Par</Text> : null}
+                  {item.flagged ? <Text style={{ color:'#92400E' }}>Recount</Text> : null}
+                  {item.countedThisCycle ? <Text style={{ color:'#065F46' }}>This cycle</Text> : null}
                 </View>
-              </TouchableOpacity>
-            )}
-          />
-        )}
+              </View>
+            </TouchableOpacity>
+          )}
+        />
       </View>
 
       {/* Floating "Top" pill */}
@@ -331,6 +336,7 @@ function CountActivityScreen() {
         </TouchableOpacity>
       ) : null}
 
+      {/* Toast */}
       {exportToast ? (
         <View style={{ position:'absolute', left:16, right:16, bottom: Platform.select({ ios:24, android:16 }), backgroundColor:'rgba(0,0,0,0.85)', borderRadius:12, paddingVertical:10, paddingHorizontal:14, alignItems:'center' }}>
           <Text style={{ color:'white', fontWeight:'600' }}>{exportToast}</Text>
