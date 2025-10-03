@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -45,8 +45,11 @@ function CountActivityScreen() {
   const [onlyBelowPar, setOnlyBelowPar] = usePersistedState<boolean>('ui:reports:countAct:onlyBelowPar', false);
   const [search, setSearch] = usePersistedState<string>('ui:reports:countAct:search', '');
   const [sortAZ, setSortAZ] = usePersistedState<boolean>('ui:reports:countAct:sortAZ', false);
+  const [delimiter, setDelimiter] = usePersistedState<'comma'|'tab'>('ui:reports:csvDelimiter', 'comma');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showTop, setShowTop] = useState(false);
+  const listRef = useRef<FlatList<Row>>(null);
 
   const D = isCompact ? 0.86 : 1;
   const showToast = (m='Export ready') => { setExportToast(m); setTimeout(()=>setExportToast(null), 1400); };
@@ -114,34 +117,40 @@ function CountActivityScreen() {
 
   const anyFilter = !!search.trim() || onlyThisCycle || onlyFlagged || onlyBelowPar || sortAZ;
 
-  const buildCsvLines = (dataset: Row[]) => {
+  const fieldToCsv = (val: any, delim: string) => {
+    const str = String(val ?? '');
+    const needsQuotes = str.includes('"') || str.includes('\n') || str.includes('\r') || str.includes(delim);
+    const safe = str.replace(/"/g,'""');
+    return needsQuotes ? `"${safe}"` : safe;
+  };
+
+  const buildCsvLines = (dataset: Row[], delim: string) => {
     const headers = ['Area','Item','Par','Last Count','Below Par','Last Count At','Flagged','Counted this cycle'];
-    const lines = [headers.join(',')];
+    const lines = [headers.join(delim)];
     for (const r of dataset) {
-      const row = [
-        r.areaName,
-        r.itemName,
-        r.par ?? '',
-        r.lastCount ?? '',
-        r.belowPar ? 'yes' : '',
-        r.lastCountAt ? r.lastCountAt.toISOString() : '',
-        r.flagged ? 'yes' : '',
-        r.countedThisCycle ? 'yes' : '',
-      ]
-      .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
-      .join(',');
-      lines.push(row);
+      const cells = [
+        fieldToCsv(r.areaName, delim),
+        fieldToCsv(r.itemName, delim),
+        fieldToCsv(r.par ?? '', delim),
+        fieldToCsv(r.lastCount ?? '', delim),
+        fieldToCsv(r.belowPar ? 'yes' : '', delim),
+        fieldToCsv(r.lastCountAt ? r.lastCountAt.toISOString() : '', delim),
+        fieldToCsv(r.flagged ? 'yes' : '', delim),
+        fieldToCsv(r.countedThisCycle ? 'yes' : '', delim),
+      ];
+      lines.push(cells.join(delim));
     }
     return lines;
   };
 
   const copyCsv = async (mode:'current'|'changes') => {
     try {
+      const delim = delimiter === 'comma' ? ',' : '\t';
       const dataset = mode === 'changes'
         ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
         : viewRows;
       if (!dataset.length) { Alert.alert('Nothing to copy', 'No rows to copy.'); return; }
-      const csv = buildCsvLines(dataset).join('\n');
+      const csv = buildCsvLines(dataset, delim).join('\n');
       if (!Clipboard?.setStringAsync) { Alert.alert('Copy unavailable', 'Clipboard not available on this device.'); return; }
       await Clipboard.setStringAsync(csv);
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
@@ -153,19 +162,21 @@ function CountActivityScreen() {
   const exportCsv = async (mode:'current'|'changes') => {
     try {
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+      const delim = delimiter === 'comma' ? ',' : '\t';
       const dataset = mode === 'changes'
         ? rows.filter(x => x.countedThisCycle || x.flagged || x.belowPar)
         : viewRows;
       if (!dataset.length) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
-      const csv = buildCsvLines(dataset).join('\n');
+      const csv = buildCsvLines(dataset, delim).join('\n');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-count-activity-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
+      const ext = delimiter === 'comma' ? 'csv' : 'tsv';
+      const fname = `tallyup-count-activity-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.${ext}`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       setExportToast('Export ready');
       setTimeout(()=>setExportToast(null), 1400);
-      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/plain', dialogTitle: fname }); }
       else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
   };
@@ -189,6 +200,15 @@ function CountActivityScreen() {
     } catch {}
   };
 
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setShowTop(e.nativeEvent.contentOffset.y > 300);
+  };
+
+  const scrollToTop = () => {
+    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  };
+
   return (
     <SafeAreaView style={{ flex:1, backgroundColor:'#FFFFFF' }}>
       <View style={{ padding:16 }}>
@@ -199,7 +219,7 @@ function CountActivityScreen() {
           </TouchableOpacity>
         </View>
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
-          Recent counts across areas and items. Filter by search, cycle, flags, or below-par; exports match your current view or changes only.
+          Recent counts across areas and items. Filter by search, cycle, flags, below-par; exports match your current view or changes only.
         </Text>
 
         {/* Search + chips */}
@@ -233,11 +253,20 @@ function CountActivityScreen() {
             <TouchableOpacity onPress={()=>setSortAZ(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortAZ ? '#059669' : '#E5E7EB', backgroundColor: sortAZ ? '#D1FAE5' : 'white' }}>
               <Text style={{ fontWeight:'800', color: sortAZ ? '#065F46' : '#374151' }}>{sortAZ ? '✓ Sort A–Z' : 'Sort by newest'}</Text>
             </TouchableOpacity>
+
+            {/* Delimiter toggle */}
+            <TouchableOpacity onPress={()=>setDelimiter('comma')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: delimiter==='comma' ? '#1E40AF' : '#E5E7EB', backgroundColor: delimiter==='comma' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: delimiter==='comma' ? '#1E40AF' : '#374151' }}>{delimiter==='comma' ? '✓ CSV (,)' : 'CSV (,)'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setDelimiter('tab')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: delimiter==='tab' ? '#1E40AF' : '#E5E7EB', backgroundColor: delimiter==='tab' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: delimiter==='tab' ? '#1E40AF' : '#374151' }}>{delimiter==='tab' ? '✓ TSV (tab)' : 'TSV (tab)'}</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
-              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export — Current view</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
-              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
+              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export — Changes only</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>copyCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F8FAFC', borderWidth:1, borderColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Current view</Text>
@@ -267,8 +296,11 @@ function CountActivityScreen() {
           </View>
         ) : (
           <FlatList
+            ref={listRef}
             data={viewRows}
             keyExtractor={(r)=>r.id}
+            onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => setShowTop(e.nativeEvent.contentOffset.y > 300)}
+            scrollEventThrottle={16}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
               <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
@@ -290,6 +322,14 @@ function CountActivityScreen() {
           />
         )}
       </View>
+
+      {/* Floating "Top" pill */}
+      {showTop ? (
+        <TouchableOpacity onPress={() => { Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{}); listRef.current?.scrollToOffset({ offset: 0, animated: true }); }} activeOpacity={0.9}
+          style={{ position:'absolute', right:16, bottom: Platform.select({ ios:72, android:64 }), backgroundColor:'#111827', paddingVertical:10, paddingHorizontal:14, borderRadius:20 }}>
+          <Text style={{ color:'white', fontWeight:'700' }}>↑ Top</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {exportToast ? (
         <View style={{ position:'absolute', left:16, right:16, bottom: Platform.select({ ios:24, android:16 }), backgroundColor:'rgba(0,0,0,0.85)', borderRadius:12, paddingVertical:10, paddingHorizontal:14, alignItems:'center' }}>

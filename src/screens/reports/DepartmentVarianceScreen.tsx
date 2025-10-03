@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SafeAreaView, View, Text, TouchableOpacity, FlatList, Alert, Platform, RefreshControl, TextInput, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -32,8 +32,11 @@ function DepartmentVarianceScreen() {
   const [onlyVariance, setOnlyVariance] = usePersistedState<boolean>('ui:reports:deptVar:onlyVariance', false);
   const [sortByMagnitude, setSortByMagnitude] = usePersistedState<boolean>('ui:reports:deptVar:sortByMagnitude', true);
   const [search, setSearch] = usePersistedState<string>('ui:reports:deptVar:search', '');
+  const [delimiter, setDelimiter] = usePersistedState<'comma'|'tab'>('ui:reports:csvDelimiter', 'comma');
   const [exportToast, setExportToast] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showTop, setShowTop] = useState(false);
+  const listRef = useRef<FlatList<Row>>(null);
 
   const D = isCompact ? 0.86 : 1;
   const showToast = (msg = 'Export ready') => { setExportToast(msg); setTimeout(()=>setExportToast(null), 1400); };
@@ -97,37 +100,43 @@ function DepartmentVarianceScreen() {
     const withExpected = rows.filter(r => r.expectedSum != null).length;
     const nonZero = rows.filter(r => (r.variance ?? 0) !== 0).length;
     const absVar = rows.reduce((acc, r) => acc + (r.variance != null ? Math.abs(r.variance) : 0), 0);
-    return { totalAreas, withExpected, nonZero, absVar };
+    const counted = rows.reduce((acc, r) => acc + r.countedSum, 0);
+    const expected = rows.reduce((acc, r) => acc + (r.expectedSum ?? 0), 0);
+    const netVariance = rows.reduce((acc, r) => acc + (r.variance ?? 0), 0);
+    return { totalAreas, withExpected, nonZero, absVar, counted, expected, netVariance };
   }, [rows]);
 
   const anyFilter = !!search.trim() || onlyVariance || !sortByMagnitude;
 
-  const buildCsvLines = (dataset: Row[]) => {
+  const fieldToCsv = (val: any, delim: string) => {
+    const str = String(val ?? '');
+    const needsQuotes = str.includes('"') || str.includes('\n') || str.includes('\r') || str.includes(delim);
+    const safe = str.replace(/"/g,'""');
+    return needsQuotes ? `"${safe}"` : safe;
+  };
+
+  const buildCsvLines = (dataset: Row[], delim: string) => {
     const headers = ['Area','Items','Expected (sum)','Counted (sum)','Variance'];
-    const lines = [headers.join(',')];
+    const lines = [headers.join(delim)];
     for (const r of dataset) {
-      const row = [
-        r.areaName,
-        String(r.items),
-        r.expectedSum == null ? '' : r.expectedSum.toFixed(2),
-        r.countedSum.toFixed(2),
-        r.variance == null ? '' : r.variance.toFixed(2)
-      ]
-      .map(s => {
-        const str = String(s ?? '');
-        return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str;
-      })
-      .join(',');
-      lines.push(row);
+      const cells = [
+        fieldToCsv(r.areaName, delim),
+        fieldToCsv(String(r.items), delim),
+        fieldToCsv(r.expectedSum == null ? '' : r.expectedSum.toFixed(2), delim),
+        fieldToCsv(r.countedSum.toFixed(2), delim),
+        fieldToCsv(r.variance == null ? '' : r.variance.toFixed(2), delim),
+      ];
+      lines.push(cells.join(delim));
     }
     return lines;
   };
 
   const copyCsv = async (mode: 'current'|'changes') => {
     try {
+      const delim = delimiter === 'comma' ? ',' : '\t';
       const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
       if (!dataset.length) { Alert.alert('Nothing to copy', 'No rows to copy.'); return; }
-      const csv = buildCsvLines(dataset).join('\n');
+      const csv = buildCsvLines(dataset, delim).join('\n');
       if (!Clipboard?.setStringAsync) { Alert.alert('Copy unavailable', 'Clipboard not available on this device.'); return; }
       await Clipboard.setStringAsync(csv);
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
@@ -139,17 +148,19 @@ function DepartmentVarianceScreen() {
   const exportCsv = async (mode: 'current'|'changes') => {
     try {
       Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+      const delim = delimiter === 'comma' ? ',' : '\t';
       const dataset = mode === 'changes' ? viewRows.filter(r => (r.variance ?? 0) !== 0) : viewRows;
-      const csv = buildCsvLines(dataset).join('\n');
-      if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
+      if (!dataset.length) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
+      const csv = buildCsvLines(dataset, delim).join('\n');
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-dept-variance-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.csv`;
+      const ext = delimiter === 'comma' ? 'csv' : 'tsv';
+      const fname = `tallyup-dept-variance-${mode}-${slug(venueId)}-${slug(departmentId)}-${ts}.${ext}`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       setExportToast('Export ready');
       setTimeout(()=>setExportToast(null), 1400);
-      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
+      if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/plain', dialogTitle: fname }); }
       else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
   };
@@ -162,6 +173,15 @@ function DepartmentVarianceScreen() {
       setExportToast('Copied');
       setTimeout(()=>setExportToast(null), 900);
     } catch {}
+  };
+
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setShowTop(e.nativeEvent.contentOffset.y > 300);
+  };
+
+  const scrollToTop = () => {
+    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
 
   return (
@@ -200,11 +220,20 @@ function DepartmentVarianceScreen() {
             <TouchableOpacity onPress={()=>setSortByMagnitude(v=>!v)} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: sortByMagnitude ? '#059669' : '#E5E7EB', backgroundColor: sortByMagnitude ? '#D1FAE5' : 'white' }}>
               <Text style={{ fontWeight:'800', color: sortByMagnitude ? '#065F46' : '#374151' }}>{sortByMagnitude ? '✓ Sort by largest variance' : 'Sort A–Z'}</Text>
             </TouchableOpacity>
+
+            {/* Delimiter toggle */}
+            <TouchableOpacity onPress={()=>setDelimiter('comma')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: delimiter==='comma' ? '#1E40AF' : '#E5E7EB', backgroundColor: delimiter==='comma' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: delimiter==='comma' ? '#1E40AF' : '#374151' }}>{delimiter==='comma' ? '✓ CSV (,)' : 'CSV (,)'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setDelimiter('tab')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: delimiter==='tab' ? '#1E40AF' : '#E5E7EB', backgroundColor: delimiter==='tab' ? '#DBEAFE' : 'white' }}>
+              <Text style={{ fontWeight:'800', color: delimiter==='tab' ? '#1E40AF' : '#374151' }}>{delimiter==='tab' ? '✓ TSV (tab)' : 'TSV (tab)'}</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={()=>exportCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE' }}>
-              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Current view</Text>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export — Current view</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>exportCsv('changes')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#EEF2FF', borderWidth:1, borderColor:'#E0E7FF' }}>
-              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export CSV — Changes only</Text>
+              <Text style={{ fontWeight:'800', color:'#3730A3' }}>Export — Changes only</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>copyCsv('current')} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor:'#F8FAFC', borderWidth:1, borderColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Copy CSV — Current view</Text>
@@ -222,7 +251,7 @@ function DepartmentVarianceScreen() {
 
         {/* Summary line */}
         <Text style={{ color:'#6B7280', marginBottom:10 }}>
-          Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)}
+          Areas: {summary.totalAreas} • With expected: {summary.withExpected} • Non-zero: {summary.nonZero} • |∑variance|: {summary.absVar.toFixed(2)} • Counted Σ: {summary.counted.toFixed(2)} • Expected Σ: {summary.expected.toFixed(2)} • Net: {summary.netVariance.toFixed(2)}
         </Text>
 
         {viewRows.length === 0 ? (
@@ -234,8 +263,11 @@ function DepartmentVarianceScreen() {
           </View>
         ) : (
           <FlatList
+            ref={listRef}
             data={viewRows}
             keyExtractor={(r)=>r.id}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => (
               <TouchableOpacity onLongPress={()=>copyRow(item)} activeOpacity={0.9}>
@@ -255,6 +287,14 @@ function DepartmentVarianceScreen() {
           />
         )}
       </View>
+
+      {/* Floating "Top" pill */}
+      {showTop ? (
+        <TouchableOpacity onPress={scrollToTop} activeOpacity={0.9}
+          style={{ position:'absolute', right:16, bottom: Platform.select({ ios:72, android:64 }), backgroundColor:'#111827', paddingVertical:10, paddingHorizontal:14, borderRadius:20 }}>
+          <Text style={{ color:'white', fontWeight:'700' }}>↑ Top</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {exportToast ? (
         <View style={{ position:'absolute', left:16, right:16, bottom: Platform.select({ ios:24, android:16 }), backgroundColor:'rgba(0,0,0,0.85)', borderRadius:12, paddingVertical:10, paddingHorizontal:14, alignItems:'center' }}>
