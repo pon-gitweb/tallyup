@@ -47,7 +47,7 @@ function CountActivityScreen() {
         const it = i.data() as ItemDoc;
         const lastAt = parseTs(it.lastCountAt);
         const countedThisCycle = (startedAt && lastAt) ? lastAt >= startedAt : false;
-        out.push({ id: `${a.id}:${i.id}`, areaName: ad?.name || 'Unnamed area', itemName: it?.name || 'Unnamed item', lastCount: typeof it.lastCount === 'number' ? it.lastCount : null, lastCountAt: lastAt, flagged: !!it.flagRecount, countedThisCycle });
+        out.push({ id: \`\${a.id}:\${i.id}\`, areaName: ad?.name || 'Unnamed area', itemName: it?.name || 'Unnamed item', lastCount: typeof it.lastCount === 'number' ? it.lastCount : null, lastCountAt: lastAt, flagged: !!it.flagRecount, countedThisCycle });
       });
     }
     setRows(out);
@@ -79,19 +79,19 @@ function CountActivityScreen() {
       const lines = [headers.join(',')];
       for (const r of dataset) {
         const row = [ r.areaName, r.itemName, r.lastCount ?? '', r.lastCountAt ? r.lastCountAt.toISOString() : '', r.flagged ? 'yes' : '', r.countedThisCycle ? 'yes' : '' ]
-          .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? `"${str.replace(/"/g,'""')}"` : str; })
+          .map((s:any)=>{ const str = String(s ?? ''); return (str.includes(',')||str.includes('"')||str.includes('\n')) ? \`"\${str.replace(/"/g,'""')}"\` : str; })
           .join(',');
         lines.push(row);
       }
       const csv = lines.join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-count-activity-${mode}-${ts}.csv`;
+      const fname = \`tallyup-count-activity-\${mode}-\${ts}.csv\`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
-      else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
+      else { Alert.alert('Exported', \`Saved to cache: \${fname}\`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
   };
 

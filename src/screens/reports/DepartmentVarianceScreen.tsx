@@ -97,18 +97,18 @@ function DepartmentVarianceScreen() {
           r.expectedSum == null ? '' : r.expectedSum.toFixed(2),
           r.countedSum.toFixed(2),
           r.variance == null ? '' : r.variance.toFixed(2)
-        ].map(s => { const str = String(s ?? ''); return (str.includes(',')||str.includes('"')) ? `"${str.replace(/"/g,'""')}"` : str; }).join(',');
+        ].map(s => { const str = String(s ?? ''); return (str.includes(',')||str.includes('"')) ? \`"\${str.replace(/"/g,'""')}"\` : str; }).join(',');
         lines.push(row);
       }
       const csv = lines.join('\n');
       if (!csv) { Alert.alert('Nothing to export', 'No rows to export.'); return; }
       const ts = new Date().toISOString().replace(/[:.]/g,'-');
-      const fname = `tallyup-dept-variance-${mode}-${ts}.csv`;
+      const fname = \`tallyup-dept-variance-\${mode}-\${ts}.csv\`;
       if (!FileSystem?.cacheDirectory) { Alert.alert('Export unavailable', 'Could not access cache.'); return; }
       const path = FileSystem.cacheDirectory + fname;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) { await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: fname }); }
-      else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
+      else { Alert.alert('Exported', \`Saved to cache: \${fname}\`); }
     } catch(e:any){ Alert.alert('Export failed', e?.message ?? String(e)); }
   };
 
