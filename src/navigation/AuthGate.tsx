@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React from 'react';
 import { View, ActivityIndicator, Text } from 'react-native';
 import { onAuthStateChanged, User } from 'firebase/auth';

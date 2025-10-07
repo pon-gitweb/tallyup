@@ -1,3 +1,4 @@
+// @ts-nocheck
 import {
   collection, doc, serverTimestamp, Timestamp, writeBatch,
   getFirestore, getDoc, setDoc

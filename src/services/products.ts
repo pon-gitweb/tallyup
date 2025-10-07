@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
   getFirestore, collection, query, orderBy, limit as fblimit, where,

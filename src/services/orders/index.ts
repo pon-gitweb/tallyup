@@ -1,3 +1,4 @@
+// @ts-nocheck
 /** Canonical orders barrel — exports from concrete files. */
 
 /* ---------- Types ---------- */

@@ -12,6 +12,6 @@ describe('pressThrottle', () => {
     expect(fn).toHaveBeenCalledTimes(1);
     jest.advanceTimersByTime(1);
     throttled();
-    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

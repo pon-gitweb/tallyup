@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useMemo } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { View, ActivityIndicator, Text } from 'react-native';

@@ -1,21 +1,7 @@
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { DEV_EMAIL, DEV_PASSWORD } from './dev';
-import { pinDevVenueIfEnvSet, ensureDevMembership } from '../services/devBootstrap';
+export const DEV_DEFAULT_EMAIL = 'test@example.com';
+export const DEV_DEFAULT_PASSWORD = 'password123';
 
-/**
- * Dev login:
- * - Sign in with DEV_EMAIL/DEV_PASSWORD
- * - If EXPO_PUBLIC_DEV_VENUE_ID is set, pin users/{uid}.venueId to that venue
- * - Ensure venues/{venueId}/members/{uid} exists
- */
+/** Dev helper used by LoginScreen; returns canned creds. */
 export async function devLogin() {
-  const auth = getAuth();
-  const { user } = await signInWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
-  const uid = user.uid;
-
-  const pin = await pinDevVenueIfEnvSet(); // { venueId } or null
-  if (pin?.venueId) {
-    await ensureDevMembership(); // add/repair membership doc
-  }
-  return { uid, venueId: pin?.venueId ?? null };
+  return { email: DEV_DEFAULT_EMAIL, password: DEV_DEFAULT_PASSWORD };
 }

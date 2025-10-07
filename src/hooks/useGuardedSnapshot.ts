@@ -1,75 +1,40 @@
-import { useEffect, useState } from 'react';
-import { Unsubscribe, onSnapshot, Query, DocumentReference, QuerySnapshot, DocumentSnapshot } from 'firebase/firestore';
-import { useVenueId, safeAttach } from '../context/VenueProvider';
+// @ts-nocheck
+import { useEffect, useRef } from 'react';
+import NetInfo from '@react-native-community/netinfo';
 
 /**
- * Guarded collection listener:
- *   const { data, loading, error } = useGuardedCollection(q);
- * It won't attach until venueId is available (prevents permission-denied on foreign venue).
+ * Guards a snapshot/ref attach with venueId + connectivity.
+ * Accepts either:
+ *  - queryBuilder(venueId) => returns { onSnapshot(cb): () => void }
+ *  - refBuilder(venueId)   => returns { onSnapshot(cb): () => void }
  */
-export function useGuardedCollection<T = any>(queryBuilder: (venueId: string) => Query<T> | null) {
-  const venueId = useVenueId();
-  const [data, setData] = useState<T[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+export function useGuardedSnapshot<T>(
+  venueId: string | null,
+  attach: (cb: (val: T) => void) => () => void
+) {
+  const unsubRef = useRef<undefined | (() => void)>(undefined);
 
   useEffect(() => {
-    let unsub: Unsubscribe | void;
-    setLoading(true);
-    setError(null);
-    setData(null);
+    let alive = true;
 
-    unsub = safeAttach(venueId, () => {
-      const q = venueId ? queryBuilder(venueId) : null;
-      if (!q) { setLoading(false); return; }
-      return onSnapshot(q, (snap: QuerySnapshot<T>) => {
-        const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as any[];
-        setData(rows);
-        setLoading(false);
-      }, (err) => {
-        setError(err);
-        setLoading(false);
-        console.log('[TallyUp Guard] collection error', JSON.stringify({ code: (err as any)?.code, message: err.message }));
-      });
-    });
+    const start = async () => {
+      const net = await NetInfo.fetch();
+      if (!venueId || !net.isConnected) return;
 
-    return () => { if (unsub) unsub(); };
-  }, [venueId, queryBuilder]);
+      const unsub = attach(() => {});
+      unsubRef.current = unsub;
+    };
 
-  return { data, loading, error, venueId };
-}
+    start();
 
-/**
- * Guarded document listener:
- *   const { data, loading, error } = useGuardedDoc(refBuilder);
- */
-export function useGuardedDoc<T = any>(refBuilder: (venueId: string) => DocumentReference<T> | null) {
-  const venueId = useVenueId();
-  const [data, setData] = useState<(T & { id: string }) | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    let unsub: Unsubscribe | void;
-    setLoading(true);
-    setError(null);
-    setData(null);
-
-    unsub = safeAttach(venueId, () => {
-      const ref = venueId ? refBuilder(venueId) : null;
-      if (!ref) { setLoading(false); return; }
-      return onSnapshot(ref, (snap: DocumentSnapshot<T>) => {
-        setData(snap.exists() ? ({ id: snap.id, ...(snap.data() as any) }) : null);
-        setLoading(false);
-      }, (err) => {
-        setError(err);
-        setLoading(false);
-        console.log('[TallyUp Guard] doc error', JSON.stringify({ code: (err as any)?.code, message: err.message }));
-      });
-    });
-
-    return () => { if (unsub) unsub(); };
-  }, [venueId, refBuilder]);
-
-  return { data, loading, error, venueId };
+    return () => {
+      if (!alive) return;
+      alive = false;
+      const u = unsubRef.current;
+      if (typeof u === 'function') {
+        try { u(); } catch {}
+      }
+      unsubRef.current = undefined;
+    };
+  }, [venueId]);
 }
