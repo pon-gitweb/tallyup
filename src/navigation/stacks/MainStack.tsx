@@ -5,30 +5,38 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 // Core
 import DashboardScreen from '../../screens/DashboardScreen';
 
-// Stock / control
+// Stock-take
+import DepartmentSelection from '../../screens/stock/DepartmentSelectionScreen';
+import AreaSelectionScreen from '../../screens/stock/AreaSelectionScreen';
+import StockTakeAreaInventoryScreen from '../../screens/stock/StockTakeAreaInventoryScreen';
+
+// Control & settings
 import StockControlScreen from '../../screens/stock/StockControlScreen';
 import SettingsScreen from '../../screens/settings/SettingsScreen';
 
-// Reports (compat wrapper)
+// Reports (compat wrapper → your hub)
 import ReportsScreen from '../../screens/reports/ReportsScreen';
 
-// Orders & Suggested Orders
+// Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
 import OrdersScreen from '../../screens/orders/OrdersScreen';
 import NewOrderScreen from '../../screens/orders/NewOrderScreen';
 import NewOrderStartScreen from '../../screens/orders/NewOrderStartScreen';
 import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
-// Stock-take (existing route name used elsewhere)
-import DepartmentSelection from '../../screens/stock/DepartmentSelectionScreen';
-
 const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
   return (
     <Stack.Navigator>
+      {/* Home */}
       <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
-      <Stack.Screen name="DepartmentSelection" component={DepartmentSelection} options={{ title: 'Stock Take' }} />
+
+      {/* Stock-take */}
+      <Stack.Screen name="DepartmentSelection" component={DepartmentSelection} options={{ title: 'Departments' }} />
+      {/* IMPORTANT: use your existing Areas screen + original route names */}
+      <Stack.Screen name="Areas" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
+      <Stack.Screen name="AreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Area Inventory' }} />
 
       {/* Control & settings */}
       <Stack.Screen name="StockControl" component={StockControlScreen} options={{ title: 'Stock Control' }} />
