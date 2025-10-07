@@ -16,7 +16,7 @@
     "@react-navigation/native-stack": "^7.3.25",
     "date-fns": "^4.1.0",
     "expo": "~53.0.20",
-    "expo-haptics": "^15.0.7",
+    "expo-haptics": "~14.1.4",
     "expo-status-bar": "~2.2.3",
     "firebase": "^12.1.0",
     "react": "19.0.0",
@@ -26,7 +26,10 @@
     "react-native-safe-area-context": "5.4.0",
     "react-native-screens": "~4.11.1",
     "react-native-toast-message": "^2.3.3",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "expo-file-system": "~18.1.11",
+    "expo-sharing": "~13.1.5",
+    "expo-print": "~14.1.4"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
