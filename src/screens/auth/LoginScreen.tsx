@@ -8,21 +8,19 @@ import {
   Alert,
   Keyboard,
 } from 'react-native';
-import NetInfo, { useNetInfo } from '@react-native-community/netinfo';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { useNetInfo } from '@react-native-community/netinfo';
+import { getAuth, signInWithEmailAndPassword, type UserCredential } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { devLogin } from '../../config/devAuth';
 
-// V2 theme (flag-guarded)
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
 
-// withErrorBoundary is part of our standard logging wrapper
-// (keeps crashes routed to a nice fallback, as per project rules)
+// Standard project wrapper (no-op here to avoid imports shuffle)
 const withErrorBoundary = (Comp: any) => Comp;
 
-// Local dlog guard (avoid pulling unknown utils)
+// Local dlog guard
 const dlog = (...args: any[]) => { if (__DEV__) console.log(...args); };
 
 function mapAuthError(e: any): string {
@@ -32,6 +30,7 @@ function mapAuthError(e: any): string {
   if (code.includes('user-not-found')) return 'No user with this email.';
   if (code.includes('wrong-password')) return 'Incorrect email or password.';
   if (code.includes('too-many-requests')) return 'Too many attempts. Try again shortly.';
+  if (String(e?.message || '').toLowerCase().includes('timeout')) return 'Network is slow. Please try again.';
   return 'Sign in failed. Please check your details and try again.';
 }
 
@@ -40,6 +39,15 @@ async function hapticLight() {
     const Haptics = await import('expo-haptics');
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   } catch {}
+}
+
+// Promise.race timeout guard (Firebase Auth has no native abort)
+function signInWithTimeout(email: string, pass: string, ms = 15000): Promise<UserCredential> {
+  const auth = getAuth();
+  return Promise.race([
+    signInWithEmailAndPassword(auth, email.trim(), pass),
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+  ]) as Promise<UserCredential>;
 }
 
 function LoginScreenInner() {
@@ -52,7 +60,6 @@ function LoginScreenInner() {
   const [showPass, setShowPass] = useState(false);
 
   const passRef = useRef<TextInput>(null);
-
   const offline = useMemo(() => net.isConnected === false || net.isInternetReachable === false, [net.isConnected, net.isInternetReachable]);
 
   const handleSignIn = useCallback(async () => {
@@ -62,8 +69,6 @@ function LoginScreenInner() {
       Alert.alert('Required', 'Enter email and password.');
       return;
     }
-
-    // Fast-fail offline (also button disabled in UI)
     if (offline) {
       await hapticLight();
       Alert.alert('You’re offline', 'Reconnect to sign in.');
@@ -71,16 +76,18 @@ function LoginScreenInner() {
     }
 
     setBusy(true);
+    const startedAt = Date.now();
     dlog('[TallyUp Login] signIn start', JSON.stringify({ email }));
+
     try {
-      const auth = getAuth();
-      const { user } = await signInWithEmailAndPassword(auth, email.trim(), pass);
+      const cred = await signInWithTimeout(email, pass, 15000);
+      const { user } = cred;
       dlog('[TallyUp Login] success', JSON.stringify({ uid: user?.uid }));
       Keyboard.dismiss();
       // Root navigator will swap to app phase automatically.
     } catch (e: any) {
       const msg = mapAuthError(e);
-      dlog('[TallyUp Login] signIn error', JSON.stringify({ code: e?.code, message: e?.message }));
+      dlog('[TallyUp Login] signIn error', JSON.stringify({ code: e?.code, message: e?.message, tookMs: Date.now() - startedAt }));
       await hapticLight();
       // Clear + refocus password
       setPass('');
@@ -100,7 +107,8 @@ function LoginScreenInner() {
       if (!offline) {
         const { email: em, password: pw } = out || {};
         if (em && pw) {
-          const { user } = await signInWithEmailAndPassword(getAuth(), String(em).trim(), String(pw));
+          const cred = await signInWithTimeout(String(em), String(pw), 15000);
+          const { user } = cred;
           dlog('[TallyUp Login] success (dev)', JSON.stringify({ uid: user?.uid }));
         }
       } else {
@@ -110,7 +118,7 @@ function LoginScreenInner() {
     } catch (e: any) {
       dlog('[TallyUp Login] devLogin error', JSON.stringify({ message: e?.message }));
       await hapticLight();
-      Alert.alert('Dev login failed', e?.message || 'Could not sign in to the dev account.');
+      Alert.alert('Dev login failed', mapAuthError(e));
     } finally {
       setBusy(false);
     }
@@ -118,7 +126,6 @@ function LoginScreenInner() {
 
   const goRegister = useCallback(() => {
     if (busy) return;
-    // Keep existing nav shape
     nav.navigate('Register');
   }, [busy, nav]);
 
@@ -227,14 +234,12 @@ function LoginScreenInner() {
             <Text style={{ color: 'white', fontWeight: '700' }}>{offline ? 'Offline' : 'Dev Login'}</Text>}
         </TouchableOpacity>
 
-        {/* Offline hint (subtle) */}
         {offline && (
           <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 10 }}>
             You’re offline — reconnect to sign in.
           </Text>
         )}
 
-        {/* Legal footer (no visual change while flag is OFF) */}
         <View style={{ marginTop: 28 }}>
           <LegalFooter />
         </View>

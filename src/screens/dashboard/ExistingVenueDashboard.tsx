@@ -1,31 +1,44 @@
+// @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { db } from '../../services/firebase';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { collection, getDocs, getFirestore } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
-import { finalizeVenueCycle, getCycleDurationHours } from '../../services/finalization';
+import IdentityBadge from '../../components/IdentityBadge';
+import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 
 type Stats = { totalAreas: number; inProgress: number; completed: number };
 
 export default function ExistingVenueDashboard() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const db = getFirestore();
+
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({ totalAreas: 0, inProgress: 0, completed: 0 });
   const [sessionStatus, setSessionStatus] = useState<string>('idle');
 
+  const auth = getAuth();
+  const user = auth.currentUser;
+  const { name: venueName } = useVenueInfo(venueId);
+
+  const friendly = useMemo(() => {
+    return friendlyIdentity(
+      { displayName: user?.displayName ?? null, email: user?.email ?? null, uid: user?.uid ?? null },
+      { name: venueName ?? null, venueId: venueId ?? null }
+    );
+  }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
+
+  // Load simple area stats (best-effort)
   useEffect(() => {
     let cancel = false;
     (async () => {
-      if (!venueId) { setLoading(false); return; }
+      if (!venueId) { setStats({ totalAreas: 0, inProgress: 0, completed: 0 }); setLoading(false); return; }
+      setLoading(true);
       try {
-        const sref = doc(db, 'venues', venueId, 'sessions', 'current');
-        const ssnap = await getDoc(sref);
-        setSessionStatus((ssnap.data() as any)?.status || 'idle');
-
+        let totalAreas = 0; let inProg = 0; let comp = 0;
         const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
-        let totalAreas = 0, inProg = 0, comp = 0;
         for (const d of deps.docs) {
           const areas = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas'));
           areas.forEach(a => {
@@ -37,95 +50,107 @@ export default function ExistingVenueDashboard() {
         }
         if (!cancel) setStats({ totalAreas, inProgress: inProg, completed: comp });
       } catch (e: any) {
-        console.log('[TallyUp Dash] load error', JSON.stringify({ code: e?.code, message: e?.message }));
-      } finally { if (!cancel) setLoading(false); }
+        if (__DEV__) console.log('[Dash] stats load error', e?.message);
+        if (!cancel) setStats({ totalAreas: 0, inProgress: 0, completed: 0 });
+      } finally {
+        if (!cancel) setLoading(false);
+      }
     })();
     return () => { cancel = true; };
-  }, [venueId]);
+  }, [db, venueId]);
 
-  const cta = useMemo(() => {
-    const { totalAreas, inProgress, completed } = stats;
-    const noneStarted = inProgress === 0 && completed === 0 && totalAreas > 0;
-    const someInProgress = inProgress > 0;
-    const allCompleted = totalAreas > 0 && completed === totalAreas;
-    let label = 'Start Stock Take';
-    let caption = '';
-    if (noneStarted) { label = 'Start New Stock Take'; caption = 'No areas started yet.'; }
-    else if (someInProgress) { label = 'Return to Stock Take'; caption = 'Stock take active in at least one area.'; }
-    else if (allCompleted) { label = 'Start New Stock Take'; caption = 'All areas are complete. Finalize and start a new cycle.'; }
-    else { label = 'Start / Return to Stock Take'; caption = 'Some departments complete, others not started.'; }
-    return { label, caption, allCompleted };
-  }, [stats]);
-
-  async function onPrimary() {
-    if (!venueId) return;
-    if (cta.allCompleted) {
-      try {
-        const hours = await getCycleDurationHours(venueId);
-        if (hours != null && hours >= 24) {
-          let proceed = false;
-          await new Promise<void>((resolve) => {
-            Alert.alert(
-              'Long Cycle Warning',
-              `This stock take spanned about ${hours.toFixed(1)} hours.\n\nCounts may be less accurate. Finalize anyway?`,
-              [
-                { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-                { text: 'Finalize', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
-              ]
-            );
-          });
-          if (!proceed) return;
-        }
-        await finalizeVenueCycle(venueId);
-        Alert.alert('Stock take finalized', 'Cycle marked complete.');
-      } catch (e: any) {
-        console.log('[TallyUp Dash] finalize/reset error', JSON.stringify({ code: e?.code, message: e?.message }));
-      }
-    }
-    // Navigate regardless — either starting new or returning
-    nav.navigate('Departments');
-  }
-
-  if (loading) {
-    return (<View style={styles.center}><ActivityIndicator /><Text>Loading Dashboard…</Text></View>);
-  }
+  const goStockTake = () => nav.navigate('DepartmentSelection');
+  const goReports = () => nav.navigate('ReportsIndex');
+  const goSuppliers = () => nav.navigate('SuppliersList');
+  const goSalesImport = () => nav.navigate('SalesImportHome');
 
   return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>Dashboard</Text>
+    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
+      {/* Header */}
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.greetTitle}>Hi {friendly}</Text>
+          <Text style={styles.greetSub}>Your venue overview at a glance.</Text>
+        </View>
+        <IdentityBadge />
+      </View>
 
-      <TouchableOpacity style={styles.primaryBtn} onPress={onPrimary}>
-        <Text style={styles.primaryText}>{cta.label}</Text>
-      </TouchableOpacity>
-      {cta.caption ? <Text style={styles.caption}>{cta.caption}</Text> : null}
-
+      {/* Session status */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Status</Text>
-        <Text>Total areas: {stats.totalAreas}</Text>
-        <Text>Completed: {stats.completed}</Text>
-        <Text>In progress: {stats.inProgress}</Text>
-        <Text>Session: {sessionStatus}</Text>
+        <Text style={styles.cardTitle}>Stock Take Session</Text>
+        <Text style={styles.cardText}>Status: <Text style={styles.bold}>{sessionStatus}</Text></Text>
+        <View style={styles.row}>
+          <TouchableOpacity onPress={goStockTake} style={styles.primaryBtn}>
+            <Text style={styles.primaryText}>Open Stock Take</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={goReports} style={styles.secondaryBtn}>
+            <Text style={styles.secondaryText}>Reports</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('SetupWizard')}><Text style={styles.secondaryText}>Setup</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('Reports')}><Text style={styles.secondaryText}>Reports</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={() => nav.navigate('Settings')}><Text style={styles.secondaryText}>Settings</Text></TouchableOpacity>
+      {/* Areas state */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Areas</Text>
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator /></View>
+        ) : (
+          <View style={styles.rowSpread}>
+            <StatPill label="Total" value={stats.totalAreas} />
+            <StatPill label="In progress" value={stats.inProgress} />
+            <StatPill label="Completed" value={stats.completed} />
+          </View>
+        )}
       </View>
+
+      {/* Quick links */}
+      <View style={styles.row}>
+        <TouchableOpacity onPress={goSuppliers} style={[styles.quickBtn, { backgroundColor: '#F59E0B' }]}>
+          <Text style={styles.quickText}>Suppliers</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={goSalesImport} style={[styles.quickBtn, { backgroundColor: '#10B981' }]}>
+          <Text style={styles.quickText}>Sales Import</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.caption}>Tip: tap the badge to see your full identity.</Text>
+    </ScrollView>
+  );
+}
+
+function StatPill({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={{
+      backgroundColor: '#111827',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 12,
+      minWidth: 90,
+      alignItems: 'center',
+    }}>
+      <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: 'white', fontWeight: '800', fontSize: 18 }}>{value}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  title: { fontSize: 24, fontWeight: '800' },
-  primaryBtn: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  container: { flex: 1, backgroundColor: '#0F1115' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
+  greetTitle: { color: 'white', fontWeight: '800', fontSize: 20 },
+  greetSub: { color: '#9CA3AF', marginTop: 4 },
+  card: { backgroundColor: '#111827', borderRadius: 14, padding: 14, marginTop: 12 },
+  cardTitle: { color: 'white', fontWeight: '800', marginBottom: 6, fontSize: 16 },
+  cardText: { color: '#D1D5DB' },
+  bold: { fontWeight: '800', color: 'white' },
+  row: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  rowSpread: { flexDirection: 'row', gap: 10, marginTop: 8, flexWrap: 'wrap' },
+  primaryBtn: { backgroundColor: '#3B82F6', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, flex: 1, alignItems: 'center' },
   primaryText: { color: 'white', fontWeight: '700' },
-  caption: { opacity: 0.7, marginTop: 6 },
-  card: { backgroundColor: '#F2F2F7', borderRadius: 12, padding: 12, gap: 6 },
-  cardTitle: { fontWeight: '800', marginBottom: 6 },
-  row: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
-  secondaryText: { fontWeight: '700' },
+  secondaryBtn: { backgroundColor: '#374151', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center' },
+  secondaryText: { color: 'white', fontWeight: '700' },
+  quickBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  quickText: { color: '#0F1115', fontWeight: '800' },
+  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  caption: { color: '#9CA3AF', marginTop: 12, fontSize: 12, textAlign: 'center' },
 });

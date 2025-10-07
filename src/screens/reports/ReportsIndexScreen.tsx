@@ -1,17 +1,18 @@
 // @ts-nocheck
 import React from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { exportCsv, exportPdf } from '../../utils/exporters';
+import { useVenueId } from '../../context/VenueProvider';
+import IdentityBadge from '../../components/IdentityBadge';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[ReportsIndex]', ...a); };
 
 export default function ReportsIndexScreen() {
   const nav = useNavigation<any>();
-  const route = useRoute<any>();
-  const venueId = route?.params?.venueId ?? 'demo_venue';
+  const venueId = useVenueId();
 
   const [busy, setBusy] = React.useState(false);
 
@@ -57,12 +58,15 @@ export default function ReportsIndexScreen() {
     finally { setBusy(false); }
   }, [busy]);
 
-  const go = (name:string, params?:any) => () => { if (!busy) nav.navigate(name as never, { venueId, ...(params||{}) } as never); };
+  const go = (name:string, params?:any) => () => {
+    if (!busy && venueId) nav.navigate(name as never, { venueId, ...(params||{}) } as never);
+  };
 
   const Tile = ({title, subtitle, onPress, color}:{title:string;subtitle?:string;onPress:()=>void;color:string}) => (
     <TouchableOpacity
       onPress={onPress}
-      style={{ backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
+      disabled={!venueId}
+      style={{ opacity: venueId ? 1 : 0.6, backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
       <Text style={{ color:'#fff', fontWeight:'900', fontSize:16 }}>{title}</Text>
       {subtitle ? <Text style={{ color:'#F3F4F6', marginTop:4 }}>{subtitle}</Text> : null}
     </TouchableOpacity>
@@ -71,22 +75,24 @@ export default function ReportsIndexScreen() {
   return (
     <LocalThemeGate>
       <View style={{ flex:1, backgroundColor:'#0F1115' }}>
-        <View style={{ padding:16, borderBottomColor:'#263142', borderBottomWidth:1 }}>
-          <MaybeTText style={{ color:'white', fontSize:20, fontWeight:'700' }}>Reports</MaybeTText>
-          <Text style={{ color:'#94A3B8', marginTop:4 }}>Share, export, and deep-dive analytics.</Text>
+        <View style={{ padding:16, borderBottomColor:'#263142', borderBottomWidth:1, flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+          <View>
+            <MaybeTText style={{ color:'white', fontSize:20, fontWeight:'700' }}>Reports</MaybeTText>
+            <Text style={{ color:'#94A3B8', marginTop:4 }}>
+              Share, export, and deep-dive analytics.
+            </Text>
+          </View>
+          {/* Personalised badge */}
+          <IdentityBadge align="right" />
         </View>
 
         <ScrollView contentContainerStyle={{ padding:16, gap:12 }}>
-          {/* Quick share / export */}
           <Tile title="Export CSV — Summary" onPress={exportQuickCsv} color={busy ? '#334155' : '#3B82F6'} />
           <Tile title="Share PDF — Summary" onPress={shareQuickPdf} color={busy ? '#4338CA' : '#7C3AED'} />
 
-          {/* Your existing analytics */}
           <Tile title="Variance Snapshot" subtitle="Compare on-hand vs expected" onPress={go('VarianceSnapshot')} color="#0EA5E9" />
           <Tile title="Last Cycle Summary" subtitle="Session KPIs & top variances" onPress={go('LastCycleSummary')} color="#059669" />
           <Tile title="Budgets" subtitle="Spend by period & supplier" onPress={go('Budgets')} color="#F59E0B" />
-
-          {/* New department-focused view with header exports */}
           <Tile title="Department Variance" subtitle="Shortage & excess by department" onPress={go('DepartmentVariance')} color="#10B981" />
         </ScrollView>
       </View>

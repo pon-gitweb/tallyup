@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
@@ -10,10 +10,11 @@ import { resetVenueCycle } from '../../services/session';
 import { seedDemoSuppliersAndProducts } from '../../services/devSeedDemo';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 
-// V2 theme (flag-guarded)
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
+import IdentityBadge from '../../components/IdentityBadge';
+import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 
 type MemberDoc = { role?: string };
 
@@ -25,6 +26,14 @@ export default function SettingsScreen() {
 
   const [isManager, setIsManager] = useState(false);
   const { count: pendingCount } = usePendingAdjustmentsCount(venueId);
+
+  const { name: venueName } = useVenueInfo(venueId);
+  const friendly = useMemo(() => {
+    return friendlyIdentity(
+      { displayName: user?.displayName ?? null, email: user?.email ?? null, uid: user?.uid ?? null },
+      { name: venueName ?? null, venueId: venueId ?? null }
+    );
+  }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   useEffect(() => {
     let unsubMember: any;
@@ -76,15 +85,15 @@ export default function SettingsScreen() {
   async function doAttachDevVenue() {
     if (!user) { Alert.alert('Not Signed In', 'Sign in first.'); return; }
     if (!devVenueId) { Alert.alert('Dev Venue Not Configured', 'Set EXPO_PUBLIC_DEV_VENUE_ID in app.json > extra.'); return; }
-    if (venueId) { Alert.alert('Already Attached', `You are already attached to: ${venueId}`); return; }
+    if (venueId) { Alert.alert('Already Attached', `You are already attached to a venue.`); return; }
 
     try {
       const uref = doc(db, 'users', user.uid);
       const usnap = await getDoc(uref);
       const hasVenueField = usnap.exists() && (usnap.data() as any)?.venueId != null;
-      if (hasVenueField) { Alert.alert('Cannot Attach', 'Your user already has venueId set.'); return; }
+      if (hasVenueField) { Alert.alert('Cannot Attach', 'Your user already has a venue assigned.'); return; }
       await setDoc(uref, { venueId: devVenueId }, { merge: true });
-      Alert.alert('Attached', `Pinned to dev venue: ${devVenueId}`);
+      Alert.alert('Attached', `Pinned to dev venue.`);
       console.log('[TallyUp Settings] attached dev venue', { uid: user.uid, venueId: devVenueId });
     } catch (e: any) {
       console.log('[TallyUp Settings] attach error', JSON.stringify({ code: e?.code, message: e?.message }));
@@ -106,13 +115,18 @@ export default function SettingsScreen() {
   return (
     <LocalThemeGate>
       <View style={styles.wrap}>
-        <MaybeTText style={styles.title}>Settings</MaybeTText>
+        {/* Header with badge */}
+        <View style={styles.headerRow}>
+          <MaybeTText style={styles.title}>Settings</MaybeTText>
+          <IdentityBadge />
+        </View>
 
+        {/* Friendly identity (no raw IDs shown) */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
+          <Text>Signed in as: <Text style={styles.bold}>{friendly}</Text></Text>
           <Text>Email: {user?.email || '—'}</Text>
-          <Text>UID: {user?.uid || '—'}</Text>
-          <Text>Venue: {venueId || '—'}</Text>
+          <Text>Venue: {venueName || '—'}</Text>
         </View>
 
         <View style={styles.row}>
@@ -154,7 +168,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* NEW: light-blue stub pills */}
+        {/* Stubs */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.stub}
@@ -173,7 +187,7 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Developer Utilities</MaybeTText>
           <Text style={{ opacity: 0.7, marginBottom: 8 }}>
-            Dev venue ID: {devVenueId || 'not configured'}
+            Dev venue ID configured: {devVenueId ? 'yes' : 'no'}
           </Text>
           <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
             <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
@@ -196,10 +210,12 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12 },
-  title: { fontSize: 22, fontWeight: '800', marginBottom: 4 },
-  card: { backgroundColor: '#F2F2F7', padding: 12, borderRadius: 12, gap: 6 },
-  heading: { fontWeight: '800', marginBottom: 4 },
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#0F1115' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  title: { color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 },
+  card: { backgroundColor: '#111827', padding: 12, borderRadius: 12, gap: 6 },
+  heading: { color: 'white', fontWeight: '800', marginBottom: 4 },
+  bold: { fontWeight: '800', color: 'white' },
   row: { flexDirection: 'row', gap: 10 },
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', position: 'relative' },
   btnText: { color: 'white', fontWeight: '700' },

@@ -67,3 +67,30 @@ declare global {
   }
 }
 export {};
+// --- Expo module shims (runtime-safe via dynamic imports) ---
+declare module 'expo-file-system' {
+  export const cacheDirectory: string | null;
+  export const documentDirectory: string | null;
+  export enum EncodingType { UTF8 = 'utf8', Base64 = 'base64' }
+  export function writeAsStringAsync(
+    fileUri: string,
+    contents: string,
+    opts?: { encoding?: EncodingType }
+  ): Promise<void>;
+}
+
+declare module 'expo-sharing' {
+  export function isAvailableAsync(): Promise<boolean>;
+  export function shareAsync(
+    url: string,
+    opts?: { mimeType?: string; dialogTitle?: string; UTI?: string }
+  ): Promise<void>;
+}
+
+declare module 'expo-print' {
+  export function printToFileAsync(opts: {
+    html: string;
+    base64?: boolean;
+  }): Promise<{ uri: string }>;
+}
+
