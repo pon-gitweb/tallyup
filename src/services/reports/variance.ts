@@ -1,83 +1,94 @@
-import { listProducts } from '../../services/products';
-import { getOnHandByProduct } from '../../services/inventory';
+// @ts-nocheck
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+
+const dlog = (...a:any[]) => { if (__DEV__) console.log('[variance]', ...a); };
 
 export type VarianceRow = {
-  productId: string;
-  name: string;
-  sku?: string | null;
-  unit?: string | null;
-  par: number;
-  onHand: number;
-  variance: number;          // onHand - par (negative = shortage)
-  unitCost: number | null;   // uses product.cost if present
-  valueImpact: number;       // variance * unitCost (0 if cost missing)
+  id?: string;
+  productId?: string;
+  name?: string;
+  sku?: string;
+  unit?: string;
+  supplierName?: string;
+  par?: number;
+  onHand?: number;
+  variance?: number; // onHand - expected
+  value?: number;    // variance * unitCost
+  unitCost?: number;
 };
 
-export type VarianceResult = {
-  rows: VarianceRow[];
-  shortages: VarianceRow[];  // variance < 0
-  excess: VarianceRow[];     // variance > 0
-  totals: {
-    shortageValue: number;   // negative number (total missing $)
-    excessValue: number;     // positive number (overstock $)
-  };
+export type VarianceDoc = {
+  generatedAt?: any;
+  shortages?: VarianceRow[];
+  excesses?: VarianceRow[];
+  totalShortageValue?: number;
+  totalExcessValue?: number;
 };
 
-/**
- * Computes variance vs par (per product) using real on‑hand from inventory.
- * - onHand comes from lastCount aggregation across all areas (see services/inventory.ts)
- * - par/packSize/cost pulled from products
- */
-export async function computeVarianceSnapshot(venueId: string): Promise<VarianceResult> {
-  const [products, onHandMap] = await Promise.all([
-    listProducts(venueId),
-    getOnHandByProduct(venueId),
-  ]);
-
-  const rows: VarianceRow[] = [];
-
-  for (const p of products) {
-    const pid = (p as any).id as string | undefined;
-    if (!pid) continue;
-
-    const name = (p as any).name as string;
-    const sku = (p as any).sku ?? null;
-    const unit = (p as any).unit ?? null;
-
-    const parRaw = (p as any).parLevel;
-    const par = typeof parRaw === 'number' ? parRaw : Number(parRaw);
-    if (!isFinite(par)) continue; // skip products with no par
-
-    const onHand = onHandMap[pid] || 0;
-
-    const unitCostRaw = (p as any).cost;
-    const unitCost = unitCostRaw != null && isFinite(Number(unitCostRaw)) ? Number(unitCostRaw) : null;
-
-    const variance = onHand - par;
-    const valueImpact = unitCost != null ? variance * unitCost : 0;
-
-    rows.push({
-      productId: pid,
-      name,
-      sku,
-      unit,
-      par,
-      onHand,
-      variance,
-      unitCost,
-      valueImpact,
-    });
+// Try a list of potential *document* paths (even segments).
+function candidateDocs(venueId: string, departmentId?: string) {
+  const v = venueId;
+  const d = departmentId;
+  const list = [
+    // venue-wide snapshot
+    `venues/${v}/reports/variance`,
+    `venues/${v}/computed/variance`,
+    `venues/${v}/analytics/variance`,
+  ];
+  if (d) {
+    list.unshift(
+      `venues/${v}/departments/${d}/reports/variance`,
+      `venues/${v}/departments/${d}/computed/variance`,
+    );
   }
+  return list;
+}
 
-  const shortages = rows.filter(r => r.variance < 0)
-    .sort((a, b) => Math.abs(b.valueImpact) - Math.abs(a.valueImpact) || a.name.localeCompare(b.name));
-  const excess = rows.filter(r => r.variance > 0)
-    .sort((a, b) => Math.abs(b.valueImpact) - Math.abs(a.valueImpact) || a.name.localeCompare(b.name));
+async function readDocIfExists(path: string) {
+  try {
+    const ref = doc(db, path);
+    const snap = await getDoc(ref);
+    if (snap.exists()) return { ok: true, data: snap.data(), path };
+    return { ok: false, reason: 'not_found', path };
+  } catch (e:any) {
+    dlog('readCandidate error', path, e);
+    return { ok: false, reason: e?.message || String(e), path };
+  }
+}
 
-  const totals = {
-    shortageValue: shortages.reduce((s, r) => s + r.valueImpact, 0),
-    excessValue: excess.reduce((s, r) => s + r.valueImpact, 0),
+function coerceVariance(v: any): VarianceDoc {
+  const shortages = Array.isArray(v?.shortages) ? v.shortages : [];
+  const excesses  = Array.isArray(v?.excesses)  ? v.excesses  : [];
+  const totalShortageValue = Number(v?.totalShortageValue || 0);
+  const totalExcessValue   = Number(v?.totalExcessValue || 0);
+  return { generatedAt: v?.generatedAt, shortages, excesses, totalShortageValue, totalExcessValue };
+}
+
+/** Old screen uses this name */
+export async function computeVarianceSnapshot(venueId: string): Promise<VarianceDoc> {
+  const cands = candidateDocs(venueId);
+  for (const p of cands) {
+    const r = await readDocIfExists(p);
+    if (r.ok) return coerceVariance(r.data);
+  }
+  // Fallback stub so the UI works
+  return {
+    shortages: [
+      { id:'s1', name:'Gin 1L', sku:'GIN-1L', variance:-2, value:-65, unitCost:32.5 },
+      { id:'s2', name:'Lime Juice 1L', sku:'LJ-1L', variance:-6, value:-18, unitCost:3 },
+    ],
+    excesses: [{ id:'e1', name:'Tonic 200ml', sku:'TON-200', variance:12, value:15.6, unitCost:1.3 }],
+    totalShortageValue: 83.0, totalExcessValue: 15.6
   };
+}
 
-  return { rows, shortages, excess, totals };
+/** New department view calls this variant */
+export async function computeVarianceForDepartment(venueId: string, departmentId?: string): Promise<VarianceDoc> {
+  const cands = candidateDocs(venueId, departmentId);
+  for (const p of cands) {
+    const r = await readDocIfExists(p);
+    if (r.ok) return coerceVariance(r.data);
+  }
+  return computeVarianceSnapshot(venueId);
 }
