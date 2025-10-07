@@ -2,58 +2,47 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
+// Core
 import DashboardScreen from '../../screens/DashboardScreen';
-import DepartmentSelectionScreen from '../../screens/stock/DepartmentSelectionScreen';
-import AreaSelectionScreen from '../../screens/stock/AreaSelectionScreen';
-import StockTakeAreaInventoryScreen from '../../screens/stock/StockTakeAreaInventoryScreen';
+
+// Stock / control
 import StockControlScreen from '../../screens/stock/StockControlScreen';
-
 import SettingsScreen from '../../screens/settings/SettingsScreen';
-import SetupWizard from '../../screens/setup/SetupWizard';
 
+// Reports (compat wrapper)
 import ReportsScreen from '../../screens/reports/ReportsScreen';
-import LastCycleSummaryScreen from '../../screens/reports/LastCycleSummaryScreen';
-import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
-import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
 
-const InvoiceScreen = require('../../screens/orders/InvoiceScreen').default;
-const ReceiveOrderScreen = require('../../screens/orders/ReceiveOrderScreen').default;
-const BudgetsScreen = require('../../screens/reports/BudgetsScreen').default;
-const SuppliersScreen = require('../../screens/setup/SuppliersScreen').default;
-const ProductsScreen = require('../../screens/setup/ProductsScreen').default;
+// Orders & Suggested Orders
+import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
+import OrdersScreen from '../../screens/orders/OrdersScreen';
+import NewOrderScreen from '../../screens/orders/NewOrderScreen';
+import NewOrderStartScreen from '../../screens/orders/NewOrderStartScreen';
+import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
+
+// Stock-take (existing route name used elsewhere)
+import DepartmentSelection from '../../screens/stock/DepartmentSelectionScreen';
 
 const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
-  const routes = [
-    { name: 'Dashboard', component: DashboardScreen, options: { title: 'Dashboard' } },
-    { name: 'DepartmentSelection', component: DepartmentSelectionScreen, options: { title: 'Departments' } },
-    { name: 'AreaSelection', component: AreaSelectionScreen, options: { title: 'Areas' } },
-    { name: 'Areas', component: AreaSelectionScreen, options: { title: 'Areas' } },
-    { name: 'StockTakeAreaInventory', component: StockTakeAreaInventoryScreen, options: { title: 'Area Inventory' } },
-    { name: 'AreaInventory', component: StockTakeAreaInventoryScreen, options: { title: 'Area Inventory' } },
-    { name: 'StockControl', component: StockControlScreen, options: { title: 'Stock Control' } },
-
-    { name: 'Settings', component: SettingsScreen, options: { title: 'Settings' } },
-    { name: 'SetupWizard', component: SetupWizard, options: { title: 'Setup Wizard' } },
-
-    { name: 'Invoice', component: InvoiceScreen, options: { title: 'Invoice' } },
-    { name: 'ReceiveOrder', component: ReceiveOrderScreen, options: { title: 'Receive Order' } },
-
-    { name: 'Reports', component: ReportsScreen, options: { title: 'Reports' } },
-    { name: 'LastCycleSummary', component: LastCycleSummaryScreen, options: { title: 'Last Cycle Summary' } },
-    { name: 'VarianceSnapshot', component: VarianceSnapshotScreen, options: { title: 'Variance Snapshot' } },
-    { name: 'DepartmentVariance', component: DepartmentVarianceScreen, options: { title: 'Department Variance' } },
-    { name: 'Budgets', component: BudgetsScreen, options: { title: 'Budgets' } },
-    { name: 'Suppliers', component: SuppliersScreen, options: { title: 'Suppliers' } },
-    { name: 'Products', component: ProductsScreen, options: { title: 'Products' } },
-  ] as const;
-
   return (
     <Stack.Navigator>
-      {routes.map(r => (
-        <Stack.Screen key={r.name} name={r.name as string} component={r.component as any} options={r.options as any} />
-      ))}
+      <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
+      <Stack.Screen name="DepartmentSelection" component={DepartmentSelection} options={{ title: 'Stock Take' }} />
+
+      {/* Control & settings */}
+      <Stack.Screen name="StockControl" component={StockControlScreen} options={{ title: 'Stock Control' }} />
+      <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+
+      {/* Reports */}
+      <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
+
+      {/* Orders */}
+      <Stack.Screen name="SuggestedOrders" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />
+      <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
+      <Stack.Screen name="NewOrder" component={NewOrderScreen} options={{ title: 'New Order' }} />
+      <Stack.Screen name="NewOrderStart" component={NewOrderStartScreen} options={{ title: 'Choose Supplier' }} />
+      <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
     </Stack.Navigator>
   );
 }
