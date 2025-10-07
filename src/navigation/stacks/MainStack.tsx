@@ -14,8 +14,9 @@ import StockTakeAreaInventoryScreen from '../../screens/stock/StockTakeAreaInven
 import StockControlScreen from '../../screens/stock/StockControlScreen';
 import SettingsScreen from '../../screens/settings/SettingsScreen';
 
-// Reports (compat wrapper → your hub)
+// Reports
 import ReportsScreen from '../../screens/reports/ReportsScreen';
+import DepartmentVarianceScreen from '../../screens/reports/DepartmentVarianceScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -34,7 +35,6 @@ export default function MainStack() {
 
       {/* Stock-take */}
       <Stack.Screen name="DepartmentSelection" component={DepartmentSelection} options={{ title: 'Departments' }} />
-      {/* IMPORTANT: use your existing Areas screen + original route names */}
       <Stack.Screen name="Areas" component={AreaSelectionScreen} options={{ title: 'Areas' }} />
       <Stack.Screen name="AreaInventory" component={StockTakeAreaInventoryScreen} options={{ title: 'Area Inventory' }} />
 
@@ -42,8 +42,9 @@ export default function MainStack() {
       <Stack.Screen name="StockControl" component={StockControlScreen} options={{ title: 'Stock Control' }} />
       <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
 
-      {/* Reports */}
+      {/* Reports hub + detail */}
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
+      <Stack.Screen name="DepartmentVariance" component={DepartmentVarianceScreen} options={{ title: 'Department Variance' }} />
 
       {/* Orders */}
       <Stack.Screen name="SuggestedOrders" component={SuggestedOrderScreen} options={{ title: 'Suggested Orders' }} />

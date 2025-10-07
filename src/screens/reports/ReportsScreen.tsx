@@ -1,12 +1,9 @@
 // @ts-nocheck
 // Compatibility wrapper so the Dashboard's existing "Reports" route
-// shows the new ReportsIndexScreen without changing navigation.
+// renders the full Reports hub you already built.
 import React from 'react';
 import ReportsIndexScreen from './ReportsIndexScreen';
 
-const dlog = (...a:any[]) => { if (__DEV__) console.log('[TallyUp Reports] mount (hub)', ...a); };
-
-export default function ReportsScreenCompat(props:any) {
-  dlog('props', Object.keys(props || {}));
+export default function ReportsScreen(props: any) {
   return <ReportsIndexScreen {...props} />;
 }
