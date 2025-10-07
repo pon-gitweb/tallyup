@@ -51,6 +51,231 @@ const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selecti
 const DELTA_ABS_THRESHOLD = 5;
 const DELTA_RATIO_THRESHOLD = 0.5;
 
+/* ---------- Row component moved to module scope (fixes Android keyboard drop) ---------- */
+
+type RowProps = {
+  item: Item;
+  isCompact: boolean;
+  dens: (n: number) => number;
+  areaStarted: boolean;
+  showExpected: boolean;
+  compactCounted: boolean;
+  showSteppers: boolean;
+  isManager: boolean;
+  localQty: Record<string, string>;
+  setLocalQty: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  inputRefs: React.MutableRefObject<Record<string, TextInput | null>>;
+  setFocusedInputId: React.Dispatch<React.SetStateAction<string | null>>;
+  setMenuFor: (it: Item | null) => void;
+  openEditItem: (it: Item, focusPar?: boolean) => void;
+  openAdjustment: (it: Item) => void;
+  deriveExpected: (it: Item) => number | null;
+  countedInThisCycle: (it: Item) => boolean;
+  clampNonNegative: (n: number) => number;
+  approveNow: (it: Item) => Promise<void>;
+  saveCount: (it: Item) => Promise<void>;
+};
+
+const Row = React.memo(function Row({
+  item,
+  isCompact,
+  dens,
+  areaStarted,
+  showExpected,
+  compactCounted,
+  showSteppers,
+  isManager,
+  localQty,
+  setLocalQty,
+  inputRefs,
+  setFocusedInputId,
+  setMenuFor,
+  openEditItem,
+  openAdjustment,
+  deriveExpected,
+  countedInThisCycle,
+  clampNonNegative,
+  approveNow,
+  saveCount,
+}: RowProps) {
+  const expectedNum = deriveExpected(item);
+  const expectedStr = expectedNum != null ? String(expectedNum) : '';
+  const countedNow = countedInThisCycle(item);
+  const locked = countedNow && !isManager;
+  const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
+  const lowStock = typeof item.parLevel === 'number' && typeof item.lastCount === 'number' && item.lastCount < item.parLevel;
+
+  // auto-repeat steppers
+  const repeatTimerRef = useRef<any>(null);
+  const repeatDirRef = useRef<1 | -1 | 0>(0);
+  const adjustTyped = (delta: number) => {
+    setLocalQty(prev => {
+      const raw = (prev[item.id] ?? '').trim();
+      let v = raw === '' ? 0 : parseFloat(raw);
+      if (isNaN(v)) v = 0;
+      v = clampNonNegative(v + delta);
+      return { ...prev, [item.id]: String(v) };
+    });
+  };
+  const startRepeat = (delta: 1 | -1) => {
+    stopRepeat();
+    repeatDirRef.current = delta;
+    repeatTimerRef.current = setInterval(() => { adjustTyped(repeatDirRef.current); }, 120);
+  };
+  const stopRepeat = () => {
+    if (repeatTimerRef.current) { clearInterval(repeatTimerRef.current); repeatTimerRef.current = null; }
+    repeatDirRef.current = 0;
+  };
+  useEffect(() => () => stopRepeat(), []);
+
+  const FlagBadge = item.flagRecount ? (
+    <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEF3C7' }}>
+      <Text style={{ color:'#92400E', fontWeight:'800', fontSize:11 }}>Recount</Text>
+    </View>
+  ) : null;
+
+  const LowBadge = lowStock ? (
+    <TouchableOpacity
+      onPress={() => openEditItem(item, true)}
+      style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
+    >
+      <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
+        Low: {item.lastCount ?? 0} &lt; {item.parLevel}
+      </Text>
+    </TouchableOpacity>
+  ) : null;
+
+  if (locked && compactCounted) {
+    return (
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onLongPress={() => setMenuFor(item)}
+        style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
+      >
+        <View style={{ flexDirection:'row', alignItems:'center' }}>
+          <View style={{ flex:1 }}>
+            <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '700' }}>{item.name}</Text>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+              <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
+              {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
+              {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+              {FlagBadge}
+              {LowBadge}
+            </View>
+          </View>
+          {areaStarted && showExpected && expectedStr ? (
+            <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
+              <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
+            </View>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onLongPress={() => setMenuFor(item)}
+      style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+            <Text style={{ fontSize: 12, color: countedInThisCycle(item) ? '#4CAF50' : '#999' }}>
+              {countedInThisCycle(item) ? `Counted: ${item.lastCount}` : 'To count'}
+            </Text>
+            {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
+            {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+            {FlagBadge}
+            {LowBadge}
+          </View>
+        </View>
+        {areaStarted && showExpected && expectedStr ? (
+          <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
+            <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {showSteppers && !locked ? (
+          <TouchableOpacity
+            onPress={() => adjustTyped(-1)}
+            onLongPress={() => startRepeat(-1)}
+            onPressOut={stopRepeat}
+            style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
+          >
+            <Text style={{ fontWeight:'900' }}>−</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <TextInput
+          ref={(el)=>{ inputRefs.current[item.id]=el; }}
+          value={localQty[item.id] ?? ''}
+          onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
+          placeholder={placeholder}
+          keyboardType="number-pad"
+          inputMode="decimal"
+          maxLength={32}
+          returnKeyType="done"
+          blurOnSubmit={false}
+          editable={!locked}
+          onFocus={()=>setFocusedInputId(item.id)}
+          onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
+          onSubmitEditing={()=> throttleAction(()=>saveCount(item))() }
+          style={{
+            flexGrow: 1, minWidth: 160,
+            paddingVertical: Math.max(8, dens(8)), paddingHorizontal: dens(12),
+            borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
+            height: Math.max(40, dens(40)),
+            backgroundColor: locked ? '#f7f7f7' : '#fff',
+            fontSize: isCompact ? 14 : 15
+          }}
+        />
+
+        {showSteppers && !locked ? (
+          <TouchableOpacity
+            onPress={() => adjustTyped(1)}
+            onLongPress={() => startRepeat(1)}
+            onPressOut={stopRepeat}
+            style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
+          >
+            <Text style={{ fontWeight:'900' }}>＋</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <TouchableOpacity
+          onPress={ throttleAction(()=>saveCount(item)) }
+          disabled={locked}
+          style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
+        >
+          {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
+          <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
+        </TouchableOpacity>
+
+        {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
+          <TouchableOpacity
+            onPress={ throttleAction(()=>approveNow(item)) }
+            disabled={locked}
+            style={{ backgroundColor: locked ? '#CFD8DC' : '#10B981', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {countedNow && !isManager ? (
+          <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
+            <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+/* ---------------------------------- Screen ---------------------------------- */
+
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
@@ -219,7 +444,7 @@ function StockTakeAreaInventoryScreen() {
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
     const incoming = typeof it.incomingQty === 'number' ? it.incomingQty : 0;
     const sold = typeof it.soldQty === 'number' ? it.soldQty : 0;
-    const wastage = typeof it.wastageQty === 'number' ? it.wastageQty : 0;
+    const wastage = typeof it.wastageQty === 'number' ? it.wastage : (typeof it.wastageQty === 'number' ? it.wastageQty : 0);
     if (base == null) return null;
     return base + incoming - sold - wastage;
   };
@@ -498,7 +723,7 @@ function StockTakeAreaInventoryScreen() {
       } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
     };
 
-    Alert.alert('Initialise with zeros', msg, [
+    Alert.alert('Initialise with zeros', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Confirm', style: 'destructive', onPress: throttleAction(doIt) }
     ]);
@@ -506,9 +731,6 @@ function StockTakeAreaInventoryScreen() {
 
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
   const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
-
-  const makeSave = (item:Item)=>throttleAction(()=>saveCount(item));
-  const makeApproveNow = (item: Item) => throttleAction(() => approveNow(item));
 
   const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
@@ -568,7 +790,7 @@ function StockTakeAreaInventoryScreen() {
           unit: it.unit || '',
           lastCount: typeof it.lastCount === 'number' ? it.lastCount : '',
           expectedQty: expected ?? '',
-          low: isLow(it) ? 'yes' : 'no',
+          low: (typeof it.parLevel === 'number' && typeof it.lastCount === 'number' && it.lastCount < it.parLevel) ? 'yes' : 'no',
           supplier: it.supplierName || '',
           flagged: it.flagRecount ? 'yes' : 'no',
         };
@@ -620,178 +842,6 @@ function StockTakeAreaInventoryScreen() {
     } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
   };
 
-  // Row
-  const Row = ({ item }: { item: Item }) => {
-    const expectedNum = deriveExpected(item);
-    const expectedStr = expectedNum != null ? String(expectedNum) : '';
-    const countedNow = countedInThisCycle(item);
-    const locked = countedNow && !isManager;
-    const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
-    const lowStock = isLow(item);
-
-    const repeatTimerRef = useRef<any>(null);
-    const repeatDirRef = useRef<1 | -1 | 0>(0);
-    const adjustTyped = (delta: number) => {
-      setLocalQty(prev => {
-        const raw = (prev[item.id] ?? '').trim();
-        let v = raw === '' ? 0 : parseFloat(raw);
-        if (isNaN(v)) v = 0;
-        v = clampNonNegative(v + delta);
-        return { ...prev, [item.id]: String(v) };
-      });
-    };
-    const startRepeat = (delta: 1 | -1) => {
-      stopRepeat();
-      repeatDirRef.current = delta;
-      repeatTimerRef.current = setInterval(() => { adjustTyped(repeatDirRef.current); }, 120);
-    };
-    const stopRepeat = () => {
-      if (repeatTimerRef.current) { clearInterval(repeatTimerRef.current); repeatTimerRef.current = null; }
-      repeatDirRef.current = 0;
-    };
-    useEffect(() => () => stopRepeat(), []);
-
-    const FlagBadge = item.flagRecount ? (
-      <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEF3C7' }}>
-        <Text style={{ color:'#92400E', fontWeight:'800', fontSize:11 }}>Recount</Text>
-      </View>
-    ) : null;
-
-    const LowBadge = lowStock ? (
-      <TouchableOpacity
-        onPress={() => openEditItem(item, true)}
-        style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
-      >
-        <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-          Low: {item.lastCount ?? 0} &lt; {item.parLevel}
-        </Text>
-      </TouchableOpacity>
-    ) : null;
-
-    if (locked && compactCounted) {
-      return (
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onLongPress={() => setMenuFor(item)}
-          style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
-        >
-          <View style={{ flexDirection:'row', alignItems:'center' }}>
-            <View style={{ flex:1 }}>
-              <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '700' }}>{item.name}</Text>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
-                {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-                {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-                {FlagBadge}
-                {LowBadge}
-              </View>
-            </View>
-            {areaStarted && showExpected && expectedStr ? (
-              <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
-                <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
-              </View>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      );
-    }
-
-    return (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onLongPress={() => setMenuFor(item)}
-        style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
-            <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-              <Text style={{ fontSize: 12, color: countedNow ? '#4CAF50' : '#999' }}>
-                {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
-              </Text>
-              {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-              {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-              {FlagBadge}
-              {LowBadge}
-            </View>
-          </View>
-          {areaStarted && showExpected && expectedStr ? (
-            <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
-              <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {showSteppers && !locked ? (
-            <TouchableOpacity
-              onPress={() => adjustTyped(-1)}
-              onLongPress={() => startRepeat(-1)}
-              onPressOut={stopRepeat}
-              style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
-            >
-              <Text style={{ fontWeight:'900' }}>−</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <TextInput
-            ref={(el)=>inputRefs.current[item.id]=el}
-            value={localQty[item.id] ?? ''}
-            onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
-            placeholder={placeholder}
-            keyboardType="number-pad"
-            inputMode="decimal"
-            maxLength={32}
-            returnKeyType="done"
-            blurOnSubmit={false}
-            editable={!locked}
-            onFocus={()=>setFocusedInputId(item.id)}
-            onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
-            onSubmitEditing={()=>makeSave(item)()}
-            style={{
-              flexGrow: 1, minWidth: 160,
-              paddingVertical: Math.max(8, dens(8)), paddingHorizontal: dens(12),
-              borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
-              height: Math.max(40, dens(40)),
-              backgroundColor: locked ? '#f7f7f7' : '#fff',
-              fontSize: isCompact ? 14 : 15
-            }}
-          />
-
-          {showSteppers && !locked ? (
-            <TouchableOpacity
-              onPress={() => adjustTyped(1)}
-              onLongPress={() => startRepeat(1)}
-              onPressOut={stopRepeat}
-              style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
-            >
-              <Text style={{ fontWeight:'900' }}>＋</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <TouchableOpacity onPress={makeSave(item)} disabled={locked}
-            style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-            {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
-            <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
-          </TouchableOpacity>
-
-          {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
-            <TouchableOpacity onPress={makeApproveNow(item)} disabled={locked}
-              style={{ backgroundColor: locked ? '#CFD8DC' : '#10B981', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {countedNow && !isManager ? (
-            <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
-              <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
   if (!itemsPathOk) {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -802,7 +852,7 @@ function StockTakeAreaInventoryScreen() {
 
   const ListHeader = () => {
     const anyPar = items.some((it) => typeof it.parLevel === 'number');
-    const anyLow = items.some((it) => isLow(it));
+    const anyLow = items.some((it) => (typeof it.parLevel === 'number' && typeof it.lastCount === 'number' && it.lastCount < it.parLevel));
     const showLowChip = anyPar && anyLow;
 
     // started/last-activity caption formatter
@@ -881,7 +931,7 @@ function StockTakeAreaInventoryScreen() {
           </View>
 
           <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
-            {showLowChip ? (
+            {items.some((it)=>typeof it.parLevel==='number') && items.some((it)=> typeof it.parLevel==='number' && typeof it.lastCount==='number' && it.lastCount < it.parLevel) ? (
               <>
                 <TouchableOpacity
                   onPress={() => setOnlyLow(false)}
@@ -999,12 +1049,36 @@ function StockTakeAreaInventoryScreen() {
         ref={listRef}
         data={filtered}
         keyExtractor={(it) => it.id}
-        renderItem={({ item }) => <Row item={item} />}
+        renderItem={({ item }) => (
+          <Row
+            item={item}
+            isCompact={isCompact}
+            dens={dens}
+            areaStarted={areaStarted}
+            showExpected={showExpected}
+            compactCounted={compactCounted}
+            showSteppers={showSteppers}
+            isManager={isManager}
+            localQty={localQty}
+            setLocalQty={setLocalQty}
+            inputRefs={inputRefs}
+            setFocusedInputId={setFocusedInputId}
+            setMenuFor={setMenuFor}
+            openEditItem={openEditItem}
+            openAdjustment={openAdjustment}
+            deriveExpected={deriveExpected}
+            countedInThisCycle={countedInThisCycle}
+            clampNonNegative={clampNonNegative}
+            approveNow={approveNow}
+            saveCount={saveCount}
+          />
+        )}
         ListHeaderComponent={<ListHeader />}
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
         keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={false}
       />
 
       {/* Request Adjustment Modal */}
@@ -1157,7 +1231,7 @@ function StockTakeAreaInventoryScreen() {
                 setMenuFor(null);
                 if (ex == null) return;
                 setLocalQty(m => ({ ...m, [it.id]: String(ex) }));
-                setTimeout(()=>jumpToItem(it.id), 50);
+                setTimeout(()=>{ inputRefs.current[it.id]?.focus?.(); }, 50);
               }}
               style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor: deriveExpected(menuFor || ({} as Item)) == null ? '#F3F4F6' : '#EAF4FF', marginBottom:8 }}
             >
@@ -1172,14 +1246,14 @@ function StockTakeAreaInventoryScreen() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openHistory(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EEF2FF', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); setTimeout(()=>openHistory(it), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EEF2FF', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#3730A3' }}>History</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openAdjustment(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3E5F5', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#6A1B9A' }}>Request adjustment</Text>
             </TouchableOpacity>
             {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
-              <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); makeApproveNow(it)(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DCFCE7', marginBottom:8 }}>
+              <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); throttleAction(()=>approveNow(it))(); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DCFCE7', marginBottom:8 }}>
                 <Text style={{ fontWeight:'800', color:'#166534' }}>Approve now (manager)</Text>
               </TouchableOpacity>
             ) : null}
@@ -1285,7 +1359,7 @@ function StockTakeAreaInventoryScreen() {
                 {reviewCounted.length === 0 ? (
                   <Text style={{ color:'#6B7280' }}>No items have been counted yet.</Text>
                 ) : reviewCounted.map((it) => (
-                  <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                  <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
                     <Text style={{ fontWeight:'700' }}>{it.name}</Text>
                     <Text style={{ color:'#374151' }}>Saved: {typeof it.lastCount === 'number' ? it.lastCount : '—'}</Text>
                   </TouchableOpacity>
@@ -1299,7 +1373,7 @@ function StockTakeAreaInventoryScreen() {
                 ) : (
                   <>
                     {reviewMissing.slice(0, 3).map((it) => (
-                      <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                      <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
                         <Text style={{ fontWeight:'700' }}>{it.name}</Text>
                         <Text style={{ color:'#6B7280' }}>Tap to jump to it</Text>
                       </TouchableOpacity>
@@ -1318,7 +1392,7 @@ function StockTakeAreaInventoryScreen() {
                 {reviewFlagged.length === 0 ? (
                   <Text style={{ color:'#6B7280' }}>No items are flagged.</Text>
                 ) : reviewFlagged.map((it) => (
-                  <TouchableOpacity key={it.id} onPress={()=>jumpToItem(it.id)} style={{ paddingVertical:6 }}>
+                  <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
                     <Text style={{ fontWeight:'700' }}>{it.name}</Text>
                     <Text style={{ color:'#92400E' }}>Marked “Recount”</Text>
                   </TouchableOpacity>
