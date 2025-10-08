@@ -1,4 +1,5 @@
 // @ts-nocheck
+import AreaInvHeader from "./components/AreaInvHeader";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
@@ -457,7 +458,7 @@ function StockTakeAreaInventoryScreen() {
   const filtered = useMemo(() => {
     let rows = filteredBase;
     if (onlyLow) rows = rows.filter(isLow);
-    if (onlyUncounted) rows = rows.filter((it) => !countedInThisCycle(it));
+    if (onlyUncounted) rows = rows.filter((it) => !countedInThisCycle(it) || it.id === focusedInputId);
     if (onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
     if (sortUncountedFirst) {
       rows = rows.slice().sort((a, b) => {
@@ -469,7 +470,7 @@ function StockTakeAreaInventoryScreen() {
       });
     }
     return rows;
-  }, [filteredBase, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs]);
+  }, [filteredBase, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs, focusedInputId]);
 
   const countedCount = items.filter(countedInThisCycle).length;
   const lowCount = items.filter(isLow).length;
@@ -612,10 +613,14 @@ function StockTakeAreaInventoryScreen() {
     const nm = (addingName || '').trim();
     if (!nm) return Alert.alert('Name required');
     try {
-      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), {
-        name: nm, unit: addingUnit || null, supplierName: addingSupplier || null,
-        createdAt: serverTimestamp(), updatedAt: serverTimestamp()
-      });
+      const payload: any = {
+        name: nm,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      const unitTrim = (addingUnit || '').trim();
+      if (unitTrim) payload.unit = unitTrim; // allowed on CREATE
+      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), payload);
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); return; }
     setAddingName(''); await rememberQuickAdd(addingUnit, addingSupplier);
     nameInputRef.current?.blur(); Keyboard.dismiss(); hapticSuccess();
@@ -1073,11 +1078,11 @@ function StockTakeAreaInventoryScreen() {
             saveCount={saveCount}
           />
         )}
-        ListHeaderComponent={<ListHeader />}
+        ListHeaderComponent={<AreaInvHeader areaName={areaName} isCompact={isCompact} dens={dens} startedAt={(areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null))} lastActivityDate={lastActivityDate} offline={offline} legendDismissed={legendDismissed} dismissLegend={dismissLegend} showExpected={showExpected} setShowExpected={setShowExpected} filter={filter} setFilter={setFilter} addingName={addingName} setAddingName={setAddingName} addingUnit={addingUnit} setAddingUnit={setAddingUnit} addingSupplier={addingSupplier} setAddingSupplier={setAddingSupplier} onAddQuickItem={addQuickItem} stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }} onOpenMore={() => setMoreOpen(true)} nameInputRef={nameInputRef} />}
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         removeClippedSubviews={false}
       />
 
