@@ -1,219 +1,279 @@
-import React, { useEffect, useMemo, useState } from 'react';
+// @ts-nocheck
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
-  Modal, Pressable, Alert, ActivityIndicator
+  Modal, Pressable, Alert, RefreshControl, ActivityIndicator
 } from 'react-native';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
   doc, serverTimestamp
 } from 'firebase/firestore';
-import { useVenueId } from '../../context/VenueProvider';
-import { throttleNav } from '../../utils/pressThrottle';
-import { dlog } from '../../utils/devlog';
+import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
+import { MaterialIcons } from '@expo/vector-icons';
 
-type RouteParams = { departmentId: string; departmentName?: string };
-type AreaRow = { id: string; name: string; startedAt?: any | null; completedAt?: any | null; };
+type Params = { venueId: string; departmentId: string };
+type AreaRow = { id: string; name?: string; startedAt?: any; completedAt?: any };
 
-function AreaSelectionScreen() {
+function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
+  const fillCount = status === 'done' ? 3 : status === 'inprog' ? 1 : 0;
+  const star = (filled: boolean, key: number) =>
+    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? '#F59E0B' : '#CBD5E1'} />;
+  return (
+    <View style={{ flexDirection: 'row', gap: 2 }}>
+      {star(fillCount >= 1, 1)}
+      {star(fillCount >= 2, 2)}
+      {star(fillCount >= 3, 3)}
+    </View>
+  );
+}
+
+function AreaSelectionInner() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const { departmentId, departmentName }: RouteParams = route.params || {};
-  const venueId = useVenueId();
-
-  const [q, setQ] = useState('');
-  const qDebounced = useDebouncedValue(q, 200);
+  const { venueId, departmentId } = (route.params || {}) as Params;
 
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [showEdit, setShowEdit] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [areaName, setAreaName] = useState('');
+  const [q, setQ] = useState('');
+  const dq = useDebouncedValue(q, 150);
 
-  useEffect(() => { load(); }, [venueId, departmentId]);
-  useFocusEffect(React.useCallback(() => { load(); return () => {}; }, [venueId, departmentId]));
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [adding, setAdding] = useState(false);
 
-  async function load() {
-    if (!venueId || !departmentId) { setAreas([]); setLoading(false); return; }
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
-      const snap = await getDocs(query(col, orderBy('name')));
-      const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as AreaRow[];
-      setAreas(list);
-    } catch (e: any) {
-      dlog('[Areas] load error', e?.message);
+      const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+      const snap = await getDocs(query(ref, orderBy('name', 'asc')));
+      const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      setAreas(rows);
+    } catch (e:any) {
+      if (__DEV__) console.log('[Areas] load error', e?.message);
       setAreas([]);
     } finally {
       setLoading(false);
     }
-  }
+  }, [venueId, departmentId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
 
   const filtered = useMemo(() => {
-    const needle = qDebounced.trim().toLowerCase();
-    if (!needle) return areas;
-    return areas.filter(a => (a.name || '').toLowerCase().includes(needle));
-  }, [qDebounced, areas]);
+    const term = dq.trim().toLowerCase();
+    if (!term) return areas;
+    return areas.filter(a => (a.name || a.id).toLowerCase().includes(term));
+  }, [areas, dq]);
 
-  function openCreate() { setEditingId(null); setAreaName(''); setShowEdit(true); }
-  function openEdit(row: AreaRow) { setEditingId(row.id); setAreaName(row.name || ''); setShowEdit(true); }
-
-  async function commitEdit() {
-    if (!venueId || !departmentId) return;
-    const name = areaName.trim();
-    if (!name) { Alert.alert('Missing name', 'Please enter an area name.'); return; }
-    try {
-      if (editingId) {
-        const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', editingId);
-        await updateDoc(ref, { name, updatedAt: serverTimestamp() });
-      } else {
-        const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
-        const now = serverTimestamp();
-        await addDoc(col, { name, createdAt: now, updatedAt: now, startedAt: null, completedAt: null, cycleResetAt: null });
-      }
-      setShowEdit(false); setAreaName(''); setEditingId(null); await load();
-    } catch (e: any) { Alert.alert('Save failed', e?.message || 'Unknown error'); }
-  }
-
-  async function confirmDelete(row: AreaRow) {
-    Alert.alert(
-      'Delete area',
-      `Remove “${row.name}”? You won’t be able to count this area unless you recreate it.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            try {
-              if (!venueId) return;
-              const ref = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', row.id);
-              await deleteDoc(ref);
-              await load();
-            } catch (e: any) { Alert.alert('Delete failed', e?.message || 'Unknown error'); }
-          }
-        }
-      ]
-    );
-  }
-
-  async function fixLegacyAreas() {
-    if (!venueId || !departmentId) return;
-    try {
-      const col = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
-      const snap = await getDocs(query(col));
-      let count = 0;
-      for (const d of snap.docs) {
-        const data: any = d.data();
-        const needsFix =
-          !('startedAt' in data) || !('completedAt' in data) ||
-          data.startedAt === undefined || data.completedAt === undefined;
-        if (needsFix) { await updateDoc(d.ref, { startedAt: null, completedAt: null }); count++; }
-      }
-      Alert.alert('Legacy Fix Complete', `Updated ${count} area(s).`); await load();
-    } catch (e: any) { Alert.alert('Fix failed', e?.message || 'Unknown error'); }
-  }
-
-  const statusPill = (row: AreaRow) => {
-    if (row.completedAt) return <Text style={[styles.pill, styles.pillDone]}>Done</Text>;
-    if (row.startedAt) return <Text style={[styles.pill, styles.pillInProg]}>In progress</Text>;
-    return <Text style={[styles.pill, styles.pillIdle]}>Not started</Text>;
+  const openArea = (areaId: string) => {
+    nav.navigate('AreaInventory', { venueId, departmentId, areaId });
   };
 
-  const makeGoToAreaInventory = (areaId: string, areaName: string) =>
-    throttleNav(() => nav.navigate('AreaInventory', { departmentId, areaId, areaName }));
+  async function addArea() {
+    const name = newName.trim();
+    if (!name) { Alert.alert('Name required', 'Enter an area name.'); return; }
+    setAdding(true);
+    try {
+      const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+      // Conform to rules: hasOnly ['name','startedAt','completedAt','cycleResetAt','createdAt','updatedAt']
+      await addDoc(ref, {
+        name,
+        startedAt: null,
+        completedAt: null,
+        cycleResetAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setShowAdd(false);
+      setNewName('');
+      await load();
+    } catch (e:any) {
+      Alert.alert('Add failed', e?.message || 'Unknown error');
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function deleteArea(id: string) {
+    Alert.alert('Delete Area', 'This will remove the area and its counts from this department. Continue?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        try {
+          await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
+          await load();
+        } catch (e:any) {
+          Alert.alert('Delete failed', e?.message || 'Unknown error');
+        }
+      }}
+    ]);
+  }
+
+  async function fixLegacyNulls() {
+    try {
+      const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
+      const snap = await getDocs(ref);
+      let count = 0;
+      for (const d of snap.docs) {
+        const data:any = d.data();
+        if (!('startedAt' in data) || !('completedAt' in data)) {
+          // lifecycle-only update is allowed by rules
+          await updateDoc(d.ref, { startedAt: null, completedAt: null });
+          count++;
+        }
+      }
+      Alert.alert('Fixed', `Updated ${count} area(s).`);
+      await load();
+    } catch (e:any) {
+      Alert.alert('Fix failed', e?.message || 'Unknown error');
+    }
+  }
+
+  const Item = ({ item }: { item: AreaRow }) => {
+    const status: 'idle'|'inprog'|'done' = item.completedAt ? 'done' : item.startedAt ? 'inprog' : 'idle';
+    const statusLabel = status === 'done' ? 'Completed' : status === 'inprog' ? 'In Progress' : 'Not started';
+    const pillStyle = status === 'done' ? styles.pillDone : status === 'inprog' ? styles.pillInProg : styles.pillIdle;
+
+    return (
+      <TouchableOpacity style={styles.row} onPress={() => openArea(item.id)} onLongPress={() => deleteArea(item.id)}>
+        <View style={{ flex: 1, paddingRight: 10 }}>
+          <Text style={styles.rowTitle}>{item.name || item.id}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <Stars status={status} />
+            <Text style={styles.rowSub}>{statusLabel}</Text>
+          </View>
+        </View>
+        <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.wrap}>
+      {/* Header */}
       <View style={styles.headerRow}>
-        <Text style={styles.title}>{departmentName || 'Areas'}</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity onPress={fixLegacyAreas} style={[styles.smallBtn, { backgroundColor: '#D6E9FF', borderColor:'#A9D2FF', borderWidth:1 }]}>
-            <Text style={[styles.smallText, { color: '#0A84FF' }]}>Fix legacy areas</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setEditingId(null); setAreaName(''); setShowEdit(true); }} style={styles.primaryBtn}>
-            <Text style={styles.primaryText}>Add Area</Text>
-          </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Areas</Text>
+          <Text style={styles.sub}>Department: {departmentId}</Text>
         </View>
+        <IdentityBadge />
       </View>
 
-      <TextInput placeholder="Search areas…" value={q} onChangeText={setQ} style={styles.search} />
+      {/* Legend */}
+      <View style={styles.legendRow}>
+        <View style={styles.legendItem}><Stars status="idle" /><Text style={styles.legendText}> Not started</Text></View>
+        <View style={styles.legendItem}><Stars status="inprog" /><Text style={styles.legendText}> In progress</Text></View>
+        <View style={styles.legendItem}><Stars status="done" /><Text style={styles.legendText}> Completed</Text></View>
+      </View>
 
+      {/* Search + actions */}
+      <View style={styles.searchRow}>
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="Search areas"
+          placeholderTextColor="#94A3B8"
+          style={styles.searchInput}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          blurOnSubmit={false}
+        />
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => setShowAdd(true)}>
+          <Text style={styles.primaryText}>Add Area</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.smallBtn} onPress={fixLegacyNulls}>
+          <Text style={styles.smallText}>Fix</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* List */}
       {loading ? (
-        <View style={styles.center}><ActivityIndicator /><Text>Loading areas…</Text></View>
+        <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+          <ActivityIndicator />
+        </View>
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(i) => i.id}
-          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.row} onPress={makeGoToAreaInventory(item.id, item.name)} onLongPress={() => { setEditingId(item.id); setAreaName(item.name || ''); setShowEdit(true); }} delayLongPress={250}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.name}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                  {statusPill(item)}
-                </View>
-              </View>
-              <TouchableOpacity onPress={() => { setEditingId(item.id); setAreaName(item.name || ''); setShowEdit(true); }} style={styles.smallBtn}>
-                <Text style={styles.smallText}>⋯</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => {
-                Alert.alert('Delete area', `Remove “${item.name}”?`, [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => confirmDelete(item) },
-                ]);
-              }} style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]}>
-                <Text style={[styles.smallText, { color: 'white' }]}>Del</Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={<Text>No areas yet. Tap “Add Area”.</Text>}
-          contentContainerStyle={{ paddingBottom: 16 }}
+          keyExtractor={(x) => x.id}
+          renderItem={Item}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          keyboardShouldPersistTaps="always"
+          ListEmptyComponent={<View style={{ padding: 16 }}><Text style={{ color: '#6B7280' }}>No matching areas.</Text></View>}
         />
       )}
 
-      {/* Create/Edit modal */}
-      <Modal visible={showEdit} transparent animationType="fade" onRequestClose={() => setShowEdit(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{editingId ? 'Rename area' : 'Add area'}</Text>
-            <TextInput value={areaName} onChangeText={setAreaName} placeholder="Area name" style={styles.modalInput} autoFocus />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <Pressable style={styles.secondaryBtn} onPress={() => setShowEdit(false)}>
+      {/* Add modal */}
+      <Modal visible={showAdd} transparent animationType="fade" onRequestClose={() => setShowAdd(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowAdd(false)}>
+          <Pressable style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Add Area</Text>
+            <TextInput
+              value={newName}
+              onChangeText={setNewName}
+              placeholder="Area name"
+              placeholderTextColor="#9CA3AF"
+              style={styles.modalInput}
+              autoFocus
+              blurOnSubmit={false}
+              returnKeyType="done"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setShowAdd(false)} disabled={adding}>
                 <Text style={styles.secondaryText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={[styles.primaryBtn, !areaName.trim() && { opacity: 0.6 }]} onPress={async () => { await commitEdit(); }} disabled={!areaName.trim()}>
-                <Text style={styles.primaryText}>{editingId ? 'Save' : 'Add'}</Text>
-              </Pressable>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.primaryBtn} onPress={addArea} disabled={adding}>
+                {adding ? <ActivityIndicator /> : <Text style={styles.primaryText}>Add</Text>}
+              </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );
 }
 
-export default withErrorBoundary(AreaSelectionScreen, 'Areas');
-
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: 'white' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 20, fontWeight: '800' },
-  search: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: 'white' },
-  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 8 },
-  row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F2F2F7', borderRadius: 12, padding: 12 },
-  name: { fontWeight: '700' },
-  primaryBtn: { backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+  wrap: { flex: 1, backgroundColor: 'white', padding: 16 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  title: { fontSize: 22, fontWeight: '800' },
+  sub: { color: '#6B7280', marginTop: 2 },
+
+  legendRow: { flexDirection: 'row', justifyContent: 'flex-start', gap: 14, marginBottom: 8 },
+  legendItem: { flexDirection: 'row', alignItems: 'center' },
+  legendText: { color: '#6B7280', marginLeft: 4, fontSize: 12 },
+
+  searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  searchInput: {
+    flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white'
+  },
+
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#F9FAFB' },
+  rowTitle: { fontSize: 16, fontWeight: '700' },
+  rowSub: { color: '#6B7280' },
+
+  primaryBtn: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, marginLeft: 8 },
   primaryText: { color: 'white', fontWeight: '700' },
   smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 6 },
   smallText: { fontWeight: '800', fontSize: 14 },
+
   pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
   pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
   pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
   pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
   modalTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8 },
@@ -221,3 +281,5 @@ const styles = StyleSheet.create({
   secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   secondaryText: { fontWeight: '700' },
 });
+
+export default withErrorBoundary(AreaSelectionInner, 'AreaSelection');

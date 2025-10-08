@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React from 'react';
 import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import SearchBarDebounced from '../../../components/SearchBarDebounced';
 
 type Stats = { countedCount: number; total: number; lowCount: number; flaggedCount: number; progressPct: number };
 
@@ -106,24 +107,15 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
 
         {/* Search + toggle */}
         <View style={{ flexDirection: 'row', gap: 8, alignItems:'center', flexWrap:'wrap' }}>
-          <View style={{ flex: 1, position: 'relative' }}>
-            <TextInput
-              value={filter}
-              onChangeText={setFilter}
-              placeholder="Search items…"
-              style={{ paddingVertical: dens(8), paddingHorizontal: filter ? 34 : dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
-              returnKeyType="search"
-              blurOnSubmit={false}
-            />
-            {filter ? (
-              <TouchableOpacity
-                onPress={() => setFilter('')}
-                style={{ position: 'absolute', right: 8, top: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#EEEEEE' }}
-              >
-                <Text style={{ fontWeight:'800' }}>×</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
+          <View style={{ flex: 1 }}>
+  <SearchBarDebounced
+    value={filter}
+    onChangeText={setFilter}
+    onDebouncedChange={setFilter}
+    placeholder="Search items…"
+    debounceMs={200}
+  />
+</View>
           <TouchableOpacity onPress={() => setShowExpected(!showExpected)} style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}>
             <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
           </TouchableOpacity>
