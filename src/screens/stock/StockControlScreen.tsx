@@ -1,10 +1,14 @@
-import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import React, { useMemo, useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
+
+// Use your real list screens from setup (exact paths you provided)
+import SuppliersScreen from '../setup/SuppliersScreen';
+import ProductsScreen from '../setup/ProductsScreen';
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -13,12 +17,23 @@ export default function StockControlScreen() {
   const venueId = useVenueId();
   const { name: venueName } = useVenueInfo(venueId);
 
+  const [showSuppliers, setShowSuppliers] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
+
   const friendly = useMemo(() => {
     return friendlyIdentity(
       { displayName: user?.displayName ?? null, email: user?.email ?? null, uid: user?.uid ?? null },
       { name: venueName ?? null, venueId: venueId ?? null }
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
+
+  useEffect(() => {
+    try {
+      const state = nav.getState?.();
+      const logger = (global as any).dlog ?? console.log;
+      logger?.('[StockControl] routeNames:', state?.routeNames);
+    } catch {}
+  }, [nav]);
 
   const Item = ({ title, onPress }: { title: string; onPress: () => void }) => (
     <TouchableOpacity style={styles.row} onPress={onPress}>
@@ -30,7 +45,6 @@ export default function StockControlScreen() {
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.wrap}>
-        {/* Header */}
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Stock Control</Text>
@@ -39,13 +53,36 @@ export default function StockControlScreen() {
           <IdentityBadge />
         </View>
 
-        <Item title="Manage Suppliers" onPress={() => nav.navigate('Suppliers')} />
-        <Item title="Manage Products"  onPress={() => nav.navigate('Products')} />
-        {/* FIX: correct, plural route names */}
-        <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
-        <Item title="Orders"           onPress={() => nav.navigate('Orders')} />
-        <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings')} />
+        <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
+        <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
+        <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
+        <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
+        <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings' as never)} />
       </View>
+
+      {/* Suppliers: full-screen modal with your rich screen */}
+      <Modal visible={showSuppliers} animationType="slide" onRequestClose={() => setShowSuppliers(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowSuppliers(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Suppliers</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <SuppliersScreen />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Products: full-screen modal with your rich screen */}
+      <Modal visible={showProducts} animationType="slide" onRequestClose={() => setShowProducts(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowProducts(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Products</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <ProductsScreen />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -61,4 +98,7 @@ const styles = StyleSheet.create({
   },
   rowText: { fontSize: 16, fontWeight: '700' },
   chev: { fontSize: 22, color: '#94A3B8', marginLeft: 8 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderColor: '#E5E7EB' },
+  back: { fontSize: 18, color: '#2563EB', width: 60 },
+  modalTitle: { fontSize: 18, fontWeight: '800' },
 });

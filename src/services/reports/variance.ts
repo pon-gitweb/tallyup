@@ -126,6 +126,9 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
       itemsSnap = await getDocs(itemsCol);
     }
   } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
     dlog('Items query fallback (no index / permission):', e);
     itemsSnap = await getDocs(itemsCol); // broad load, filter later
   }
@@ -149,6 +152,9 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
     const snap = await getDocs(q);
     lastTakeId = snap.docs[0]?.id ?? null;
   } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
     dlog('StockTakes query failed (no index / permission):', e);
     // Fallback: try latest by createdAt if present
     try {
@@ -171,6 +177,9 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
         lastCountsByItemId[d.id] = toNum(v?.qty ?? v?.quantity ?? v?.count);
       });
     } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
       dlog('Counts load failed (continue with zeros):', e);
     }
   }
@@ -188,6 +197,9 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
       for (const [k, v] of Object.entries(m)) soldByItemId[k] = toNum(v);
     }
   } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
     dlog('Sales agg read failed (ignore):', e);
   }
 
@@ -200,6 +212,9 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
       for (const [k, v] of Object.entries(m)) receivedByItemId[k] = toNum(v);
     }
   } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
     dlog('Invoices agg read failed (ignore):', e);
   }
 
@@ -221,11 +236,17 @@ export async function computeVarianceForDepartment(opts: OrchestrateOptions): Pr
       const latestRef = doc(db, 'venues', venueId, 'reports', 'variance', 'latest');
       await setDoc(latestRef, result, { merge: true });
     } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
       dlog('Persist to Firestore failed (permission? continue to local):', e);
     }
     try {
       await AsyncStorage.setItem(localKey(venueId, departmentId), JSON.stringify(result));
     } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
       dlog('Persist to AsyncStorage failed:', e);
     }
   }

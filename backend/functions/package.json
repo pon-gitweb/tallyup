@@ -1,0 +1,23 @@
+{
+  "name": "tallyup-functions",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": { "node": "20" },
+  "scripts": {
+    "build": "tsc -p .",
+    "deploy": "npm run build && npx -y firebase-tools deploy --only functions:aiVarianceExplain",
+    "serve": "npm run build && npx -y firebase-tools emulators:start --only functions"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "firebase-admin": "^12.5.0",
+    "firebase-functions": "^4.9.0",
+    "openai": "^4.57.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/node": "^20.12.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}

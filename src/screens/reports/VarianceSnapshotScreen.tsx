@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, ScrollView } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { computeVarianceSnapshot, VarianceRow } from '../../services/reports/variance';
+import { explainVariance } from '../../services/aiVariance';
 
 export default function VarianceSnapshotScreen() {
   const venueId = useVenueId();
@@ -72,7 +73,7 @@ export default function VarianceSnapshotScreen() {
           {loading && <RowLoading />}
           {!loading && filteredShort.length === 0 && <RowEmpty text="No shortages in this cycle" />}
           {!loading && filteredShort.map((r, i) => (
-            <Row key={r.id || i} row={r} divider={i < filteredShort.length - 1} />
+            <Row key={r.id || i} row={r} divider={i < filteredShort.length - 1} venueId={venueId} />
           ))}
         </SectionCard>
 
@@ -82,7 +83,7 @@ export default function VarianceSnapshotScreen() {
           {loading && <RowLoading />}
           {!loading && filteredExcess.length === 0 && <RowEmpty text="No excess in this cycle" />}
           {!loading && filteredExcess.map((r, i) => (
-            <Row key={r.id || i} row={r} divider={i < filteredExcess.length - 1} />
+            <Row key={r.id || i} row={r} divider={i < filteredExcess.length - 1} venueId={venueId} />
           ))}
         </SectionCard>
 
@@ -104,8 +105,50 @@ function SectionCard({ children }: { children: React.ReactNode }) {
   return <View style={styles.card}>{children}</View>;
 }
 
-function Row({ row, divider }: { row: VarianceRow; divider?: boolean }) {
-  const { name, unit, supplierName, par, onHand, variance, value } = (row || {}) as any;
+function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; venueId: string }) {
+  const { id, productId, name, unit, supplierName, par, onHand, variance, value, lastDeliveryAt, auditTrail } = (row || {}) as any;
+
+  async function onExplain() {
+    try {
+      const counted = typeof onHand === 'number' ? onHand : 0;
+      const expected = (typeof counted === 'number' && typeof variance === 'number') ? (counted - variance) : 0;
+
+      const ctx = {
+        venueId,
+        areaId: null,
+        productId: productId || id || String(name || 'unknown'),
+        expected,
+        counted,
+        unit: unit || null,
+        lastDeliveryAt: lastDeliveryAt || null,
+        lastSalesLookbackDays: 3,
+        auditTrail: Array.isArray(auditTrail) ? auditTrail : [],
+      };
+
+      const res = await explainVariance(ctx);
+
+      // Be honest when context is thin
+      const notMuchData = (!ctx.lastDeliveryAt) && (!ctx.auditTrail?.length);
+      const suggestions = [
+        !ctx.lastDeliveryAt ? 'recent delivery date' : null,
+        !ctx.auditTrail?.length ? 'audit trail entries' : null,
+        'recent sales window',
+      ].filter(Boolean).join(', ');
+
+      const lines = [
+        res.summary || 'No explanation available.',
+        res.confidence != null ? `\nConfidence: ${(res.confidence * 100).toFixed(0)}%` : '',
+        (res.factors && res.factors.length) ? `\nFactors:\n• ${res.factors.join('\n• ')}` : '',
+        notMuchData ? `\n\nLimited data. Add ${suggestions} for better insights.` : '',
+        res.cachedAt ? `\n\nCached: ${new Date(res.cachedAt).toLocaleString()}` : '',
+      ].filter(Boolean);
+
+      Alert.alert('AI Insight', lines.join('\n'));
+    } catch (e: any) {
+      Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
+    }
+  }
+
   return (
     <View style={[styles.row, divider && styles.rowDivider]}>
       <View style={{ flex: 1 }}>
@@ -118,6 +161,9 @@ function Row({ row, divider }: { row: VarianceRow; divider?: boolean }) {
       <Cell label="On-hand" value={onHand} />
       <Cell label="Variance" value={variance} emph />
       <Cell label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
+      <TouchableOpacity onPress={onExplain} style={styles.aiBtn} accessibilityLabel="Explain this variance">
+        <Text style={styles.aiText}>🤖 Explain</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -170,4 +216,6 @@ const styles = StyleSheet.create({
   cellVal: { fontWeight: '800' },
   reloadBtn: { alignSelf: 'center', marginTop: 12, backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
   reloadText: { color: '#1D4ED8', fontWeight: '800' },
+  aiBtn: { marginLeft: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10 },
+  aiText: { color: '#1D4ED8', fontWeight: '800' },
 });
