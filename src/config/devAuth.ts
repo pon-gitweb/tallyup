@@ -1,5 +1,5 @@
 export const DEV_DEFAULT_EMAIL = 'test@example.com';
-export const DEV_DEFAULT_PASSWORD = 'password123';
+export const DEV_DEFAULT_PASSWORD = 'test1234';
 
 /** Dev helper used by LoginScreen; returns canned creds. */
 export async function devLogin() {

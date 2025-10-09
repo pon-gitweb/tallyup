@@ -1,251 +1,163 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  Keyboard,
-} from 'react-native';
-import { useNetInfo } from '@react-native-community/netinfo';
-import { getAuth, signInWithEmailAndPassword, type UserCredential } from 'firebase/auth';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { devLogin } from '../../config/devAuth';
-
-import LocalThemeGate from '../../theme/LocalThemeGate';
-import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
-
-// Standard project wrapper (no-op here to avoid imports shuffle)
-const withErrorBoundary = (Comp: any) => Comp;
-
-// Local dlog guard
-const dlog = (...args: any[]) => { if (__DEV__) console.log(...args); };
+import { useVenueId } from '../../context/VenueProvider';
+import AppErrorBoundary from '../../components/AppErrorBoundary';
+import { db } from '../../services/firebase';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { DEV_VENUE_ID } from '../../config/devVenue';
 
 function mapAuthError(e: any): string {
-  const code = String(e?.code || '').toLowerCase();
-  if (code.includes('operation-not-allowed')) return 'Email/Password is disabled for this project.';
-  if (code.includes('invalid-credential') || code.includes('invalid-password')) return 'Incorrect email or password.';
-  if (code.includes('user-not-found')) return 'No user with this email.';
-  if (code.includes('wrong-password')) return 'Incorrect email or password.';
-  if (code.includes('too-many-requests')) return 'Too many attempts. Try again shortly.';
-  if (String(e?.message || '').toLowerCase().includes('timeout')) return 'Network is slow. Please try again.';
-  return 'Sign in failed. Please check your details and try again.';
+  const code = (e?.code || '').toString();
+  if (code.includes('invalid-credential') || code.includes('wrong-password')) return 'Email or password is incorrect.';
+  if (code.includes('user-not-found')) return 'No account found for that email.';
+  if (code.includes('email-already-in-use')) return 'That email is already registered.';
+  if (code.includes('operation-not-allowed')) return 'Email/Password sign-in is not enabled in Firebase.';
+  if (code.includes('too-many-requests')) return 'Too many attempts. Please try again later.';
+  return e?.message ?? 'An error occurred.';
 }
 
-async function hapticLight() {
-  try {
-    const Haptics = await import('expo-haptics');
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  } catch {}
-}
+async function attachToDevVenue(uid: string, email: string | null) {
+  // Attach the current user to the known dev venue (create missing docs if needed).
+  const vref = doc(db, 'venues', DEV_VENUE_ID);
+  const mref = doc(db, 'venues', DEV_VENUE_ID, 'members', uid);
+  const uref = doc(db, 'users', uid);
 
-// Promise.race timeout guard (Firebase Auth has no native abort)
-function signInWithTimeout(email: string, pass: string, ms = 15000): Promise<UserCredential> {
-  const auth = getAuth();
-  return Promise.race([
-    signInWithEmailAndPassword(auth, email.trim(), pass),
-    new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
-  ]) as Promise<UserCredential>;
+  const vSnap = await getDoc(vref);
+  if (!vSnap.exists()) {
+    // Only minimal fields; we're attaching to an existing venue id you've been using
+    await setDoc(vref, { venueId: DEV_VENUE_ID, name: 'TallyUp Dev Venue', createdAt: serverTimestamp(), dev: true }, { merge: true });
+  }
+  await setDoc(mref, { uid, role: 'owner', joinedAt: serverTimestamp(), dev: true }, { merge: true });
+  await setDoc(uref, { uid, email: email ?? null, venueId: DEV_VENUE_ID, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 function LoginScreenInner() {
   const nav = useNavigation<any>();
-  const net = useNetInfo();
+  const auth = getAuth();
+  const venueId = useVenueId();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
+  const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [showPass, setShowPass] = useState(false);
 
-  const passRef = useRef<TextInput>(null);
-  const offline = useMemo(() => net.isConnected === false || net.isInternetReachable === false, [net.isConnected, net.isInternetReachable]);
+  // Signed in + no venue => Auth.Setup (prod-oriented; dev flow handled explicitly below)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u) return;
+      if (!venueId) {
+        nav.navigate('Setup');
+      }
+    });
+    return () => unsub();
+  }, [auth, nav, venueId]);
 
-  const handleSignIn = useCallback(async () => {
-    if (busy) return; // throttle
-    if (!email || !pass) {
-      await hapticLight();
-      Alert.alert('Required', 'Enter email and password.');
+  const trySignIn = async () => {
+    if (!email.trim() || !pass) {
+      Alert.alert('Missing info', 'Enter email and password.');
       return;
     }
-    if (offline) {
-      await hapticLight();
-      Alert.alert('You’re offline', 'Reconnect to sign in.');
-      return;
-    }
-
     setBusy(true);
-    const startedAt = Date.now();
-    dlog('[TallyUp Login] signIn start', JSON.stringify({ email }));
-
     try {
-      const cred = await signInWithTimeout(email, pass, 15000);
-      const { user } = cred;
-      dlog('[TallyUp Login] success', JSON.stringify({ uid: user?.uid }));
-      Keyboard.dismiss();
-      // Root navigator will swap to app phase automatically.
-    } catch (e: any) {
-      const msg = mapAuthError(e);
-      dlog('[TallyUp Login] signIn error', JSON.stringify({ code: e?.code, message: e?.message, tookMs: Date.now() - startedAt }));
-      await hapticLight();
-      // Clear + refocus password
-      setPass('');
-      requestAnimationFrame(() => passRef.current?.focus());
-      Alert.alert('Sign in failed', msg);
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
+      // Providers will route; if this user has no venue, Setup screen will be shown.
+    } catch (e:any) {
+      Alert.alert('Sign-in failed', mapAuthError(e));
     } finally {
       setBusy(false);
     }
-  }, [busy, email, pass, offline]);
+  };
 
-  const handleDevLogin = useCallback(async () => {
-    if (busy) return;
+  const doDevLogin = async () => {
     setBusy(true);
     try {
-      const out = await devLogin();
-      dlog('[TallyUp Login] devLogin ok', JSON.stringify(out));
-      if (!offline) {
-        const { email: em, password: pw } = out || {};
-        if (em && pw) {
-          const cred = await signInWithTimeout(String(em), String(pw), 15000);
-          const { user } = cred;
-          dlog('[TallyUp Login] success (dev)', JSON.stringify({ uid: user?.uid }));
-        }
-      } else {
-        await hapticLight();
-        Alert.alert('You’re offline', 'Reconnect to use the dev login.');
-      }
-    } catch (e: any) {
-      dlog('[TallyUp Login] devLogin error', JSON.stringify({ message: e?.message }));
-      await hapticLight();
+      const { email: em, password: pw } = await devLogin(); // test@example.com / test1234
+      const cred = await signInWithEmailAndPassword(auth, em, pw);
+      // Force attach to your dev venue id every time
+      await attachToDevVenue(cred.user.uid, cred.user.email ?? em);
+      Alert.alert('Dev Login', 'Attached to Dev Venue');
+    } catch (e:any) {
       Alert.alert('Dev login failed', mapAuthError(e));
     } finally {
       setBusy(false);
     }
-  }, [busy, offline]);
+  };
 
-  const goRegister = useCallback(() => {
-    if (busy) return;
-    nav.navigate('Register');
-  }, [busy, nav]);
+  const gotoRegister = () => nav.navigate('Register');
 
   return (
-    <LocalThemeGate>
-      <View style={{ flex: 1, padding: 16, backgroundColor: '#0F1115', justifyContent: 'center' }}>
-        <MaybeTText style={{ color: 'white', fontSize: 22, fontWeight: '700', marginBottom: 16 }}>
-          Welcome to TallyUp
-        </MaybeTText>
+    <View style={S.container}>
+      <View style={S.inner}>
+        <Text style={S.title}>Welcome to TallyUp</Text>
 
         <TextInput
+          style={S.input}
           placeholder="Email"
-          placeholderTextColor="#6B7787"
           autoCapitalize="none"
           keyboardType="email-address"
-          returnKeyType="next"
           value={email}
           onChangeText={setEmail}
-          onSubmitEditing={() => passRef.current?.focus()}
-          style={{
-            backgroundColor: '#171B22',
-            color: 'white',
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: '#263142',
-            marginBottom: 12,
-          }}
-          editable={!busy}
         />
 
-        <View style={{ position: 'relative' }}>
+        <View style={S.passRow}>
           <TextInput
-            ref={passRef}
+            style={[S.input, { flex: 1, marginBottom: 0 }]}
             placeholder="Password"
-            placeholderTextColor="#6B7787"
-            secureTextEntry={!showPass}
-            returnKeyType="done"
-            onSubmitEditing={handleSignIn}
+            secureTextEntry={!reveal}
             value={pass}
             onChangeText={setPass}
-            style={{
-              backgroundColor: '#171B22',
-              color: 'white',
-              paddingHorizontal: 12,
-              paddingVertical: 12,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: '#263142',
-              paddingRight: 64,
-            }}
-            editable={!busy}
           />
-          <TouchableOpacity
-            onPress={() => setShowPass(s => !s)}
-            style={{ position: 'absolute', right: 8, top: 8, padding: 8 }}
-            disabled={busy}
-            accessibilityLabel={showPass ? 'Hide password' : 'Show password'}
-          >
-            <Text style={{ color: '#9CA3AF', fontWeight: '600' }}>{showPass ? 'Hide' : 'Show'}</Text>
+          <TouchableOpacity onPress={() => setReveal(v => !v)} style={S.revealBtn}>
+            <Text style={{ fontWeight: '700' }}>{reveal ? 'Hide' : 'Show'}</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          onPress={handleSignIn}
-          disabled={busy || offline}
-          style={{
-            marginTop: 16,
-            backgroundColor: (busy || offline) ? '#2B3442' : '#3B82F6',
-            paddingVertical: 12,
-            borderRadius: 10,
-            alignItems: 'center',
-          }}
-        >
-          {busy ? <ActivityIndicator /> :
-            <Text style={{ color: 'white', fontWeight: '700' }}>{offline ? 'Offline' : 'Sign In'}</Text>}
+        <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
+          {busy ? <ActivityIndicator /> : <Text style={S.primaryText}>Sign In</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={goRegister}
-          disabled={busy}
-          style={{
-            marginTop: 12,
-            backgroundColor: busy ? '#2B3442' : '#7C3AED',
-            paddingVertical: 12,
-            borderRadius: 10,
-            alignItems: 'center',
-          }}
-        >
-          {busy ? <ActivityIndicator /> : <Text style={{ color: 'white', fontWeight: '700' }}>Register</Text>}
+        <TouchableOpacity style={S.secondary} onPress={gotoRegister} disabled={busy}>
+          <Text style={S.secondaryText}>Create Account</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={handleDevLogin}
-          disabled={busy || offline}
-          style={{
-            marginTop: 12,
-            backgroundColor: (busy || offline) ? '#2B3442' : '#10B981',
-            paddingVertical: 12,
-            borderRadius: 10,
-            alignItems: 'center',
-          }}
-        >
-          {busy ? <ActivityIndicator /> :
-            <Text style={{ color: 'white', fontWeight: '700' }}>{offline ? 'Offline' : 'Dev Login'}</Text>}
+        <TouchableOpacity style={S.ghost} onPress={doDevLogin} disabled={busy}>
+          <Text style={S.ghostText}>Dev Login</Text>
         </TouchableOpacity>
-
-        {offline && (
-          <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 10 }}>
-            You’re offline — reconnect to sign in.
-          </Text>
-        )}
-
-        <View style={{ marginTop: 28 }}>
-          <LegalFooter />
-        </View>
       </View>
-    </LocalThemeGate>
+
+      <View style={S.footer}>
+        <LegalFooter />
+      </View>
+    </View>
   );
 }
 
-export default withErrorBoundary(LoginScreenInner);
+// Error boundary wrapper
+export default function LoginScreen() {
+  return (
+    <AppErrorBoundary>
+      <LoginScreenInner />
+    </AppErrorBoundary>
+  );
+}
+
+const S = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff' },
+  inner: { flex: 1, padding: 20, justifyContent: 'center' },
+  title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 10 },
+  passRow: { flexDirection: 'row', alignItems: 'center' },
+  revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 10 },
+  primary: { backgroundColor: '#0A84FF', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
+  primaryText: { color: '#fff', fontWeight: '700' },
+  secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: '#D1D5DB' },
+  secondaryText: { color: '#111827', fontWeight: '700' },
+  disabled: { opacity: 0.6 },
+  ghost: { padding: 10, alignItems: 'center', marginTop: 12 },
+  ghostText: { color: '#6B7280' },
+  footer: { paddingHorizontal: 16, paddingBottom: 16 },
+});

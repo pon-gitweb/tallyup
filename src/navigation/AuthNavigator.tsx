@@ -1,36 +1,27 @@
-// @ts-nocheck
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import LoginScreen from '../screens/LoginScreen';
+import LoginScreen from '../screens/auth/LoginScreen';
+import RegisterScreen from '../screens/auth/RegisterScreen';
+import SetupWizard from '../screens/setup/SetupWizard';
 import CreateVenueScreen from '../screens/CreateVenueScreen';
 
 export type AuthStackParamList = {
   Login: undefined;
-  CreateVenue: undefined;
+  Register: undefined;
+  Setup: undefined;
+  CreateVenue: { origin?: 'auth' } | undefined;
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
-/**
- * NOTE: No <NavigationContainer/> here.
- * RootNavigator owns the single app-wide container.
- */
 export default function AuthNavigator() {
   return (
-    <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen
-        name="CreateVenue"
-        component={CreateVenueScreen}
-        options={{ headerShown: true, title: 'Create Venue' }}
-      />
-      {/* SetupWizard is referenced dynamically in the old file; keep it if you use it */}
-      <Stack.Screen
-        name="VenueSetup"
-        component={require('../screens/setup/SetupWizard').default}
-        options={{ title: 'Setup Wizard' }}
-      />
+    <Stack.Navigator id={undefined as any}>
+      <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Create Account' }} />
+      <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue' }} />
+      <Stack.Screen name="Setup" component={SetupWizard} options={{ title: 'Set up your venue', headerBackTitle: 'Back' }} />
     </Stack.Navigator>
   );
 }
