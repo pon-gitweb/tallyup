@@ -7,10 +7,28 @@ import MaybeTText from '../../components/themed/MaybeTText';
 import { exportCsv, exportPdf } from '../../utils/exporters';
 import { useVenueId } from '../../context/VenueProvider';
 import { useVarianceReport } from '../../hooks/useVarianceReport';
+import { explainVariance } from '../../services/aiVariance';
+import { fetchVarianceDepartment } from '../../services/reports/varianceRemote';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[DepartmentVariance]', ...a); };
 
-type Row = { id?: string; name: string; sku?: string; variance: number; value?: number; department?: string };
+type Row = {
+  id?: string;
+  productId?: string;
+  name: string;
+  sku?: string | null;
+  variance: number; // +excess, -shortage
+  value?: number | null;
+  department?: string;
+  onHand?: number | null;
+  par?: number | null;
+  unit?: string | null;
+  lastDeliveryAt?: string | null;
+  // NEW: enrichments for AI
+  recentSoldQty?: number | null;
+  recentReceivedQty?: number | null;
+  auditTrail?: Array<{ at: string; action: string; qty?: number; by?: string }>;
+};
 
 export default function DepartmentVarianceScreen() {
   const route = useRoute<any>();
@@ -20,40 +38,98 @@ export default function DepartmentVarianceScreen() {
   const venueId = venueIdParam || venueIdCtx || null;
   const departmentId: string | undefined = route?.params?.departmentId;
 
+  // Local client-side report (may hit permission-denied)
   const { loading, result, error } = useVarianceReport(venueId, departmentId ?? null);
 
+  // ---- Server fallback state (only used on permission-denied) ----
+  const [remoteResult, setRemoteResult] = React.useState<any>(null);
+  const [fallbackLoading, setFallbackLoading] = React.useState(false);
+  const [fallbackError, setFallbackError] = React.useState<any>(null);
+  const fallbackTried = React.useRef(false);
+
+  // Fallback trigger effect
+  React.useEffect(() => {
+    const msg = String(error?.code || error?.message || error || '');
+    const isDenied = /permission[- ]denied|insufficient permissions/i.test(msg);
+    if (!venueId || !isDenied || fallbackTried.current) return;
+
+    let alive = true;
+    (async () => {
+      try {
+        dlog('Triggering server fallback due to:', msg, { venueId, departmentId });
+        setFallbackError(null);
+        setFallbackLoading(true);
+        const resp = await fetchVarianceDepartment({ venueId, departmentId: departmentId ?? null });
+        if (!alive) return;
+
+        dlog('Server fallback response:', {
+          shortages: resp?.shortages?.length || 0,
+          excesses: resp?.excesses?.length || 0,
+          totalShortageValue: resp?.totalShortageValue,
+          totalExcessValue: resp?.totalExcessValue,
+        });
+        dlog('Server fallback debug:', resp?.notes?.debug);
+
+        setRemoteResult({
+          shortages: resp?.shortages || [],
+          excesses: resp?.excesses || [],
+          totalShortageValue: resp?.totalShortageValue || 0,
+          totalExcessValue: resp?.totalExcessValue || 0,
+        });
+      } catch (e) {
+        if (!alive) return;
+        dlog('Server fallback failed:', e);
+        setFallbackError(e);
+      } finally {
+        if (alive) setFallbackLoading(false);
+        fallbackTried.current = true;
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [error, venueId, departmentId]);
+
+  // Prefer remote result if present; otherwise local result
+  const effectiveResult = remoteResult || result;
+
+  const mapRow = (it: any): Row => ({
+    id: it.itemId || it.id,
+    productId: it.itemId || it.id,
+    name: it.name ?? '(item)',
+    sku: it.sku ?? '',
+    variance: Number(it.deltaVsPar ?? it.varianceQty ?? 0),
+    value: it.valueImpact ?? it.varianceValue ?? undefined,
+    department: it.departmentId ?? undefined,
+    onHand: typeof it.onHand === 'number' ? it.onHand
+          : (typeof it.theoreticalOnHand === 'number' ? it.theoreticalOnHand : null),
+    par: typeof it.par === 'number' ? it.par : null,
+    unit: it.unit ?? null,
+    lastDeliveryAt: it.lastDeliveryAt ?? null,
+    // NEW: bring through enrichments from server
+    recentSoldQty: typeof it.recentSoldQty === 'number' ? it.recentSoldQty : null,
+    recentReceivedQty: typeof it.recentReceivedQty === 'number' ? it.recentReceivedQty : null,
+    auditTrail: Array.isArray(it.auditTrail) ? it.auditTrail : undefined,
+  });
+
   const shortages: Row[] = React.useMemo(() => {
-    if (!result?.shortages?.length) return [];
-    return result.shortages.map(it => ({
-      id: it.itemId,
-      name: it.name ?? '(item)',
-      sku: '', // placeholder for future SKU
-      variance: Number(it.deltaVsPar ?? 0), // negative
-      value: it.valueImpact ?? undefined,
-      department: it.departmentId ?? undefined,
-    }));
-  }, [result]);
+    if (!effectiveResult?.shortages?.length) return [];
+    return effectiveResult.shortages.map(mapRow);
+  }, [effectiveResult]);
 
   const excesses: Row[] = React.useMemo(() => {
-    if (!result?.excesses?.length) return [];
-    return result.excesses.map(it => ({
-      id: it.itemId,
-      name: it.name ?? '(item)',
-      sku: '',
-      variance: Number(it.deltaVsPar ?? 0), // positive
-      value: it.valueImpact ?? undefined,
-      department: it.departmentId ?? undefined,
-    }));
-  }, [result]);
+    if (!effectiveResult?.excesses?.length) return [];
+    return effectiveResult.excesses.map(mapRow);
+  }, [effectiveResult]);
 
   const totals = React.useMemo(() => ({
-    shortage: Number(result?.totalShortageValue ?? 0),
-    excess: Number(result?.totalExcessValue ?? 0),
-  }), [result]);
+    shortage: Number(effectiveResult?.totalShortageValue ?? 0),
+    excess: Number(effectiveResult?.totalExcessValue ?? 0),
+  }), [effectiveResult]);
 
   React.useEffect(() => {
-    if (error) {
-      Alert.alert('Failed to load variance', error);
+    const msg = String(error?.code || error?.message || error || '');
+    if (error && !/permission[- ]denied|insufficient permissions/i.test(msg)) {
+      Alert.alert('Failed to load variance', msg);
     }
   }, [error]);
 
@@ -67,7 +143,7 @@ export default function DepartmentVarianceScreen() {
       const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
       const filename = `variance-${departmentId || 'all'}-${stamp}.csv`;
       const out = await exportCsv(filename, headers, rows);
-      dlog('[Reports] CSV export', out);
+      dlog('CSV export', out);
     } catch (e:any) {
       Alert.alert('Export failed', e?.message || 'Could not export CSV.');
     }
@@ -83,14 +159,15 @@ export default function DepartmentVarianceScreen() {
             <td>${r.name}</td>
             <td>${r.sku || ''}</td>
             <td style="text-align:right">${r.variance}</td>
-            <td style="text-align:right">${r.value != null ? `$${Number(r.value).toFixed(2)}` : ''}</td>
+            <td style="text-align:right">${r.value != null ? r.value.toFixed(2) : ''}</td>
           </tr>`).join('')}
         </tbody>
       </table>
     `;
     try {
       const html = `
-        <html><body style="font-family: -apple-system, Roboto, sans-serif; padding: 12px;">
+        <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+        <body style="font-family: -apple-system, Roboto, sans-serif; padding: 12px;">
           <h2>Department Variance — ${departmentId || 'All Departments'}</h2>
           <p><b>Total shortage:</b> $${totals.shortage.toFixed(2)} &nbsp;&nbsp; <b>Total excess:</b> $${totals.excess.toFixed(2)}</p>
           ${rowHtml('Shortages', shortages)}
@@ -99,11 +176,81 @@ export default function DepartmentVarianceScreen() {
         </body></html>
       `;
       const out = await exportPdf('Department Variance', html);
-      dlog('[Reports] PDF export', out);
+      dlog('PDF export', out);
     } catch (e:any) {
       Alert.alert('Share PDF failed', e?.message || 'Could not generate PDF.');
     }
   }, [shortages, excesses, totals, departmentId]);
+
+  const ExplainButton = ({ row }: { row: Row }) => {
+    const [busy, setBusy] = React.useState(false);
+    const onPress = React.useCallback(async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const counted = typeof row.onHand === 'number' ? row.onHand : 0;
+        const expected = (typeof row.onHand === 'number' && typeof row.variance === 'number')
+          ? (row.onHand - row.variance)
+          : 0;
+
+        const ai = await explainVariance({
+          itemName: row.name,
+          varianceQty: row.variance,
+          varianceValue: row.value,
+          par: row.par,
+          lastCountQty: counted,
+          theoreticalOnHand: typeof row.onHand === 'number' ? row.onHand : null,
+          departmentId: row.department,
+          // NEW: pass enrichments (the service will ignore if undefined)
+          recentSoldQty: row.recentSoldQty ?? undefined,
+          recentReceivedQty: row.recentReceivedQty ?? undefined,
+          lastDeliveryAt: row.lastDeliveryAt ?? undefined,
+          context: {
+            venueId: String(venueId || ''),
+            areaId: null,
+            productId: row.productId || row.id || String(row.name || 'unknown'),
+            expected,
+            counted,
+            unit: row.unit ?? null,
+            departmentId: row.department ?? null,
+            lastDeliveryAt: row.lastDeliveryAt ?? null,
+            recentSoldQty: row.recentSoldQty ?? null,
+            recentReceivedQty: row.recentReceivedQty ?? null,
+          },
+        });
+
+        const lines = [
+          ai.summary,
+          '',
+          ai.factors?.length ? 'Key factors:' : null,
+          ...(ai.factors || []).map((f: string) => `- ${f}`),
+          '',
+          `Confidence: ${ai.confidence || 'unknown'}`,
+          '',
+          ai.missing?.length ? 'To improve results, add:' : null,
+          ...(ai.missing || []).map((m: string) => `- ${m}`),
+        ].filter(Boolean);
+
+        Alert.alert('AI Insight', lines.join('\n'));
+      } catch (e:any) {
+        Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
+      } finally {
+        setBusy(false);
+      }
+    }, [busy, row, venueId]);
+
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        disabled={busy}
+        style={{ marginLeft: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10,
+          paddingVertical: 8, borderRadius: 10 }}
+        accessibilityLabel="Explain this variance"
+      >
+        {busy ? <ActivityIndicator /> : <Text style={{ color: '#1D4ED8', fontWeight: '800' }}>🤖 Explain</Text>}
+      </TouchableOpacity>
+    );
+  };
 
   const RowItem = ({ label, item }: { label: 'Shortage'|'Excess', item: Row }) => (
     <View style={{
@@ -112,47 +259,52 @@ export default function DepartmentVarianceScreen() {
     }}>
       <View style={{ flex: 1 }}>
         <Text style={{ color: 'white', fontWeight: '600' }}>{item.name}</Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{item.sku || '—'} • {label}</Text>
-      </View>
-      <View style={{ width: 90, alignItems: 'flex-end' }}>
-        <Text style={{ color: label === 'Shortage' ? '#FCA5A5' : '#A7F3D0', fontWeight: '700' }}>
-          {item.variance > 0 ? `+${item.variance}` : `${item.variance}`}
-        </Text>
-        <Text style={{ color: '#94A3B8', fontSize: 12 }}>
-          {item.value != null ? `$${Number(item.value).toFixed(2)}` : ''}
+        <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
+          {label} • SKU: {item.sku || '—'} • Var: {item.variance} {typeof item.value === 'number' ? `• $${item.value.toFixed(2)}` : ''}
         </Text>
       </View>
+      <ExplainButton row={item} />
     </View>
   );
 
-  const combined = React.useMemo(() => ([
-    ...shortages.map(r => ({ label: 'Shortage' as const, item: r })),
-    ...excesses.map(r => ({ label: 'Excess'   as const, item: r })),
-  ]), [shortages, excesses]);
+  const Section = ({ label, items }: { label: 'Shortages'|'Excesses', items: Row[] }) => (
+    <View style={{ marginTop: 16 }}>
+      <Text style={{ color: '#9CA3AF', fontWeight: '700', marginBottom: 8 }}>{label}</Text>
+      <FlatList
+        data={items}
+        keyExtractor={(r) => r.id || r.productId || r.name}
+        renderItem={({ item }) => <RowItem label={label === 'Shortages' ? 'Shortage' : 'Excess'} item={item} />}
+        ListEmptyComponent={() => (
+          <View style={{ paddingVertical: 6 }}>
+            <Text style={{ color: '#9CA3AF' }}>None</Text>
+          </View>
+        )}
+      />
+    </View>
+  );
+
+  const effectiveLoading = loading || fallbackLoading;
 
   return (
     <LocalThemeGate>
-      <View style={{ flex: 1, backgroundColor: '#0F1115' }}>
-        <View style={{ padding: 16, borderBottomColor: '#263142', borderBottomWidth: 1 }}>
-          <MaybeTText style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>
-            Department Variance
+      <View style={{ flex: 1, backgroundColor: '#0B132B' }}>
+        {/* Toolbar */}
+        <View style={{ padding: 12, borderBottomColor: '#263142', borderBottomWidth: 1 }}>
+          <MaybeTText style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>
+            Department Variance {departmentId ? `— ${departmentId}` : ''}
           </MaybeTText>
-          <Text style={{ color: '#94A3B8', marginTop: 4 }}>
-            {departmentId ? `Department: ${departmentId}` : 'All Departments'}
-          </Text>
-
-          <View style={{ flexDirection: 'row', marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', marginTop: 8 }}>
             <TouchableOpacity
               onPress={exportCurrentCsv}
-              style={{ backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginRight: 8 }}
-              disabled={loading}
+              style={{ backgroundColor: '#2563EB', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginRight: 8 }}
+              disabled={effectiveLoading}
             >
               <Text style={{ color: 'white', fontWeight: '700' }}>Export CSV — Current view</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={sharePdf}
               style={{ backgroundColor: '#7C3AED', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
-              disabled={loading}
+              disabled={effectiveLoading}
             >
               <Text style={{ color: 'white', fontWeight: '700' }}>Share PDF</Text>
             </TouchableOpacity>
@@ -162,22 +314,32 @@ export default function DepartmentVarianceScreen() {
               <Text style={{ color: '#fca5a5' }}>No venue selected — connect to a venue to load variance.</Text>
             </View>
           )}
-          <View style={{ marginTop: 8 }}>
-            <Text style={{ color: '#9CA3B8' }}>
-              Totals: shortage ${totals.shortage.toFixed(2)} · excess ${totals.excess.toFixed(2)}
-            </Text>
-          </View>
+          {fallbackLoading && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: '#9CA3AF' }}>Loading via secure server fallback…</Text>
+            </View>
+          )}
+          {fallbackError && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: '#fca5a5' }}>Server fallback failed: {String(fallbackError?.message || fallbackError)}</Text>
+            </View>
+          )}
         </View>
 
-        {loading ? (
+        {/* Body */}
+        {effectiveLoading && !remoteResult ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <ActivityIndicator />
           </View>
         ) : (
           <FlatList
-            data={combined}
-            keyExtractor={(r, i) => r.item?.id || `${r.label}-${i}`}
-            renderItem={({ item }) => <RowItem label={item.label} item={item.item} />}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
+            data={[
+              { key: 'shortages', label: 'Shortages', items: shortages },
+              { key: 'excesses', label: 'Excesses', items: excesses },
+            ]}
+            keyExtractor={(s) => s.key}
+            renderItem={({ item }) => <Section label={item.label as any} items={item.items} />}
             ListEmptyComponent={() => (
               <View style={{ padding: 16 }}>
                 <Text style={{ color: '#9CA3B8' }}>
