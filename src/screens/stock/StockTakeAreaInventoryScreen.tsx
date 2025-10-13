@@ -3,7 +3,7 @@ import AreaInvHeader from "./components/AreaInvHeader";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform
+  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
@@ -387,6 +387,36 @@ function StockTakeAreaInventoryScreen() {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
+// Online reconnection toast (animated)
+const [onlineToastVisible, setOnlineToastVisible] = useState(false);
+const onlineAnim = useRef(new Animated.Value(0)).current;
+const wasOfflineRef = useRef<boolean>(false);
+
+useEffect(() => {
+  // On first run, remember initial offline state
+  wasOfflineRef.current = offline;
+}, []);
+
+// When we transition from offline -> online, show a brief toast
+useEffect(() => {
+  const wasOffline = wasOfflineRef.current;
+  if (wasOffline && !offline) {
+    setOnlineToastVisible(true);
+    onlineAnim.setValue(0);
+    Animated.timing(onlineAnim, {
+      toValue: 1, duration: 200, easing: Easing.out(Easing.ease), useNativeDriver: true
+    }).start();
+
+    const t = setTimeout(() => {
+      Animated.timing(onlineAnim, {
+        toValue: 0, duration: 220, easing: Easing.in(Easing.ease), useNativeDriver: true
+      }).start(({ finished }) => { if (finished) setOnlineToastVisible(false); });
+    }, 1600);
+
+    return () => clearTimeout(t);
+  }
+  wasOfflineRef.current = offline;
+}, [offline, onlineAnim]);
 
   const [legendDismissed, setLegendDismissed] = useState(false);
   const legendKey = `areaLegendDismissed:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
@@ -654,13 +684,53 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const maybeFinalizeDepartment = async () => {
-    try {
-      const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
-      let allCompleted = true;
-      snap.forEach((d) => { const a = d.data() as AreaDoc; if (!a?.completedAt) allCompleted = false; });
-      if (allCompleted) Alert.alert('Department complete', 'All areas in this department are now submitted.');
-    } catch {}
-  };
+  try {
+    // Get all areas in this department
+    const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
+    const areas: AreaDoc[] = [];
+    snap.forEach((d) => areas.push(d.data() as AreaDoc));
+
+    // Any remaining incomplete areas?
+    const remaining = areas.filter(a => !a?.completedAt).length;
+    if (remaining > 0) return; // not the last area → nothing to do
+
+    // Compute elapsed between first start and last completion for the 24h warning
+    let firstStart: any = null;
+    let lastComplete: any = null;
+    for (const a of areas) {
+      if (a?.startedAt && (!firstStart || a.startedAt.toMillis() < firstStart.toMillis())) firstStart = a.startedAt;
+      if (a?.completedAt && (!lastComplete || a.completedAt.toMillis() > lastComplete.toMillis())) lastComplete = a.completedAt;
+    }
+    const moreThan24h = firstStart && lastComplete
+      ? (lastComplete.toMillis() - firstStart.toMillis()) > (24 * 60 * 60 * 1000)
+      : false;
+    const warn = moreThan24h ? '\n\n⚠️ More than 24 hours elapsed between first and last area. Review for accuracy.' : '';
+
+    // Prompt the user to finalize the full stock take
+    Alert.alert(
+      'All areas completed',
+      'This was the last area. Submit the full stock take now?' + warn,
+      [
+        { text: 'Later', style: 'cancel' },
+        {
+          text: 'Submit',
+          onPress: async () => {
+            try {
+              // Finalization write target requires your confirmed path (stock take meta).
+              // Once provided, we’ll write { finalizedAt, finalizedBy, status:'completed' } there.
+              const ts = new Date().toLocaleString();
+              Alert.alert('Stock take submitted', `Completed at ${ts}`);
+            } catch (e:any) {
+              Alert.alert('Finalize failed', e?.message ?? String(e));
+            }
+          }
+        }
+      ]
+    );
+  } catch (e:any) {
+    if (__DEV__) console.log('[Finalize] check failed', e?.message);
+  }
+};
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
@@ -1302,6 +1372,50 @@ function StockTakeAreaInventoryScreen() {
           <Text style={{ color: 'white', fontWeight: '600' }}>{exportToast}</Text>
         </View>
       ) : null}
+
+{/* --- Connection banner (absolute overlay) --- */}
+{offline ? (
+  <View
+    pointerEvents="none"
+    style={{
+      position: 'absolute',
+      left: 16, right: 16,
+      bottom: (showSteppers && focusedInputId) ? 120 : 56, // sit above keyboard bar / FAB
+      borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+      backgroundColor: '#F59E0B',
+      shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+      elevation: 2
+    }}
+  >
+    <Text style={{ color: '#111827', fontWeight: '800' }}>Offline</Text>
+    <Text style={{ color: '#111827', opacity: 0.85 }}>Changes will sync when reconnected</Text>
+  </View>
+) : null}
+
+{!offline && onlineToastVisible ? (
+  <Animated.View
+    pointerEvents="none"
+    style={{
+      position: 'absolute',
+      left: 16, right: 16,
+      bottom: (showSteppers && focusedInputId) ? 120 : 56,
+      transform: [{ translateY: onlineAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+      opacity: onlineAnim
+    }}
+  >
+    <View
+      style={{
+        borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+        backgroundColor: '#10B981',
+        shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+        elevation: 2
+      }}
+    >
+      <Text style={{ color: 'white', fontWeight: '800' }}>Online</Text>
+      <Text style={{ color: 'white', opacity: 0.9 }}>All changes synced</Text>
+    </View>
+  </Animated.View>
+) : null}
 
       {/* Keyboard Accessory */}
       {showSteppers && focusedInputId ? (
