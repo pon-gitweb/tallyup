@@ -75,6 +75,7 @@ type RowProps = {
   clampNonNegative: (n: number) => number;
   approveNow: (it: Item) => Promise<void>;
   saveCount: (it: Item) => Promise<void>;
+  pending: boolean;
 };
 
 const Row = React.memo(function Row({
@@ -98,6 +99,7 @@ const Row = React.memo(function Row({
   clampNonNegative,
   approveNow,
   saveCount,
+  pending,
 }: RowProps) {
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -264,6 +266,7 @@ const lowStock = typeof item.parLevel === 'number'
         >
           {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
           <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
+            {pending ? <View style={{ width:6, height:6, borderRadius:3, backgroundColor:'#F59E0B' }} /> : null}
         </TouchableOpacity>
 
         {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
@@ -397,6 +400,21 @@ function StockTakeAreaInventoryScreen() {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
+ // Track items saved while offline (UI-only perceived sync)
+const [pendingSyncIds, setPendingSyncIds] = useState<Set<string>>(new Set());
+const addPending = (id: string) =>
+  setPendingSyncIds(prev => { const n = new Set(prev); n.add(id); return n; });
+const removePending = (id: string) =>
+  setPendingSyncIds(prev => { const n = new Set(prev); n.delete(id); return n; });
+
+// When we come back online, clear the pending marks after a short grace
+useEffect(() => {
+  if (!offline) {
+    const t = setTimeout(() => setPendingSyncIds(new Set()), 2000);
+    return () => clearTimeout(t);
+  }
+}, [offline]);
+ 
 // Online reconnection toast (animated)
 const [onlineToastVisible, setOnlineToastVisible] = useState(false);
 const onlineAnim = useRef(new Animated.Value(0)).current;
@@ -584,8 +602,10 @@ useEffect(() => {
     const doWrite = async (qty: number) => {
       try {
         await ensureAreaStarted();
+        if (offline) addPending(item.id);
         await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id),
           { lastCount: qty, lastCountAt: serverTimestamp() });
+          if (!offline) removePending(item.id);
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
         hapticSuccess();
         showUndo(item.id, prevQty, prevAt);
@@ -1156,6 +1176,7 @@ useEffect(() => {
             clampNonNegative={clampNonNegative}
             approveNow={approveNow}
             saveCount={saveCount}
+            pending={pendingSyncIds.has(item.id)}
           />
         )}
         ListHeaderComponent={<AreaInvHeader areaName={areaName} isCompact={isCompact} dens={dens} startedAt={(areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null))} lastActivityDate={lastActivityDate} offline={offline} legendDismissed={legendDismissed} dismissLegend={dismissLegend} showExpected={showExpected} setShowExpected={setShowExpected} filter={filter} setFilter={setFilter} addingName={addingName} setAddingName={setAddingName} addingUnit={addingUnit} setAddingUnit={setAddingUnit} addingSupplier={addingSupplier} setAddingSupplier={setAddingSupplier} onAddQuickItem={addQuickItem} stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }} onOpenMore={() => setMoreOpen(true)} nameInputRef={nameInputRef} />}
