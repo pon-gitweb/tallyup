@@ -104,7 +104,17 @@ const Row = React.memo(function Row({
   const countedNow = countedInThisCycle(item);
   const locked = countedNow && !isManager;
   const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
-  const lowStock = typeof item.parLevel === 'number' && typeof item.lastCount === 'number' && item.lastCount < item.parLevel;
+// derive visible count: prefer a valid typed value, else fall back to saved lastCount
+const typedRaw = (localQty[item.id] ?? '').trim();
+const typedNum = /^\d+(\.\d+)?$/.test(typedRaw) ? parseFloat(typedRaw) : null;
+const visibleCount: number | null =
+  typedNum != null ? typedNum :
+  (typeof item.lastCount === 'number' ? item.lastCount : null);
+
+const lowStock = typeof item.parLevel === 'number'
+  && typeof visibleCount === 'number'
+  && visibleCount < item.parLevel;
+
 
   // auto-repeat steppers
   const repeatTimerRef = useRef<any>(null);
@@ -141,8 +151,8 @@ const Row = React.memo(function Row({
       style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
     >
       <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-        Low: {item.lastCount ?? 0} &lt; {item.parLevel}
-      </Text>
+  Low: {visibleCount ?? 0} &lt; {item.parLevel}
+</Text>
     </TouchableOpacity>
   ) : null;
 
