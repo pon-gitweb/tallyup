@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
   Modal, Pressable, Alert, RefreshControl, ActivityIndicator
@@ -7,7 +7,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
-  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc,
+  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot,
   doc, serverTimestamp
 } from 'firebase/firestore';
 import IdentityBadge from '../../components/IdentityBadge';
@@ -39,36 +39,45 @@ function AreaSelectionInner() {
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
   const [q, setQ] = useState('');
-  const dq = useDebouncedValue(q, 150);
-
+  const dq = useDebouncedValue(q, 120);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  const didAlertRef = useRef(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     setLoading(true);
     try {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
-      const snap = await getDocs(query(ref, orderBy('name', 'asc')));
-      const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-      setAreas(rows);
+      const qy = query(ref, orderBy('name', 'asc'));
+      const unsub = onSnapshot(qy, (snap) => {
+        setFromCache(Boolean(snap.metadata.fromCache));
+        const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        setAreas(rows);
+        setLoading(false);
+      }, (e:any) => {
+        if (__DEV__) console.log('[Areas] listener error', e?.message);
+        setAreas([]);
+        setLoading(false);
+        if (!didAlertRef.current) {
+          didAlertRef.current = true;
+          Alert.alert('Could not load areas', e?.message || 'Permission or connectivity issue');
+        }
+      });
+      return () => unsub();
     } catch (e:any) {
-      if (__DEV__) console.log('[Areas] load error', e?.message);
-      setAreas([]);
-    } finally {
+      if (__DEV__) console.log('[Areas] listener setup failed', e?.message);
       setLoading(false);
     }
   }, [venueId, departmentId]);
 
-  useEffect(() => { load(); }, [load]);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await load();
+    // Realtime listener keeps fresh; nothing to pull.
     setRefreshing(false);
-  }, [load]);
+  }, []);
 
   const filtered = useMemo(() => {
     const term = dq.trim().toLowerCase();
@@ -76,47 +85,48 @@ function AreaSelectionInner() {
     return areas.filter(a => (a.name || a.id).toLowerCase().includes(term));
   }, [areas, dq]);
 
-  const openArea = (areaId: string) => {
+  const openArea = useCallback((areaId: string) => {
+    // ✅ Route name aligned with your navigator
     nav.navigate('AreaInventory', { venueId, departmentId, areaId });
-  };
+  }, [nav, venueId, departmentId]);
+
+  const deleteArea = useCallback(async (id: string) => {
+    Alert.alert('Delete area?', 'This removes the area and its items.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
+          } catch (e:any) {
+            Alert.alert('Delete failed', e?.message || 'Unknown error');
+          }
+        }
+      }
+    ]);
+  }, [venueId, departmentId]);
 
   async function addArea() {
-    const name = newName.trim();
-    if (!name) { Alert.alert('Name required', 'Enter an area name.'); return; }
+    if (!newName.trim()) {
+      Alert.alert('Name required', 'Please enter an area name.');
+      return;
+    }
     setAdding(true);
     try {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
-      // Conform to rules: hasOnly ['name','startedAt','completedAt','cycleResetAt','createdAt','updatedAt']
       await addDoc(ref, {
-        name,
+        name: newName.trim(),
         startedAt: null,
         completedAt: null,
-        cycleResetAt: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       setShowAdd(false);
       setNewName('');
-      await load();
     } catch (e:any) {
       Alert.alert('Add failed', e?.message || 'Unknown error');
     } finally {
       setAdding(false);
     }
-  }
-
-  async function deleteArea(id: string) {
-    Alert.alert('Delete Area', 'This will remove the area and its counts from this department. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try {
-          await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
-          await load();
-        } catch (e:any) {
-          Alert.alert('Delete failed', e?.message || 'Unknown error');
-        }
-      }}
-    ]);
   }
 
   async function fixLegacyNulls() {
@@ -127,13 +137,11 @@ function AreaSelectionInner() {
       for (const d of snap.docs) {
         const data:any = d.data();
         if (!('startedAt' in data) || !('completedAt' in data)) {
-          // lifecycle-only update is allowed by rules
           await updateDoc(d.ref, { startedAt: null, completedAt: null });
           count++;
         }
       }
       Alert.alert('Fixed', `Updated ${count} area(s).`);
-      await load();
     } catch (e:any) {
       Alert.alert('Fix failed', e?.message || 'Unknown error');
     }
@@ -150,10 +158,10 @@ function AreaSelectionInner() {
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <Stars status={status} />
-            <Text style={styles.rowSub}>{statusLabel}</Text>
+            <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
           </View>
         </View>
-        <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+        <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
       </TouchableOpacity>
     );
   };
@@ -162,21 +170,33 @@ function AreaSelectionInner() {
     <View style={styles.wrap}>
       {/* Header */}
       <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
+        <View>
           <Text style={styles.title}>Areas</Text>
-          <Text style={styles.sub}>Department: {departmentId}</Text>
+          <Text style={styles.sub}>Choose an area to count</Text>
         </View>
-        <IdentityBadge />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {fromCache ? <Text style={styles.offlinePill}>Offline</Text> : null}
+          <IdentityBadge />
+        </View>
       </View>
 
       {/* Legend */}
       <View style={styles.legendRow}>
-        <View style={styles.legendItem}><Stars status="idle" /><Text style={styles.legendText}> Not started</Text></View>
-        <View style={styles.legendItem}><Stars status="inprog" /><Text style={styles.legendText}> In progress</Text></View>
-        <View style={styles.legendItem}><Stars status="done" /><Text style={styles.legendText}> Completed</Text></View>
+        <View style={styles.legendItem}>
+          <Stars status="idle" />
+          <Text style={styles.legendText}>Not started</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <Stars status="inprog" />
+          <Text style={styles.legendText}>In progress</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <Stars status="done" />
+          <Text style={styles.legendText}>Completed</Text>
+        </View>
       </View>
 
-      {/* Search + actions */}
+      {/* Search + Actions */}
       <View style={styles.searchRow}>
         <TextInput
           value={q}
@@ -208,32 +228,36 @@ function AreaSelectionInner() {
           keyExtractor={(x) => x.id}
           renderItem={Item}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          keyboardShouldPersistTaps="always"
-          ListEmptyComponent={<View style={{ padding: 16 }}><Text style={{ color: '#6B7280' }}>No matching areas.</Text></View>}
+          ListEmptyComponent={
+            <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+              <Text style={{ color: '#6B7280' }}>No matching areas.</Text>
+            </View>
+          }
+          contentContainerStyle={{ paddingBottom: 60 }}
         />
       )}
 
-      {/* Add modal */}
+      {/* Add Modal */}
       <Modal visible={showAdd} transparent animationType="fade" onRequestClose={() => setShowAdd(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setShowAdd(false)}>
           <Pressable style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add Area</Text>
+            <Text style={styles.modalTitle}>New Area</Text>
             <TextInput
               value={newName}
               onChangeText={setNewName}
               placeholder="Area name"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor="#94A3B8"
               style={styles.modalInput}
-              autoFocus
-              blurOnSubmit={false}
+              autoCorrect={false}
+              autoCapitalize="words"
               returnKeyType="done"
             />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setShowAdd(false)} disabled={adding}>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity style={styles.secondaryBtn} disabled={adding} onPress={() => setShowAdd(false)}>
                 <Text style={styles.secondaryText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryBtn} onPress={addArea} disabled={adding}>
-                {adding ? <ActivityIndicator /> : <Text style={styles.primaryText}>Add</Text>}
+              <TouchableOpacity style={styles.primaryBtn} disabled={adding} onPress={addArea}>
+                <Text style={styles.primaryText}>{adding ? 'Adding…' : 'Add'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -265,14 +289,17 @@ const styles = StyleSheet.create({
   rowSub: { color: '#6B7280' },
 
   primaryBtn: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, marginLeft: 8 },
-  primaryText: { color: 'white', fontWeight: '700' },
-  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 6 },
-  smallText: { fontWeight: '800', fontSize: 14 },
+  primaryText: { color: 'white', fontWeight: '800' },
+
+  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, marginLeft: 8 },
+  smallText: { fontWeight: '700', color: '#374151' },
 
   pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
   pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
   pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
   pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+
+  offlinePill: { backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
