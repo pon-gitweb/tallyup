@@ -218,7 +218,8 @@ const lowStock = typeof item.parLevel === 'number'
             onPress={() => adjustTyped(-1)}
             onLongPress={() => startRepeat(-1)}
             onPressOut={stopRepeat}
-            style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
+            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
+
           >
             <Text style={{ fontWeight:'900' }}>−</Text>
           </TouchableOpacity>
@@ -239,13 +240,14 @@ const lowStock = typeof item.parLevel === 'number'
           onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
           onSubmitEditing={()=> throttleAction(()=>saveCount(item))() }
           style={{
-            flexGrow: 1, minWidth: 160,
-            paddingVertical: Math.max(8, dens(8)), paddingHorizontal: dens(12),
-            borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
-            height: Math.max(40, dens(40)),
-            backgroundColor: locked ? '#f7f7f7' : '#fff',
-            fontSize: isCompact ? 14 : 15
-          }}
+  flexGrow: 1, minWidth: 160,
+  paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
+  borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
+  height: Math.max(44, dens(40)),
+  backgroundColor: locked ? '#f7f7f7' : '#fff',
+  fontSize: isCompact ? 13 : 15
+}}
+
         />
 
         {showSteppers && !locked ? (
@@ -253,7 +255,7 @@ const lowStock = typeof item.parLevel === 'number'
             onPress={() => adjustTyped(1)}
             onLongPress={() => startRepeat(1)}
             onPressOut={stopRepeat}
-            style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
+            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
           >
             <Text style={{ fontWeight:'900' }}>＋</Text>
           </TouchableOpacity>
@@ -262,7 +264,16 @@ const lowStock = typeof item.parLevel === 'number'
         <TouchableOpacity
           onPress={ throttleAction(()=>saveCount(item)) }
           disabled={locked}
-          style={{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor: locked ? '#B0BEC5' : '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
+style={{
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 6,
+  backgroundColor: locked ? '#B0BEC5' : '#0A84FF',
+  paddingVertical: dens(10),
+  paddingHorizontal: dens(12),
+  borderRadius: 10,
+  minHeight: 44
+}}
         >
           {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
           <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
@@ -273,7 +284,14 @@ const lowStock = typeof item.parLevel === 'number'
           <TouchableOpacity
             onPress={ throttleAction(()=>approveNow(item)) }
             disabled={locked}
-            style={{ backgroundColor: locked ? '#CFD8DC' : '#10B981', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}>
+            style={{
+  backgroundColor: locked ? '#CFD8DC' : '#10B981',
+  paddingVertical: dens(10),
+  paddingHorizontal: dens(12),
+  borderRadius: 10,
+  minHeight: 44
+}}
+>
             <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
           </TouchableOpacity>
         ) : null}
@@ -306,7 +324,7 @@ function StockTakeAreaInventoryScreen() {
 
   // [PAIR2] global density
   const { density, setDensity, isCompact } = useDensity();
-  const D = isCompact ? 0.78 : 1;                   // tighten ~22% in compact
+  const D = isCompact ? 0.72 : 1;                   // tighten ~22% in compact
   const dens = <T extends number>(v: T) => Math.round(v * D);
 
   // Export toast (non-blocking)
