@@ -1,4 +1,5 @@
 // @ts-nocheck
+import OrderEditorScreen from '../screens/orders/OrderEditorScreen';
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -34,6 +35,7 @@ export default function AppNavigator() {
       <Stack.Screen name="Orders" component={OrdersScreen} options={{ title: 'Orders' }} />
       <Stack.Screen name="NewOrder" component={NewOrderScreen} options={{ title: 'New Order' }} />
       <Stack.Screen name="NewOrderStart" component={NewOrderStartScreen} options={{ title: 'Choose Supplier' }} />
+      <Stack.Screen name="OrderEditor" component={OrderEditorScreen} options={{ title: 'Edit Order' }} />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
     </Stack.Navigator>
   );

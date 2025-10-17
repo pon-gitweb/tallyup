@@ -157,7 +157,7 @@ export default function OrderEditorScreen() {
     try {
       if (!venueId || !orderId) return;
       const name = (nameRaw || '').trim();
-      const qty = Math.max(1, parseInt(qtyRaw ?? defaultQty || '1', 10) || 1);
+      const qty = Math.max(1, parseInt(((qtyRaw ?? defaultQty) || '1'), 10) || 1);
       if (!name) {
         Alert.alert('Missing name', 'Pick or type a product name.');
         return;

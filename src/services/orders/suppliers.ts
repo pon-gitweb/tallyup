@@ -1,26 +1,39 @@
-import { getApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
 
-export type Supplier = {
-  id: string;
-  name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-};
+async function resolveSupplierName(
+  venueId: string,
+  supplierId: string,
+  supplierName?: string
+): Promise<string | undefined> {
+  if (typeof supplierName === 'string' && supplierName.trim().length > 0) return supplierName.trim();
+  if (!venueId || !supplierId) return undefined;
+  const ref = doc(db, 'venues', venueId, 'suppliers', supplierId);
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : null;
+  const name = data && (data as any).name ? String((data as any).name) : undefined;
+  return name;
+}
 
-export async function listSuppliers(venueId: string): Promise<Supplier[]> {
-  const db = getFirestore(getApp());
-  const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
-  const out: Supplier[] = [];
-  snap.forEach(d => {
-    const s = d.data() as any;
-    out.push({ id: d.id, name: s?.name ?? null, email: s?.email ?? null, phone: s?.phone ?? null });
-  });
-  if (!out.find(s => s.id === 'unassigned')) {
-    await setDoc(doc(db, 'venues', venueId, 'suppliers', 'unassigned'), { name: 'Unassigned', system: true }, { merge: true });
-    out.unshift({ id: 'unassigned', name: 'Unassigned' });
+export async function setSupplierOnProduct(
+  venueId: string,
+  productId: string,
+  supplierId: string,
+  supplierName?: string
+): Promise<void> {
+  if (!venueId || !productId || !supplierId) throw new Error('setSupplierOnProduct: venueId, productId, supplierId required');
+  const finalName = await resolveSupplierName(venueId, supplierId, supplierName);
+  const ref = doc(db, 'venues', venueId, 'products', productId);
+  const payload: Record<string, any> = {
+    supplierId,
+    supplier: { id: supplierId },
+    updatedAt: serverTimestamp(),
+  };
+  if (finalName) {
+    payload.supplierName = finalName;
+    payload.supplier.name = finalName;
   }
-  return out;
+  await updateDoc(ref, payload);
 }
 
 export async function setSupplierSmart(
@@ -29,10 +42,5 @@ export async function setSupplierSmart(
   supplierId: string,
   supplierName?: string
 ): Promise<void> {
-  const db = getFirestore(getApp());
-  await setDoc(
-    doc(db, 'venues', venueId, 'products', productId),
-    { supplierId, supplierName: supplierName ?? null, updatedAt: new Date() },
-    { merge: true }
-  );
+  return setSupplierOnProduct(venueId, productId, supplierId, supplierName);
 }

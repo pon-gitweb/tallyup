@@ -148,7 +148,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.row}>
-          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SuggestedOrder')}>
+          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SuggestedOrders')}>
             <Text style={styles.btnText}>Suggested Orders</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('Orders')}>

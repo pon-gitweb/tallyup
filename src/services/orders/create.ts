@@ -1,86 +1,103 @@
-import { getApp } from 'firebase/app';
 import {
-  getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc
+  collection,
+  doc,
+  writeBatch,
+  serverTimestamp,
+  getDoc,
 } from 'firebase/firestore';
-import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
-import { findSuggestionsDraftAfter, getLastStocktakeTimeOrWindowStart } from './queries';
+import { db } from '../firebase';
 
-type CreateOpts = {
-  createdBy?: string | null;
-  guard?: boolean;               // default true
-  guardWindowHours?: number;     // used only if no stocktake timestamp exists; default 6
+export type DraftOrderLineInput = {
+  productId: string;
+  name: string;
+  qty: number;
+  unitCost?: number | null;
+  packSize?: number | null;
 };
 
-export type CreateDraftsResult = {
-  created: string[];
-  skippedByGuard?: boolean;
-};
-
-export async function createDraftsFromSuggestions(
+async function resolveSupplierName(
   venueId: string,
-  suggestions: SuggestedLegacyMap,
-  opts: CreateOpts = {}
-): Promise<CreateDraftsResult> {
-  const db = getFirestore(getApp());
-  const created: string[] = [];
+  supplierId: string,
+  supplierName?: string | null
+): Promise<string | null> {
+  if (typeof supplierName === 'string' && supplierName.trim().length > 0) return supplierName.trim();
+  if (!venueId || !supplierId) return null;
+  const sRef = doc(db, 'venues', venueId, 'suppliers', supplierId);
+  const snap = await getDoc(sRef);
+  if (!snap.exists()) return null;
+  const data = snap.data() as any;
+  const n = data?.name ? String(data.name) : null;
+  return n && n.length > 0 ? n : null;
+}
 
-  const guard = opts.guard !== false;
-  if (guard) {
-    const since = await getLastStocktakeTimeOrWindowStart(venueId, opts.guardWindowHours ?? 6);
-    const exists = await findSuggestionsDraftAfter(venueId, since);
-    if (exists) {
-      return { created: [], skippedByGuard: true };
-    }
+export async function createDraftOrderWithLines(
+  venueId: string,
+  supplierId: string,
+  lines: DraftOrderLineInput[],
+  notes?: string | null,
+  supplierNameHint?: string | null
+): Promise<{ id: string }> {
+  if (!venueId) throw new Error('createDraftOrderWithLines: venueId required');
+  if (!supplierId) throw new Error('createDraftOrderWithLines: supplierId required');
+
+  const cleaned = (lines || [])
+    .map((l) => ({
+      productId: String(l?.productId ?? '').trim(),
+      name: String(l?.name ?? ''),
+      qty: Number.isFinite(l?.qty as number) ? Math.max(1, Math.round(Number(l.qty))) : 1,
+      unitCost: Number.isFinite(l?.unitCost as number) ? Number(l.unitCost) : 0,
+      packSize: Number.isFinite(l?.packSize as number) ? Number(l.packSize) : null,
+    }))
+    .filter((l) => l.productId && l.qty >= 1);
+
+  if (cleaned.length === 0) throw new Error('No valid lines to create');
+
+  const supplierName = await resolveSupplierName(venueId, supplierId, supplierNameHint);
+  const itemsCount = cleaned.length;
+  const subtotal = cleaned.reduce((acc, l) => acc + l.qty * (l.unitCost ?? 0), 0);
+
+  const ordersCol = collection(db, 'venues', venueId, 'orders');
+  const orderRef = doc(ordersCol);
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  const header: Record<string, any> = {
+    docType: 'order',
+    state: 'draft',
+    status: 'draft',
+    displayStatus: 'Draft',
+    isDraft: true,
+    venueId,
+    supplierId,
+    supplierName: supplierName ?? null,
+    supplier: { id: supplierId, name: supplierName ?? null },
+    itemsCount,
+    lineCount: itemsCount,
+    totals: { subtotal },
+    notes: notes ?? null,
+    origin: 'suggested',
+    source: 'suggestedOrders',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  batch.set(orderRef, header);
+
+  const linesCol = collection(db, 'venues', venueId, 'orders', orderRef.id, 'lines');
+  for (const l of cleaned) {
+    const lineRef = doc(linesCol, l.productId); // stable by product
+    const lineDoc: Record<string, any> = {
+      productId: l.productId,
+      name: l.name ?? '',
+      qty: l.qty,
+      unitCost: l.unitCost ?? 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (l.packSize != null) lineDoc.packSize = l.packSize;
+    batch.set(lineRef, lineDoc);
   }
 
-  const keys = Object.keys(suggestions);
-  for (const supplierKey of keys) {
-    const bucket: any = (suggestions as any)[supplierKey] || {};
-    // Most-safe way to collect lines across {items},{lines},legacy-root
-    const entries: Array<[string, SuggestedLine]> = [];
-    if (bucket.items && typeof bucket.items === 'object') {
-      for (const [k, v] of Object.entries(bucket.items)) {
-        if (v && typeof v === 'object') entries.push([k, v as SuggestedLine]);
-      }
-    } else {
-      for (const [k, v] of Object.entries(bucket)) {
-        if (k === 'items' || k === 'lines') continue;
-        if (v && typeof v === 'object' && 'productId' in (v as any)) entries.push([k, v as SuggestedLine]);
-      }
-    }
-    if (entries.length === 0) continue;
-
-    const isUnassigned = supplierKey === 'unassigned' || supplierKey === '__no_supplier__' || supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'no_supplier' || supplierKey === 'none';
-    const supplierId = isUnassigned ? null : supplierKey;
-
-    // Create order
-    const orderRef = await addDoc(collection(db, 'venues', venueId, 'orders'), {
-      status: 'draft',
-      supplierId: supplierId ?? null,
-      createdAt: serverTimestamp(),
-      createdBy: opts.createdBy ?? null,
-      source: 'suggestions',
-      needsSupplierReview: isUnassigned ? true : false,
-    });
-
-    // Lines
-    const batch = writeBatch(db);
-    for (const [productId, line] of entries) {
-      const l = line as SuggestedLine;
-      const unitCost = Number.isFinite(l.cost as any) ? Number(l.cost) : 0;
-      batch.set(doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', productId), {
-        productId,
-        name: l.productName ?? null,
-        qty: Number(l.qty) || 0,
-        unitCost,
-        needsPar: !!l.needsPar,
-        needsSupplier: !!l.needsSupplier,
-        reason: l.reason ?? null,
-      });
-    }
-    await batch.commit();
-    created.push(orderRef.id);
-  }
-
-  return { created };
+  await batch.commit();
+  return { id: orderRef.id };
 }

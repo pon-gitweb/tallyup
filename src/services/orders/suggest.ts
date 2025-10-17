@@ -1,3 +1,4 @@
+console.log('[SO Service] suggest.ts ACTIVE');
 import { getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -6,6 +7,8 @@ import {
   getDoc,
   setDoc,
   doc,
+  Query,
+  DocumentReference,
 } from 'firebase/firestore';
 
 export type SuggestedLine = {
@@ -50,6 +53,34 @@ type AreaItemDoc = {
   cost?: number | null;
   value?: number | null;
 };
+
+// --- Dev-only tracing helpers (no behavior change) ---
+const SO_TAG = '[SuggestedOrders]';
+function dlog(...args: any[]) {
+  // Use console.log (not warn) so it shows up in all RN log streams consistently.
+  if (__DEV__) console.log(SO_TAG, ...args);
+}
+async function traceGetDoc<T = any>(label: string, ref: DocumentReference<T>) {
+  dlog('reading doc', label, (ref as any).path);
+  try {
+    const snap = await getDoc(ref);
+    return snap;
+  } catch (e: any) {
+    dlog('blocked doc', label, (ref as any).path, { code: e?.code, msg: e?.message });
+    throw e;
+  }
+}
+async function traceGetDocs<T = any>(label: string, q: Query<T> | any) {
+  dlog('reading query', label);
+  try {
+    const snaps = await getDocs(q);
+    return snaps;
+  } catch (e: any) {
+    dlog('blocked query', label, { code: e?.code, msg: e?.message });
+    throw e;
+  }
+}
+// --- end tracing ---
 
 const toNumOrNull = (v: any): number | null => {
   const n = typeof v === 'string' ? Number(v) : v;
@@ -119,7 +150,7 @@ function finalizeStore(store: Record<string, any>): SuggestedLegacyMap {
 
 async function ensureUnassignedSupplierDoc(db: ReturnType<typeof getFirestore>, venueId: string) {
   const ref = doc(db, 'venues', venueId, 'suppliers', 'unassigned');
-  const snap = await getDoc(ref);
+  const snap = await traceGetDoc('suppliers.unassigned', ref);
   if (!snap.exists()) {
     await setDoc(
       ref,
@@ -136,7 +167,7 @@ async function ensureUnassignedSupplierDoc(db: ReturnType<typeof getFirestore>, 
 
 async function loadProducts(db: ReturnType<typeof getFirestore>, venueId: string): Promise<ProductDoc[]> {
   const out: ProductDoc[] = [];
-  const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
+  const snap = await traceGetDocs('products.list', collection(db, 'venues', venueId, 'products'));
   snap.forEach(d => {
     const p = d.data() as any;
     out.push({
@@ -156,11 +187,11 @@ async function loadProducts(db: ReturnType<typeof getFirestore>, venueId: string
 
 async function loadAreaItems(db: ReturnType<typeof getFirestore>, venueId: string): Promise<AreaItemDoc[]> {
   const out: AreaItemDoc[] = [];
-  const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  const deps = await traceGetDocs('departments.list', collection(db, 'venues', venueId, 'departments'));
   for (const dep of deps.docs) {
-    const areas = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    const areas = await traceGetDocs('areas.list', collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     for (const area of areas.docs) {
-      const items = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'));
+      const items = await traceGetDocs('area.items.list', collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'));
       items.forEach(d => {
         const it = d.data() as any;
         const linkId = it?.productId ?? it?.productRef?.id ?? it?.product?.id ?? null;
@@ -190,6 +221,7 @@ export async function buildSuggestedOrdersInMemory(
   venueId: string,
   opts: SuggestOpts = {}
 ): Promise<SuggestedLegacyMap> {
+  dlog('ENTER buildSuggestedOrdersInMemory', { venueId, opts });
   const db = getFirestore(getApp());
   const roundToPack = !!opts.roundToPack;
   const defaultPar = Number.isFinite(opts.defaultParIfMissing) ? Number(opts.defaultParIfMissing) : 6;
@@ -205,10 +237,10 @@ export async function buildSuggestedOrdersInMemory(
 
   // Seed supplier keys (so UI sees buckets even before lines exist)
   try {
-    const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+    const suppliersSnap = await traceGetDocs('suppliers.list', collection(db, 'venues', venueId, 'suppliers'));
     suppliersSnap.forEach(s => ensureBucket(store, s.id));
   } catch (e) {
-    console.warn('[SuggestedOrders] suppliers seed error', e);
+    console.log('[SuggestedOrders] suppliers seed error', e);
   }
 
   const [products, areaItems] = await Promise.all([

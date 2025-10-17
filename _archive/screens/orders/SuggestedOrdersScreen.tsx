@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+console.log("[SO Screen] SuggestedOrdersScreen ACTIVE");
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
 import { createDraftsFromSuggestions } from '../../services/orders/createDraftsFromSuggestions';
 import { runBackfillLinkAndPars } from '../../dev/backfillLinkAndPars';
+import { computeSuggestionForItem } from 'src/services/orders/suggestMath';
 
 // Never assume shapes; normalize every bucket
 function asBucket(b: any) {
@@ -15,7 +18,13 @@ function asBucket(b: any) {
 
 type Props = { route?: { params?: { venueId?: string } } };
 
+// Keys that we treat as "unassigned" (no supplier)
+const UNASSIGNED_KEYS = ['unassigned', '__no_supplier__', 'no_supplier', 'none', 'null', 'undefined', ''];
+
 export default function SuggestedOrdersScreen(props: Props) {
+  // Dev-only: attach a global probe to call from console (Expo debugger)
+  // @ts-ignore
+  (globalThis as any).__SO_PROBE__ = require("../../dev/soPermsProbe").probeSuggestedOrdersAccess;
   const auth = getAuth();
   const uid = auth.currentUser?.uid || null;
   const venueId =
@@ -28,7 +37,7 @@ export default function SuggestedOrdersScreen(props: Props) {
   const [busy, setBusy] = useState(false);
   const [suggestions, setSuggestions] = useState<Record<string, any>>({});
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!venueId) {
       setLoading(false);
       Alert.alert('Suggested Orders', 'Missing venueId.');
@@ -47,15 +56,14 @@ export default function SuggestedOrdersScreen(props: Props) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [venueId]);
 
-  useEffect(() => { load(); }, [venueId]);
+  useEffect(() => { load(); }, [load]);
 
   const supplierKeys = useMemo(() => {
     const keys = Object.keys(suggestions || {});
-    const special = ['unassigned','__no_supplier__','no_supplier','none','null','undefined',''];
-    keys.sort((a,b) => {
-      const ia = special.indexOf(a), ib = special.indexOf(b);
+    keys.sort((a, b) => {
+      const ia = UNASSIGNED_KEYS.indexOf(a), ib = UNASSIGNED_KEYS.indexOf(b);
       if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
       return a.localeCompare(b);
     });
@@ -74,12 +82,44 @@ export default function SuggestedOrdersScreen(props: Props) {
     return sum;
   }, [supplierKeys, suggestions]);
 
+  const hasUnassigned = useMemo(() => {
+    return supplierKeys.some(k => UNASSIGNED_KEYS.includes(k));
+  }, [supplierKeys]);
+
+  // Build a filtered suggestions object that excludes "unassigned" buckets
+  const filteredForDrafts = useMemo(() => {
+    const out: Record<string, any> = {};
+    for (const k of supplierKeys) {
+      if (UNASSIGNED_KEYS.includes(k)) continue; // skip per product rule
+      const b = asBucket((suggestions as any)[k]);
+      if (!b.lines?.length) continue;
+      out[k] = b;
+    }
+    return out;
+  }, [supplierKeys, suggestions]);
+
   async function onCreateDrafts() {
     if (!venueId) return;
     try {
       setBusy(true);
-      const res = await createDraftsFromSuggestions(venueId, suggestions as any, { createdBy: uid });
-      Alert.alert('Drafts created', `${res.created.length} draft order(s) created`);
+
+      // Count lines before/after filtering to inform the user about skipped unassigned
+      let unassignedCount = 0;
+      for (const k of supplierKeys) {
+        if (!UNASSIGNED_KEYS.includes(k)) continue;
+        const b = asBucket((suggestions as any)[k]);
+        unassignedCount += b.lines?.length || 0;
+      }
+
+      const res = await createDraftsFromSuggestions(venueId, filteredForDrafts as any, { createdBy: uid });
+
+      const createdCount = Array.isArray(res?.created) ? res.created.length : 0;
+      const msg = [
+        `${createdCount} draft order(s) created`,
+        unassignedCount > 0 ? `• Skipped ${unassignedCount} unassigned line(s)` : null,
+      ].filter(Boolean).join('\n');
+
+      Alert.alert('Drafts created', msg || 'Done.');
     } catch (e: any) {
       Alert.alert('Create Drafts', String(e?.message || e));
     } finally {
@@ -113,15 +153,6 @@ export default function SuggestedOrdersScreen(props: Props) {
     );
   }
 
-  const hasUnassigned =
-    suggestions['unassigned'] ||
-    suggestions['__no_supplier__'] ||
-    suggestions['no_supplier'] ||
-    suggestions['none'] ||
-    suggestions['null'] ||
-    suggestions['undefined'] ||
-    suggestions[''];
-
   return (
     <View style={{ flex:1 }}>
       <View style={{ padding:12, borderBottomWidth:1, borderColor:'#eee' }}>
@@ -133,7 +164,7 @@ export default function SuggestedOrdersScreen(props: Props) {
           <View style={{ marginTop:8, backgroundColor:'#FFF7E6', padding:8, borderRadius:6 }}>
             <Text style={{ color:'#8A5A00' }}>
               Some items need attention: no supplier and/or missing par. You can still create drafts,
-              but please link these products to a supplier and set pars.
+              but unassigned items won’t be drafted until you assign a supplier.
             </Text>
           </View>
         ) : null}
@@ -161,9 +192,7 @@ export default function SuggestedOrdersScreen(props: Props) {
           const lines = bucket.lines || [];
           if (lines.length === 0) return null;
 
-          const isUnassigned =
-            k === 'unassigned' || k === '__no_supplier__' || k === 'no_supplier' ||
-            k === 'none' || k === 'null' || k === 'undefined' || k === '';
+          const isUnassigned = UNASSIGNED_KEYS.includes(k);
 
           return (
             <View key={k} style={{ marginBottom:14, borderWidth:1, borderColor:'#eee', borderRadius:8 }}>
@@ -174,17 +203,47 @@ export default function SuggestedOrdersScreen(props: Props) {
                 </Text>
                 <Text style={{ color:'#666' }}>{lines.length} line(s)</Text>
               </View>
-              {lines.map((l: any) => (
-                <View key={l.productId} style={{ padding:10, borderBottomWidth:1, borderColor:'#f2f2f2' }}>
-                  <Text style={{ fontWeight:'600' }}>{l.productName || l.productId}</Text>
-                  <Text style={{ color:'#444' }}>Qty: {l.qty} @ ${Number(l.cost || 0).toFixed(2)}</Text>
-                  {l.needsSupplier ? <Text style={{ color:'#8A5A00' }}>• Needs supplier</Text> : null}
-                  {l.needsPar ? <Text style={{ color:'#8A5A00' }}>• Missing par (defaulted)</Text> : null}
-                </View>
-              ))}
+
+              {lines.map((l: any) => {
+                // Derive "smart but pure" meta without changing your stored qty.
+                const calc = computeSuggestionForItem({
+                  par: typeof l.parLevel === 'number' ? l.parLevel : null,
+                  onHand: typeof l.onHand === 'number' ? l.onHand : (typeof l.lastCount === 'number' ? l.lastCount : 0),
+                  packSize: typeof l.packSize === 'number' ? l.packSize : null,
+                  moq: typeof l.moq === 'number' ? l.moq : null,
+                  // If you later load avgDailySales30 or leadTimeDays into line, these will light up automatically:
+                  avgDailySales: typeof l.avgDailySales30 === 'number' ? l.avgDailySales30 : null,
+                  leadTimeDays: typeof l.leadTimeDays === 'number' ? l.leadTimeDays : null,
+                  roundToPack: true,
+                });
+
+                return (
+                  <View key={l.productId} style={{ padding:10, borderBottomWidth:1, borderColor:'#f2f2f2' }}>
+                    <Text style={{ fontWeight:'600' }}>{l.productName || l.productId}</Text>
+                    <Text style={{ color:'#444' }}>
+                      Qty: {l.qty} @ ${Number(l.cost || 0).toFixed(2)}
+                    </Text>
+
+                    {/* Compact “perceived smart” meta line */}
+                    {(calc?.applied || calc?.notes?.length || calc?.estDaysToSell != null) ? (
+                      <Text style={{ color:'#6B7280', marginTop: 2, fontSize: 12 }}>
+                        {calc.applied?.moq ? 'MOQ' : ''}{calc.applied?.moq && (calc.applied?.pack || calc.applied?.leadTime) ? ' · ' : ''}
+                        {calc.applied?.pack ? 'Pack' : ''}{calc.applied?.pack && calc.applied?.leadTime ? ' · ' : ''}
+                        {calc.applied?.leadTime ? 'Lead' : ''}
+                        {calc.estDaysToSell != null ? ` · ~${calc.estDaysToSell} days to sell` : ''}
+                        {Array.isArray(calc.notes) && calc.notes.length ? ` · ${calc.notes.join(' · ')}` : ''}
+                      </Text>
+                    ) : null}
+
+                    {l.needsSupplier ? <Text style={{ color:'#8A5A00' }}>• Needs supplier</Text> : null}
+                    {l.needsPar ? <Text style={{ color:'#8A5A00' }}>• Missing par (defaulted)</Text> : null}
+                  </View>
+                );
+              })}
             </View>
           );
         })}
+
         {totalLines === 0 ? (
           <View style={{ padding:16 }}>
             <Text style={{ color:'#555' }}>
