@@ -1,31 +1,27 @@
 /**
- * AI runtime configuration and paywall / bypass codes.
- *
- * - USE_AI_SUGGESTER: enables AI mode if true.
- * - AI_SUGGEST_URL:   backend endpoint for AI suggestions.
- * - AI_SUGGEST_API_KEY: optional API key if your endpoint requires it.
- *
- * - ENTITLEMENT_URL: endpoint for checking paywall entitlement.
- * - VALIDATE_CODE_URL: optional endpoint to validate promo/bypass codes.
- *
- * - DEV_BYPASS_CODES: local developer codes that unlock AI (for testing only).
+ * AI runtime config for Suggested Orders (Expo-safe, no native).
+ * - Platform-aware base URL: Android emulator → 10.0.2.2; iOS/Web → localhost.
+ * - Exports exactly what suggestAI.ts and SuggestedOrderScreen.tsx import.
  */
+import { Platform } from 'react-native';
 
+const LOCAL_BASE =
+  Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+
+/** Master toggle: when false, app always uses math suggester */
 export const USE_AI_SUGGESTER = true;
 
-export const AI_SUGGEST_URL = ''; // e.g. 'https://api.stackmosaic.ai/v1/suggest-orders'
-export const AI_SUGGEST_API_KEY = ''; // optional
+/** AI suggest endpoint + optional API key */
+export const AI_SUGGEST_URL = `${LOCAL_BASE}/api/ai/suggest`;
+export const AI_SUGGEST_API_KEY = ''; // leave blank if your server doesn't require it
 
-// Paywall endpoints
-export const ENTITLEMENT_URL = ''; // e.g. 'https://billing.stackmosaic.ai/api/entitlement'
-export const VALIDATE_CODE_URL = ''; // e.g. 'https://billing.stackmosaic.ai/api/validate-promo'
+/** Request tuning (names expected by suggestAI.ts) */
+export const AI_REQUEST_TIMEOUT_MS = 12000;
+export const AI_HISTORY_DAYS = 90;
 
-// Local developer bypass codes
-export const DEV_BYPASS_CODES: string[] = [
-  'DEV-AI-OPEN',
-  'QA-BYPASS-2025',
-];
+/** Paywall endpoints (used by services/entitlement.ts) */
+export const ENTITLEMENT_URL = `${LOCAL_BASE}/api/entitlement`;
+export const VALIDATE_CODE_URL = `${LOCAL_BASE}/api/validate-promo`;
 
-// Default limits for AI request history
-export const DEFAULT_AI_HISTORY_DAYS = 90;
-export const AI_MAX_HISTORY_DAYS = 730; // 2 years
+/** Local developer bypass codes (accepted client-side only) */
+export const DEV_BYPASS_CODES: string[] = ['DEV-AI-OPEN', 'QA-BYPASS-2025'];
