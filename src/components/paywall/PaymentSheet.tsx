@@ -8,6 +8,7 @@ import { Linking } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { createCheckout } from '../../services/payments';
+import { devGrantEntitlementServer, setEntitledInFirestore } from '../../services/entitlement';
 
 type Props = {
   visible: boolean;
@@ -39,19 +40,33 @@ export default function PaymentSheet({ visible, onClose }: Props){
         promoCode: promoCode.trim() || null,
       });
 
-      if (!res?.ok || !res?.checkoutUrl) {
-        throw new Error(res?.error || res?.message || 'Checkout unavailable');
+      if (!res?.ok) throw new Error(res?.error || res?.message || 'Checkout unavailable');
+
+      // Promo path: skip checkout, unlock now, persist in Firestore
+      if (res?.promoApplied && Number(res?.amountCents) === 0) {
+        try {
+          await devGrantEntitlementServer(uid, venueId);
+        } catch {}
+        try {
+          await setEntitledInFirestore(venueId, uid, 'promo');
+        } catch {}
+        Alert.alert('Promo applied', 'AI access unlocked for this venue.', [{ text:'OK', onPress:onClose }]);
+        return;
       }
 
-      const supported = await Linking.canOpenURL(res.checkoutUrl);
-      if (supported) {
-        await Linking.openURL(res.checkoutUrl);
+      // Regular checkout path (stubbed)
+      if (res?.checkoutUrl) {
+        const supported = await Linking.canOpenURL(res.checkoutUrl);
+        if (supported) {
+          await Linking.openURL(res.checkoutUrl);
+        } else {
+          Alert.alert('Checkout link', res.checkoutUrl);
+        }
       } else {
-        Alert.alert('Checkout link', res.checkoutUrl);
+        throw new Error('No checkout URL returned');
       }
-      // Keep modal open so user can retry if needed
     }catch(e:any){
-      Alert.alert('Could not start checkout', e?.message || 'Please try again.');
+      Alert.alert('Could not continue', e?.message || 'Please try again.');
     }finally{
       setLoading(false);
     }
@@ -100,7 +115,7 @@ export default function PaymentSheet({ visible, onClose }: Props){
               style={[S.btn, canCheckout ? S.btnPrimary : S.btnDisabled]}
               disabled={!canCheckout}
             >
-              {loading ? <ActivityIndicator/> : <Text style={S.btnText}>Continue to checkout</Text>}
+              {loading ? <ActivityIndicator/> : <Text style={S.btnText}>Continue</Text>}
             </TouchableOpacity>
           </View>
 
