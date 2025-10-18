@@ -1,163 +1,136 @@
 // @ts-nocheck
-import React, { useMemo, useState } from 'react';
-import { View, Text, Modal, Pressable, TouchableOpacity, StyleSheet, TextInput, Linking, Platform, KeyboardAvoidingView, ActivityIndicator } from 'react-native';
-import { validatePromo, startCheckout } from '../../services/entitlement';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  View, Text, Modal, Pressable, StyleSheet, TouchableOpacity,
+  TextInput, ActivityIndicator, Alert
+} from 'react-native';
+import { Linking } from 'react-native';
+import { getAuth } from 'firebase/auth';
+import { useVenueId } from '../../context/VenueProvider';
+import { createCheckout } from '../../services/payments';
 
 type Props = {
   visible: boolean;
-  onClose: ()=>void;
-
-  venueId: string;
-  uid: string;
-
-  // Callbacks into screen:
-  onEntitled?: (state: { source: 'promo'|'trial'|'subscription'; plan: string; expiresAt?: number|null }) => void;
-
-  // Optional: default plan/interval
-  defaultInterval?: 'month'|'year';
+  onClose: () => void;
 };
 
-const price = {
-  month: { amount: 29, label: 'NZD / month' },
-  year:  { amount: 290, label: 'NZD / year', note: '2 months free' },
-};
+export default function PaymentSheet({ visible, onClose }: Props){
+  const auth = getAuth();
+  const uid = auth?.currentUser?.uid || '';
+  const venueId = useVenueId();
 
-export default function PaymentSheet(props: Props){
-  const [interval, setInterval] = useState<'month'|'year'>(props.defaultInterval || 'month');
-  const [promoOpen, setPromoOpen] = useState(false);
-  const [promo, setPromo] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string|null>(null);
+  const [plan, setPlan] = useState<'monthly'|'yearly'>('monthly');
+  const [promoCode, setPromoCode] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const planLabel = useMemo(()=> interval === 'year' ? 'AI+ (Annual)' : 'AI+ (Monthly)', [interval]);
-  const amount = price[interval].amount;
+  const canCheckout = useMemo(()=> !!uid && !!venueId && !loading, [uid, venueId, loading]);
 
-  const tryPromo = async ()=>{
-    setBusy(true); setError(null);
-    try {
-      const res = await validatePromo(promo.trim(), props.venueId, props.uid);
-      if (res?.entitled) {
-        props.onEntitled?.({ source: 'promo', plan: res.plan || 'ai_plus', expiresAt: res.expiresAt });
-        props.onClose();
-      } else {
-        setError('Promo code not valid.');
+  const onContinue = useCallback(async ()=>{
+    if (!uid || !venueId) {
+      Alert.alert('Not signed in', 'Please sign in again and try.');
+      return;
+    }
+    try{
+      setLoading(true);
+      const res = await createCheckout({
+        uid,
+        venueId,
+        plan,
+        promoCode: promoCode.trim() || null,
+      });
+
+      if (!res?.ok || !res?.checkoutUrl) {
+        throw new Error(res?.error || res?.message || 'Checkout unavailable');
       }
-    } catch (e:any) {
-      setError(e?.message || 'Promo code not valid.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
-  const goCheckout = async ()=>{
-    setBusy(true); setError(null);
-    try {
-      const session = await startCheckout({ planId: 'ai_plus', interval, venueId: props.venueId, uid: props.uid });
-      // Open the (stub) checkout URL — replace with in-app webview later if desired
-      const ok = await Linking.openURL(session.sessionUrl);
-      if (!ok) throw new Error('Could not open checkout');
-      // In a real flow, webhook → entitlement. For demo, we simulate success signal here.
-      // You can wire a "Return to app" deep-link later.
-    } catch (e:any) {
-      setError(e?.message || 'Could not start checkout.');
-    } finally {
-      setBusy(false);
+      const supported = await Linking.canOpenURL(res.checkoutUrl);
+      if (supported) {
+        await Linking.openURL(res.checkoutUrl);
+      } else {
+        Alert.alert('Checkout link', res.checkoutUrl);
+      }
+      // Keep modal open so user can retry if needed
+    }catch(e:any){
+      Alert.alert('Could not start checkout', e?.message || 'Please try again.');
+    }finally{
+      setLoading(false);
     }
-  };
-
-  const Button = ({onPress, children, muted}:{onPress:()=>void; children:any; muted?:boolean})=>(
-    <TouchableOpacity onPress={onPress} style={[S.btn, muted? S.btnMuted: null]} disabled={!!busy}>
-      <Text style={[S.btnText, muted? S.btnTextMuted: null]}>{children}</Text>
-    </TouchableOpacity>
-  );
+  },[uid, venueId, plan, promoCode, onClose]);
 
   return (
-    <Modal visible={props.visible} transparent animationType="fade" onRequestClose={props.onClose}>
-      <Pressable style={S.back} onPress={props.onClose}>
-        <KeyboardAvoidingView behavior={Platform.OS==='ios' ? 'padding' : undefined}>
-          <View style={S.card}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={S.backdrop} onPress={onClose}>
+        <Pressable style={S.card} onPress={(e)=>e.stopPropagation()}>
+          <Text style={S.title}>Unlock AI Suggested Orders</Text>
+          <Text style={S.sub}>
+            Try AI-powered purchase planning. Continue with a promo code or proceed to checkout.
+          </Text>
 
-            <Text style={S.title}>Unlock AI Suggested Orders</Text>
-            <Text style={S.sub}>Smarter ordering, fewer shortages, lower waste.</Text>
-
-            {/* Interval toggle */}
-            <View style={S.toggleWrap}>
-              <TouchableOpacity onPress={()=>setInterval('month')} style={[S.toggle, interval==='month'? S.toggleActive: null]}>
-                <Text style={[S.toggleText, interval==='month'? S.toggleTextActive: null]}>Monthly</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={()=>setInterval('year')} style={[S.toggle, interval==='year'? S.toggleActive: null]}>
-                <Text style={[S.toggleText, interval==='year'? S.toggleTextActive: null]}>Annual</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Plan card */}
-            <View style={S.plan}>
-              <Text style={S.planTitle}>{planLabel}</Text>
-              <Text style={S.planPrice}>${amount} <Text style={S.planNote}>{price[interval].label}</Text></Text>
-              {interval==='year' ? <Text style={S.savingNote}>{price.year.note}</Text> : null}
-              <View style={S.bullets}>
-                <Text style={S.bullet}>• AI-generated supplier buckets</Text>
-                <Text style={S.bullet}>• Draft creation & duplicate blocks</Text>
-                <Text style={S.bullet}>• Future: stock trends & seasons</Text>
-              </View>
-              {error ? <Text style={S.error}>{error}</Text> : null}
-              {busy ? <ActivityIndicator style={{marginTop:8}}/> : null}
-              <Button onPress={goCheckout}>Continue to payment</Button>
-              <Button onPress={()=>setPromoOpen(true)} muted>I have a promo code</Button>
-            </View>
-
-            {/* Promo inline */}
-            {promoOpen && (
-              <View style={S.promo}>
-                <Text style={S.promoTitle}>Apply promo</Text>
-                <TextInput
-                  value={promo} onChangeText={setPromo}
-                  placeholder="Enter promo code" autoCapitalize="characters"
-                  style={S.input}
-                />
-                <View style={{flexDirection:'row', gap:8, marginTop:8}}>
-                  <Button onPress={tryPromo}>Apply</Button>
-                  <Button onPress={()=>{ setPromo(''); setPromoOpen(false); }} muted>Cancel</Button>
-                </View>
-              </View>
-            )}
-
-            <Button onPress={props.onClose} muted>Close</Button>
+          <View style={S.segmentWrap}>
+            <TouchableOpacity
+              onPress={()=>setPlan('monthly')}
+              style={[S.segment, plan==='monthly' && S.segmentActive]}
+            >
+              <Text style={[S.segmentText, plan==='monthly' && S.segmentTextActive]}>Monthly · $29</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={()=>setPlan('yearly')}
+              style={[S.segment, plan==='yearly' && S.segmentActive]}
+            >
+              <Text style={[S.segmentText, plan==='yearly' && S.segmentTextActive]}>Yearly · $290</Text>
+            </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+
+          <Text style={S.label}>Promo code (optional)</Text>
+          <TextInput
+            placeholder="Enter promo code"
+            autoCapitalize="characters"
+            value={promoCode}
+            onChangeText={setPromoCode}
+            style={S.input}
+          />
+
+          <View style={S.actions}>
+            <TouchableOpacity onPress={onClose} style={[S.btn, S.btnGhost]} disabled={loading}>
+              <Text style={[S.btnText, S.btnGhostText]}>Not now</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={onContinue}
+              style={[S.btn, canCheckout ? S.btnPrimary : S.btnDisabled]}
+              disabled={!canCheckout}
+            >
+              {loading ? <ActivityIndicator/> : <Text style={S.btnText}>Continue to checkout</Text>}
+            </TouchableOpacity>
+          </View>
+
+          <Text style={S.footerNote}>
+            You’ll complete payment on a secure page. Promo discounts apply at checkout.
+          </Text>
+        </Pressable>
       </Pressable>
     </Modal>
   );
 }
 
 const S = StyleSheet.create({
-  back:{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', padding:20 },
+  backdrop:{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', padding:24 },
   card:{ backgroundColor:'#fff', borderRadius:14, padding:16 },
-  title:{ fontSize:18, fontWeight:'800' },
-  sub:{ fontSize:13, color:'#6b7280', marginTop:4, marginBottom:12 },
-
-  toggleWrap:{ flexDirection:'row', gap:8 },
-  toggle:{ flex:1, paddingVertical:8, borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, alignItems:'center' },
-  toggleActive:{ backgroundColor:'#111827', borderColor:'#111827' },
-  toggleText:{ fontSize:13, color:'#111827', fontWeight:'700' },
-  toggleTextActive:{ color:'#fff' },
-
-  plan:{ marginTop:12, borderWidth:1, borderColor:'#e5e7eb', borderRadius:12, padding:12 },
-  planTitle:{ fontSize:16, fontWeight:'800' },
-  planPrice:{ fontSize:22, fontWeight:'900', marginTop:4 },
-  planNote:{ fontSize:12, color:'#6b7280', fontWeight:'700' },
-  savingNote:{ fontSize:12, color:'#059669', marginTop:2, fontWeight:'700' },
-  bullets:{ marginTop:8 },
-  bullet:{ fontSize:13, color:'#374151', marginTop:2 },
-  error:{ color:'#DC2626', marginTop:6, fontSize:12, fontWeight:'700' },
-
-  promo:{ marginTop:12, paddingTop:12, borderTopWidth:1, borderTopColor:'#f3f4f6' },
-  promoTitle:{ fontSize:14, fontWeight:'800', marginBottom:6 },
-
-  btn:{ backgroundColor:'#111827', paddingVertical:10, borderRadius:10, alignItems:'center', marginTop:10 },
-  btnMuted:{ backgroundColor:'#e5e7eb' },
-  btnText:{ color:'#fff', fontWeight:'800' },
-  btnTextMuted:{ color:'#111827' },
-
-  input:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, padding:10, fontSize:16, backgroundColor:'#fff' },
+  title:{ fontSize:18, fontWeight:'800', marginBottom:4 },
+  sub:{ fontSize:13, color:'#6b7280', marginBottom:12 },
+  segmentWrap:{ flexDirection:'row', gap:8, marginBottom:12 },
+  segment:{ flex:1, borderWidth:1, borderColor:'#e5e7eb', paddingVertical:10, borderRadius:10, alignItems:'center' },
+  segmentActive:{ backgroundColor:'#111827', borderColor:'#111827' },
+  segmentText:{ fontSize:13, fontWeight:'700', color:'#111827' },
+  segmentTextActive:{ color:'#fff' },
+  label:{ fontSize:12, fontWeight:'700', color:'#374151', marginBottom:6 },
+  input:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, paddingHorizontal:12, paddingVertical:10, fontSize:15, marginBottom:14 },
+  actions:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginTop:4, gap:8 },
+  btn:{ flex:1, paddingVertical:12, borderRadius:10, alignItems:'center', justifyContent:'center' },
+  btnPrimary:{ backgroundColor:'#111827' },
+  btnDisabled:{ backgroundColor:'#9CA3AF' },
+  btnGhost:{ backgroundColor:'#fff', borderWidth:1, borderColor:'#e5e7eb' },
+  btnText:{ color:'#fff', fontSize:14, fontWeight:'800' },
+  btnGhostText:{ color:'#111827' },
+  footerNote:{ marginTop:10, fontSize:11, color:'#6b7280', textAlign:'center' },
 });

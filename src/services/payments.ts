@@ -1,0 +1,69 @@
+/**
+ * Lightweight client for the payments stub endpoints.
+ * No external deps; fetch-based; Expo-safe.
+ */
+
+type CheckoutRequest = {
+  uid: string;
+  venueId: string;
+  plan?: 'monthly' | 'yearly';
+  promoCode?: string | null;
+};
+
+type CheckoutResponse = {
+  ok: boolean;
+  mode?: 'stub';
+  checkoutUrl?: string;
+  clientSecret?: string;
+  amount?: number;
+  currency?: string;
+  interval?: 'month' | 'year';
+  promoApplied?: boolean;
+  error?: string;
+  message?: string;
+};
+
+function resolveServerBase(): string {
+  // Use Android emulator loopback by default in dev
+  const devDefault = 'http://10.0.2.2:3001';
+  // Allow override via runtime env (Expo Updates / constants) if you use it
+  // @ts-ignore
+  const envBase = (globalThis as any)?.TALLYUP_AI_BASE_URL || undefined;
+
+  if (__DEV__) return envBase || devDefault;
+
+  // In production, point to your deployed AI server base
+  return envBase || 'https://ai.tallyup.app';
+}
+
+async function postJSON<T>(path: string, body: any): Promise<T> {
+  const base = resolveServerBase();
+  const url = `${base}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  const text = await res.text();
+  let json: any = {};
+  try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
+
+  if (!res.ok) {
+    const errMsg = json?.error || json?.message || `HTTP ${res.status}`;
+    throw new Error(errMsg);
+  }
+  return json as T;
+}
+
+/**
+ * Create checkout (stub) — server returns a fake URL & clientSecret.
+ * Later this becomes a real Stripe call but the shape remains compatible.
+ */
+export async function createCheckout(req: CheckoutRequest): Promise<CheckoutResponse> {
+  return postJSON<CheckoutResponse>('/api/checkout/create', {
+    uid: req.uid,
+    venueId: req.venueId,
+    plan: req.plan || 'monthly',
+    promoCode: req.promoCode || null,
+  });
+}
