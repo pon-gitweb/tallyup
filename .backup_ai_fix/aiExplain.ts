@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { AI_BASE_URL } from '../config/ai';
+import { AI_SUGGEST_URL } from '../config/ai';
 
-const BASE = AI_BASE_URL;
+const BASE = AI_SUGGEST_URL.replace(/\/+$/,''); // e.g. http://10.0.2.2:3001
 
 async function jsonFetch(path:string, opts:any = {}){
   const res = await fetch(`${BASE}${path}`, {

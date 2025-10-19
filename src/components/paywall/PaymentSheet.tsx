@@ -1,151 +1,147 @@
-// @ts-nocheck
-import React, { useCallback, useMemo, useState } from 'react';
-import {
-  View, Text, Modal, Pressable, StyleSheet, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert
-} from 'react-native';
-import { Linking } from 'react-native';
-import { getAuth } from 'firebase/auth';
-import { useVenueId } from '../../context/VenueProvider';
-import { createCheckout } from '../../services/payments';
-import { devGrantEntitlementServer, setEntitledInFirestore } from '../../services/entitlement';
+import React, { useCallback, useEffect, useState } from "react";
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
+import { validatePromoCode, createCheckout, fetchEntitlement } from "../../services/payments";
+
+type Plan = "monthly" | "yearly";
 
 type Props = {
   visible: boolean;
   onClose: () => void;
+  uid: string;
+  venueId: string;
+  /** NEW: preferred callback */
+  onUnlocked?: (entitled: boolean) => void;
+  /** LEGACY: for compatibility with existing screens */
+  onEntitled?: (entitled: boolean) => void;
+  defaultPlan?: Plan;
 };
 
-export default function PaymentSheet({ visible, onClose }: Props){
-  const auth = getAuth();
-  const uid = auth?.currentUser?.uid || '';
-  const venueId = useVenueId();
+export default function PaymentSheet(props: Props) {
+  const { visible, onClose, uid, venueId, onUnlocked, onEntitled, defaultPlan = "monthly" } = props;
 
-  const [plan, setPlan] = useState<'monthly'|'yearly'>('monthly');
-  const [promoCode, setPromoCode] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [promo, setPromo] = useState<string>("");
+  const [plan, setPlan] = useState<Plan>(defaultPlan);
+  const [busy, setBusy] = useState(false);
 
-  const canCheckout = useMemo(()=> !!uid && !!venueId && !loading, [uid, venueId, loading]);
+  const notifyUnlocked = useCallback((ent: boolean) => {
+    try { onUnlocked?.(ent); } catch {}
+    try { onEntitled?.(ent); } catch {}
+  }, [onUnlocked, onEntitled]);
 
-  const onContinue = useCallback(async ()=>{
-    if (!uid || !venueId) {
-      Alert.alert('Not signed in', 'Please sign in again and try.');
-      return;
-    }
-    try{
-      setLoading(true);
-      const res = await createCheckout({
-        uid,
-        venueId,
-        plan,
-        promoCode: promoCode.trim() || null,
-      });
+  // Auto-close if already entitled
+  useEffect(() => {
+    if (!visible) return;
+    (async () => {
+      try {
+        const { entitled } = await fetchEntitlement(venueId);
+        if (entitled) {
+          notifyUnlocked(true);
+          onClose();
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [visible, venueId, notifyUnlocked, onClose]);
 
-      if (!res?.ok) throw new Error(res?.error || res?.message || 'Checkout unavailable');
+  const onContinue = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // 1) Promo path (dev codes unlock immediately)
+      if (promo.trim().length > 0) {
+        const res = await validatePromoCode({ uid, venueId, code: promo.trim() });
+        if (!res.ok) throw new Error("Promo validation failed.");
+        const { entitled } = await fetchEntitlement(venueId);
+        if (entitled) {
+          notifyUnlocked(true);
+          Alert.alert("AI unlocked", "This venue now has AI access.");
+          onClose();
+          return;
+        }
+      }
 
-      // Promo path: skip checkout, unlock now, persist in Firestore
-      if (res?.promoApplied && Number(res?.amountCents) === 0) {
-        try {
-          await devGrantEntitlementServer(uid, venueId);
-        } catch {}
-        try {
-          await setEntitledInFirestore(venueId, uid, 'promo');
-        } catch {}
-        Alert.alert('Promo applied', 'AI access unlocked for this venue.', [{ text:'OK', onPress:onClose }]);
+      // 2) Checkout path (stub)
+      const c = await createCheckout({ uid, venueId, plan, promoCode: promo || null });
+      if (!c.ok) throw new Error("Checkout failed.");
+      if (c.promoApplied && (c.amountCents ?? 0) === 0 && !c.checkoutUrl) {
+        const { entitled } = await fetchEntitlement(venueId);
+        notifyUnlocked(!!entitled);
+        Alert.alert("AI unlocked", "Promo applied. AI access enabled for this venue.");
+        onClose();
         return;
       }
+      const url = c.checkoutUrl;
+      if (!url) throw new Error("No checkout URL returned.");
+      const ok = await Linking.openURL(url).catch(() => false);
+      if (!ok) throw new Error("Could not open checkout.");
 
-      // Regular checkout path (stubbed)
-      if (res?.checkoutUrl) {
-        const supported = await Linking.canOpenURL(res.checkoutUrl);
-        if (supported) {
-          await Linking.openURL(res.checkoutUrl);
-        } else {
-          Alert.alert('Checkout link', res.checkoutUrl);
-        }
-      } else {
-        throw new Error('No checkout URL returned');
-      }
-    }catch(e:any){
-      Alert.alert('Could not continue', e?.message || 'Please try again.');
-    }finally{
-      setLoading(false);
+      // Best-effort entitlement refresh after browser open
+      setTimeout(async () => {
+        try { const { entitled } = await fetchEntitlement(venueId); if (entitled) notifyUnlocked(true); } catch {}
+      }, 1200);
+    } catch (err: any) {
+      Alert.alert("Could not continue", String(err?.message || err || "Unknown error"));
+    } finally {
+      setBusy(false);
     }
-  },[uid, venueId, plan, promoCode, onClose]);
+  }, [busy, promo, uid, venueId, plan, notifyUnlocked, onClose]);
+
+  const PlanButton = ({ value, label }: { value: Plan; label: string }) => {
+    const selected = plan === value;
+    return (
+      <Pressable
+        onPress={() => setPlan(value)}
+        style={{
+          paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1,
+          borderColor: selected ? "#2563EB" : "#E5E7EB", backgroundColor: selected ? "#EFF6FF" : "white",
+          minWidth: 120, alignItems: "center",
+        }}
+      >
+        <Text style={{ fontWeight: "600", color: selected ? "#1D4ED8" : "#111827" }}>{label}</Text>
+      </Pressable>
+    );
+  };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={S.backdrop} onPress={onClose}>
-        <Pressable style={S.card} onPress={(e)=>e.stopPropagation()}>
-          <Text style={S.title}>Unlock AI Suggested Orders</Text>
-          <Text style={S.sub}>
-            Try AI-powered purchase planning. Continue with a promo code or proceed to checkout.
-          </Text>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: "white", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 28, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "85%" }}>
+          <View style={{ height: 4, width: 44, backgroundColor: "#E5E7EB", borderRadius: 2, alignSelf: "center", marginBottom: 12 }} />
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 4 }}>Unlock AI Suggested Orders</Text>
+            <Text style={{ color: "#4B5563", marginBottom: 16 }}>Try AI-powered purchase planning. Continue with a promo code or proceed to checkout.</Text>
 
-          <View style={S.segmentWrap}>
-            <TouchableOpacity
-              onPress={()=>setPlan('monthly')}
-              style={[S.segment, plan==='monthly' && S.segmentActive]}
-            >
-              <Text style={[S.segmentText, plan==='monthly' && S.segmentTextActive]}>Monthly · $29</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={()=>setPlan('yearly')}
-              style={[S.segment, plan==='yearly' && S.segmentActive]}
-            >
-              <Text style={[S.segmentText, plan==='yearly' && S.segmentTextActive]}>Yearly · $290</Text>
-            </TouchableOpacity>
-          </View>
+            <View style={{ flexDirection: "row", gap: 12, marginBottom: 16 }}>
+              <PlanButton value="monthly" label="Monthly · $29" />
+              <PlanButton value="yearly" label="Yearly · $290" />
+            </View>
 
-          <Text style={S.label}>Promo code (optional)</Text>
-          <TextInput
-            placeholder="Enter promo code"
-            autoCapitalize="characters"
-            value={promoCode}
-            onChangeText={setPromoCode}
-            style={S.input}
-          />
+            <Text style={{ fontWeight: "600", marginBottom: 6 }}>Promo code (optional)</Text>
+            <TextInput
+              placeholder="Enter promo code"
+              value={promo}
+              onChangeText={setPromo}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={{ borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 8, paddingHorizontal: 12, paddingVertical: Platform.OS === "ios" ? 12 : 8, marginBottom: 16 }}
+            />
 
-          <View style={S.actions}>
-            <TouchableOpacity onPress={onClose} style={[S.btn, S.btnGhost]} disabled={loading}>
-              <Text style={[S.btnText, S.btnGhostText]}>Not now</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+              <Pressable onPress={onClose} style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: "#F3F4F6", alignItems: "center" }} disabled={busy}>
+                <Text style={{ fontWeight: "600", color: "#111827" }}>Not now</Text>
+              </Pressable>
+              <Pressable onPress={onContinue} style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: busy ? "#93C5FD" : "#2563EB", alignItems: "center" }} disabled={busy}>
+                {busy ? <ActivityIndicator color="white" /> : <Text style={{ fontWeight: "700", color: "white" }}>Continue</Text>}
+              </Pressable>
+            </View>
 
-            <TouchableOpacity
-              onPress={onContinue}
-              style={[S.btn, canCheckout ? S.btnPrimary : S.btnDisabled]}
-              disabled={!canCheckout}
-            >
-              {loading ? <ActivityIndicator/> : <Text style={S.btnText}>Continue</Text>}
-            </TouchableOpacity>
-          </View>
-
-          <Text style={S.footerNote}>
-            You’ll complete payment on a secure page. Promo discounts apply at checkout.
-          </Text>
-        </Pressable>
-      </Pressable>
+            <Text style={{ color: "#6B7280", marginTop: 12, fontSize: 12 }}>
+              You’ll complete payment on a secure page. Promo discounts apply at checkout.
+            </Text>
+          </ScrollView>
+        </View>
+      </View>
     </Modal>
   );
 }
-
-const S = StyleSheet.create({
-  backdrop:{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', padding:24 },
-  card:{ backgroundColor:'#fff', borderRadius:14, padding:16 },
-  title:{ fontSize:18, fontWeight:'800', marginBottom:4 },
-  sub:{ fontSize:13, color:'#6b7280', marginBottom:12 },
-  segmentWrap:{ flexDirection:'row', gap:8, marginBottom:12 },
-  segment:{ flex:1, borderWidth:1, borderColor:'#e5e7eb', paddingVertical:10, borderRadius:10, alignItems:'center' },
-  segmentActive:{ backgroundColor:'#111827', borderColor:'#111827' },
-  segmentText:{ fontSize:13, fontWeight:'700', color:'#111827' },
-  segmentTextActive:{ color:'#fff' },
-  label:{ fontSize:12, fontWeight:'700', color:'#374151', marginBottom:6 },
-  input:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, paddingHorizontal:12, paddingVertical:10, fontSize:15, marginBottom:14 },
-  actions:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginTop:4, gap:8 },
-  btn:{ flex:1, paddingVertical:12, borderRadius:10, alignItems:'center', justifyContent:'center' },
-  btnPrimary:{ backgroundColor:'#111827' },
-  btnDisabled:{ backgroundColor:'#9CA3AF' },
-  btnGhost:{ backgroundColor:'#fff', borderWidth:1, borderColor:'#e5e7eb' },
-  btnText:{ color:'#fff', fontSize:14, fontWeight:'800' },
-  btnGhostText:{ color:'#111827' },
-  footerNote:{ marginTop:10, fontSize:11, color:'#6b7280', textAlign:'center' },
-});

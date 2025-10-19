@@ -1,69 +1,45 @@
-/**
- * Lightweight client for the payments stub endpoints.
- * No external deps; fetch-based; Expo-safe.
- */
+import { AI_BASE_URL } from "../config/ai";
 
-type CheckoutRequest = {
-  uid: string;
-  venueId: string;
-  plan?: 'monthly' | 'yearly';
-  promoCode?: string | null;
-};
-
-type CheckoutResponse = {
-  ok: boolean;
-  mode?: 'stub';
-  checkoutUrl?: string;
-  clientSecret?: string;
-  amount?: number;
-  currency?: string;
-  interval?: 'month' | 'year';
-  promoApplied?: boolean;
-  error?: string;
-  message?: string;
-};
-
-function resolveServerBase(): string {
-  // Use Android emulator loopback by default in dev
-  const devDefault = 'http://10.0.2.2:3001';
-  // Allow override via runtime env (Expo Updates / constants) if you use it
-  // @ts-ignore
-  const envBase = (globalThis as any)?.TALLYUP_AI_BASE_URL || undefined;
-
-  if (__DEV__) return envBase || devDefault;
-
-  // In production, point to your deployed AI server base
-  return envBase || 'https://ai.tallyup.app';
+/** POST /api/validate-promo → { ok, entitled?: boolean, code?: string } */
+export async function validatePromoCode(params: { uid: string; venueId: string; code: string }) {
+  const resp = await fetch(`${AI_BASE_URL}/api/validate-promo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error(data?.error || data?.message || `Promo validation failed (${resp.status})`);
+  return data as { ok: boolean; entitled?: boolean; code?: string };
 }
 
-async function postJSON<T>(path: string, body: any): Promise<T> {
-  const base = resolveServerBase();
-  const url = `${base}${path}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
+/** POST /api/dev/create-checkout → { ok, promoApplied, amountCents, checkoutUrl? } */
+export async function createCheckout(params: { uid: string; venueId: string; plan: "monthly" | "yearly"; promoCode?: string | null }) {
+  const resp = await fetch(`${AI_BASE_URL}/api/dev/create-checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
   });
-  const text = await res.text();
-  let json: any = {};
-  try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
-
-  if (!res.ok) {
-    const errMsg = json?.error || json?.message || `HTTP ${res.status}`;
-    throw new Error(errMsg);
-  }
-  return json as T;
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error(data?.error || data?.message || `Checkout failed (${resp.status})`);
+  return data as { ok: boolean; promoApplied?: boolean; amountCents?: number; checkoutUrl?: string | null };
 }
 
-/**
- * Create checkout (stub) — server returns a fake URL & clientSecret.
- * Later this becomes a real Stripe call but the shape remains compatible.
- */
-export async function createCheckout(req: CheckoutRequest): Promise<CheckoutResponse> {
-  return postJSON<CheckoutResponse>('/api/checkout/create', {
-    uid: req.uid,
-    venueId: req.venueId,
-    plan: req.plan || 'monthly',
-    promoCode: req.promoCode || null,
+/** POST /api/dev/portal-url → { ok, url } */
+export async function openBillingPortal(params: { uid: string; venueId: string }) {
+  const resp = await fetch(`${AI_BASE_URL}/api/dev/portal-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
   });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error(data?.error || data?.message || `Portal URL failed (${resp.status})`);
+  return data as { ok: boolean; url: string };
+}
+
+/** GET /api/entitlement?venueId=... → { ok, entitled } */
+export async function fetchEntitlement(venueId: string) {
+  const resp = await fetch(`${AI_BASE_URL}/api/entitlement?venueId=${encodeURIComponent(venueId)}`);
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error(data?.error || data?.message || `Entitlement check failed (${resp.status})`);
+  return data as { ok: boolean; entitled: boolean };
 }
