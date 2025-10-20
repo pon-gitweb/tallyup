@@ -1,0 +1,38 @@
+/**
+ * Minimal AI client helpers (Expo-safe).
+ * Adds a tiny fetchJsonWithHeaders helper and exported AI_BASE.
+ */
+
+export const AI_BASE =
+  (typeof process !== "undefined" &&
+    process?.env?.EXPO_PUBLIC_AI_URL) ||
+  "http://localhost:3001";
+
+/** Build absolute URL from a path or absolute input. */
+export function buildAiUrl(path: string): string {
+  if (!path) return AI_BASE;
+  if (/^https?:\/\//i.test(path)) return path;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${AI_BASE}${p}`;
+}
+
+/** Fetch JSON and also return lower-cased response headers (for meters/limits). */
+export async function fetchJsonWithHeaders<T = any>(
+  path: string,
+  init?: RequestInit
+): Promise<{ json: T; headers: Record<string, string> }> {
+  const url = buildAiUrl(path);
+  const res = await fetch(url, init);
+  const headers: Record<string, string> = {};
+  res.headers?.forEach?.((v, k) => (headers[k.toLowerCase()] = v));
+  const txt = await res.text();
+  const json = txt ? (JSON.parse(txt) as T) : ({} as T);
+  if (!res.ok) {
+    const message =
+      (json as any)?.error ||
+      (json as any)?.message ||
+      `${res.status} ${res.statusText}`;
+    throw new Error(message);
+  }
+  return { json, headers };
+}
