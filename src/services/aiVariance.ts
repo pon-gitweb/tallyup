@@ -1,67 +1,32 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
+/**
+ * Variance explainer client: Expo-safe fetch to local/remote server.
+ * Returns: { summary, factors?: string[], missing?: string[], confidence?: number }
+ */
+type ExplainInput = Record<string, any>;
+type ExplainOut = { summary: string; factors?: string[]; missing?: string[]; confidence?: number };
 
-export type VarianceContext = {
-  venueId: string;
-  areaId?: string | null;
-  productId: string;
-  expected: number;
-  counted: number;
-  unit?: string | null;
-  lastDeliveryAt?: string | null;
-  lastSalesLookbackDays?: number | null;
-  notes?: string | null;
-  auditTrail?: Array<{ at: string; action: string; qty?: number; by?: string }>;
-};
+const base =
+  (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL) ||
+  'http://localhost:3001';
+const URL_EXPLAIN = `${String(base).replace(/\/+$/,'')}/api/variance-explain`;
 
-export type AiResponse = {
-  summary: string;
-  factors?: string[];
-  confidence?: number;
-  cachedAt?: string;
-};
+export async function explainVariance(input: ExplainInput): Promise<ExplainOut> {
+  const resp = await fetch(URL_EXPLAIN, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input ?? {}),
+  }).catch((e) => { throw new Error(`Network error: ${String(e?.message || e)}`); });
 
-const API_URL = 'https://australia-southeast1-tallyup-f1463.cloudfunctions.net/aiVarianceExplain';
-const CACHE_NS = 'aiVariance';
-
-function cacheKey(ctx: VarianceContext) {
-  const k = [
-    ctx.venueId, ctx.areaId || '', ctx.productId,
-    ctx.expected, ctx.counted, ctx.lastDeliveryAt || '',
-    ctx.lastSalesLookbackDays ?? ''
-  ].join('|');
-  return `${CACHE_NS}:${k}`;
-}
-
-/** Honest, offline-safe explain: returns cache if offline, asks server otherwise. */
-export async function explainVariance(ctx: VarianceContext): Promise<AiResponse> {
-  const key = cacheKey(ctx);
-  const net = await NetInfo.fetch();
-
-  if (!net.isConnected) {
-    const cached = await AsyncStorage.getItem(key);
-    if (cached) return JSON.parse(cached);
-    return { summary: 'Limited data: offline. Add recent delivery date, sales window, and audit entries for stronger insights.', confidence: 0 };
+  if (!resp.ok) {
+    const msg = await resp.text().catch(() => '');
+    throw new Error(msg || `Server error (${resp.status})`);
   }
 
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context: ctx }),
-    });
-    if (!res.ok) {
-      const cached = await AsyncStorage.getItem(key);
-      if (cached) return JSON.parse(cached);
-      return { summary: `Service error (${res.status}). Add recent delivery date, sales window, and audit entries for stronger insights.`, confidence: 0 };
-    }
-    const data = (await res.json()) as AiResponse;
-    const withMeta = { ...data, cachedAt: new Date().toISOString() };
-    await AsyncStorage.setItem(key, JSON.stringify(withMeta));
-    return withMeta;
-  } catch {
-    const cached = await AsyncStorage.getItem(key);
-    if (cached) return JSON.parse(cached);
-    return { summary: 'Request failed. Add recent delivery date, sales window, and audit entries for stronger insights.', confidence: 0 };
-  }
+  const json = await resp.json().catch(() => ({}));
+  return {
+    summary: String(json?.summary || 'No explanation available.'),
+    factors: Array.isArray(json?.factors) ? json.factors : undefined,
+    missing: Array.isArray(json?.missing) ? json.missing : undefined,
+    confidence: Number.isFinite(json?.confidence) ? Number(json.confidence) : undefined,
+  };
 }
