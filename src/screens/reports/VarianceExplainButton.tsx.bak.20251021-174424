@@ -1,0 +1,39 @@
+import React, { useState } from 'react';
+import { Alert, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { explainVariance } from '../../services/aiVariance';
+
+export default function VarianceExplainButton({ ctx }: { ctx: any }) {
+  const [busy, setBusy] = useState(false);
+
+  async function onPress() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await explainVariance(ctx);
+      const notMuchData = (!ctx.lastDeliveryAt) && (!(ctx.auditTrail && ctx.auditTrail.length));
+      const suggestions = [
+        !ctx.lastDeliveryAt ? 'recent delivery date' : null,
+        !(ctx.auditTrail && ctx.auditTrail.length) ? 'audit trail entries' : null,
+        'recent sales window'
+      ].filter(Boolean).join(', ');
+      const lines = [
+        res.summary || 'No explanation available.',
+        res.confidence != null ? `\nConfidence: ${(res.confidence * 100).toFixed(0)}%` : '',
+        (res.factors && res.factors.length) ? `\nFactors:\n• ${res.factors.join('\n• ')}` : '',
+        notMuchData ? `\n\nLimited data. Add ${suggestions} for better insights.` : '',
+        (res as any).cachedAt ? `\n\nCached: ${new Date((res as any).cachedAt).toLocaleString()}` : '',
+      ].filter(Boolean);
+      Alert.alert('AI Insight', lines.join('\n'));
+    } catch (e: any) {
+      Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <TouchableOpacity onPress={onPress} disabled={busy} style={{ backgroundColor:'#EFF6FF', paddingHorizontal:12, paddingVertical:8, borderRadius:10 }}>
+      {busy ? <ActivityIndicator /> : <Text style={{ color:'#1D4ED8', fontWeight:'800' }}>🤖 Explain</Text>}
+    </TouchableOpacity>
+  );
+}

@@ -1,3 +1,11 @@
+jest.mock("expo-constants");
+// add (or replace existing) mock at the top of the file
+jest.mock('../suggest', () => ({
+  buildSuggestedOrdersInMemory: jest.fn(async () => ({
+    buckets: {},                  // minimal stable shape
+    unassigned: { lines: [] },
+  })),
+}));
 // Jest-only RN shim to avoid ReferenceError in Node
 ;(global as any).__DEV__ = false
 

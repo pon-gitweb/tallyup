@@ -1,0 +1,55 @@
+import { buildSuggestedOrdersInMemory } from "./suggest";
+import {
+  composeMergedResult,
+  type Baseline,
+  type OverlayResponse,
+  type MergedResult,
+} from "./overlay";
+
+/** Build a clean URL: ${EXPO_PUBLIC_AI_URL}/suggest-orders (no double /api) */
+function buildUrl(path: string) {
+  const base = process.env.EXPO_PUBLIC_AI_URL || "";
+  const a = base.endsWith("/") ? base.slice(0, -1) : base;
+  const b = path.startsWith("/") ? path : `/${path}`;
+  return `${a}${b}`;
+}
+
+async function postJSON<T>(path: string, body: unknown) {
+  const url = buildUrl(path);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data: T | null = null;
+  try {
+    data = (await res.json()) as T;
+  } catch (_) {
+    // non-JSON or empty body — leave data as null
+  }
+  // RN fetch headers are already Headers-like; pass through
+  return { data, headers: res.headers };
+}
+
+/**
+ * runAISuggest
+ * - Builds math baseline
+ * - POSTs to /suggest-orders (server already mounted at /api)
+ * - Merges overlay deltas and respects quota headers (retry/backoff + cache)
+ */
+export async function runAISuggest(args: {
+  venueId: string;
+  context: any;
+}): Promise<MergedResult> {
+  const math = await buildSuggestedOrdersInMemory(args as any);
+
+  const baseline: Baseline = {
+    venueId: args.venueId,
+    suppliers: (math && (math as any).suppliers) ? (math as any).suppliers : (math as any),
+  };
+
+  // Endpoint WITHOUT extra /api (EXPO_PUBLIC_AI_URL already ends with /api)
+  const { data, headers } = await postJSON<OverlayResponse>("/suggest-orders", { baseline });
+
+  return composeMergedResult(baseline, data, headers);
+}

@@ -1,14 +1,19 @@
-/** Unit-only Jest config (no Expo/RN), runs fast with ts-jest */
+/** @type {import('jest').Config} */
 module.exports = {
+  preset: 'jest-expo',
   testEnvironment: 'node',
-  transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', { isolatedModules: true, tsconfig: 'tsconfig.jest.json' }]
-  },
-  testMatch: [
-    '<rootDir>/src/utils/**/__tests__/**/*.(test|spec).[tj]s?(x)',
-    '<rootDir>/src/utils/**/?(*.)+(test|spec).[tj]s?(x)'
+  roots: ['<rootDir>/src'],
+  modulePathIgnorePatterns: [
+    '<rootDir>/functions',
+    '<rootDir>/backend/functions'
   ],
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
-  transformIgnorePatterns: ['/node_modules/'],
-  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/build/']
+  transformIgnorePatterns: [
+    'node_modules/(?!(expo|react-native|@react-native|@react-navigation|expo-modules-core|@expo|react-native-reanimated|react-native-gesture-handler|react-native-safe-area-context)/)'
+  ],
+  moduleNameMapper: {
+    '^expo/virtual/env$': '<rootDir>/test/mocks/expo-virtual-env.js'
+  },
+  setupFiles: [
+    '<rootDir>/test/jest.setup.js'
+  ]
 };

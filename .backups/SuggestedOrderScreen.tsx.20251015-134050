@@ -1,0 +1,134 @@
+// @ts-nocheck
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+import IdentityBadge from '../../components/IdentityBadge';
+
+// Use the concrete builder (rules-friendly, in-memory)
+import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
+
+export default function SuggestedOrderScreen() {
+  // Dev-only helpers (you already created these files)
+  // @ts-ignore
+  (globalThis as any).__SO_PROBE__  = require('../../dev/soPermsProbe').probeSuggestedOrdersAccess;
+  // @ts-ignore
+  (globalThis as any).__SO_ATTACH__ = require('../../dev/attachVenue').attachUserToVenueIfAllowed;
+
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const db = getFirestore();
+
+  const [rows, setRows] = useState<any[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!venueId) { setRows([]); return; }
+    try {
+      // Build in-memory suggestions (reads products + areas/items; allowed by rules)
+      const compat = await buildSuggestedOrdersInMemory(venueId, { roundToPack: true, defaultParIfMissing: 6 });
+
+      // Optional: fetch suppliers for display names (allowed by rules)
+      const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+      const supplierNames: Record<string, string> = {};
+      suppliersSnap.forEach(d => { supplierNames[d.id] = (d.data() as any)?.name || 'Supplier'; });
+
+      // Convert compat map → unique bucket rows (dedupe by bucket identity)
+      const seen = new Set<any>();
+      const out: any[] = [];
+      for (const [key, bucket] of Object.entries(compat)) {
+        if (seen.has(bucket)) continue;
+        seen.add(bucket);
+        const supplierId = key || 'unassigned';
+        const itemsCount = bucket.lines?.length || 0;
+        const supplierName =
+          supplierId === 'unassigned' ? 'Unassigned' :
+          supplierNames[supplierId] || 'Supplier';
+
+        out.push({ id: supplierId, supplierId, supplierName, itemsCount });
+      }
+
+      // Prioritise Unassigned at top, then by itemsCount desc
+      out.sort((a, b) => {
+        if (a.id === 'unassigned' && b.id !== 'unassigned') return -1;
+        if (b.id === 'unassigned' && a.id !== 'unassigned') return 1;
+        return (b.itemsCount || 0) - (a.itemsCount || 0);
+      });
+
+      setRows(out);
+    } catch (e: any) {
+      if (__DEV__) console.log('[SuggestedOrders] load error', e?.code || e?.message || e);
+      setRows([]);
+    }
+  }, [db, venueId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  const createAll = () => {
+    Alert.alert('Create Drafts', 'This will create drafts for all suppliers.');
+    // Wire createDraftsFromSuggestions here if desired.
+  };
+
+  const openSupplier = (supplierId: string) =>
+    nav.navigate('NewOrderStart', { venueId, supplierId });
+
+  const Item = ({ item }: { item: any }) => (
+    <TouchableOpacity style={S.row} onPress={() => openSupplier(item.supplierId || item.id)}>
+      <View style={{ flex: 1 }}>
+        <Text style={S.rowTitle}>{item.supplierName || 'Supplier'}</Text>
+        <Text style={S.rowSub}>{item.itemsCount || 0} items</Text>
+      </View>
+      <Text style={S.chev}>›</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.headerRow}>
+        <Text style={S.title}>Suggested Orders</Text>
+        <IdentityBadge />
+      </View>
+
+      <TouchableOpacity style={S.primary} onPress={createAll}>
+        <Text style={S.primaryText}>Create Drafts (All)</Text>
+      </TouchableOpacity>
+
+      <FlatList
+        data={rows}
+        keyExtractor={(it) => String(it.id)}
+        renderItem={Item}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListEmptyComponent={
+          <View style={S.empty}>
+            <Text style={S.emptyTitle}>No suggestions yet</Text>
+            <Text style={S.emptyText}>
+              Complete a stock take and set PAR or pack sizes. Items without suppliers will appear under “Unassigned”.
+            </Text>
+          </View>
+        }
+      />
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  wrap: { flex: 1, padding: 16 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  title: { fontSize: 20, fontWeight: '600' },
+  primary: { backgroundColor: '#2563eb', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, alignSelf: 'flex-start', marginBottom: 8 },
+  primaryText: { color: '#fff', fontWeight: '600' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
+  rowTitle: { fontSize: 16, fontWeight: '600' },
+  rowSub: { fontSize: 12, color: '#6b7280' },
+  chev: { fontSize: 24, color: '#9ca3af', marginLeft: 8 },
+  empty: { paddingTop: 48, paddingHorizontal: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  emptyText: { fontSize: 13, color: '#6b7280' },
+});

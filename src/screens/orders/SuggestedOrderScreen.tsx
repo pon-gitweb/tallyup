@@ -158,7 +158,7 @@ export default function SuggestedOrderScreen(){
   return (
     <View style={S.wrap}>
       <View style={S.topBar}>{HeaderRight}</View>
-      <FlatList data={rows} keyExtractor={keyExtractor} renderItem={renderRow} ListHeaderComponent={listHeader} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={doRefresh}/>} ListEmptyComponent={!refreshing?(<View style={S.empty}><Text style={S.emptyTitle}>No suggestions</Text><Text style={S.emptyText}>Pull to refresh after your next stock take.</Text></View>):null} />
+      <FlatList data={rows} keyExtractor={keyExtractor} renderItem={renderRow} ListHeaderComponent={listHeader} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={doRefresh}/>} ListEmptyComponent={!refreshing?(<View style={S.empty}><Text style={S.emptyTitle}>All items are at or above PAR</Text><Text style={S.emptyText}>Based on your most recent stock take and your PAR settings, there’s nothing to top up right now. If you’ve just counted or updated PARs, pull to refresh to re-check.</Text></View>):null} />
 
       {/* Unassigned Modal */}
       <Modal visible={unassignedOpen} transparent animationType="fade" onRequestClose={()=>setUnassignedOpen(false)}>

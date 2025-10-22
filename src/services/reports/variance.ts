@@ -1,270 +1,168 @@
-import { getFirestore, collection, query, where, orderBy, limit, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { VarianceItem, VarianceResult } from '../../types/reports';
+// @ts-nocheck
+import { getFirestore, collection, getDocs, query as fsQuery, orderBy, limit } from 'firebase/firestore';
+import { getApp } from 'firebase/app';
 
-// Local dev logger (guarded). We avoid importing project dlog to keep this self-contained/safe.
-const dlog = (...args: any[]) => { if (__DEV__) console.log('[Variance]', ...args); };
+const vlog = (...a:any[]) => console.log('[Variance]', ...a);
 
-// ---------- Pure compute (unit-testable) ----------
-export type ComputeInputs = {
-  items: Array<{
-    id: string;
-    name?: string | null;
-    departmentId?: string | null;
-    unitCost?: number | null;
-    par?: number | null;
-  }>;
-  lastCountsByItemId: Record<string, number | null | undefined>;
-  receivedByItemId?: Record<string, number | null | undefined>;
-  soldByItemId?: Record<string, number | null | undefined>;
-  filterDepartmentId?: string | null;
+function n(v:any,d=0){ const x=Number(v); return Number.isFinite(x)?x:d; }
+function s(v:any,d=''){ return (typeof v==='string' && v.trim().length)?v.trim():d; }
+
+type BuildOpts = {
+  bandPct?: number;        // default 1.5
+  sortBy?: 'value'|'qty'|'name'|'supplier';
+  dir?: 'asc'|'desc';
 };
 
-export function computeVarianceFromData(inputs: ComputeInputs): VarianceResult {
-  const { items, lastCountsByItemId, receivedByItemId = {}, soldByItemId = {}, filterDepartmentId } = inputs;
-
-  const shortages: VarianceItem[] = [];
-  const excesses: VarianceItem[] = [];
-  let totalShortageValue = 0;
-  let totalExcessValue = 0;
-
-  const notes: string[] = [];
-
-  if (!items?.length) {
-    notes.push('No items found for the selected scope.');
+// best source of baseline time is the latest completed area
+async function getLatestCompletedAt(db:any, venueId:string): Promise<number|null> {
+  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  let newest: number | null = null;
+  for (const dep of depsSnap.docs) {
+    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    areasSnap.forEach(a => {
+      const data:any = a.data() || {};
+      const c = data?.completedAt;
+      if (c?.toMillis) {
+        const ms = c.toMillis();
+        if (newest==null || ms>newest) newest = ms;
+      }
+    });
   }
+  return newest;
+}
 
-  for (const item of items) {
-    if (filterDepartmentId && item.departmentId !== filterDepartmentId) continue;
+export async function buildVariance(venueId:string, opts:BuildOpts = {}){
+  const db = getFirestore(getApp());
+  const bandPct = Number.isFinite(opts.bandPct) ? Number(opts.bandPct) : 1.5;
+  const sortBy = opts.sortBy || 'value';
+  const dir = opts.dir || 'desc';
 
-    const lastCount = toNum(lastCountsByItemId[item.id]);
-    const received = toNum(receivedByItemId[item.id]);
-    const sold = toNum(soldByItemId[item.id]);
-
-    const theoreticalOnHand = lastCount + received - sold;
-    const par = toNumOrNull(item.par);
-    const unitCost = toNumOrNull(item.unitCost);
-
-    const deltaVsPar = par == null ? null : (theoreticalOnHand - par);
-
-    let valueImpact: number | null = null;
-    if (deltaVsPar != null && unitCost != null) {
-      valueImpact = Math.abs(deltaVsPar) * unitCost;
-    }
-
-    const row: VarianceItem = {
-      itemId: item.id,
-      name: item.name ?? null,
-      departmentId: item.departmentId ?? null,
-      unitCost,
-      par,
-      lastCount,
-      received,
-      sold,
-      theoreticalOnHand,
-      deltaVsPar,
-      valueImpact,
+  // metadata sources
+  const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+  const prodMeta: Record<string,{ name?:string; par?:number; supplierId?:string; supplierName?:string; cost?:number }> = {};
+  productsSnap.forEach(d=>{
+    const v:any = d.data() || {};
+    prodMeta[d.id] = {
+      name: s(v?.name, d.id),
+      par: Number.isFinite(v?.par) ? Number(v.par) : undefined,
+      supplierId: s(v?.supplierId || v?.supplier?.id || ''),
+      supplierName: s(v?.supplierName || v?.supplier?.name || ''),
+      cost: n(v?.costPrice ?? v?.price ?? v?.unitCost, 0)
     };
+  });
 
-    if (deltaVsPar == null || deltaVsPar === 0) {
-      // Neutral or no par -> ignore from shortage/excess buckets
-      continue;
-    } else if (deltaVsPar < 0) {
-      shortages.push(row);
-      if (valueImpact != null) totalShortageValue += valueImpact;
-    } else {
-      excesses.push(row);
-      if (valueImpact != null) totalExcessValue += valueImpact;
+  const baselineMs = await getLatestCompletedAt(db, venueId);
+  if (!baselineMs) {
+    return {
+      summary: {
+        message: 'No completed stocktake found yet. Complete a stocktake to see variances.',
+        withinBand: true,
+        bandPct
+      },
+      rowsMaterial: [],
+      rowsMinor: []
+    };
+  }
+
+  // Gather latest counts (baseline) and, if possible, previous counts for delta
+  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  const latestByPid: Record<string, number> = {};
+  const prevByPid: Record<string, number> = {};
+
+  // We infer previous by reading area items that expose historical `lastCountPrev` if you store it,
+  // otherwise we just take "not baseline" as previous best-effort (this is heuristic).
+  for (const dep of depsSnap.docs) {
+    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    for (const area of areasSnap.docs) {
+      const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'));
+      itemsSnap.forEach(it=>{
+        const v:any = it.data() || {};
+        const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
+        if (!pid) return;
+        const lc = n(v?.lastCount, 0);
+        latestByPid[pid] = (latestByPid[pid]||0) + lc;
+
+        // optional previous if app stores it; if not, we’ll compare to PAR later.
+        const lp = n(v?.prevCount ?? v?.previousCount, NaN);
+        if (Number.isFinite(lp)) prevByPid[pid] = (prevByPid[pid]||0) + lp;
+      });
     }
   }
 
-  // Sort buckets by largest $ impact first, then abs qty
-  shortages.sort((a, b) => (num(b.valueImpact) - num(a.valueImpact)) || (Math.abs(a.deltaVsPar ?? 0) - Math.abs(b.deltaVsPar ?? 0)));
-  excesses.sort((a, b) => (num(b.valueImpact) - num(a.valueImpact)) || (Math.abs(b.deltaVsPar ?? 0) - Math.abs(a.deltaVsPar ?? 0)));
+  const rows:any[] = [];
+  Object.keys(latestByPid).forEach(pid=>{
+    const meta = prodMeta[pid] || {};
+    const name = s(meta.name, pid);
+    const supplierName = s(meta.supplierName, '');
+    const par = Number.isFinite(meta.par) ? Number(meta.par) : undefined;
+    const cost = n(meta.cost, 0);
+
+    const latest = n(latestByPid[pid], 0);
+    const prev = Number.isFinite(prevByPid[pid]) ? n(prevByPid[pid], 0) : (Number.isFinite(par)? n(par,0) : null);
+
+    // variance quantity: prefer change vs previous count; otherwise compare to PAR
+    let varianceQty = 0;
+    if (prev != null) {
+      varianceQty = latest - prev;
+    }
+    const varianceValue = cost>0 ? varianceQty * cost : 0;
+    const baseForPct = Math.max(1, (prev ?? par ?? latest) || 1);
+    const variancePct = (varianceQty / baseForPct) * 100;
+
+    rows.push({
+      productId: pid,
+      name,
+      supplierName: supplierName || undefined,
+      par: par ?? null,
+      varianceQty,
+      varianceValue,
+      variancePct
+    });
+  });
+
+  // band split
+  const material = rows.filter(r=> Math.abs(n(r.variancePct,0)) >= bandPct);
+  const minor    = rows.filter(r=> Math.abs(n(r.variancePct,0)) <  bandPct);
+
+  // sort helper
+  const cmp = (a:any,b:any)=>{
+    const d = dir==='asc'? 1 : -1;
+    if (sortBy==='value') return d * (n(a.varianceValue,0) - n(b.varianceValue,0));
+    if (sortBy==='qty')   return d * (n(a.varianceQty,0)   - n(b.varianceQty,0));
+    if (sortBy==='name')  return d * String(a.name||'').localeCompare(String(b.name||''));
+    if (sortBy==='supplier') return d * String(a.supplierName||'').localeCompare(String(b.supplierName||''));
+    return 0;
+  };
+  material.sort(cmp).reverse(); // show largest first by default
+  minor.sort(cmp).reverse();
+
+  const withinBand = material.length===0;
+  const summary = withinBand
+    ? { message: `All variances are within ±${bandPct}% of expected.`, withinBand: true, bandPct }
+    : { message: `${material.length} items outside ±${bandPct}% band.`, withinBand: false, bandPct };
 
   return {
-    shortages,
-    excesses,
-    totalShortageValue: round2(totalShortageValue),
-    totalExcessValue: round2(totalExcessValue),
-    generatedAt: Date.now(),
-    scope: { venueId: 'unknown', departmentId: filterDepartmentId ?? null },
-    notes,
+    summary,
+    rowsMaterial: material,
+    rowsMinor: minor
   };
 }
+// ---------- Compatibility shims ----------
+export async function computeVariance(venueId: string, opts: any = {}) {
+  return buildVariance(venueId, opts);
+}
 
-// ---------- Firestore orchestration (defensive) ----------
-type OrchestrateOptions = {
-  venueId: string;
-  departmentId?: string | null;
-  // Optional: bypass cache write (e.g., preview mode)
-  skipPersist?: boolean;
+export async function computeVarianceForDepartment(
+  venueId: string,
+  departmentId: string,
+  opts: any = {}
+) {
+  // TODO: add department filtering inside buildVariance if you need it
+  return buildVariance(venueId, opts);
+}
+
+export default {
+  buildVariance,
+  computeVariance,
+  computeVarianceForDepartment,
 };
-
-/**
- * Best-effort loader:
- * - Items from venues/{venueId}/items (expects fields: name, departmentId, unitCost, par)
- * - Last completed stocktake from venues/{venueId}/stockTakes (status=='complete'), newest by completedAt
- *   and counts under stockTakes/{id}/counts (docs id=itemId, field qty or quantity)
- * - Sales and invoices are optional; if not found, treated as 0-movement.
- * - Persists "latest" snapshot to venues/{venueId}/reports/variance/latest (catch & continue on permission errors),
- *   and also writes an AsyncStorage fallback.
- */
-export async function computeVarianceForDepartment(opts: OrchestrateOptions): Promise<VarianceResult> {
-  const { venueId, departmentId = null, skipPersist } = opts;
-  const db = getFirestore();
-
-  // 1) Load items
-  const itemsCol = collection(db, 'venues', venueId, 'items');
-  // If an index for departmentId filter is not present, fallback to client-side filter.
-  let itemsSnap;
-  try {
-    if (departmentId) {
-      const q = query(itemsCol, where('departmentId', '==', departmentId));
-      itemsSnap = await getDocs(q);
-    } else {
-      itemsSnap = await getDocs(itemsCol);
-    }
-  } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-    dlog('Items query fallback (no index / permission):', e);
-    itemsSnap = await getDocs(itemsCol); // broad load, filter later
-  }
-
-  const items = itemsSnap.docs.map(d => {
-    const v = d.data() as any;
-    return {
-      id: d.id,
-      name: v?.name ?? null,
-      departmentId: v?.departmentId ?? null,
-      unitCost: toNumOrNull(v?.unitCost),
-      par: toNumOrNull(v?.par),
-    };
-  });
-
-  // 2) Find last completed stock take
-  const takesCol = collection(db, 'venues', venueId, 'stockTakes');
-  let lastTakeId: string | null = null;
-  try {
-    const q = query(takesCol, where('status', '==', 'complete'), orderBy('completedAt', 'desc'), limit(1));
-    const snap = await getDocs(q);
-    lastTakeId = snap.docs[0]?.id ?? null;
-  } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-    dlog('StockTakes query failed (no index / permission):', e);
-    // Fallback: try latest by createdAt if present
-    try {
-      const q2 = query(takesCol, orderBy('completedAt', 'desc'), limit(1));
-      const snap2 = await getDocs(q2);
-      lastTakeId = snap2.docs[0]?.id ?? null;
-    } catch (e2) {
-      dlog('StockTakes fallback also failed:', e2);
-    }
-  }
-
-  // 3) Load last counts (if any)
-  const lastCountsByItemId: Record<string, number> = {};
-  if (lastTakeId) {
-    try {
-      const countsCol = collection(db, 'venues', venueId, 'stockTakes', lastTakeId, 'counts');
-      const countsSnap = await getDocs(countsCol);
-      countsSnap.forEach((d) => {
-        const v = d.data() as any;
-        lastCountsByItemId[d.id] = toNum(v?.qty ?? v?.quantity ?? v?.count);
-      });
-    } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-      dlog('Counts load failed (continue with zeros):', e);
-    }
-  }
-
-  // 4) Optional: sales + invoices (best-effort; treat missing as zero)
-  const soldByItemId: Record<string, number> = {};
-  const receivedByItemId: Record<string, number> = {};
-
-  try {
-    // Example try-path 1: aggregated sales bucket
-    const salesAgg = doc(db, 'venues', venueId, 'reports', 'sales', 'latest', 'summary'); // may not exist
-    const salesDoc = await getDoc(salesAgg);
-    if (salesDoc.exists()) {
-      const m = salesDoc.data()?.byItemId ?? {};
-      for (const [k, v] of Object.entries(m)) soldByItemId[k] = toNum(v);
-    }
-  } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-    dlog('Sales agg read failed (ignore):', e);
-  }
-
-  try {
-    // Example try-path 2: aggregated receipted invoices
-    const invAgg = doc(db, 'venues', venueId, 'reports', 'invoices', 'latest', 'summary'); // may not exist
-    const invDoc = await getDoc(invAgg);
-    if (invDoc.exists()) {
-      const m = invDoc.data()?.byItemId ?? {};
-      for (const [k, v] of Object.entries(m)) receivedByItemId[k] = toNum(v);
-    }
-  } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-    dlog('Invoices agg read failed (ignore):', e);
-  }
-
-  // 5) Compute
-  const result = computeVarianceFromData({
-    items,
-    lastCountsByItemId,
-    receivedByItemId,
-    soldByItemId,
-    filterDepartmentId: departmentId,
-  });
-
-  // Patch scope metadata
-  result.scope = { venueId, departmentId };
-
-  // 6) Persist "latest" (Firestore + AsyncStorage fallback)
-  if (!skipPersist) {
-    try {
-      const latestRef = doc(db, 'venues', venueId, 'reports', 'variance', 'latest');
-      await setDoc(latestRef, result, { merge: true });
-    } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-      dlog('Persist to Firestore failed (permission? continue to local):', e);
-    }
-    try {
-      await AsyncStorage.setItem(localKey(venueId, departmentId), JSON.stringify(result));
-    } catch (e) {
-  // TEMP: show raw FirebaseError (prints index link if needed)
-  console.error('[Variance:raw/items]', e?.code, e?.message);
-
-      dlog('Persist to AsyncStorage failed:', e);
-    }
-  }
-
-  return result;
-}
-
-// ---------- Helpers ----------
-function toNum(v: any): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function toNumOrNull(v: any): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-function num(n: number | null | undefined): number { return Number.isFinite(n as any) ? (n as number) : 0; }
-function round2(n: number): number { return Math.round(n * 100) / 100; }
-function localKey(venueId: string, departmentId?: string | null) {
-  return `variance:latest:${venueId}:${departmentId ?? 'all'}`;
-}

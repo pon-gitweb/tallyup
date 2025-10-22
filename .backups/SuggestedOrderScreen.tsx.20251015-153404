@@ -1,0 +1,355 @@
+// @ts-nocheck
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  RefreshControl, Alert, Modal, Pressable
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+import IdentityBadge from '../../components/IdentityBadge';
+
+// Suggestions come from the concrete file (we know it works)
+import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
+
+// --- Resolve orders API from whichever module actually exports what we need ---
+const OrdersIndex = require('../../services/orders/index'); // barrel
+const OrdersFile  = require('../../services/orders');       // file
+
+const createDraftOrderWithLines =
+  OrdersIndex.createDraftOrderWithLines || OrdersFile.createDraftOrderWithLines;
+
+const setSupplierSmart =
+  OrdersIndex.setSupplierSmart || OrdersFile.setSupplierSmart || OrdersIndex.setSupplierOnProduct || OrdersFile.setSupplierOnProduct;
+
+const setParSmart =
+  OrdersIndex.setParSmart || OrdersFile.setParSmart || OrdersIndex.setParOnProduct || OrdersFile.setParOnProduct;
+
+type BucketRow = { id: string; supplierId: string; supplierName: string; itemsCount: number };
+
+export default function SuggestedOrderScreen() {
+  // Dev helpers (unchanged)
+  // @ts-ignore
+  (globalThis as any).__SO_PROBE__  = require('../../dev/soPermsProbe').probeSuggestedOrdersAccess;
+  // @ts-ignore
+  (globalThis as any).__SO_ATTACH__ = require('../../dev/attachVenue').attachUserToVenueIfAllowed;
+
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const db = getFirestore();
+
+  const [rows, setRows] = useState<BucketRow[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Unassigned modal
+  const [unassignedOpen, setUnassignedOpen] = useState(false);
+  const [unassignedLines, setUnassignedLines] = useState<any[]>([]);
+
+  // Supplier preview modal
+  const [supplierOpen, setSupplierOpen] = useState(false);
+  const [supplierPreview, setSupplierPreview] = useState<{ supplierId: string; supplierName: string; lines: any[] } | null>(null);
+
+  // Supplier picker modal
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSuppliers, setPickerSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [pickerForProductId, setPickerForProductId] = useState<string | null>(null);
+
+  // --- helpers ---
+  const toDraftLine = (l: any) => {
+    const name = (l.productName ?? String(l.productId ?? '')).trim() || 'Item';
+    const qty = Number.isFinite(Number(l.qty)) ? Math.max(1, Number(l.qty)) : 1;
+    const unitCost = Number.isFinite(Number(l.cost)) ? Number(l.cost) : 0;
+    return { productId: String(l.productId), name, qty, unitCost };
+  };
+
+  const extractOrderId = (res: any): string =>
+    res?.id || res?.orderId || res?.docId || res?.docRef?.id || res?.ref?.id || '';
+
+  const loadSuppliers = useCallback(async (): Promise<{ id: string; name: string }[]> => {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+    const out: { id: string; name: string }[] = [];
+    snap.forEach(d => out.push({ id: d.id, name: (d.data() as any)?.name || 'Supplier' }));
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }, [db, venueId]);
+
+  const load = useCallback(async () => {
+    if (!venueId) { setRows([]); return; }
+    try {
+      const compat = await buildSuggestedOrdersInMemory(venueId, { roundToPack: true, defaultParIfMissing: 6 });
+      const suppliersList = await loadSuppliers();
+      const supplierNames: Record<string, string> = {};
+      for (const s of suppliersList) supplierNames[s.id] = s.name;
+
+      const seen = new Set<any>();
+      const tmp: BucketRow[] = [];
+      for (const [key, bucket] of Object.entries(compat)) {
+        if (seen.has(bucket)) continue;
+        seen.add(bucket);
+        const supplierId = key || 'unassigned';
+        const itemsCount = bucket.lines?.length || 0;
+        if (itemsCount <= 0) continue; // hide empty buckets
+        const supplierName = supplierId === 'unassigned' ? 'Unassigned' : (supplierNames[supplierId] || 'Supplier');
+        tmp.push({ id: supplierId, supplierId, supplierName, itemsCount });
+      }
+      tmp.sort((a, b) => {
+        if (a.id === 'unassigned' && b.id !== 'unassigned') return -1;
+        if (b.id === 'unassigned' && a.id !== 'unassigned') return 1;
+        return (b.itemsCount || 0) - (a.itemsCount || 0);
+      });
+      setRows(tmp);
+    } catch (e:any) {
+      if (__DEV__) console.log('[SuggestedOrders] load error', e?.code || e?.message || e);
+      setRows([]);
+    }
+  }, [venueId, loadSuppliers]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  // ----- Unassigned -----
+  const openUnassigned = useCallback(async () => {
+    const compat = await buildSuggestedOrdersInMemory(venueId, { roundToPack: true, defaultParIfMissing: 6 });
+    setUnassignedLines(compat['unassigned']?.lines || []);
+    setUnassignedOpen(true);
+  }, [venueId]);
+
+  const openSupplierPicker = useCallback(async (productId: string) => {
+    const list = await loadSuppliers();
+    if (!list.length) { Alert.alert('No suppliers', 'Create a supplier first.'); return; }
+    setPickerSuppliers(list);
+    setPickerForProductId(productId);
+    setPickerOpen(true);
+  }, [loadSuppliers]);
+
+  const pickSupplier = useCallback(async (supplierId: string) => {
+    if (!pickerForProductId) return;
+    try {
+      if (!setSupplierSmart) throw new Error('setSupplier helper missing');
+      await setSupplierSmart(venueId, pickerForProductId, supplierId);
+
+      // Optimistic: remove line locally so Unassigned shrinks immediately
+      setUnassignedLines(prev => prev.filter(l => l.productId !== pickerForProductId));
+
+      setPickerOpen(false);
+      setPickerForProductId(null);
+
+      // Refresh full list (so the supplier bucket grows)
+      await load();
+    } catch (e:any) {
+      Alert.alert('Failed to assign supplier', e?.message || String(e));
+    }
+  }, [venueId, pickerForProductId, load]);
+
+  const setParPack = useCallback(async (productId: string, suggestedPack?: number) => {
+    try {
+      if (!setParSmart) throw new Error('setPar helper missing');
+      await setParSmart(venueId, productId, suggestedPack || 6);
+
+      // no need to keep unassigned if it still has no supplier; just refresh
+      await load();
+      await openUnassigned();
+    } catch (e:any) {
+      Alert.alert('Failed to set PAR', e?.message || 'Try again.');
+    }
+  }, [venueId, load, openUnassigned]);
+
+  // ----- Supplier preview (non-unassigned) -----
+  const [supplierLoading, setSupplierLoading] = useState(false);
+
+  const openSupplierPreview = useCallback(async (supplierId: string, supplierName: string) => {
+    setSupplierLoading(true);
+    const compat = await buildSuggestedOrdersInMemory(venueId, { roundToPack: true, defaultParIfMissing: 6 });
+    const bucket = compat[supplierId];
+    const lines = bucket?.lines || [];
+    setSupplierLoading(false);
+
+    if (!lines.length) {
+      Alert.alert('Nothing to order', 'No suggested lines for this supplier.');
+      return;
+    }
+    setSupplierPreview({ supplierId, supplierName, lines });
+    setSupplierOpen(true);
+  }, [venueId]);
+
+  const createDraftForPreview = useCallback(async () => {
+    if (!supplierPreview) return;
+    try {
+      if (!createDraftOrderWithLines) throw new Error('createDraftOrderWithLines missing from services');
+      const linesSanitized = supplierPreview.lines.map(toDraftLine);
+      const res = await createDraftOrderWithLines(venueId, supplierPreview.supplierId, linesSanitized);
+      const orderId = extractOrderId(res);
+      console.log('[SuggestedOrders] draft result', { gotId: !!orderId, shape: Object.keys(res || {}) });
+      if (!orderId) {
+        Alert.alert('Draft not created', 'Could not get a new draft order id.');
+        return;
+      }
+      setSupplierOpen(false);
+      nav.navigate('OrderEditor', { orderId, supplierName: supplierPreview.supplierName });
+    } catch (e:any) {
+      console.log('[SuggestedOrders] createDraftForSupplier error', e?.code || '', e?.message || e);
+      Alert.alert('Could not create draft', e?.message || 'Please try again.');
+    }
+  }, [venueId, supplierPreview, nav]);
+
+  // Click row
+  const onRowPress = useCallback(async (row: BucketRow) => {
+    if (row.supplierId === 'unassigned') {
+      await openUnassigned();
+    } else {
+      await openSupplierPreview(row.supplierId, row.supplierName);
+    }
+  }, [openUnassigned, openSupplierPreview]);
+
+  const Row = ({ item }: { item: BucketRow }) => (
+    <TouchableOpacity style={S.row} onPress={() => onRowPress(item)}>
+      <View style={{ flex: 1 }}>
+        <Text style={S.rowTitle}>{item.supplierName}</Text>
+        <Text style={S.rowSub}>{item.itemsCount || 0} items</Text>
+      </View>
+      <Text style={S.chev}>›</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.headerRow}>
+        <Text style={S.title}>Suggested Orders</Text>
+        <IdentityBadge />
+      </View>
+
+      <FlatList
+        data={rows}
+        keyExtractor={(it) => String(it.id)}
+        renderItem={Row}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListEmptyComponent={
+          <View style={S.empty}>
+            <Text style={S.emptyTitle}>No suggestions yet</Text>
+            <Text style={S.emptyText}>
+              Complete a stock take and set PAR or pack sizes. Items without suppliers will appear under “Unassigned”.
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Unassigned */}
+      <Modal visible={unassignedOpen} transparent animationType="fade" onRequestClose={() => setUnassignedOpen(false)}>
+        <Pressable style={S.modalBack} onPress={() => setUnassignedOpen(false)}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Unassigned ({unassignedLines.length})</Text>
+            {unassignedLines.length === 0 ? (
+              <Text style={S.rowSub}>All set — no unassigned items.</Text>
+            ) : (
+              <FlatList
+                data={unassignedLines}
+                keyExtractor={(l) => l.productId}
+                renderItem={({ item: l }) => (
+                  <View style={S.lineRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={S.lineName}>{l.productName || l.productId}</Text>
+                      <Text style={S.rowSub}>Qty {l.qty} · ${Number(l.cost || 0).toFixed(2)}</Text>
+                    </View>
+                    <TouchableOpacity style={S.smallBtn} onPress={() => openSupplierPicker(l.productId)}>
+                      <Text style={S.smallBtnText}>Assign</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[S.smallBtn, { marginLeft: 8 }]} onPress={() => setParPack(l.productId)}>
+                      <Text style={S.smallBtnText}>Set PAR</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+            <TouchableOpacity style={[S.smallBtn, { alignSelf: 'flex-end', marginTop: 8 }]} onPress={() => setUnassignedOpen(false)}>
+              <Text style={S.smallBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Supplier Preview */}
+      <Modal visible={supplierOpen} transparent animationType="fade" onRequestClose={() => setSupplierOpen(false)}>
+        <Pressable style={S.modalBack} onPress={() => setSupplierOpen(false)}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>{supplierPreview?.supplierName || 'Order'}</Text>
+            {supplierLoading ? (
+              <Text style={S.rowSub}>Loading…</Text>
+            ) : (
+              <FlatList
+                data={supplierPreview?.lines || []}
+                keyExtractor={(l) => l.productId}
+                renderItem={({ item: l }) => (
+                  <View style={S.lineRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={S.lineName}>{l.productName || l.productId}</Text>
+                      <Text style={S.rowSub}>Qty {l.qty} · ${Number(l.cost || 0).toFixed(2)}</Text>
+                    </View>
+                  </View>
+                )}
+              />
+            )}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+              <TouchableOpacity style={[S.smallBtn, { marginRight: 8 }]} onPress={() => setSupplierOpen(false)}>
+                <Text style={S.smallBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.primary} onPress={createDraftForPreview}>
+                <Text style={S.primaryText}>Create Draft</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Supplier Picker */}
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={S.modalBack} onPress={() => setPickerOpen(false)}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Choose Supplier</Text>
+            <FlatList
+              data={pickerSuppliers}
+              keyExtractor={(s) => s.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={S.modalRow} onPress={() => pickSupplier(item.id)}>
+                  <Text style={S.modalRowText}>{item.name}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={<Text style={S.rowSub}>No suppliers found.</Text>}
+            />
+            <TouchableOpacity style={[S.smallBtn, { alignSelf: 'flex-end', marginTop: 8 }]} onPress={() => setPickerOpen(false)}>
+              <Text style={S.smallBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  wrap: { flex: 1, padding: 16 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  title: { fontSize: 20, fontWeight: '600' },
+  primary: { backgroundColor: '#2563eb', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, alignSelf: 'flex-start' },
+  primaryText: { color: '#fff', fontWeight: '600' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#e5e7eb' },
+  rowTitle: { fontSize: 16, fontWeight: '600' },
+  rowSub: { fontSize: 12, color: '#6b7280' },
+  chev: { fontSize: 24, color: '#9ca3af', marginLeft: 8 },
+  empty: { paddingTop: 48, paddingHorizontal: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  emptyText: { fontSize: 13, color: '#6b7280' },
+  lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee' },
+  lineName: { fontSize: 14, fontWeight: '600' },
+  smallBtn: { backgroundColor: '#111827', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
+  smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  modalBack: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 },
+  modalCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, maxHeight: '75%' },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  modalRow: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee' },
+  modalRowText: { fontSize: 16 },
+});

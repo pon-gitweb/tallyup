@@ -1,0 +1,12 @@
+export const getFirestore = () => ({ __mock: true });
+export const getDoc = async () => ({ exists: () => false, data: () => ({}) });
+export const setDoc = async () => {};
+export const addDoc = async () => ({ id: "mock-id" });
+export const doc = (...args) => ({ __path: args.join('/') });
+export const collection = (...args) => ({ __path: args.join('/') });
+export const query = (..._args) => ({});
+export const where = (..._args) => ({});
+export const orderBy = (..._args) => ({});
+export const getDocs = async () => ({ forEach: () => {}, docs: [] });
+export const serverTimestamp = () => new Date();
+export const documentId = () => "__name__";

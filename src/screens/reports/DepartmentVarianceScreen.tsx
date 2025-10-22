@@ -1,355 +1,179 @@
 // @ts-nocheck
 import React from 'react';
-import { ActivityIndicator, FlatList, Text, TouchableOpacity, View, Alert } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import LocalThemeGate from '../../theme/LocalThemeGate';
-import MaybeTText from '../../components/themed/MaybeTText';
-import { exportCsv, exportPdf } from '../../utils/exporters';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  RefreshControl,
+} from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { useVarianceReport } from '../../hooks/useVarianceReport';
-import { explainVariance } from '../../services/aiVariance';
-import { fetchVarianceDepartment } from '../../services/reports/varianceRemote';
-
-const dlog = (...a:any[]) => { if (__DEV__) console.log('[DepartmentVariance]', ...a); };
-
-type Row = {
-  id?: string;
-  productId?: string;
-  name: string;
-  sku?: string | null;
-  variance: number; // +excess, -shortage
-  value?: number | null;
-  department?: string;
-  onHand?: number | null;
-  par?: number | null;
-  unit?: string | null;
-  lastDeliveryAt?: string | null;
-  // NEW: enrichments for AI
-  recentSoldQty?: number | null;
-  recentReceivedQty?: number | null;
-  auditTrail?: Array<{ at: string; action: string; qty?: number; by?: string }>;
-};
+import { buildVariance } from '../../services/reports/variance';
+import VarianceExplainButton from './components/VarianceExplainButton';
+import IdentityBadge from '../../components/IdentityBadge';
 
 export default function DepartmentVarianceScreen() {
-  const route = useRoute<any>();
-  const nav = useNavigation<any>();
-  const venueIdCtx = useVenueId();
-  const venueIdParam: string | undefined = route?.params?.venueId;
-  const venueId = venueIdParam || venueIdCtx || null;
-  const departmentId: string | undefined = route?.params?.departmentId;
+  const venueId = useVenueId();
 
-  // Local client-side report (may hit permission-denied)
-  const { loading, result, error } = useVarianceReport(venueId, departmentId ?? null);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [rows, setRows] = React.useState<any[]>([]);
+  const [minor, setMinor] = React.useState<any[]>([]);
+  const [showMinor, setShowMinor] = React.useState(false);
+  const [summary, setSummary] = React.useState<any>(null);
 
-  // ---- Server fallback state (only used on permission-denied) ----
-  const [remoteResult, setRemoteResult] = React.useState<any>(null);
-  const [fallbackLoading, setFallbackLoading] = React.useState(false);
-  const [fallbackError, setFallbackError] = React.useState<any>(null);
-  const fallbackTried = React.useRef(false);
+  const [sortBy, setSortBy] = React.useState<'value' | 'qty' | 'name' | 'supplier'>('value');
+  const [dir, setDir] = React.useState<'asc' | 'desc'>('desc');
 
-  // Fallback trigger effect
-  React.useEffect(() => {
-    const msg = String(error?.code || error?.message || error || '');
-    const isDenied = /permission[- ]denied|insufficient permissions/i.test(msg);
-    if (!venueId || !isDenied || fallbackTried.current) return;
-
-    let alive = true;
-    (async () => {
-      try {
-        dlog('Triggering server fallback due to:', msg, { venueId, departmentId });
-        setFallbackError(null);
-        setFallbackLoading(true);
-        const resp = await fetchVarianceDepartment({ venueId, departmentId: departmentId ?? null });
-        if (!alive) return;
-
-        dlog('Server fallback response:', {
-          shortages: resp?.shortages?.length || 0,
-          excesses: resp?.excesses?.length || 0,
-          totalShortageValue: resp?.totalShortageValue,
-          totalExcessValue: resp?.totalExcessValue,
-        });
-        dlog('Server fallback debug:', resp?.notes?.debug);
-
-        setRemoteResult({
-          shortages: resp?.shortages || [],
-          excesses: resp?.excesses || [],
-          totalShortageValue: resp?.totalShortageValue || 0,
-          totalExcessValue: resp?.totalExcessValue || 0,
-        });
-      } catch (e) {
-        if (!alive) return;
-        dlog('Server fallback failed:', e);
-        setFallbackError(e);
-      } finally {
-        if (alive) setFallbackLoading(false);
-        fallbackTried.current = true;
-      }
-    })();
-
-    return () => { alive = false; };
-  }, [error, venueId, departmentId]);
-
-  // Prefer remote result if present; otherwise local result
-  const effectiveResult = remoteResult || result;
-
-  const mapRow = (it: any): Row => ({
-    id: it.itemId || it.id,
-    productId: it.itemId || it.id,
-    name: it.name ?? '(item)',
-    sku: it.sku ?? '',
-    variance: Number(it.deltaVsPar ?? it.varianceQty ?? 0),
-    value: it.valueImpact ?? it.varianceValue ?? undefined,
-    department: it.departmentId ?? undefined,
-    onHand: typeof it.onHand === 'number' ? it.onHand
-          : (typeof it.theoreticalOnHand === 'number' ? it.theoreticalOnHand : null),
-    par: typeof it.par === 'number' ? it.par : null,
-    unit: it.unit ?? null,
-    lastDeliveryAt: it.lastDeliveryAt ?? null,
-    // NEW: bring through enrichments from server
-    recentSoldQty: typeof it.recentSoldQty === 'number' ? it.recentSoldQty : null,
-    recentReceivedQty: typeof it.recentReceivedQty === 'number' ? it.recentReceivedQty : null,
-    auditTrail: Array.isArray(it.auditTrail) ? it.auditTrail : undefined,
-  });
-
-  const shortages: Row[] = React.useMemo(() => {
-    if (!effectiveResult?.shortages?.length) return [];
-    return effectiveResult.shortages.map(mapRow);
-  }, [effectiveResult]);
-
-  const excesses: Row[] = React.useMemo(() => {
-    if (!effectiveResult?.excesses?.length) return [];
-    return effectiveResult.excesses.map(mapRow);
-  }, [effectiveResult]);
-
-  const totals = React.useMemo(() => ({
-    shortage: Number(effectiveResult?.totalShortageValue ?? 0),
-    excess: Number(effectiveResult?.totalExcessValue ?? 0),
-  }), [effectiveResult]);
+  const load = React.useCallback(async () => {
+    if (!venueId) {
+      setRows([]);
+      setMinor([]);
+      setSummary(null);
+      return;
+    }
+    setRefreshing(true);
+    try {
+      const res = await buildVariance(venueId, { sortBy, dir });
+      setRows(res.rowsMaterial || []);
+      setMinor(res.rowsMinor || []);
+      setSummary(res.summary || null);
+    } catch (e) {
+      setRows([]);
+      setMinor([]);
+      setSummary({
+        withinBand: true,
+        bandPct: 1.5,
+        message: 'Could not calculate variance right now.',
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [venueId, sortBy, dir]);
 
   React.useEffect(() => {
-    const msg = String(error?.code || error?.message || error || '');
-    if (error && !/permission[- ]denied|insufficient permissions/i.test(msg)) {
-      Alert.alert('Failed to load variance', msg);
-    }
-  }, [error]);
+    load();
+  }, [load]);
 
-  const exportCurrentCsv = React.useCallback(async () => {
-    try {
-      const headers = ['Type', 'Name', 'SKU', 'Variance', 'Value'];
-      const rows = [
-        ...shortages.map(r => ['Shortage', r.name, r.sku || '', r.variance, r.value ?? '']),
-        ...excesses.map(r => ['Excess', r.name, r.sku || '', r.variance, r.value ?? '']),
-      ];
-      const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
-      const filename = `variance-${departmentId || 'all'}-${stamp}.csv`;
-      const out = await exportCsv(filename, headers, rows);
-      dlog('CSV export', out);
-    } catch (e:any) {
-      Alert.alert('Export failed', e?.message || 'Could not export CSV.');
-    }
-  }, [shortages, excesses, departmentId]);
+  const onToggleMinor = React.useCallback(() => setShowMinor(v => !v), []);
 
-  const sharePdf = React.useCallback(async () => {
-    const rowHtml = (label: string, items: Row[]) => `
-      <h3>${label}</h3>
-      <table style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
-        <thead><tr><th>Name</th><th>SKU</th><th style="text-align:right">Variance</th><th style="text-align:right">Value</th></tr></thead>
-        <tbody>
-          ${items.map(r => `<tr>
-            <td>${r.name}</td>
-            <td>${r.sku || ''}</td>
-            <td style="text-align:right">${r.variance}</td>
-            <td style="text-align:right">${r.value != null ? r.value.toFixed(2) : ''}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    `;
-    try {
-      const html = `
-        <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
-        <body style="font-family: -apple-system, Roboto, sans-serif; padding: 12px;">
-          <h2>Department Variance — ${departmentId || 'All Departments'}</h2>
-          <p><b>Total shortage:</b> $${totals.shortage.toFixed(2)} &nbsp;&nbsp; <b>Total excess:</b> $${totals.excess.toFixed(2)}</p>
-          ${rowHtml('Shortages', shortages)}
-          <br />
-          ${rowHtml('Excesses', excesses)}
-        </body></html>
-      `;
-      const out = await exportPdf('Department Variance', html);
-      dlog('PDF export', out);
-    } catch (e:any) {
-      Alert.alert('Share PDF failed', e?.message || 'Could not generate PDF.');
-    }
-  }, [shortages, excesses, totals, departmentId]);
+  const onCycleSort = React.useCallback(() => {
+    const order = ['value', 'qty', 'name', 'supplier'] as const;
+    const nextIdx = (order.indexOf(sortBy) + 1) % order.length;
+    if (nextIdx === 0) setDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    setSortBy(order[nextIdx]);
+  }, [sortBy]);
 
-  const ExplainButton = ({ row }: { row: Row }) => {
-    const [busy, setBusy] = React.useState(false);
-    const onPress = React.useCallback(async () => {
-      if (busy) return;
-      setBusy(true);
-      try {
-        const counted = typeof row.onHand === 'number' ? row.onHand : 0;
-        const expected = (typeof row.onHand === 'number' && typeof row.variance === 'number')
-          ? (row.onHand - row.variance)
-          : 0;
-
-        const ai = await explainVariance({
-          itemName: row.name,
-          varianceQty: row.variance,
-          varianceValue: row.value,
-          par: row.par,
-          lastCountQty: counted,
-          theoreticalOnHand: typeof row.onHand === 'number' ? row.onHand : null,
-          departmentId: row.department,
-          // NEW: pass enrichments (the service will ignore if undefined)
-          recentSoldQty: row.recentSoldQty ?? undefined,
-          recentReceivedQty: row.recentReceivedQty ?? undefined,
-          lastDeliveryAt: row.lastDeliveryAt ?? undefined,
-          context: {
-            venueId: String(venueId || ''),
-            areaId: null,
-            productId: row.productId || row.id || String(row.name || 'unknown'),
-            expected,
-            counted,
-            unit: row.unit ?? null,
-            departmentId: row.department ?? null,
-            lastDeliveryAt: row.lastDeliveryAt ?? null,
-            recentSoldQty: row.recentSoldQty ?? null,
-            recentReceivedQty: row.recentReceivedQty ?? null,
-          },
-        });
-
-        const lines = [
-          ai.summary,
-          '',
-          ai.factors?.length ? 'Key factors:' : null,
-          ...(ai.factors || []).map((f: string) => `- ${f}`),
-          '',
-          `Confidence: ${ai.confidence || 'unknown'}`,
-          '',
-          ai.missing?.length ? 'To improve results, add:' : null,
-          ...(ai.missing || []).map((m: string) => `- ${m}`),
-        ].filter(Boolean);
-
-        Alert.alert('AI Insight', lines.join('\n'));
-      } catch (e:any) {
-        Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
-      } finally {
-        setBusy(false);
-      }
-    }, [busy, row, venueId]);
-
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        disabled={busy}
-        style={{ marginLeft: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10,
-          paddingVertical: 8, borderRadius: 10 }}
-        accessibilityLabel="Explain this variance"
-      >
-        {busy ? <ActivityIndicator /> : <Text style={{ color: '#1D4ED8', fontWeight: '800' }}>🤖 Explain</Text>}
-      </TouchableOpacity>
-    );
-  };
-
-  const RowItem = ({ label, item }: { label: 'Shortage'|'Excess', item: Row }) => (
-    <View style={{
-      paddingVertical: 10, paddingHorizontal: 12,
-      borderBottomColor: '#263142', borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center'
-    }}>
+  const header = (
+    <View style={S.header}>
       <View style={{ flex: 1 }}>
-        <Text style={{ color: 'white', fontWeight: '600' }}>{item.name}</Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
-          {label} • SKU: {item.sku || '—'} • Var: {item.variance} {typeof item.value === 'number' ? `• $${item.value.toFixed(2)}` : ''}
-        </Text>
+        <Text style={S.title}>Department Variance</Text>
+        {summary ? (
+          <Text style={[S.rowSub, summary.withinBand ? S.subOk : S.subWarn]}>
+            {summary.message}
+          </Text>
+        ) : (
+          <Text style={S.rowSub}>Calculating latest variance…</Text>
+        )}
       </View>
-      <ExplainButton row={item} />
+      <IdentityBadge />
     </View>
   );
 
-  const Section = ({ label, items }: { label: 'Shortages'|'Excesses', items: Row[] }) => (
-    <View style={{ marginTop: 16 }}>
-      <Text style={{ color: '#9CA3AF', fontWeight: '700', marginBottom: 8 }}>{label}</Text>
+  const tools = (
+    <View style={S.tools}>
+      <TouchableOpacity onPress={onCycleSort} style={S.toolChip}>
+        <Text style={S.toolText}>
+          Sort: {sortBy} · {dir}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onToggleMinor} style={S.toolChip}>
+        <Text style={S.toolText}>
+          {showMinor ? 'Hide minor' : 'Show minor'} (±{summary?.bandPct ?? 1.5}%)
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const data = React.useMemo(
+    () => (showMinor ? [...rows, ...minor] : rows),
+    [rows, minor, showMinor]
+  );
+
+  const renderRow = ({ item: r }: { item: any }) => (
+    <View style={S.row}>
+      <View style={{ flex: 1 }}>
+        <Text style={S.rowTitle}>{r.name}</Text>
+        <Text style={S.rowSub}>
+          {r.supplierName ? `${r.supplierName} · ` : ''}
+          {Number.isFinite(r.par) ? `PAR ${r.par} · ` : ''}
+          {Number(r.varianceQty) > 0
+            ? `Excess ${r.varianceQty}`
+            : Number(r.varianceQty) < 0
+            ? `Short ${Math.abs(r.varianceQty)}`
+            : 'No variance'}
+          {Number.isFinite(r.varianceValue) ? ` · $${Number(r.varianceValue).toFixed(2)}` : ''}
+          {Number.isFinite(r.variancePct) ? ` · ${Number(r.variancePct).toFixed(1)}%` : ''}
+          {!r.material ? ' · minor' : ''}
+        </Text>
+      </View>
+      <VarianceExplainButton venueId={venueId} departmentId={null} row={r} />
+    </View>
+  );
+
+  return (
+    <View style={S.wrap}>
+      {header}
+      {tools}
       <FlatList
-        data={items}
-        keyExtractor={(r) => r.id || r.productId || r.name}
-        renderItem={({ item }) => <RowItem label={label === 'Shortages' ? 'Shortage' : 'Excess'} item={item} />}
-        ListEmptyComponent={() => (
-          <View style={{ paddingVertical: 6 }}>
-            <Text style={{ color: '#9CA3AF' }}>None</Text>
-          </View>
-        )}
+        data={data}
+        keyExtractor={(r) => String(r.productId)}
+        renderItem={renderRow}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
+        ListEmptyComponent={
+          !refreshing ? (
+            <View style={S.empty}>
+              <Text style={S.emptyTitle}>No material variances</Text>
+              <Text style={S.emptyText}>
+                Your latest stock take is within the accepted range. You can still view minor
+                variances by tapping “Show minor”.
+              </Text>
+            </View>
+          ) : null
+        }
       />
     </View>
   );
-
-  const effectiveLoading = loading || fallbackLoading;
-
-  return (
-    <LocalThemeGate>
-      <View style={{ flex: 1, backgroundColor: '#0B132B' }}>
-        {/* Toolbar */}
-        <View style={{ padding: 12, borderBottomColor: '#263142', borderBottomWidth: 1 }}>
-          <MaybeTText style={{ color: 'white', fontSize: 18, fontWeight: '700' }}>
-            Department Variance {departmentId ? `— ${departmentId}` : ''}
-          </MaybeTText>
-          <View style={{ flexDirection: 'row', marginTop: 8 }}>
-            <TouchableOpacity
-              onPress={exportCurrentCsv}
-              style={{ backgroundColor: '#2563EB', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginRight: 8 }}
-              disabled={effectiveLoading}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Export CSV — Current view</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={sharePdf}
-              style={{ backgroundColor: '#7C3AED', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
-              disabled={effectiveLoading}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Share PDF</Text>
-            </TouchableOpacity>
-          </View>
-          {!venueId && (
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: '#fca5a5' }}>No venue selected — connect to a venue to load variance.</Text>
-            </View>
-          )}
-          {fallbackLoading && (
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: '#9CA3AF' }}>Loading via secure server fallback…</Text>
-            </View>
-          )}
-          {fallbackError && (
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: '#fca5a5' }}>Server fallback failed: {String(fallbackError?.message || fallbackError)}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Body */}
-        {effectiveLoading && !remoteResult ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator />
-          </View>
-        ) : (
-          <FlatList
-            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
-            data={[
-              { key: 'shortages', label: 'Shortages', items: shortages },
-              { key: 'excesses', label: 'Excesses', items: excesses },
-            ]}
-            keyExtractor={(s) => s.key}
-            renderItem={({ item }) => <Section label={item.label as any} items={item.items} />}
-            ListEmptyComponent={() => (
-              <View style={{ padding: 16 }}>
-                <Text style={{ color: '#9CA3B8' }}>
-                  No variance items found for this scope.
-                </Text>
-              </View>
-            )}
-          />
-        )}
-      </View>
-    </LocalThemeGate>
-  );
 }
+
+const S = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: '#fff' },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  title: { fontSize: 22, fontWeight: '800' },
+  row: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rowTitle: { fontSize: 15, fontWeight: '700' },
+  rowSub: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  subOk: { color: '#065f46' },
+  subWarn: { color: '#7f1d1d' },
+  tools: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+  toolChip: { backgroundColor: '#f3f4f6', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10 },
+  toolText: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  empty: { paddingTop: 48, paddingHorizontal: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  emptyText: { fontSize: 13, color: '#6b7280' },
+});
+

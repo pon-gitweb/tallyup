@@ -1,38 +1,19 @@
-/**
- * Minimal AI client helpers (Expo-safe).
- * Adds a tiny fetchJsonWithHeaders helper and exported AI_BASE.
- */
+// NOTE: Keep this Node/Jest friendly (no expo/virtual/env import).
+// Reads from process.env when present (Jest), falls back otherwise.
 
-export const AI_BASE =
-  (typeof process !== "undefined" &&
-    process?.env?.EXPO_PUBLIC_AI_URL) ||
-  "http://localhost:3001";
+const RUNTIME_AI_BASE =
+  (typeof process !== "undefined" && process && process.env && process.env.EXPO_PUBLIC_AI_URL)
+    ? String(process.env.EXPO_PUBLIC_AI_URL)
+    : "http://localhost:3001";
 
 /** Build absolute URL from a path or absolute input. */
 export function buildAiUrl(path: string): string {
-  if (!path) return AI_BASE;
+  if (!path) return RUNTIME_AI_BASE;
   if (/^https?:\/\//i.test(path)) return path;
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${AI_BASE}${p}`;
+  const a = String(RUNTIME_AI_BASE).replace(/\/+$/,'');
+  const b = String(path).replace(/^\/+/, '');
+  return `${a}/${b}`;
 }
 
-/** Fetch JSON and also return lower-cased response headers (for meters/limits). */
-export async function fetchJsonWithHeaders<T = any>(
-  path: string,
-  init?: RequestInit
-): Promise<{ json: T; headers: Record<string, string> }> {
-  const url = buildAiUrl(path);
-  const res = await fetch(url, init);
-  const headers: Record<string, string> = {};
-  res.headers?.forEach?.((v, k) => (headers[k.toLowerCase()] = v));
-  const txt = await res.text();
-  const json = txt ? (JSON.parse(txt) as T) : ({} as T);
-  if (!res.ok) {
-    const message =
-      (json as any)?.error ||
-      (json as any)?.message ||
-      `${res.status} ${res.statusText}`;
-    throw new Error(message);
-  }
-  return { json, headers };
-}
+// Optional helper used by clients that want to log what base we resolved.
+export const __aiBase = RUNTIME_AI_BASE;

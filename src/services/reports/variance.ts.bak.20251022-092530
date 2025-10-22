@@ -1,0 +1,270 @@
+import { getFirestore, collection, query, where, orderBy, limit, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { VarianceItem, VarianceResult } from '../../types/reports';
+
+// Local dev logger (guarded). We avoid importing project dlog to keep this self-contained/safe.
+const dlog = (...args: any[]) => { if (__DEV__) console.log('[Variance]', ...args); };
+
+// ---------- Pure compute (unit-testable) ----------
+export type ComputeInputs = {
+  items: Array<{
+    id: string;
+    name?: string | null;
+    departmentId?: string | null;
+    unitCost?: number | null;
+    par?: number | null;
+  }>;
+  lastCountsByItemId: Record<string, number | null | undefined>;
+  receivedByItemId?: Record<string, number | null | undefined>;
+  soldByItemId?: Record<string, number | null | undefined>;
+  filterDepartmentId?: string | null;
+};
+
+export function computeVarianceFromData(inputs: ComputeInputs): VarianceResult {
+  const { items, lastCountsByItemId, receivedByItemId = {}, soldByItemId = {}, filterDepartmentId } = inputs;
+
+  const shortages: VarianceItem[] = [];
+  const excesses: VarianceItem[] = [];
+  let totalShortageValue = 0;
+  let totalExcessValue = 0;
+
+  const notes: string[] = [];
+
+  if (!items?.length) {
+    notes.push('No items found for the selected scope.');
+  }
+
+  for (const item of items) {
+    if (filterDepartmentId && item.departmentId !== filterDepartmentId) continue;
+
+    const lastCount = toNum(lastCountsByItemId[item.id]);
+    const received = toNum(receivedByItemId[item.id]);
+    const sold = toNum(soldByItemId[item.id]);
+
+    const theoreticalOnHand = lastCount + received - sold;
+    const par = toNumOrNull(item.par);
+    const unitCost = toNumOrNull(item.unitCost);
+
+    const deltaVsPar = par == null ? null : (theoreticalOnHand - par);
+
+    let valueImpact: number | null = null;
+    if (deltaVsPar != null && unitCost != null) {
+      valueImpact = Math.abs(deltaVsPar) * unitCost;
+    }
+
+    const row: VarianceItem = {
+      itemId: item.id,
+      name: item.name ?? null,
+      departmentId: item.departmentId ?? null,
+      unitCost,
+      par,
+      lastCount,
+      received,
+      sold,
+      theoreticalOnHand,
+      deltaVsPar,
+      valueImpact,
+    };
+
+    if (deltaVsPar == null || deltaVsPar === 0) {
+      // Neutral or no par -> ignore from shortage/excess buckets
+      continue;
+    } else if (deltaVsPar < 0) {
+      shortages.push(row);
+      if (valueImpact != null) totalShortageValue += valueImpact;
+    } else {
+      excesses.push(row);
+      if (valueImpact != null) totalExcessValue += valueImpact;
+    }
+  }
+
+  // Sort buckets by largest $ impact first, then abs qty
+  shortages.sort((a, b) => (num(b.valueImpact) - num(a.valueImpact)) || (Math.abs(a.deltaVsPar ?? 0) - Math.abs(b.deltaVsPar ?? 0)));
+  excesses.sort((a, b) => (num(b.valueImpact) - num(a.valueImpact)) || (Math.abs(b.deltaVsPar ?? 0) - Math.abs(a.deltaVsPar ?? 0)));
+
+  return {
+    shortages,
+    excesses,
+    totalShortageValue: round2(totalShortageValue),
+    totalExcessValue: round2(totalExcessValue),
+    generatedAt: Date.now(),
+    scope: { venueId: 'unknown', departmentId: filterDepartmentId ?? null },
+    notes,
+  };
+}
+
+// ---------- Firestore orchestration (defensive) ----------
+type OrchestrateOptions = {
+  venueId: string;
+  departmentId?: string | null;
+  // Optional: bypass cache write (e.g., preview mode)
+  skipPersist?: boolean;
+};
+
+/**
+ * Best-effort loader:
+ * - Items from venues/{venueId}/items (expects fields: name, departmentId, unitCost, par)
+ * - Last completed stocktake from venues/{venueId}/stockTakes (status=='complete'), newest by completedAt
+ *   and counts under stockTakes/{id}/counts (docs id=itemId, field qty or quantity)
+ * - Sales and invoices are optional; if not found, treated as 0-movement.
+ * - Persists "latest" snapshot to venues/{venueId}/reports/variance/summary (catch & continue on permission errors),
+ *   and also writes an AsyncStorage fallback.
+ */
+export async function computeVarianceForDepartment(opts: OrchestrateOptions): Promise<VarianceResult> {
+  const { venueId, departmentId = null, skipPersist } = opts;
+  const db = getFirestore();
+
+  // 1) Load items
+  const itemsCol = collection(db, 'venues', venueId, 'items');
+  // If an index for departmentId filter is not present, fallback to client-side filter.
+  let itemsSnap;
+  try {
+    if (departmentId) {
+      const q = query(itemsCol, where('departmentId', '==', departmentId));
+      itemsSnap = await getDocs(q);
+    } else {
+      itemsSnap = await getDocs(itemsCol);
+    }
+  } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+    dlog('Items query fallback (no index / permission):', e);
+    itemsSnap = await getDocs(itemsCol); // broad load, filter later
+  }
+
+  const items = itemsSnap.docs.map(d => {
+    const v = d.data() as any;
+    return {
+      id: d.id,
+      name: v?.name ?? null,
+      departmentId: v?.departmentId ?? null,
+      unitCost: toNumOrNull(v?.unitCost),
+      par: toNumOrNull(v?.par),
+    };
+  });
+
+  // 2) Find last completed stock take
+  const takesCol = collection(db, 'venues', venueId, 'stockTakes');
+  let lastTakeId: string | null = null;
+  try {
+    const q = query(takesCol, where('status', '==', 'complete'), orderBy('completedAt', 'desc'), limit(1));
+    const snap = await getDocs(q);
+    lastTakeId = snap.docs[0]?.id ?? null;
+  } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+    dlog('StockTakes query failed (no index / permission):', e);
+    // Fallback: try latest by createdAt if present
+    try {
+      const q2 = query(takesCol, orderBy('completedAt', 'desc'), limit(1));
+      const snap2 = await getDocs(q2);
+      lastTakeId = snap2.docs[0]?.id ?? null;
+    } catch (e2) {
+      dlog('StockTakes fallback also failed:', e2);
+    }
+  }
+
+  // 3) Load last counts (if any)
+  const lastCountsByItemId: Record<string, number> = {};
+  if (lastTakeId) {
+    try {
+      const countsCol = collection(db, 'venues', venueId, 'stockTakes', lastTakeId, 'counts');
+      const countsSnap = await getDocs(countsCol);
+      countsSnap.forEach((d) => {
+        const v = d.data() as any;
+        lastCountsByItemId[d.id] = toNum(v?.qty ?? v?.quantity ?? v?.count);
+      });
+    } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+      dlog('Counts load failed (continue with zeros):', e);
+    }
+  }
+
+  // 4) Optional: sales + invoices (best-effort; treat missing as zero)
+  const soldByItemId: Record<string, number> = {};
+  const receivedByItemId: Record<string, number> = {};
+
+  try {
+    // Example try-path 1: aggregated sales bucket
+    const salesAgg = doc(db, 'venues', venueId, 'reports', 'sales', 'latest', 'summary'); // may not exist
+    const salesDoc = await getDoc(salesAgg);
+    if (salesDoc.exists()) {
+      const m = salesDoc.data()?.byItemId ?? {};
+      for (const [k, v] of Object.entries(m)) soldByItemId[k] = toNum(v);
+    }
+  } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+    dlog('Sales agg read failed (ignore):', e);
+  }
+
+  try {
+    // Example try-path 2: aggregated receipted invoices
+    const invAgg = doc(db, 'venues', venueId, 'reports', 'invoices', 'latest', 'summary'); // may not exist
+    const invDoc = await getDoc(invAgg);
+    if (invDoc.exists()) {
+      const m = invDoc.data()?.byItemId ?? {};
+      for (const [k, v] of Object.entries(m)) receivedByItemId[k] = toNum(v);
+    }
+  } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+    dlog('Invoices agg read failed (ignore):', e);
+  }
+
+  // 5) Compute
+  const result = computeVarianceFromData({
+    items,
+    lastCountsByItemId,
+    receivedByItemId,
+    soldByItemId,
+    filterDepartmentId: departmentId,
+  });
+
+  // Patch scope metadata
+  result.scope = { venueId, departmentId };
+
+  // 6) Persist "latest" (Firestore + AsyncStorage fallback)
+  if (!skipPersist) {
+    try {
+      const latestRef = doc(db, 'venues', venueId, 'reports', 'variance', 'latest');
+      await setDoc(latestRef, result, { merge: true });
+    } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+      dlog('Persist to Firestore failed (permission? continue to local):', e);
+    }
+    try {
+      await AsyncStorage.setItem(localKey(venueId, departmentId), JSON.stringify(result));
+    } catch (e) {
+  // TEMP: show raw FirebaseError (prints index link if needed)
+  console.error('[Variance:raw/items]', e?.code, e?.message);
+
+      dlog('Persist to AsyncStorage failed:', e);
+    }
+  }
+
+  return result;
+}
+
+// ---------- Helpers ----------
+function toNum(v: any): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function toNumOrNull(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function num(n: number | null | undefined): number { return Number.isFinite(n as any) ? (n as number) : 0; }
+function round2(n: number): number { return Math.round(n * 100) / 100; }
+function localKey(venueId: string, departmentId?: string | null) {
+  return `variance:latest:${venueId}:${departmentId ?? 'all'}`;
+}

@@ -1,4 +1,4 @@
-/** Expo SDK 53 compatible Jest config (no runtime changes) */
+/** Expo SDK 53 compatible Jest config */
 module.exports = {
   preset: 'jest-expo',
   testMatch: [
@@ -6,8 +6,18 @@ module.exports = {
     '<rootDir>/src/**/?(*.)+(test|spec).[tj]s?(x)',
   ],
   transformIgnorePatterns: [
-    'node_modules/(?!(react-native|@react-native|react-clone-referenced-element|@expo(nent)?/.*|expo(nent)?|@expo-google-fonts/.*|expo-font|expo-asset)/)',
+    'node_modules/(?!(jest-)?react-native'
+      + '|@react-native(-community)?'
+      + '|react-clone-referenced-element'
+      + '|react-native-svg'
+      + '|expo(nent)?'
+      + '|expo-.*'
+      + '|@expo/.*'
+      + '|@unimodules/.*'
+      + '|unimodules-.*'
+      + '|sentry-expo'
+      + '|native-base'
+      + ')/)',
   ],
   testPathIgnorePatterns: ['/node_modules/', '/dist/', '/build/'],
-  // keep it lean; we don’t need setupFilesAfterEnv for pure util tests
 };
