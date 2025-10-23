@@ -49,7 +49,7 @@ export default function MainStack() {
 
       {/* Products */}
       <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
-      <Stack.Screen name="EditProductScreen" component={EditProductScreen} options={{ title: 'Edit Product' }} />
+      <Stack.Screen name="EditProductScreen" component={EditProductScreen} options={{ title: íit Product' }} />
 
       {/* Reports hub + detail */}
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
