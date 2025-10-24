@@ -1,18 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-
-const pdfParseMod = require('pdf-parse');
-
-// Normalise into an object with a .parse(buffer) method
-const parser =
-  (typeof pdfParseMod === 'function' && { parse: pdfParseMod }) ||
-  (pdfParseMod && typeof pdfParseMod.default === 'function' && { parse: pdfParseMod.default }) ||
-  (pdfParseMod && typeof pdfParseMod.PDFParse === 'function' && new pdfParseMod.PDFParse());
-
-if (!parser || typeof parser.parse !== 'function') {
-  console.error('pdf-parse export keys:', Object.keys(pdfParseMod || {}));
-  throw new Error('Could not get a parser.parse(buffer) function from pdf-parse.');
-}
+const pdfParse = require('pdf-parse'); // v1.1.1 exposes a function
 
 const { csvHeaders, toRow, ensureSupplierSlug } = require('./utils.cjs');
 
@@ -29,7 +17,7 @@ const OUT_DIR= path.join(ROOT, 'supplier_catalogs/normalized');
 
 const SUPPLIER_RULES = [
   { id:'ticketyboo', match: /tickety[\s-]?boo|t[io]ckety/i,      extractor: extractTicketyBoo, label:'Tickety Boo' },
-  { id:'plc',        match: /premium liquor|plc-20|PLC-20/i,     extractor: extractPLC,       label:'Premium Liquor' },
+  { id:'plc',        { ich: /premium liquor|plc-20|PLC-20/i,     extractor: extractPLC,       label:'Premium Liquor' },
   { id:'no8',        match: /no\.?8|no8\s+distillery/i,          extractor: extractNo8,       label:'No.8 Distillery' },
   { id:'alchemy',    match: /alchemy.*tonic|160ml/i,             extractor: extractAlchemy,   label:'Alchemy Tonic' },
   { id:'nicely',     match: /nicely\s+done/i,                    extractor: extractNicely,    label:'Nicely Done' },
@@ -52,7 +40,7 @@ const chooseExtractor = (text, filename) => {
 
   for (const file of files) {
     const buf = fs.readFileSync(path.join(IN_DIR, file));
-    const data = await parser.parse(buf);
+    const data = await pdfParse(buf);
     const text = data && data.text ? data.text : '';
     const rule = chooseExtractor(text, file);
     const rows = rule.extractor({ text, supplier: rule.label });
