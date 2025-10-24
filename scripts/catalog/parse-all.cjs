@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const pdfParse = require('pdf-parse'); // v1.1.1 exposes a function
+const getPdfText = require('./getPdfText.cjs');
 
 const { csvHeaders, toRow, ensureSupplierSlug } = require('./utils.cjs');
 
@@ -17,9 +17,9 @@ const OUT_DIR= path.join(ROOT, 'supplier_catalogs/normalized');
 
 const SUPPLIER_RULES = [
   { id:'ticketyboo', match: /tickety[\s-]?boo|t[io]ckety/i,      extractor: extractTicketyBoo, label:'Tickety Boo' },
-  { id:'plc',        { ich: /premium liquor|plc-20|PLC-20/i,     extractor: extractPLC,       label:'Premium Liquor' },
+  { id:'plc',        match: /premium\s+liquor|plc-20/i,          extractor: extractPLC,       label:'Premium Liquor' },
   { id:'no8',        match: /no\.?8|no8\s+distillery/i,          extractor: extractNo8,       label:'No.8 Distillery' },
-  { id:'alchemy',    match: /alchemy.*tonic|160ml/i,             extractor: extractAlchemy,   label:'Alchemy Tonic' },
+  { id:'alchemy',    match: /alchemy.*tonic|160\s*ml/i,          extractor: extractAlchemy,   label:'Alchemy Tonic' },
   { id:'nicely',     match: /nicely\s+done/i,                    extractor: extractNicely,    label:'Nicely Done' },
   { id:'masterfmc',  match: /master\s+fm&co|fm&co/i,             extractor: extractMasterFMC, label:'MASTER FM&Co' },
 ];
@@ -40,8 +40,7 @@ const chooseExtractor = (text, filename) => {
 
   for (const file of files) {
     const buf = fs.readFileSync(path.join(IN_DIR, file));
-    const data = await pdfParse(buf);
-    const text = data && data.text ? data.text : '';
+    const text = await getPdfText(buf, file);
     const rule = chooseExtractor(text, file);
     const rows = rule.extractor({ text, supplier: rule.label });
     const slug = ensureSupplierSlug(rule.label);
@@ -49,7 +48,7 @@ const chooseExtractor = (text, filename) => {
     const header = csvHeaders.join(',');
     const body = rows.map(toRow).join('\n');
     fs.writeFileSync(outPath, `${header}\n${body}\n`, 'utf8');
-    const density = text.replace(/\s+/g,'').length;
-    console.log(`[catalog] ${rule.label} (${file}) → ${rows.length} rows (${density ? 'text ok' : 'no text - likely scanned/OCR needed'}) → ${outPath}`);
+    const compact = (text||'').replace(/\s+/g,'');
+    console.log(`[catalog] ${rule.label} (${file}) → ${rows.length} rows (${compact ? 'text ok' : 'no text'}) → ${outPath}`);
   }
 })().catch(err => { console.error(err); process.exit(1); });
