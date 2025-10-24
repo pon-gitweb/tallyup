@@ -1,18 +1,22 @@
 // @ts-nocheck
 /**
  * Apply supplier links to products using existing writers.
- * No schema changes. Safe to call from any UI.
+ * Also writes lastSupplierPrice if a numeric price is supplied for the row.
+ * Note: In unit test env (no Firebase app), price write is skipped gracefully.
  */
 import { ensureProduct } from '../orders/linking';
 import { setSupplierOnProduct } from '../orders/suppliers';
+import type { Firestore } from 'firebase/firestore';
+import { getFirestore, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 export type ApplyRow = {
-  rowIndex: number;              // index from preview
-  productId?: string | null;     // chosen product (existing or to be created)
-  productName?: string | null;   // optional: name when creating new
-  supplierId: string;            // the supplier we’re linking to
-  supplierName?: string | null;  // display name (optional; util will resolve name if omitted)
-  createIfMissing?: boolean;     // create product if productId is supplied but doesn't exist (by ensureProduct)
+  rowIndex: number;
+  productId?: string | null;
+  productName?: string | null;
+  supplierId: string;
+  supplierName?: string | null;
+  createIfMissing?: boolean;
+  price?: number | null;       // optional numeric price from CSV
 };
 
 export type ApplyReportItem = {
@@ -25,18 +29,24 @@ export type ApplyReportItem = {
 export async function applyCatalogLinks(params: {
   venueId: string;
   rows: ApplyRow[];
+  db?: Firestore | null; // optional injection for tests
 }): Promise<{ results: ApplyReportItem[] }> {
   const { venueId, rows } = params || {};
+  let { db } = params || {};
   const results: ApplyReportItem[] = [];
 
   if (!venueId || !Array.isArray(rows) || rows.length === 0) {
     return { results };
   }
 
+  // Try to obtain a Firestore instance; if none (e.g. unit tests), we skip price write
+  if (!db) {
+    try { db = getFirestore(); } catch { db = null; }
+  }
+
   for (const r of rows) {
     const rowIndex = Number(r.rowIndex ?? -1);
     try {
-      // Minimal validation
       if (!r?.supplierId) {
         results.push({ rowIndex, status: 'skipped', message: 'Missing supplierId' });
         continue;
@@ -46,21 +56,18 @@ export async function applyCatalogLinks(params: {
         continue;
       }
 
-      // Optionally ensure product exists (safe no-op if it already exists)
+      // Optionally ensure product exists (safe if already there)
       if (r.productId && r.createIfMissing) {
         await ensureProduct(venueId, r.productId, r.productName ?? r.productId);
       }
 
-      // If productId is still missing but we have a name, generate a simple id (callers may replace with a real id strategy)
       let finalProductId = r.productId ?? null;
       if (!finalProductId && r.productName) {
-        // Caller chose to create a new product using its name as id seed
         const seed = String(r.productName).trim();
         if (!seed) {
           results.push({ rowIndex, status: 'skipped', message: 'Cannot derive productId from empty name' });
           continue;
         }
-        // Simple id suggestion (can be replaced by caller)
         finalProductId = seed.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
         await ensureProduct(venueId, finalProductId, r.productName);
       }
@@ -70,8 +77,17 @@ export async function applyCatalogLinks(params: {
         continue;
       }
 
-      // Link supplier to product
+      // Link supplier to product (always)
       await setSupplierOnProduct(venueId, finalProductId, r.supplierId, r.supplierName ?? undefined);
+
+      // Optionally persist lastSupplierPrice (numeric only, and only if db available)
+      if (db && Number.isFinite(r?.price)) {
+        const ref = doc(db, 'venues', venueId, 'products', finalProductId);
+        await updateDoc(ref, {
+          lastSupplierPrice: Number(r.price),
+          updatedAt: serverTimestamp(),
+        });
+      }
 
       results.push({ rowIndex, status: 'ok', productId: finalProductId });
     } catch (e:any) {
