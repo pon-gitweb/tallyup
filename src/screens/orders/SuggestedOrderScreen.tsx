@@ -16,10 +16,12 @@ import { createDraftsFromSuggestions, computeSuggestionKey } from '../../service
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
 
-const dlog = (...a:any[]) => console.log('[SuggestedOrders]', ...a);
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
 const n = (v:any,d=0)=>{const x=Number(v);return Number.isFinite(x)?x:d;};
 const m1=(v:any)=>{const x=Number(v);return Number.isFinite(x)?Math.max(1,Math.round(x)):1;};
+
+// keep submitted set aligned with OrdersScreen
+const SUBMITTED_SET = new Set(['submitted','sent','placed','approved','awaiting','processing']);
 
 type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
 
@@ -89,7 +91,8 @@ export default function SuggestedOrderScreen(){
     setSnapshot({buckets,unassigned});
   },[db,venueId]);
 
-  // Persisted dedupe: scan ALL orders (no orderBy) to include brand-new serverTimestamp docs
+  // PERSISTENT VENUE-WIDE DEDUPE:
+  // include both draft and submitted orders created from suggestions
   const loadExistingSuggestionKeys=useCallback(async()=>{
     if(!venueId){setExistingKeys(new Set());return;}
     const ref=collection(db,'venues',venueId,'orders');
@@ -98,7 +101,9 @@ export default function SuggestedOrderScreen(){
     snap.forEach(d=>{
       const data:any=d.data()||{};
       const status=String(data.displayStatus||data.status||'draft').toLowerCase();
-      if(status==='draft' && data?.source==='suggestions' && typeof data?.suggestionKey==='string'){
+      const isDraft = status==='draft';
+      const isSubmitted = SUBMITTED_SET.has(status);
+      if((isDraft || isSubmitted) && data?.source==='suggestions' && typeof data?.suggestionKey==='string'){
         keys.add(data.suggestionKey);
       }
     });
@@ -159,8 +164,6 @@ export default function SuggestedOrderScreen(){
       return;
     }
     try{
-      // CORRECT payload shape for createDraftsFromSuggestions:
-      // { "<supplierId>" | "unassigned": { supplierName?, lines: [...] } }
       const supplierKey = supplierPreview.supplierId === 'unassigned' ? 'unassigned' : supplierPreview.supplierId;
       const payload:any = {};
       payload[supplierKey] = {
@@ -171,7 +174,6 @@ export default function SuggestedOrderScreen(){
       const res = await createDraftsFromSuggestions(venueId, payload, {createdBy:uid});
       console.log('[Suggested] create result', res);
 
-      // If writer created or returned an id, mark dedupe locally
       if (Array.isArray(res?.created) && res.created.length > 0) {
         setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
       }
@@ -179,7 +181,6 @@ export default function SuggestedOrderScreen(){
       setSupplierOpen(false);
       Alert.alert('Draft saved',`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
       if (Platform.OS==='android') ToastAndroid.show('Draft saved in Orders', ToastAndroid.SHORT);
-      // Stay on Suggested (no auto-navigation)
     }catch(e:any){
       console.log('[Suggested] create error', e);
       Alert.alert('Could not create draft',e?.message||'Please try again.');
