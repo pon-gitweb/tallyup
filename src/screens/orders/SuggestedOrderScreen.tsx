@@ -6,7 +6,10 @@ import {
   RefreshControl, Alert, Modal, Platform, ToastAndroid
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import {
+  getFirestore, collection, getDocs,
+  writeBatch, doc, query, where, serverTimestamp
+} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
@@ -167,7 +170,8 @@ export default function SuggestedOrderScreen(){
       productName:String(l.productName??l.name??l.productId??''),
       qty:m1(l.qty),
       cost:n(l.unitCost??l.cost??0,0),
-      packSize:Number.isFinite(l?.packSize)?Number(l?.packSize):null
+      packSize:Number.isFinite(l?.packSize)?Number(l?.packSize):null,
+      dept: l?.dept ?? null,
     }));
     const suggestionKey=buildSuggestionKey(supplierId==='unassigned'?null:supplierId,previewLines);
     const alreadyDrafted=existingKeys.has(suggestionKey);
@@ -176,35 +180,88 @@ export default function SuggestedOrderScreen(){
     setSupplierOpen(true);
   },[snapshot,existingKeys]);
 
-  // FIX: pass a legacy flat map (no {buckets,unassigned} wrapper)
+  // Find first existing draft for supplier (null/unassigned queries all drafts)
+  const findExistingDraftForSupplier = useCallback(async(supplierId:string|null)=>{
+    if(!venueId) return null;
+    const ref = collection(db, 'venues', venueId, 'orders');
+    let qRef = query(ref, where('status','==','draft'));
+    if(supplierId && supplierId !== 'unassigned'){
+      qRef = query(ref, where('status','==','draft'), where('supplierId','==',supplierId));
+    }
+    const snap = await getDocs(qRef);
+    let firstId:string|null = null;
+    snap.forEach(d=>{ if(!firstId) firstId = d.id; });
+    return firstId;
+  },[db,venueId]);
+
+  // Merge the given lines into an existing draft (set/merge per productId)
+  const mergeIntoExistingDraft = useCallback(async(orderId:string, lines:any[])=>{
+    const batch = writeBatch(db);
+    const orderRef = doc(db, 'venues', venueId!, 'orders', orderId);
+    const safeQty=(q:any)=>Math.max(1,Math.round(Number(q)||1));
+    for(const l of (Array.isArray(lines)?lines:[])){
+      const unitCost = Number.isFinite(l?.cost)?Number(l.cost):0;
+      const lr = doc(orderRef, 'lines', String(l.productId));
+      batch.set(lr, {
+        productId:String(l.productId),
+        name:String(l.productName??l.name??l.productId??''),
+        qty:safeQty(l.qty),
+        unitCost,
+        packSize:Number.isFinite(l?.packSize)?Number(l.packSize):null,
+        reason:l?.reason??null,
+        needsPar:!!l?.needsPar,
+        needsSupplier:!!l?.needsSupplier,
+        dept: l?.dept ?? null,
+      }, { merge:true });
+    }
+    batch.update(orderRef,{ updatedAt:serverTimestamp(), displayStatus:'draft', status:'draft' });
+    await batch.commit();
+  },[db,venueId]);
+
+  // Merge-aware draft creation
   const createDraftForPreview=useCallback(async()=>{
     if(!venueId||!supplierPreview)return;
-    if(supplierPreview.alreadyDrafted){
-      Alert.alert('Already drafted','A draft for this supplier’s current suggestion has already been created. Find it in Orders.');
-      return;
-    }
     try{
       const key = supplierPreview.supplierId || 'unassigned';
-      const legacyMap = {
-        [key]: {
-          supplierName: supplierPreview.supplierName ?? null,
-          lines: supplierPreview.lines || [],
-        }
-      };
-      const res = await createDraftsFromSuggestions(venueId, legacyMap, { createdBy: uid });
-      dlog('create result', res);
+      const existingId = await findExistingDraftForSupplier(key==='unassigned'?null:key);
 
-      if (Array.isArray(res?.created) && res.created.length > 0) {
-        setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
+      const doCreateSeparate = async()=>{
+        const legacyMap = {
+          [key]: { supplierName: supplierPreview.supplierName ?? null, lines: supplierPreview.lines || [] },
+        };
+        const res = await createDraftsFromSuggestions(venueId, legacyMap, { createdBy: uid });
+        if (Array.isArray(res?.created) && res.created.length > 0) {
+          setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
+        }
+        setSupplierOpen(false);
+        Alert.alert('Draft saved',`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
+        if (Platform.OS==='android') ToastAndroid.show('Draft saved in Orders', ToastAndroid.SHORT);
+      };
+
+      if(existingId){
+        Alert.alert(
+          'Draft exists for this supplier',
+          'Would you like to MERGE these lines into the existing draft, or create a SEPARATE draft?',
+          [
+            { text:'Cancel', style:'cancel' },
+            { text:'Separate', onPress: doCreateSeparate },
+            { text:'Merge', style:'default', onPress: async()=>{
+                await mergeIntoExistingDraft(existingId, supplierPreview.lines||[]);
+                setSupplierOpen(false);
+                Alert.alert('Merged', 'Lines merged into the existing draft.');
+                if (Platform.OS==='android') ToastAndroid.show('Merged into existing draft', ToastAndroid.SHORT);
+              }
+            },
+          ]
+        );
+        return;
       }
 
-      setSupplierOpen(false);
-      Alert.alert('Draft saved',`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
-      if (Platform.OS==='android') ToastAndroid.show('Draft saved in Orders', ToastAndroid.SHORT);
+      await doCreateSeparate();
     }catch(e:any){
       Alert.alert('Could not create draft',e?.message||'Please try again.');
     }
-  },[venueId,supplierPreview,uid]);
+  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft]);
 
   const onToggleMode=useCallback(async(nextMode:'math'|'ai')=>{
     if(nextMode==='ai'&&!entitled){ setPayOpen(true); return; }

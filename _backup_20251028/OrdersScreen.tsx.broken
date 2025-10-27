@@ -1,19 +1,8 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert } from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import {
-  getFirestore,
-  collection,
-  onSnapshot,
-  doc,
-  deleteDoc,
-  query,
-  where,
-  getDocs,
-  writeBatch,
-  Timestamp
-} from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
 type OrderRow = {
@@ -28,8 +17,6 @@ type OrderRow = {
   receivedAt?: any;
   linesCount?: number | null;
   total?: number | null;
-  // additive: may exist if upstream set it
-  deptScope?: string[] | null;
 };
 
 const S = StyleSheet.create({
@@ -53,6 +40,10 @@ const S = StyleSheet.create({
   smallBtnText:{color:'#fff',fontSize:12,fontWeight:'700'},
   empty:{padding:24,alignItems:'center'},
   emptyText:{color:'#6B7280'},
+
+  // grouping headers
+  headerRow:{backgroundColor:'#F9FAFB',paddingVertical:8,paddingHorizontal:16,borderTopWidth:StyleSheet.hairlineWidth,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  headerText:{fontSize:12,fontWeight:'800',color:'#6B7280',textTransform:'uppercase'},
 });
 
 const STATUS_GROUPS = {
@@ -60,6 +51,35 @@ const STATUS_GROUPS = {
   submitted: (s:string)=>['submitted','sent','placed','approved','awaiting','processing'].includes(s),
   received: (s:string)=>['received','complete','closed'].includes(s),
 };
+
+// ===== helpers for grouping =====
+const ms = (x:any)=>x?.toMillis?.() ?? 0;
+function toStartOfDay(ts:number){
+  const d = new Date(ts); d.setHours(0,0,0,0); return d.getTime();
+}
+function formatDay(ts:number){
+  const d=new Date(ts);
+  const dow = d.toLocaleDateString(undefined,{weekday:'short'});
+  const day = d.toLocaleDateString(undefined,{day:'2-digit',month:'short'});
+  return `${dow} ${day}`;
+}
+function startOfWeek(ts:number){ // Mon-based weeks
+  const d=new Date(ts); const day=(d.getDay()+6)%7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day); return d.getTime();
+}
+function endOfWeek(ts:number){
+  const s = startOfWeek(ts); const d=new Date(s); d.setDate(d.getDate()+6); return toStartOfDay(d.getTime());
+}
+function formatWeekRange(ts:number){
+  const s = startOfWeek(ts), e = endOfWeek(ts);
+  const sd = new Date(s), ed = new Date(e);
+  const month = sd.toLocaleDateString(undefined,{month:'short'});
+  const pad = (n:number)=>String(n).padStart(2,'0');
+  return `${month} ${pad(sd.getDate())}–${pad(ed.getDate())}`;
+}
+
+type RowNode = { kind:'row'; data:OrderRow };
+type HeaderNode = { kind:'header'; id:string; label:string };
+type Node = RowNode|HeaderNode;
 
 export default function OrdersScreen(){
   const nav = useNavigation<any>();
@@ -70,17 +90,17 @@ export default function OrdersScreen(){
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
 
-  // Subscribe to orders (newest first by any available timestamp)
+  // Subscribe to orders
   useEffect(()=>{
     if(!venueId) return;
     const ref = collection(db,'venues',venueId,'orders');
     const unsub = onSnapshot(ref,(snap)=>{
       const out:OrderRow[]=[];
-      snap.forEach((docSnap)=>{
-        const d:any=docSnap.data()||{};
+      snap.forEach((doc)=>{
+        const d:any=doc.data()||{};
         const s=String(d.status||d.displayStatus||'draft').toLowerCase();
         out.push({
-          id:docSnap.id,
+          id:doc.id,
           supplierId:d.supplierId??null,
           supplierName:d.supplierName??'Supplier',
           status:s,
@@ -91,10 +111,9 @@ export default function OrdersScreen(){
           receivedAt:d.receivedAt??null,
           linesCount:Number.isFinite(d.linesCount)?Number(d.linesCount):null,
           total:Number.isFinite(d.total)?Number(d.total):null,
-          deptScope: Array.isArray(d.deptScope) ? d.deptScope : null, // additive
         });
       });
-      const ms=(x:any)=>x?.toMillis?.()??0;
+      // newest first by any available timestamp
       out.sort((a,b)=>{
         const ta = ms(a.receivedAt)||ms(a.submittedAt)||ms(a.createdAt)||a.createdAtClientMs||0;
         const tb = ms(b.receivedAt)||ms(b.submittedAt)||ms(b.createdAt)||b.createdAtClientMs||0;
@@ -105,10 +124,54 @@ export default function OrdersScreen(){
     return ()=>unsub();
   },[db,venueId]);
 
-  const rows=useMemo(()=>{
+  const baseRows=useMemo(()=>{
     const pick=STATUS_GROUPS[tab];
     return rowsAll.filter(r=>pick(String(r.status||'draft')));
   },[rowsAll,tab]);
+
+  // Build grouped list only for Received tab; others are flat
+  const data:Node[] = useMemo(()=>{
+    if(tab!=='received') return baseRows.map(r=>({kind:'row',data:r}) as Node);
+
+    const now = Date.now();
+    const DAY_MS = 24*60*60*1000;
+    const sevenDaysAgo = toStartOfDay(now - 7*DAY_MS);
+
+    const buckets = new Map<string,{label:string; items:OrderRow[]}>();
+
+    for(const r of baseRows){
+      const t = ms(r.receivedAt)||ms(r.submittedAt)||ms(r.createdAt)||r.createdAtClientMs||0;
+      if(!t){ continue; }
+      if(t >= sevenDaysAgo){
+        const dayKey = String(toStartOfDay(t));
+        if(!buckets.has(dayKey)){
+          buckets.set(dayKey,{label:formatDay(t),items:[]});
+        }
+        buckets.get(dayKey)!.items.push(r);
+      }else{
+        const wkKey = `W:${startOfWeek(t)}`;
+        if(!buckets.has(wkKey)){
+          buckets.set(wkKey,{label:formatWeekRange(t),items:[]});
+        }
+        buckets.get(wkKey)!.items.push(r);
+      }
+    }
+
+    // Sort headers by most recent
+    const entries = Array.from(buckets.entries()).sort((a,b)=>{
+      const aKey = a[0].startsWith('W:') ? Number(a[0].slice(2)) : Number(a[0]);
+      const bKey = b[0].startsWith('W:') ? Number(b[0].slice(2)) : Number(b[0]);
+      return bKey - aKey;
+    });
+
+    const nodes:Node[]=[];
+    entries.forEach(([key,grp])=>{
+      nodes.push({kind:'header',id:key,label:grp.label});
+      // keep rows inside each group already sorted newest-first by outer sort
+      nodes.push(...grp.items.map(it=>({kind:'row',data:it} as Node)));
+    });
+    return nodes;
+  },[baseRows,tab]);
 
   const openRow=useCallback((row:OrderRow)=>{
     const s=String(row.status||'draft');
@@ -123,106 +186,42 @@ export default function OrdersScreen(){
     nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
   },[nav]);
 
-  // UPDATED: delete draft + all its lines, batched
-  const confirmDelete=useCallback(async (row:OrderRow)=>{
-    Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
-      { text:'Cancel', style:'cancel' },
-      { text:'Delete', style:'destructive', onPress: async ()=>{
-        try{
-          if(!venueId) return;
-          const orderRef = doc(db,'venues',venueId,'orders',row.id);
-          const linesCol = collection(orderRef,'lines');
-          const lineSnap = await getDocs(linesCol);
-          const batch = writeBatch(db);
-          lineSnap.forEach(d => batch.delete(doc(orderRef,'lines',d.id)));
-          batch.delete(orderRef);
-          await batch.commit();
-        }catch(e:any){
-          Alert.alert('Delete failed', e?.message || 'Could not delete draft.');
-        }
-      }}
-    ]);
-  },[db,venueId]);
-
-  const renderItem=useCallback(({item}:{item:OrderRow})=>{
+  const renderNode=useCallback(({item}:{item:Node})=>{
+    if(item.kind==='header'){
+      return (
+        <View style={S.headerRow}>
+          <Text style={S.headerText}>{item.label}</Text>
+        </View>
+      );
+    }
+    const r=item.data;
     const bits:string[]=[];
-    if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':'s'}`);
-    if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
+    if(r.linesCount!=null) bits.push(`${r.linesCount} line${r.linesCount===1?'':'s'}`);
+    if(r.total!=null) bits.push(`$${r.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
-    const pillText=item.displayStatus||item.status||'—';
-    const isSubmitted=STATUS_GROUPS.submitted(String(item.status||'draft'));
-    const isDraft = String(item.status||'draft')==='draft';
+    const pillText=r.displayStatus||r.status||'—';
+    const isSubmitted=STATUS_GROUPS.submitted(String(r.status||'draft'));
     return(
       <View style={S.row}>
-        <TouchableOpacity
-          style={S.left}
-          onPress={()=>openRow(item)}
-          onLongPress={()=>{ if(isDraft) confirmDelete(item); }}
-          delayLongPress={350}
-          activeOpacity={0.8}
-        >
-          <Text style={S.rowTitle}>{item.supplierName||'Supplier'}</Text>
+        <TouchableOpacity style={S.left} onPress={()=>openRow(r)} activeOpacity={0.8}>
+          <Text style={S.rowTitle}>{r.supplierName||'Supplier'}</Text>
           <Text style={S.rowSub}>{subtitle||'—'}</Text>
           <View style={S.pill}><Text style={S.pillText}>{pillText}</Text></View>
-          {/* additive: show dept scope if present */}
-          {Array.isArray(item.deptScope) && item.deptScope.length>0 ? (
-            <View style={S.pill}><Text style={S.pillText}>{item.deptScope.join(' · ')}</Text></View>
-          ) : null}
         </TouchableOpacity>
         {isSubmitted ? (
-          <TouchableOpacity style={S.smallBtn} onPress={()=>startReceive(item)}>
+          <TouchableOpacity style={S.smallBtn} onPress={()=>startReceive(r)}>
             <Text style={S.smallBtnText}>Receive</Text>
           </TouchableOpacity>
         ) : null}
       </View>
     );
-  },[openRow,startReceive,confirmDelete]);
+  },[openRow,startReceive]);
 
   const onRefresh=useCallback(()=>{
+    // snapshot listener keeps rows fresh; just do a cosmetic spinner
     setRefreshing(true);
     setTimeout(()=>setRefreshing(false),200);
   },[]);
-
-  // ---- Auto-clean stale drafts (>=7 days) with index-aware fallback
-  const cleanedRef = useRef(false);
-  useEffect(()=>{
-    if(!venueId || cleanedRef.current) return;
-    cleanedRef.current = true;
-
-    (async ()=>{
-      const ref = collection(db,'venues',venueId,'orders');
-      const sevenDaysMs = 7*24*60*60*1000;
-      const cutoffMs = Date.now() - sevenDaysMs;
-
-      try{
-        const qy = query(ref, where('status','==','draft'), where('createdAtClientMs','<', cutoffMs));
-        const snap = await getDocs(qy);
-        const stale = snap.docs;
-        console.log('[Orders] Auto-clean stale drafts count =', stale.length);
-        await Promise.all(stale.map(d => deleteDoc(d.ref)));
-        console.log('[Orders] Auto-clean complete');
-      }catch(err:any){
-        console.log('[Orders] Auto-clean failed', err);
-        try{
-          const snapAll = await getDocs(ref);
-          const staleAll = snapAll.docs.filter(d=>{
-            const v:any = d.data()||{};
-            const s = String(v.status||v.displayStatus||'draft').toLowerCase();
-            if(s!=='draft') return false;
-            const clientMs = Number(v.createdAtClientMs||0);
-            const serverMs = v.createdAt?.toMillis?.() ?? 0;
-            const ts = clientMs || serverMs || 0;
-            return ts>0 && ts < cutoffMs;
-          });
-          console.log('[Orders] Auto-clean (no-index) stale count =', staleAll.length);
-          await Promise.all(staleAll.map(d=>deleteDoc(d.ref)));
-          console.log('[Orders] Auto-clean complete');
-        }catch(e2){
-          console.log('[Orders] Auto-clean fallback failed', e2);
-        }
-      }
-    })();
-  },[db,venueId]);
 
   return(
     <View style={S.wrap}>
@@ -248,9 +247,9 @@ export default function OrdersScreen(){
       </View>
 
       <FlatList
-        data={rows}
-        keyExtractor={(r)=>r.id}
-        renderItem={renderItem}
+        data={data}
+        keyExtractor={(n)=> n.kind==='header' ? `h:${n.id}` : n.data.id}
+        renderItem={renderNode}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={<View style={S.empty}><Text style={S.emptyText}>No {tab} orders.</Text></View>}
         contentContainerStyle={{paddingBottom:20}}

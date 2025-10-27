@@ -110,6 +110,17 @@ export async function createDraftsFromSuggestions(
     }
     // --- END DEDUPE ---
 
+    // derive deptScope (unique, truthy) from incoming lines if present
+    const deptScope = Array.from(
+      new Set(
+        (lines as any[])
+          .map(l => (l && typeof l === 'object' ? (l as any).dept : null))
+          .filter(Boolean)
+          .map(String)
+      )
+    );
+    const deptScopeField = deptScope.length ? deptScope : null;
+
     const orderRef = await addDoc(ordersCol, {
       status: 'draft',
       displayStatus: 'draft',
@@ -119,10 +130,12 @@ export async function createDraftsFromSuggestions(
       suggestionKey,
       needsSupplierReview: isUnassigned ? true : false,
       createdAt: serverTimestamp(),
-      createdAtClientMs: Date.now(), // appears instantly before server ts resolves
+      createdAtClientMs: Date.now(),
       linesCount,
       total,
       createdBy: opts.createdBy ?? null,
+      // additive: only store if present
+      ...(deptScopeField ? { deptScope: deptScopeField } : {}),
     });
 
     const batch = writeBatch(db);
@@ -137,7 +150,9 @@ export async function createDraftsFromSuggestions(
         needsPar: !!(l as any).needsPar,
         needsSupplier: !!(l as any).needsSupplier,
         reason: (l as any).reason ?? null,
-      });
+        // additive: carry through dept if upstream provided it
+        dept: (l as any).dept ?? null,
+      }, { merge: true });
     }
     await batch.commit();
 

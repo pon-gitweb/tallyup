@@ -1,0 +1,154 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { getApp } from 'firebase/app';
+import {
+  getFirestore, doc, onSnapshot, collection, query, orderBy,
+  serverTimestamp, writeBatch
+} from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+
+type Params = { orderId: string; receiveNow?: boolean };
+
+export default function OrderDetailScreen() {
+  const nav = useNavigation<any>();
+  const route = useRoute<RouteProp<Record<string, Params>, string>>();
+  const venueId = useVenueId();
+  const orderId = route.params?.orderId || '';
+  const receiveNowParam = !!route.params?.receiveNow;
+
+  const [hdr, setHdr] = useState<any>(null);
+  const [lines, setLines] = useState<any[]>([]);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+
+  const db = getFirestore(getApp());
+  const orderRef = venueId && orderId ? doc(db, 'venues', venueId, 'orders', orderId) : null;
+
+  // Header (order doc)
+  useEffect(() => {
+    if (!orderRef) return;
+    const unsub = onSnapshot(orderRef, (snap) => setHdr(snap.exists() ? snap.data() : null));
+    return () => unsub();
+  }, [orderRef]);
+
+  // Lines
+  useEffect(() => {
+    if (!orderRef) return;
+    const col = collection(orderRef, 'lines');
+    const qy = query(col, orderBy('name'));
+    const unsub = onSnapshot(qy, (snap) => {
+      const next: any[] = [];
+      snap.forEach((d) => {
+        const v = d.data() as any;
+        next.push({ id: d.id, name: v?.name ?? d.id, qtyOrdered: Number(v?.qty ?? v?.qtyOrdered ?? 0), receivedQty: Number(v?.receivedQty ?? 0) });
+      });
+      setLines(next);
+    });
+    return () => unsub();
+  }, [orderRef]);
+
+  // Auto-open Receive sheet only if explicitly requested AND not already received
+  useEffect(() => {
+    const status = String(hdr?.status || hdr?.displayStatus || '').toLowerCase();
+    if (receiveNowParam && status !== 'received' && Array.isArray(lines)) {
+      setReceiveOpen(true);
+    } else {
+      setReceiveOpen(false);
+    }
+  }, [receiveNowParam, hdr, lines]);
+
+  const confirmReceive = useCallback(async () => {
+    try {
+      if (!orderRef) throw new Error('No order');
+      const batch = writeBatch(db);
+      lines.forEach((ln) => {
+        const lr = doc(orderRef, 'lines', ln.id);
+        const want = Number.isFinite(ln.receivedQty) ? Number(ln.receivedQty) : Number(ln.qtyOrdered || 0);
+        batch.update(lr, { receivedQty: Math.max(0, want) });
+      });
+      batch.update(orderRef, {
+        status: 'received',
+        displayStatus: 'received',
+        receivedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+
+      nav.setParams({ receiveNow: false });
+      Alert.alert('Received', 'Order marked as received.');
+      setReceiveOpen(false);
+    } catch (e: any) {
+      Alert.alert('Receive', e?.message ?? 'Failed to receive order.');
+    }
+  }, [db, orderRef, lines, nav]);
+
+  const totalOrdered = useMemo(() => lines.reduce((a,b)=>a+(Number(b.qtyOrdered)||0),0), [lines]);
+  const totalReceived = useMemo(() => lines.reduce((a,b)=>a+(Number(b.receivedQty)||0),0), [lines]);
+
+  if (!hdr) {
+    return <View style={{ padding: 16 }}><Text>Loading…</Text></View>;
+  }
+
+  return (
+    <View style={{ flex:1, backgroundColor:'#fff' }}>
+      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+        <Text style={{ fontWeight: '800' }}>{hdr?.supplierName || 'Supplier'}</Text>
+        <Text style={{ color:'#6b7280' }}>{hdr?.displayStatus || hdr?.status || '—'}</Text>
+        <Text style={{ marginTop: 6, color:'#6b7280' }}>
+          Ordered {totalOrdered} • Received {totalReceived}
+        </Text>
+        {Array.isArray(hdr?.deptScope)&&hdr.deptScope.length>0 ? (
+          <Text style={{ marginTop: 4, color:'#6b7280' }}>Dept: {hdr.deptScope.join(' · ')}</Text>
+        ) : null}
+      </View>
+
+      <FlatList
+        data={lines}
+        keyExtractor={(l)=>l.id}
+        contentContainerStyle={{ padding: 12 }}
+        renderItem={({item})=>(
+          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:12, marginBottom:10, borderWidth:1, borderColor:'#eee' }}>
+            <Text style={{ fontWeight:'700' }}>{item.name ?? item.id}</Text>
+            <Text style={{ color:'#6b7280', marginTop:6 }}>
+              Ordered {item.qtyOrdered ?? 0} • Received {item.receivedQty ?? 0}
+            </Text>
+          </View>
+        )}
+      />
+
+      <Modal transparent visible={receiveOpen} onRequestClose={()=>setReceiveOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', padding:18 }}>
+          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:16, maxHeight:'80%' }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:10 }}>Confirm received</Text>
+            <Text style={{ color:'#6b7280', marginBottom:12 }}>
+              We’ll mark this order as received and use the ordered quantities
+              (or the edited received quantities if you’ve changed them).
+            </Text>
+
+            <TouchableOpacity
+              onPress={confirmReceive}
+              style={{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#fff', fontWeight:'800' }}>Confirm</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={()=>{ setReceiveOpen(false); nav.setParams({ receiveNow:false }); Alert.alert('Scan Invoice','Invoice OCR coming soon.'); }}
+              style={{ marginTop:10, backgroundColor:'#f3f4f6', paddingVertical:12, borderRadius:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#111827', fontWeight:'800' }}>Scan (coming soon)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={()=>{ setReceiveOpen(false); }}
+              style={{ marginTop:10, paddingVertical:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#111827', fontWeight:'700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
