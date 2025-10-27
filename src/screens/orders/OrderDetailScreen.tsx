@@ -4,8 +4,8 @@ import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-nati
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, doc, getDoc, onSnapshot, collection, query, orderBy,
-  updateDoc, serverTimestamp, writeBatch
+  getFirestore, doc, onSnapshot, collection, query, orderBy,
+  serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
@@ -61,14 +61,12 @@ export default function OrderDetailScreen() {
   const confirmReceive = useCallback(async () => {
     try {
       if (!orderRef) throw new Error('No order');
-      // 1) Persist receivedQty for each line (default to ordered qty if none was changed)
       const batch = writeBatch(db);
       lines.forEach((ln) => {
         const lr = doc(orderRef, 'lines', ln.id);
         const want = Number.isFinite(ln.receivedQty) ? Number(ln.receivedQty) : Number(ln.qtyOrdered || 0);
         batch.update(lr, { receivedQty: Math.max(0, want) });
       });
-      // 2) Mark order as received with server timestamps
       batch.update(orderRef, {
         status: 'received',
         displayStatus: 'received',
@@ -77,9 +75,7 @@ export default function OrderDetailScreen() {
       });
       await batch.commit();
 
-      // 3) Clear the param so the sheet won't reopen on return/rerender
       nav.setParams({ receiveNow: false });
-
       Alert.alert('Received', 'Order marked as received.');
       setReceiveOpen(false);
     } catch (e: any) {
@@ -87,7 +83,6 @@ export default function OrderDetailScreen() {
     }
   }, [db, orderRef, lines, nav]);
 
-  // Very small UI (kept minimal; your header wrapper adds the actions)
   const totalOrdered = useMemo(() => lines.reduce((a,b)=>a+(Number(b.qtyOrdered)||0),0), [lines]);
   const totalReceived = useMemo(() => lines.reduce((a,b)=>a+(Number(b.receivedQty)||0),0), [lines]);
 
@@ -128,6 +123,7 @@ export default function OrderDetailScreen() {
               (or the edited received quantities if you’ve changed them).
             </Text>
 
+            {/* Confirm (manual) */}
             <TouchableOpacity
               onPress={confirmReceive}
               style={{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' }}
@@ -135,6 +131,15 @@ export default function OrderDetailScreen() {
               <Text style={{ color:'#fff', fontWeight:'800' }}>Confirm</Text>
             </TouchableOpacity>
 
+            {/* Scan (stub) – no navigation until Receive route is registered */}
+            <TouchableOpacity
+              onPress={()=>{ setReceiveOpen(false); nav.setParams({ receiveNow:false }); Alert.alert('Scan Invoice','Invoice OCR coming soon.'); }}
+              style={{ marginTop:10, backgroundColor:'#f3f4f6', paddingVertical:12, borderRadius:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#111827', fontWeight:'800' }}>Scan (coming soon)</Text>
+            </TouchableOpacity>
+
+            {/* Cancel */}
             <TouchableOpacity
               onPress={()=>{ setReceiveOpen(false); }}
               style={{ marginTop:10, paddingVertical:10, alignItems:'center' }}

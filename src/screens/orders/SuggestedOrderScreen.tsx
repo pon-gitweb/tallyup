@@ -5,23 +5,24 @@ import {
   View, Text, StyleSheet, FlatList, ScrollView, TouchableOpacity,
   RefreshControl, Alert, Modal, Platform, ToastAndroid
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
 import { runAISuggest } from '../../services/orders/suggestAI';
-import { createDraftsFromSuggestions, computeSuggestionKey } from '../../services/orders/createFromSuggestions';
+import { createDraftsFromSuggestions } from '../../services/orders/createFromSuggestions';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
 
+const dlog = (...a:any[]) => console.log('[Suggested]', ...a);
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
 const n = (v:any,d=0)=>{const x=Number(v);return Number.isFinite(x)?x:d;};
 const m1=(v:any)=>{const x=Number(v);return Number.isFinite(x)?Math.max(1,Math.round(x)):1;};
 
-// keep submitted set aligned with OrdersScreen
 const SUBMITTED_SET = new Set(['submitted','sent','placed','approved','awaiting','processing']);
+const RECEIVED_SET  = new Set(['received','complete','closed']);
 
 type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
 
@@ -32,6 +33,13 @@ function dedupeByProductId(lines:any[]){
     seen.add(pid); out.push(l);
   }
   return out;
+}
+
+function buildSuggestionKey(supplierId:string|null, lines:any[]){
+  const parts=(Array.isArray(lines)?lines:[])
+    .map(l=>`${String(l?.productId||'')}:${m1(l?.qty)}`)
+    .filter(Boolean).sort().join(',');
+  return `${supplierId ?? 'unassigned'}|${parts}`;
 }
 
 export default function SuggestedOrderScreen(){
@@ -91,8 +99,7 @@ export default function SuggestedOrderScreen(){
     setSnapshot({buckets,unassigned});
   },[db,venueId]);
 
-  // PERSISTENT VENUE-WIDE DEDUPE:
-  // include both draft and submitted orders created from suggestions
+  // Venue-wide dedupe: draft + submitted + received
   const loadExistingSuggestionKeys=useCallback(async()=>{
     if(!venueId){setExistingKeys(new Set());return;}
     const ref=collection(db,'venues',venueId,'orders');
@@ -103,16 +110,17 @@ export default function SuggestedOrderScreen(){
       const status=String(data.displayStatus||data.status||'draft').toLowerCase();
       const isDraft = status==='draft';
       const isSubmitted = SUBMITTED_SET.has(status);
-      if((isDraft || isSubmitted) && data?.source==='suggestions' && typeof data?.suggestionKey==='string'){
+      const isReceived  = RECEIVED_SET.has(status);
+      if((isDraft || isSubmitted || isReceived) && data?.source==='suggestions' && typeof data?.suggestionKey==='string'){
         keys.add(data.suggestionKey);
       }
     });
     setExistingKeys(keys);
-    console.log('[Suggested] existingKeys', keys.size, 'sample', keys.size ? Array.from(keys)[0] : '(none)');
+    dlog('existingKeys', keys.size, 'sample', keys.size ? Array.from(keys)[0] : '(none)');
   },[db,venueId]);
 
   const doRefreshRaw=useCallback(async()=>{
-    if(!venueId){setRows([]);setSnapshot(null);return;}
+    if(!venueId){setRows([]);setSnapshot(null);setExistingKeys(new Set());return;}
     await loadExistingSuggestionKeys();
     const compat:any=await buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
     const graduated=normalizeCompat(compat);
@@ -136,6 +144,20 @@ export default function SuggestedOrderScreen(){
     })();
   },[venueId,doRefreshRaw]);
 
+  // Also refresh on focus (handles relaunch/login switch)
+  useFocusEffect(useCallback(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        setRefreshing(true);
+        await doRefreshRaw();
+      } finally {
+        if(!cancelled) setRefreshing(false);
+      }
+    })();
+    return ()=>{ cancelled=true; };
+  },[doRefreshRaw]));
+
   const openSupplierPreview=useCallback((supplierId:string,supplierName:string)=>{
     if(!snapshot)return;
     const bucket=snapshot.buckets?.[supplierId];
@@ -147,16 +169,14 @@ export default function SuggestedOrderScreen(){
       cost:n(l.unitCost??l.cost??0,0),
       packSize:Number.isFinite(l?.packSize)?Number(l?.packSize):null
     }));
-    const suggestionKey=computeSuggestionKey(
-      supplierId==='unassigned'?null:supplierId,
-      previewLines
-    );
+    const suggestionKey=buildSuggestionKey(supplierId==='unassigned'?null:supplierId,previewLines);
     const alreadyDrafted=existingKeys.has(suggestionKey);
-    console.log('[Suggested] preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted);
+    dlog('preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted);
     setSupplierPreview({ supplierId,supplierName,lines:previewLines,suggestionKey,alreadyDrafted });
     setSupplierOpen(true);
   },[snapshot,existingKeys]);
 
+  // FIX: pass a legacy flat map (no {buckets,unassigned} wrapper)
   const createDraftForPreview=useCallback(async()=>{
     if(!venueId||!supplierPreview)return;
     if(supplierPreview.alreadyDrafted){
@@ -164,15 +184,15 @@ export default function SuggestedOrderScreen(){
       return;
     }
     try{
-      const supplierKey = supplierPreview.supplierId === 'unassigned' ? 'unassigned' : supplierPreview.supplierId;
-      const payload:any = {};
-      payload[supplierKey] = {
-        supplierName: supplierPreview.supplierName,
-        lines: supplierPreview.lines
+      const key = supplierPreview.supplierId || 'unassigned';
+      const legacyMap = {
+        [key]: {
+          supplierName: supplierPreview.supplierName ?? null,
+          lines: supplierPreview.lines || [],
+        }
       };
-
-      const res = await createDraftsFromSuggestions(venueId, payload, {createdBy:uid});
-      console.log('[Suggested] create result', res);
+      const res = await createDraftsFromSuggestions(venueId, legacyMap, { createdBy: uid });
+      dlog('create result', res);
 
       if (Array.isArray(res?.created) && res.created.length > 0) {
         setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
@@ -182,7 +202,6 @@ export default function SuggestedOrderScreen(){
       Alert.alert('Draft saved',`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
       if (Platform.OS==='android') ToastAndroid.show('Draft saved in Orders', ToastAndroid.SHORT);
     }catch(e:any){
-      console.log('[Suggested] create error', e);
       Alert.alert('Could not create draft',e?.message||'Please try again.');
     }
   },[venueId,supplierPreview,uid]);

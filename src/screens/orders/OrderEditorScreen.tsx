@@ -157,7 +157,7 @@ export default function OrderEditorScreen() {
     }
   }, [venueId, supplierId, mode, nextCursor, queryText]);
 
-  // Add/catalog item → write to {lines}/{productId} with qty
+  // Add/catalog item → write to {lines}/{productId} with qty (+ optional pricing metadata)
   const addCatalogItem = useCallback(async (prod: ProductRow, qtyRaw?: string) => {
     try {
       if (!venueId || !orderId) return;
@@ -170,9 +170,15 @@ export default function OrderEditorScreen() {
         const snap = await getDoc(lineRef);
         if (snap.exists()) prev = Number((snap.data() as any)?.qty ?? 0);
       } catch {}
+      const unitCost = Number.isFinite((prod as any)?.cost) ? Number((prod as any)?.cost) : null;
+      const packSize = Number.isFinite((prod as any)?.packSize) ? Number((prod as any)?.packSize) : null;
+
       await setDoc(lineRef, {
+        productId: String(prod.id),
         name: prod.name ?? String(prod.id),
         qty: prev + qty,
+        ...(unitCost != null ? { unitCost } : {}),
+        ...(packSize != null ? { packSize } : {}),
         updatedAt: serverTimestamp(),
       }, { merge: true });
       savedToast('Added to draft');
@@ -196,7 +202,12 @@ export default function OrderEditorScreen() {
         const snap = await getDoc(lineRef);
         if (snap.exists()) prev = Number((snap.data() as any)?.qty ?? 0);
       } catch {}
-      await setDoc(lineRef, { name, qty: prev + qty, updatedAt: serverTimestamp() }, { merge: true });
+      await setDoc(lineRef, {
+        productId: name,   // keep a productId field for consistency
+        name,
+        qty: prev + qty,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
       savedToast('Added to draft');
     } catch (e:any) {
       Alert.alert('Error', e?.message ?? 'Failed adding line.');
@@ -251,7 +262,7 @@ export default function OrderEditorScreen() {
   const renderProduct = ({ item }: { item: ProductRow }) => (
     <View style={styles.productRow}>
       <Text style={styles.productName}>{item.name ?? 'Product'}</Text>
-      <TouchableOpacity style={styles.quickAdd} onPress={() => addCatalogItem(item, defaultQty)}>
+      <TouchableOpacity style={styles.quickAdd} onPress={() => addCatalogItem(item, defaultQty)} disabled={!supplierId}>
         <Text style={styles.quickAddText}>Add ×{Math.max(1, parseInt(defaultQty || '1', 10) || 1)}</Text>
       </TouchableOpacity>
     </View>
@@ -297,7 +308,9 @@ export default function OrderEditorScreen() {
 
           {/* Catalog add */}
           <View style={styles.rowBetween}>
-            <Text style={[styles.label, { marginTop: 12 }]}>Products from {supplierName}</Text>
+            <Text style={[styles.label, { marginTop: 12 }]}>
+              {supplierId ? `Products from ${supplierName}` : 'Products (assign supplier to browse)'}
+            </Text>
             <View style={styles.qtyWrap}>
               <Text style={styles.qtyLabel}>Qty</Text>
               <TextInput
@@ -310,15 +323,16 @@ export default function OrderEditorScreen() {
           </View>
 
           <TextInput
-            placeholder="Type at least 2 letters to search this supplier’s catalog"
+            placeholder={supplierId ? "Type at least 2 letters to search this supplier’s catalog" : "Assign a supplier to search catalog"}
             value={queryText}
             onChangeText={setQueryText}
             style={styles.input}
             autoCorrect={false}
+            editable={!!supplierId}
           />
 
           {mode !== 'browse' && (
-            <TouchableOpacity style={styles.browseBtn} onPress={browseFirstPage} disabled={loading || !supplierId}>
+            <TouchableOpacity style={[styles.browseBtn, !supplierId && {opacity:0.5}]} onPress={browseFirstPage} disabled={loading || !supplierId}>
               <Text style={styles.browseText}>{loading ? 'Loading…' : 'Load supplier catalog'}</Text>
             </TouchableOpacity>
           )}
@@ -338,10 +352,13 @@ export default function OrderEditorScreen() {
             ListFooterComponent={<View style={{height:24}}/>}
           />
 
-          {/* Submit */}
-          <View style={{ paddingVertical: 12 }}>
-            <TouchableOpacity onPress={submitOrder} style={styles.submitBtn}>
-              <Text style={styles.submitText}>Submit Order</Text>
+          {/* Footer actions */}
+          <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
+            <TouchableOpacity
+              onPress={submitOrder}
+              style={{ backgroundColor: '#111827', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+            >
+              <Text style={{ color: 'white', fontWeight: '800' }}>Submit Order</Text>
             </TouchableOpacity>
           </View>
         </>
@@ -351,35 +368,34 @@ export default function OrderEditorScreen() {
 }
 
 const styles = StyleSheet.create({
-  container:{ flex:1, backgroundColor:'#fff', padding:12 },
-  label:{ fontWeight:'800', marginBottom:6 },
-  notes:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, padding:10, minHeight:60 },
-  muted:{ color:'#6b7280' },
+  container: { flex: 1, backgroundColor: '#fafafa', padding: 12 },
+  label: { fontWeight: '800', marginBottom: 6 },
+  notes: {
+    backgroundColor: '#fff', borderRadius: 10, padding: 10, minHeight: 64,
+    borderWidth: 1, borderColor: '#eee', textAlignVertical: 'top'
+  },
+  lineCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10, borderColor: '#eee', borderWidth: 1 },
+  lineName: { fontWeight: '700' },
+  lineControls: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  bumpBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb' },
+  qtyText: { width: 56, textAlign: 'center', fontWeight: '800' },
+  removeBtn: { marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 6 },
 
-  lineCard:{ backgroundColor:'#fff', borderRadius:12, padding:12, marginBottom:10, borderColor:'#eee', borderWidth:1 },
-  lineName:{ fontWeight:'700' },
-  lineControls:{ flexDirection:'row', alignItems:'center', marginTop:8 },
-  bumpBtn:{ paddingHorizontal:14, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#e5e7eb' },
-  qtyText:{ width:56, textAlign:'center', fontWeight:'800' },
-  removeBtn:{ marginLeft:'auto', paddingHorizontal:10, paddingVertical:6 },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  qtyWrap: { flexDirection: 'row', alignItems: 'center' },
+  qtyLabel: { marginRight: 6, color: '#6b7280' },
+  qtyInput: { width: 56, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingVertical: 6, textAlign: 'center' },
 
-  rowBetween:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
-  qtyWrap:{ flexDirection:'row', alignItems:'center', gap:6 },
-  qtyLabel:{ color:'#6b7280' },
-  qtyInput:{ width:52, borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingVertical:4, paddingHorizontal:8, textAlign:'center' },
+  input: { backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#eee', paddingHorizontal: 10, paddingVertical: 10, marginTop: 8 },
 
-  input:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, paddingHorizontal:10, paddingVertical:8, marginTop:8 },
-  browseBtn:{ marginTop:10, paddingVertical:10, alignItems:'center', borderRadius:10, borderWidth:1, borderColor:'#e5e7eb' },
-  browseText:{ fontWeight:'700' },
+  browseBtn: { marginTop: 10, backgroundColor: '#f3f4f6', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  browseText: { fontWeight: '700', color: '#111827' },
 
-  customAdd:{ marginTop:10, paddingVertical:10, alignItems:'center', borderRadius:10, backgroundColor:'#111827' },
-  customAddText:{ color:'#fff', fontWeight:'800' },
+  productRow: { backgroundColor: '#fff', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#eee', marginTop: 10, flexDirection: 'row', alignItems: 'center' },
+  productName: { flex: 1, fontWeight: '700' },
+  quickAdd: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#111827' },
+  quickAddText: { color: '#fff', fontWeight: '800' },
 
-  productRow:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:StyleSheet.hairlineWidth, borderColor:'#eee' },
-  productName:{ fontWeight:'700' },
-  quickAdd:{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, backgroundColor:'#111827' },
-  quickAddText:{ color:'#fff', fontWeight:'700' },
-
-  submitBtn:{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' },
-  submitText:{ color:'#fff', fontWeight:'800' },
+  customAdd: { marginTop: 10, backgroundColor: '#111827', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  customAddText: { color: '#fff', fontWeight: '800' },
 });
