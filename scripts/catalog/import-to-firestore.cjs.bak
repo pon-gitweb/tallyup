@@ -1,0 +1,153 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const admin = require('firebase-admin');
+const slugify = require('slugify');
+const csv = require('fast-csv');
+
+const PROJECT = process.env.FIREBASE_PROJECT || process.env.GCLOUD_PROJECT;
+const DRY = process.env.DRY_RUN === '1';
+
+function toNum(v) {
+  if (v == null || v === '') return null;
+  const t = String(v).replace(/[,\s]/g,'').replace(/\$/g,'').replace(/NZD/i,'');
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+function toInt(v) {
+  const n = toNum(v);
+  return n == null ? null : Math.round(n);
+}
+function idFrom(name, size) {
+  const base = [name || '', size || ''].filter(Boolean).join(' ');
+  return slugify(base || 'item', { lower:true, strict:true });
+}
+function supplierFromFilename(f) {
+  return slugify(path.basename(f, '.csv'), { lower:true, strict:true });
+}
+
+(async function main() {
+  if (!PROJECT) {
+    console.error('Missing FIREBASE_PROJECT env. Do: export FIREBASE_PROJECT=your-project-id');
+    process.exit(1);
+  }
+
+  // Firebase Admin init (uses GOOGLE_APPLICATION_CREDENTIALS)
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+    projectId: PROJECT,
+  });
+  const db = admin.firestore();
+
+  const IN_DIR = path.join(process.cwd(), 'supplier_catalogs/normalized');
+  if (!fs.existsSync(IN_DIR)) {
+    console.error('Missing folder:', IN_DIR);
+    process.exit(1);
+  }
+
+  const files = fs.readdirSync(IN_DIR).filter(f => f.endsWith('.csv'));
+  if (!files.length) {
+    console.log('No CSVs found in', IN_DIR);
+    process.exit(0);
+  }
+
+  for (const file of files) {
+    const full = path.join(IN_DIR, file);
+    const supplierSlug = supplierFromFilename(file);
+    const supplierDoc = db.collection('global_suppliers').doc(supplierSlug);
+    const itemsCol = supplierDoc.collection('items');
+
+    console.log(`[firestore] Importing ${file} → global_suppliers/${supplierSlug}/items`);
+
+    let headerWritten = false;
+    let count = 0;
+    let batch = db.batch();
+    let inBatch = 0;
+    let supplierNameFromRows = null;
+
+    // Ensure supplier doc exists
+    if (!DRY) {
+      batch.set(supplierDoc, {
+        slug: supplierSlug,
+        displayName: supplierSlug.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        source: 'catalog-import',
+      }, { merge:true });
+      inBatch++;
+    }
+
+    const commitBatch = async () => {
+      if (DRY || inBatch === 0) return;
+      await batch.commit();
+      batch = db.batch();
+      inBatch = 0;
+    };
+
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(full)
+        .pipe(csv.parse({ headers:true, ignoreEmpty:true, trim:true }))
+        .on('error', reject)
+        .on('data', (row) => {
+          if (!headerWritten) { headerWritten = true; }
+
+          const supplier = String(row.supplier || '').trim();
+          if (supplier && !supplierNameFromRows) supplierNameFromRows = supplier;
+
+          const name = String(row.name || '').trim();
+          const size = String(row.size || '').trim();
+          if (!name && !size) return; // skip empty lines
+
+          const docId = idFrom(name, size);
+
+          const data = {
+            supplier: supplier || supplierSlug,
+            externalSku: row.externalSku || '',
+            name,
+            size,
+            abv: toNum(row.abv),
+            unitsPerCase: toInt(row.unitsPerCase),
+            unit: row.unit || '',
+            priceBottleExGst: toNum(row.priceBottleExGst),
+            priceCaseExGst: toNum(row.priceCaseExGst),
+            gstPercent: toNum(row.gstPercent) ?? 15,
+            category: row.category || '',
+            notes: row.notes || '',
+            source: 'catalog-import',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          if (!DRY) {
+            batch.set(itemsCol.doc(docId), data, { merge:true });
+            inBatch++;
+          }
+          count++;
+
+          // Keep batch under 400 ops
+          if (inBatch >= 400) {
+            // pause stream
+            this.pause?.();
+            commitBatch().then(() => this.resume?.());
+          }
+        })
+        .on('end', async () => {
+          // write supplier display name if we saw one in rows
+          if (!DRY && supplierNameFromRows) {
+            batch.set(supplierDoc, {
+              displayName: supplierNameFromRows,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge:true });
+            inBatch++;
+          }
+
+          await commitBatch();
+          console.log(`[firestore] ${file}: ${DRY ? '[DRY RUN] ' : ''}Imported ${count} rows.`);
+          resolve();
+        });
+    });
+  }
+
+  console.log('Done.');
+  process.exit(0);
+})().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

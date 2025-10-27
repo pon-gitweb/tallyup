@@ -1,47 +1,41 @@
+// @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList, TextInput
+View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList, TextInput
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
-import { listProducts, deleteProductById, Product } from '../../services/products';
+import { listProducts, deleteProductById} from '../../services/products';
 import ProductSupplierTools from '../../components/products/ProductSupplierTools';
+
+// Optional, best-effort read of global catalogs (won't throw if firebase/firestore isn't present)
+let getFirestore: any, collection: any, getDocs: any;
+try {
+  // Modular SDK (already used elsewhere in the app)
+  ({ getFirestore, collection, getDocs } = require('firebase/firestore'));
+} catch (e) {
+  // If the module isn't available in this build target, we just won't show the count.
+}
 
 export default function ProductsScreen() {
   const nav = useNavigation<any>();
-  // Debug: list available route names in this navigator
   try {
     const rn = (nav.getState()?.routeNames ?? []) as string[];
     // eslint-disable-next-line no-console
     console.log("[Products] routeNames:", rn);
   } catch (e) {}
 
-  // Try a few known screen names without touching navigation config
-  const goEdit = (params: any) => {
-    const names = (nav.getState()?.routeNames ?? []) as string[];
-    const tryNames = [
-      EditProductScreen,
-      EditProduct,
-      ProductEdit,
-      Product,
-    ];
-    for (const n of tryNames) {
-      if (names.includes(n)) {
-        // @ts-ignore
-        nav.navigate(n, params);
-        return true;
-      }
-    }
-    return false;
-  };
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Product[]>([]);
   const [q, setQ] = useState('');
 
-  // NEW: toggle for Supplier Tools panel (catalogue import + apply)
+  // Supplier Tools toggle
   const [toolsOpen, setToolsOpen] = useState(false);
+
+  // Optional: tiny badge showing global supplier catalogs available
+  const [globalSupplierCount, setGlobalSupplierCount] = useState<number | null>(null);
 
   async function load() {
     if (!venueId) { setRows([]); setLoading(false); return; }
@@ -58,12 +52,38 @@ export default function ProductsScreen() {
 
   useEffect(() => { load(); }, [venueId]);
 
+  // Read global supplier catalog count (optional; silent on error)
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!getFirestore || !collection || !getDocs) return;
+        const db = getFirestore();
+        const snap = await getDocs(collection(db, 'global_suppliers'));
+        setGlobalSupplierCount(snap.size ?? 0);
+      } catch {
+        // ignore: purely informational
+      }
+    })();
+  }, []);
+
   function onNew() {
-    nav.navigate('EditProductScreen', { productId: null });
+    // keep route name the same as currently wired
+    nav.navigate('EditProductScreen', { productId: null, product: null });
   }
+
   function onEdit(p: Product) {
-    nav.navigate('EditProductScreen', { productId: p.id, product: p });
+    // Avoid non-serializable refs in params (DocumentReference, functions, Maps, etc.)
+    // JSON stringify/parse gives us a plain object clone suitable for navigation state.
+    let safeProduct: any = null;
+    try {
+      safeProduct = JSON.parse(JSON.stringify(p));
+    } catch {
+      // Fallback: pass minimal shape if something was still not serializable
+      safeProduct = { id: p.id, name: (p as any)?.name ?? '', parLevel: (p as any)?.parLevel ?? null, supplierName: (p as any)?.supplierName ?? null };
+    }
+    nav.navigate('EditProductScreen', { productId: p.id, product: safeProduct });
   }
+
   function onDelete(p: Product) {
     Alert.alert('Delete Product', `Delete ${p.name}?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -106,13 +126,15 @@ export default function ProductsScreen() {
     <View style={styles.wrap}>
       <Text style={styles.title}>Products</Text>
 
-      {/* Pills row (now includes Supplier Tools toggle) */}
+      {/* Pills row (includes Supplier Tools toggle) */}
       <View style={styles.pillsRow}>
         <TouchableOpacity
           style={[styles.pill, styles.pillPrimary]}
           onPress={() => setToolsOpen(v => !v)}
         >
-          <Text style={[styles.pillText, styles.pillTextPrimary]}>{toolsOpen ? 'Hide Supplier Tools' : 'Supplier Tools'}</Text>
+          <Text style={[styles.pillText, styles.pillTextPrimary]}>
+            {toolsOpen ? 'Hide Supplier Tools' : 'Supplier Tools'}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -141,9 +163,16 @@ export default function ProductsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Supplier Tools panel (read-only preview + apply exact matches) */}
+      {/* Supplier Tools panel */}
       {toolsOpen ? (
         <View style={styles.toolsPanel}>
+          {typeof globalSupplierCount === 'number' ? (
+            <View style={{ marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.hint}>
+                Global catalogs available: {globalSupplierCount}
+              </Text>
+            </View>
+          ) : null}
           <ProductSupplierTools
             existingProducts={rows}
             onApplied={(s) => {
@@ -223,6 +252,7 @@ const styles = StyleSheet.create({
   pillTextPrimary: { color: '#fff' },
 
   toolsPanel: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 12 },
+  hint: { fontSize: 12, color: '#6b7280' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   search: {
@@ -239,8 +269,6 @@ const styles = StyleSheet.create({
 
   smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
   smallText: { fontWeight: '700' },
-
   badge: { fontSize: 11, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, alignSelf: 'flex-start' },
   badgeOk: { backgroundColor: '#ecfdf5', color: '#065f46' },
-  badgeWarn: { backgroundColor: '#fffbeb', color: '#92400e' },
-});
+  badgeWarn: { backgroundColor: '#fffbeb', color: '#92400e' }});

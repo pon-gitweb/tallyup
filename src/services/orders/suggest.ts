@@ -1,25 +1,35 @@
 // @ts-nocheck
-import { getFirestore, collection, getDocs, query as fsQuery, where, orderBy, limit, documentId } from 'firebase/firestore';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 
 const dlog = (...a:any[]) => console.log('[SuggestedOrders]', ...a);
 
-type SuggestedLegacyMap = {
-  buckets: Record<string, { supplierName?: string; lines: any[] }>;
-  unassigned: { lines: any[] };
-  _meta?: { baselineCompletedAt?: number|string|null; reason?: string };
-};
-
-const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
-
 function n(v:any,d=0){ const x=Number(v); return Number.isFinite(x)?x:d; }
 function s(v:any,d=''){ return (typeof v==='string' && v.trim().length)?v.trim():d; }
-function m1(v:any){ const x = Math.round(n(v,0)); return x>0?x:1; }
 function uniq<T>(arr:T[]){ return Array.from(new Set(arr)); }
 
+/** Public types used by other modules */
+export type SuggestedLine = {
+  productId: string;
+  productName: string;
+  qty: number;
+  unitCost: number | null;
+  packSize: number | null;
+
+  // Flags expected by downstream code
+  cost?: number | null;          // alias for unitCost (kept for callers)
+  needsPar?: boolean;            // true if PAR was missing (we defaulted)
+  needsSupplier?: boolean;       // true if no preferred supplier was found
+  reason?: string | null;        // human hint why it needs attention
+};
+
+export type SuggestedLegacyMap = {
+  buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }>;
+  unassigned: { lines: SuggestedLine[] };
+  _meta?: { baselineCompletedAt?: number|null; reason?: string|null } | {};
+};
+
 async function getLatestCompletedAt(db:any, venueId:string): Promise<number|null> {
-  // Query across departments/*/areas/* for the most recent completedAt
-  // We’ll scan a few departments for simplicity; if you keep a top-level stockTakes collection, prefer that.
   const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
   let newest: number | null = null;
   for (const dep of depsSnap.docs) {
@@ -36,6 +46,12 @@ async function getLatestCompletedAt(db:any, venueId:string): Promise<number|null
   return newest;
 }
 
+/**
+ * Build Suggested Orders in-memory from Products + latest stock counts.
+ * - If product.par is missing, we use defaultParIfMissing and mark needsPar=true
+ * - If product has no supplierId, we place it into unassigned and mark needsSupplier=true
+ * - Each line carries `cost` (alias of unitCost) for older callers
+ */
 export async function buildSuggestedOrdersInMemory(
   venueId: string,
   opts: { roundToPack?: boolean; defaultParIfMissing?: number } = { roundToPack: true, defaultParIfMissing: 6 }
@@ -46,66 +62,60 @@ export async function buildSuggestedOrdersInMemory(
   const defaultPar = Number.isFinite(opts.defaultParIfMissing) ? Number(opts.defaultParIfMissing) : 6;
 
   // 1) supplier names
-  dlog('reading query suppliers.list');
+  dlog('reading suppliers');
   const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
   const supplierNameById: Record<string,string> = {};
   suppliersSnap.forEach(d => { supplierNameById[d.id] = s((d.data() as any)?.name, 'Supplier'); });
 
   // 2) products (for PAR and supplier link)
-  dlog('reading query products.list');
+  dlog('reading products');
   const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-  const prodMeta: Record<string,{ par?:number; supplierId?:string; supplierName?:string; packSize?:number|null; cost?:number }> = {};
-  const prodNameById: Record<string,string> = {};
+  const prodMeta: Record<string,{ par?:number; supplierId?:string; supplierName?:string; packSize?:number|null; cost?:number; name?:string }> = {};
   productsSnap.forEach(d => {
     const v:any = d.data() || {};
     const sid = v?.supplierId || v?.supplier?.id || undefined;
     const sname = v?.supplierName || v?.supplier?.name || (sid ? supplierNameById[sid] : undefined);
     prodMeta[d.id] = {
-      par: Number.isFinite(v?.par) ? Number(v.par) : undefined,
+      name: s(v?.name, String(d.id)),
+      par: Number.isFinite(v?.par) ? Number(v.par) : (Number.isFinite(v?.parLevel) ? Number(v.parLevel) : undefined),
       supplierId: sid,
       supplierName: sname,
       packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
       cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
     };
-    prodNameById[d.id] = (typeof v?.name === 'string' && v.name.trim().length) ? v.name.trim() : String(d.id);
   });
-  dlog('reading query departments.list');
-  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
 
+  // 3) latest counts by product (sum across all areas)
+  dlog('reading departments/areas/items');
+  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
   const onHandByProduct: Record<string, number> = {};
   for (const dep of depsSnap.docs) {
-    dlog('reading query areas.list');
     const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     for (const area of areasSnap.docs) {
-      dlog('reading query area.items.list');
       const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'));
       itemsSnap.forEach(it => {
         const v:any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
         if (!pid) return;
-        // Optional filter: only counts from/around the baseline stocktake.
-        // We accept any lastCount present; if you want to be strict, uncomment the next 3 lines.
-        // const lca = v?.lastCountAt;
-        // if (baselineMs && lca?.toMillis && lca.toMillis() < baselineMs - 60*60*1000) return; // older than baseline
-        // if (baselineMs && lca?.toMillis && lca.toMillis() > baselineMs + 24*60*60*1000) return; // clearly after
         const qty = n(v?.lastCount, 0);
         onHandByProduct[pid] = (onHandByProduct[pid] || 0) + qty;
       });
     }
   }
-
   dlog('countedProductIds', { count: Object.keys(onHandByProduct).length });
 
-  // 5) build suggestions: need = max(0, PAR - onHand)
-  const buckets: Record<string,{ supplierName?:string; lines:any[] }> = {};
-  const unassigned: { lines:any[] } = { lines: [] };
+  // 4) build suggestions
+  const buckets: Record<string,{ supplierName?:string; lines: SuggestedLine[] }> = {};
+  const unassigned: { lines: SuggestedLine[] } = { lines: [] };
 
   Object.keys(onHandByProduct).forEach(pid => {
     const meta = prodMeta[pid] || {};
-    const par = Number.isFinite(meta.par) ? Number(meta.par) : defaultPar;
+    const name = s(meta.name, pid);
+    const parFromDoc = Number.isFinite(meta.par) ? Number(meta.par) : undefined;
+    const usedPar = parFromDoc ?? defaultPar;
     const onHand = n(onHandByProduct[pid], 0);
-    const needed = Math.max(0, par - onHand);
-    if (needed <= 0) return; // nothing to suggest for this product
+    const needed = Math.max(0, usedPar - onHand);
+    if (needed <= 0) return;
 
     const sid = s(meta.supplierId || '');
     const sname = s(meta.supplierName || (sid ? supplierNameById[sid] : ''), 'Supplier');
@@ -114,24 +124,29 @@ export async function buildSuggestedOrdersInMemory(
 
     const qty = roundToPack && pack && pack>0 ? Math.ceil(needed / pack) * pack : Math.round(needed);
 
-   const line = {
-  productId: pid,
-  productName: prodNameById[pid] ?? pid, // <-- use the map, never .get()
-  qty: qty > 0 ? qty : 0,
-  unitCost: cost > 0 ? cost : null,
-  packSize: pack,
-};
+    const baseLine: SuggestedLine = {
+      productId: pid,
+      productName: name,
+      qty: qty > 0 ? qty : 0,
+      unitCost: cost > 0 ? cost : null,
+      packSize: pack,
+      cost: cost > 0 ? cost : null,                               // alias for callers
+      needsPar: parFromDoc == null,                               // flag if we used defaultPar
+      needsSupplier: !sid,                                        // flag if no supplier
+      reason: !sid ? 'No preferred supplier set'
+            : (parFromDoc == null ? `PAR missing; used default ${usedPar}` : null),
+    };
 
     if (!sid) {
-      unassigned.lines.push(line);
+      unassigned.lines.push(baseLine);
     } else {
       if (!buckets[sid]) buckets[sid] = { supplierName: sname, lines: [] };
       const exists = new Set((buckets[sid].lines||[]).map((x:any)=>String(x.productId)));
-      if (!exists.has(pid)) buckets[sid].lines.push(line);
+      if (!exists.has(pid)) buckets[sid].lines.push(baseLine);
     }
   });
 
-  // 6) tidy up
+  // Deduplicate and drop zero-qty lines
   Object.keys(buckets).forEach(sid => {
     const seen = new Set<string>();
     buckets[sid].lines = (buckets[sid].lines || []).filter((l:any)=>{
@@ -146,11 +161,10 @@ export async function buildSuggestedOrdersInMemory(
   const totalLines = Object.values(buckets).reduce((a,b)=>a+(b.lines?.length||0),0) + unassigned.lines.length;
 
   dlog('summary', { suppliersWithLines, totalLines });
-  dlog('perSupplierCounts', Object.fromEntries(Object.entries(buckets).map(([k,v])=>[k, v.lines.length])).concat([['unassigned', unassigned.lines.length]]));
 
   return {
     buckets,
     unassigned,
-    _meta: baselineInfo
+    _meta: {},   // no undefined symbol
   };
 }

@@ -255,12 +255,15 @@ export default function StockTakeAreaInventoryScreen() {
   const Section = ({ title, data }: { title: string; data: Item[] }) => (
     <View style={{ marginTop: 10 }}>
       <Text style={{ marginHorizontal: 12, marginBottom: 6, fontWeight: '800', color: '#666' }}>{title} ({data.length})</Text>
-      <FlatList
-        data={data}
-        keyExtractor={(it) => it.id}
-        renderItem={({ item }) => <Row item={item} />}
-        ListEmptyComponent={<Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>}
-      />
+      {data.length === 0 ? (
+        <Text style={{ paddingHorizontal: 12, paddingVertical: 10, color: '#999' }}>No items</Text>
+      ) : (
+        <View>
+          {data.map((item) => (
+            <Row key={item.id} item={item} />
+          ))}
+        </View>
+      )}
     </View>
   );
 

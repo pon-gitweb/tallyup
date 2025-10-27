@@ -18,3 +18,4 @@ package-lock.json
 # Local env
 .env
 *.local.*
+/keys

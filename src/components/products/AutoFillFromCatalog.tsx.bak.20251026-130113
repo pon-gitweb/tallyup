@@ -1,0 +1,221 @@
+// @ts-nocheck
+import React, { useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+
+/**
+ * Props:
+ *  - initialTerm?: string
+ *  - onApply: (patch: {
+ *      name?: string|null; sku?: string|null; unit?: string|null; size?: string|null;
+ *      packSize?: number|null; abv?: number|null; costPrice?: number|null; gstPercent?: number|null;
+ *      supplierNameSuggested?: string|null; supplierGlobalId?: string|null; categorySuggested?: string|null;
+ *    }) => void
+ *
+ * This component avoids FlatList entirely to prevent "VirtualizedLists nested inside ScrollView" warnings
+ * when used inside EditProductScreen's parent <ScrollView>.
+ */
+
+type CatalogRow = {
+  id: string;
+  name?: string|null;
+  sku?: string|null;
+  unit?: string|null;
+  size?: string|null;
+  packSize?: number|null;
+  abv?: number|null;
+  costPrice?: number|null;
+  gstPercent?: number|null;
+  supplierName?: string|null;        // for suggested supplier label
+  supplierGlobalId?: string|null;
+  category?: string|null;
+};
+
+type Props = {
+  initialTerm?: string;
+  onApply: (patch: {
+    name?: string|null;
+    sku?: string|null;
+    unit?: string|null;
+    size?: string|null;
+    packSize?: number|null;
+    abv?: number|null;
+    costPrice?: number|null;
+    gstPercent?: number|null;
+    supplierNameSuggested?: string|null;
+    supplierGlobalId?: string|null;
+    categorySuggested?: string|null;
+  }) => void;
+};
+
+const numOrNull = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const intOrNull = (v: any) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? n : null;
+};
+
+export default function AutoFillFromCatalog({ initialTerm = '', onApply }: Props) {
+  // Try to import a catalog service if one exists; fall back safely if not.
+  let cat: any = {};
+  try { cat = require('../../services/catalog'); } catch {}
+  const hasSearch =
+    typeof cat.searchProducts === 'function' ||
+    typeof cat.search === 'function' ||
+    typeof cat.searchCatalog === 'function';
+
+  const [term, setTerm] = useState(initialTerm);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<CatalogRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const hint = useMemo(() => {
+    if (!hasSearch) {
+      return 'Catalog search service not available in this build. You can still enter details manually.';
+    }
+    if (!results.length && !loading && term.trim().length === 0) {
+      return 'Type a product name or SKU and tap Search.';
+    }
+    return null;
+  }, [hasSearch, results, loading, term]);
+
+  async function runSearch() {
+    if (!hasSearch) {
+      setError('Catalog search is not available.');
+      setResults([]);
+      return;
+    }
+    if (!term.trim()) {
+      setError('Enter a product name or SKU.');
+      setResults([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      // Support a few common function names without coupling to a specific service signature.
+      let rows: any[] = [];
+      if (typeof cat.searchProducts === 'function') {
+        rows = await cat.searchProducts(term.trim());
+      } else if (typeof cat.search === 'function') {
+        rows = await cat.search(term.trim());
+      } else if (typeof cat.searchCatalog === 'function') {
+        rows = await cat.searchCatalog(term.trim());
+      }
+
+      const normalized: CatalogRow[] = (Array.isArray(rows) ? rows : []).map((r, i) => ({
+        id: String(r?.id ?? i),
+        name: r?.name ?? null,
+        sku: r?.sku ?? r?.code ?? null,
+        unit: r?.unit ?? null,
+        size: r?.size ?? null,
+        packSize: intOrNull(r?.packSize ?? r?.pack ?? null),
+        abv: numOrNull(r?.abv ?? null),
+        costPrice: numOrNull(r?.costPrice ?? r?.price ?? r?.unitCost ?? null),
+        gstPercent: numOrNull(r?.gstPercent ?? r?.gst ?? null),
+        supplierName: r?.supplierName ?? r?.supplier ?? null,
+        supplierGlobalId: r?.supplierGlobalId ?? null,
+        category: r?.category ?? null,
+      }));
+
+      setResults(normalized);
+    } catch (e: any) {
+      setError(e?.message || 'Search failed.');
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function applyRow(row: CatalogRow) {
+    onApply({
+      name: row.name ?? null,
+      sku: row.sku ?? null,
+      unit: row.unit ?? null,
+      size: row.size ?? null,
+      packSize: intOrNull(row.packSize),
+      abv: numOrNull(row.abv),
+      costPrice: numOrNull(row.costPrice),
+      gstPercent: numOrNull(row.gstPercent ?? 15) ?? 15,
+      supplierNameSuggested: row.supplierName ?? null,
+      supplierGlobalId: row.supplierGlobalId ?? null,
+      categorySuggested: row.category ?? null,
+    });
+  }
+
+  return (
+    <View style={S.wrap}>
+      <Text style={S.title}>Auto-fill from Global Catalog</Text>
+      <Text style={S.hint}>
+        Search the shared catalog and apply fields into this product. No data is written until you tap Save.
+      </Text>
+
+      <View style={S.row}>
+        <TextInput
+          value={term}
+          onChangeText={setTerm}
+          placeholder="Search name or SKU"
+          autoCapitalize="none"
+          style={S.input}
+        />
+        <TouchableOpacity style={S.btn} onPress={runSearch} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={S.btnText}>Search</Text>}
+        </TouchableOpacity>
+      </View>
+
+      {hint ? <Text style={S.hintMuted}>{hint}</Text> : null}
+      {error ? <Text style={S.err}>{error}</Text> : null}
+
+      {/* Results — no FlatList here to avoid nesting with parent ScrollView */}
+      {results.length > 0 ? (
+        <View style={{ marginTop: 10 }}>
+          {results.map((r) => (
+            <View key={r.id} style={S.resultRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={S.resultTitle}>{r.name ?? r.sku ?? 'Unknown'}</Text>
+                <Text style={S.resultSub}>
+                  {r.sku ? `SKU ${r.sku} · ` : ''}
+                  {r.costPrice != null ? `$${Number(r.costPrice).toFixed(2)} · ` : ''}
+                  {r.packSize ? `${r.packSize} / ` : ''}
+                  {r.unit ? `${r.unit} · ` : ''}
+                  {r.size ? `${r.size} · ` : ''}
+                  {r.abv != null ? `${r.abv}% ABV` : ''}
+                </Text>
+                {(r.supplierName || r.category || r.supplierGlobalId) ? (
+                  <Text style={S.resultHint}>
+                    {(r.supplierName ? `Supplier: ${r.supplierName}` : '')}
+                    {(r.supplierName && r.category) ? ' · ' : ''}
+                    {(r.category ? `Category: ${r.category}` : '')}
+                    {(r.supplierGlobalId ? ` · Source: ${r.supplierGlobalId}` : '')}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity style={S.smallBtn} onPress={() => applyRow(r)}>
+                <Text style={S.smallBtnText}>Apply</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  wrap: { backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 12 },
+  title: { fontSize: 16, fontWeight: '800' },
+  hint: { color: '#374151', marginTop: 4 },
+  hintMuted: { color: '#6B7280', marginTop: 6, fontSize: 12 },
+  err: { color: '#B91C1C', marginTop: 6 },
+  row: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  input: { flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  btn: { backgroundColor: '#111827', paddingHorizontal: 14, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  btnText: { color: '#fff', fontWeight: '800' },
+  resultRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  resultTitle: { fontSize: 14, fontWeight: '700' },
+  resultSub: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  resultHint: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  smallBtn: { backgroundColor: '#0A84FF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
+  smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+});

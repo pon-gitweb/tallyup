@@ -4,7 +4,8 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet } 
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, doc, getDoc, collection, addDoc, serverTimestamp, writeBatch, updateDoc
+  getFirestore, doc, getDoc, collection, setDoc, getDocs,
+  serverTimestamp, writeBatch, updateDoc, onSnapshot, orderBy, query
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
@@ -20,31 +21,33 @@ export default function OrderEditorScreen() {
   const orderId = route.params?.orderId;
   const supplierName = route.params?.supplierName ?? 'Supplier';
 
+  const db = getFirestore(getApp());
+
   const [orderOk, setOrderOk] = useState(false);
   const [supplierId, setSupplierId] = useState<string | null>(null);
-
   const [notes, setNotes] = useState('');
   const [defaultQty, setDefaultQty] = useState('1');
 
+  // existing lines (live)
   const [lines, setLines] = useState<LineRow[]>([]);
+  const totalQty = useMemo(() => lines.reduce((a, b) => a + (Number(b.qty) || 0), 0), [lines]);
 
-  // Server-backed catalog/search
+  // catalog/search
   const [queryText, setQueryText] = useState('');
   const [items, setItems] = useState<ProductRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [mode, setMode] = useState<'idle'|'browse'|'search'>('idle'); // idle until the user types or taps browse
+  const [mode, setMode] = useState<'idle'|'browse'|'search'>('idle');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     nav.setOptions({ title: `Order: ${supplierName}` });
   }, [nav, supplierName]);
 
-  // Load order → supplierId + notes
+  // Load order header (get supplier + notes)
   useEffect(() => {
     (async () => {
       try {
         if (!venueId || !orderId) return;
-        const db = getFirestore(getApp());
         const ref = doc(db, 'venues', venueId, 'orders', orderId);
         const snap = await getDoc(ref);
         if (snap.exists()) {
@@ -55,27 +58,39 @@ export default function OrderEditorScreen() {
         } else {
           setOrderOk(false);
         }
-      } catch (e) {
-        console.warn('[OrderEditor] verify draft error', e);
+      } catch {
         setOrderOk(false);
       }
     })();
-  }, [venueId, orderId]);
+  }, [db, venueId, orderId]);
+
+  // Subscribe to lines (sorted by name)
+  useEffect(() => {
+    if (!venueId || !orderId) return;
+    const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+    const qy = query(collection(orderRef, 'lines'), orderBy('name'));
+    const unsub = onSnapshot(qy, (snap) => {
+      const next: LineRow[] = [];
+      snap.forEach((d) => {
+        const v:any = d.data()||{};
+        next.push({ id: d.id, name: v?.name ?? d.id, qty: Number(v?.qty ?? 0) });
+      });
+      setLines(next);
+    });
+    return () => unsub();
+  }, [db, venueId, orderId]);
 
   const persistNotes = useCallback(async () => {
     try {
       if (!venueId || !orderId) return;
-      const db = getFirestore(getApp());
       const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
       await updateDoc(orderRef, {
         notes: (notes || '').trim(),
         updatedAt: serverTimestamp(),
       });
-      savedToast('Notes saved'); // ✅ subtle confirmation
-    } catch (e) {
-      console.warn('[OrderEditor] persistNotes error', e);
-    }
-  }, [venueId, orderId, notes]);
+      savedToast('Notes saved');
+    } catch {}
+  }, [db, venueId, orderId, notes]);
 
   // Browse first page
   const browseFirstPage = useCallback(async () => {
@@ -86,15 +101,12 @@ export default function OrderEditorScreen() {
       const { items: page, nextCursor } = await listProductsBySupplierPage(venueId, supplierId, 50, true, null);
       setItems(page);
       setNextCursor(nextCursor);
-    } catch (e) {
-      console.warn('[OrderEditor] browseFirstPage error', e);
-      Alert.alert('Error', 'Could not load supplier catalog.');
     } finally {
       setLoading(false);
     }
   }, [venueId, supplierId]);
 
-  // Search (first page)
+  // Search first page
   const searchFirstPage = useCallback(async (term: string) => {
     if (!venueId || !supplierId) return;
     const clean = term.trim();
@@ -105,14 +117,26 @@ export default function OrderEditorScreen() {
       const { items: page, nextCursor } = await searchProductsBySupplierPrefixPage(venueId, supplierId, clean, 30, null);
       setItems(page);
       setNextCursor(nextCursor);
-    } catch (e) {
-      console.warn('[OrderEditor] searchFirstPage error', e);
     } finally {
       setLoading(false);
     }
   }, [venueId, supplierId]);
 
-  // Load more (depending on mode)
+  // Debounce search
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (queryText.trim().length >= 2) {
+        searchFirstPage(queryText);
+      } else {
+        if (mode !== 'browse') {
+          setItems([]); setNextCursor(null); setMode('idle');
+        }
+      }
+    }, 220);
+    return () => clearTimeout(id);
+  }, [queryText, searchFirstPage, mode]);
+
+  // Load more
   const loadMore = useCallback(async () => {
     if (!venueId || !supplierId) return;
     if (!nextCursor) return;
@@ -123,90 +147,111 @@ export default function OrderEditorScreen() {
         setItems(prev => [...prev, ...page]);
         setNextCursor(nc);
       } else if (mode === 'search') {
-        const clean = queryText.trim();
-        if (!clean) return;
+        const clean = queryText.trim(); if (!clean) return;
         const { items: page, nextCursor: nc } = await searchProductsBySupplierPrefixPage(venueId, supplierId, clean, 30, nextCursor);
         setItems(prev => [...prev, ...page]);
         setNextCursor(nc);
       }
-    } catch (e) {
-      console.warn('[OrderEditor] loadMore error', e);
     } finally {
       setLoading(false);
     }
   }, [venueId, supplierId, mode, nextCursor, queryText]);
 
-  // Debounce search typing
-  useEffect(() => {
-    const id = setTimeout(() => {
-      if (queryText.trim().length >= 2) {
-        searchFirstPage(queryText);
-      } else {
-        // too short → clear results unless we’re browsing
-        if (mode !== 'browse') {
-          setItems([]);
-          setNextCursor(null);
-          setMode('idle');
-        }
-      }
-    }, 220);
-    return () => clearTimeout(id);
-  }, [queryText, searchFirstPage, mode]);
+  // Add/catalog item → write to {lines}/{productId} with qty
+  const addCatalogItem = useCallback(async (prod: ProductRow, qtyRaw?: string) => {
+    try {
+      if (!venueId || !orderId) return;
+      const qty = Math.max(1, parseInt(((qtyRaw ?? defaultQty) || '1'), 10) || 1);
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      const lineRef = doc(orderRef, 'lines', String(prod.id));
+      // read current to accumulate
+      let prev = 0;
+      try {
+        const snap = await getDoc(lineRef);
+        if (snap.exists()) prev = Number((snap.data() as any)?.qty ?? 0);
+      } catch {}
+      await setDoc(lineRef, {
+        name: prod.name ?? String(prod.id),
+        qty: prev + qty,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      savedToast('Added to draft');
+    } catch (e:any) {
+      Alert.alert('Error', e?.message ?? 'Failed adding line.');
+    }
+  }, [db, venueId, orderId, defaultQty]);
 
-  const addLineWithName = useCallback(async (nameRaw: string, qtyRaw?: string) => {
+  // Manual add (free text)
+  const addManual = useCallback(async (nameRaw: string, qtyRaw?: string) => {
     try {
       if (!venueId || !orderId) return;
       const name = (nameRaw || '').trim();
       const qty = Math.max(1, parseInt(((qtyRaw ?? defaultQty) || '1'), 10) || 1);
-      if (!name) {
-        Alert.alert('Missing name', 'Pick or type a product name.');
-        return;
-      }
-      const db = getFirestore(getApp());
-      const ref = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
-      const added = await addDoc(ref, {
-        name,
-        qtyOrdered: qty,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        source: 'manual',
-      });
-      setLines(prev => [{ id: added.id, name, qty }, ...prev]);
-      savedToast('Notes saved'); // ✅ subtle confirmation
-    } catch (e: any) {
-      console.warn('[OrderEditor] addLine error', e);
+      if (!name) { Alert.alert('Missing name', 'Pick or type a product name.'); return; }
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      // create a line doc keyed by name (so edits overwrite)
+      const lineRef = doc(orderRef, 'lines', name);
+      let prev = 0;
+      try {
+        const snap = await getDoc(lineRef);
+        if (snap.exists()) prev = Number((snap.data() as any)?.qty ?? 0);
+      } catch {}
+      await setDoc(lineRef, { name, qty: prev + qty, updatedAt: serverTimestamp() }, { merge: true });
+      savedToast('Added to draft');
+    } catch (e:any) {
       Alert.alert('Error', e?.message ?? 'Failed adding line.');
     }
-  }, [venueId, orderId, defaultQty]);
+  }, [db, venueId, orderId, defaultQty]);
+
+  const bumpQty = useCallback(async (lineId: string, delta: number) => {
+    try {
+      if (!venueId || !orderId) return;
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      const lineRef = doc(orderRef, 'lines', lineId);
+      const snap = await getDoc(lineRef);
+      const prev = Number(snap.exists() ? (snap.data() as any)?.qty ?? 0 : 0);
+      const next = prev + delta;
+      if (next <= 0) {
+        await updateDoc(lineRef, { qty: 0, updatedAt: serverTimestamp() });
+      } else {
+        await updateDoc(lineRef, { qty: next, updatedAt: serverTimestamp() });
+      }
+    } catch {}
+  }, [db, venueId, orderId]);
+
+  const removeLine = useCallback(async (lineId: string) => {
+    try {
+      if (!venueId || !orderId) return;
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      await updateDoc(doc(orderRef,'lines',lineId), { qty: 0, updatedAt: serverTimestamp() });
+    } catch {}
+  }, [db, venueId, orderId]);
 
   const submitOrder = useCallback(async () => {
     try {
       if (!venueId || !orderId) return;
-      if (!lines.length) {
+      if (!lines.some(l => (l.qty||0) > 0)) {
         Alert.alert('No lines', 'Add at least one line before submitting.');
         return;
       }
-      const db = getFirestore(getApp());
       const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
-      const batch = writeBatch(db);
-      batch.update(orderRef, {
+      await updateDoc(orderRef, {
         status: 'submitted',
         displayStatus: 'Submitted',
+        submittedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      await batch.commit();
       Alert.alert('Submitted', 'Order submitted successfully.');
       nav.navigate('Orders');
-    } catch (e: any) {
-      console.warn('[OrderEditor] submit error', e);
+    } catch (e:any) {
       Alert.alert('Error', e?.message ?? 'Failed to submit order.');
     }
-  }, [venueId, orderId, lines.length, nav]);
+  }, [db, venueId, orderId, lines, nav]);
 
-  const renderItem = ({ item }: { item: ProductRow }) => (
+  const renderProduct = ({ item }: { item: ProductRow }) => (
     <View style={styles.productRow}>
       <Text style={styles.productName}>{item.name ?? 'Product'}</Text>
-      <TouchableOpacity style={styles.quickAdd} onPress={() => addLineWithName(item.name ?? '', defaultQty)}>
+      <TouchableOpacity style={styles.quickAdd} onPress={() => addCatalogItem(item, defaultQty)}>
         <Text style={styles.quickAddText}>Add ×{Math.max(1, parseInt(defaultQty || '1', 10) || 1)}</Text>
       </TouchableOpacity>
     </View>
@@ -220,6 +265,7 @@ export default function OrderEditorScreen() {
         <Text style={styles.muted}>Preparing order…</Text>
       ) : (
         <>
+          {/* Header / notes */}
           <Text style={styles.label}>Notes</Text>
           <TextInput
             placeholder="Optional notes for this order"
@@ -230,6 +276,26 @@ export default function OrderEditorScreen() {
             multiline
           />
 
+          {/* Existing lines */}
+          <Text style={[styles.label, { marginTop: 12 }]}>Lines</Text>
+          <FlatList
+            data={lines}
+            keyExtractor={(l) => l.id}
+            ListEmptyComponent={<Text style={styles.muted}>No lines yet.</Text>}
+            renderItem={({ item }) => (
+              <View style={styles.lineCard}>
+                <Text style={styles.lineName}>{item.name ?? item.id}</Text>
+                <View style={styles.lineControls}>
+                  <TouchableOpacity onPress={() => bumpQty(item.id, -1)} style={styles.bumpBtn}><Text>–</Text></TouchableOpacity>
+                  <Text style={styles.qtyText}>{item.qty}</Text>
+                  <TouchableOpacity onPress={() => bumpQty(item.id, +1)} style={styles.bumpBtn}><Text>+</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={() => removeLine(item.id)} style={styles.removeBtn}><Text style={{color:'#b00020'}}>Remove</Text></TouchableOpacity>
+                </View>
+              </View>
+            )}
+          />
+
+          {/* Catalog add */}
           <View style={styles.rowBetween}>
             <Text style={[styles.label, { marginTop: 12 }]}>Products from {supplierName}</Text>
             <View style={styles.qtyWrap}>
@@ -258,43 +324,26 @@ export default function OrderEditorScreen() {
           )}
 
           {showCustomAdd && (
-            <TouchableOpacity style={styles.customAdd} onPress={() => addLineWithName(queryText, defaultQty)}>
-              <Text style={styles.customAddText}>Add “{queryText.trim()}” as a custom item ×{Math.max(1, parseInt(defaultQty || '1', 10) || 1)}</Text>
+            <TouchableOpacity style={styles.customAdd} onPress={() => addManual(queryText, defaultQty)}>
+              <Text style={styles.customAddText}>Add “{queryText}” ×{Math.max(1, parseInt(defaultQty || '1', 10) || 1)}</Text>
             </TouchableOpacity>
           )}
 
           <FlatList
             data={items}
-            keyExtractor={(p) => p.id}
-            style={styles.list}
-            ListEmptyComponent={!loading ? <Text style={styles.muted}>No products yet. Try searching or “Load supplier catalog”.</Text> : null}
-            renderItem={renderItem}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
+            keyExtractor={(i)=>String(i.id)}
+            renderItem={renderProduct}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.7}
+            ListFooterComponent={<View style={{height:24}}/>}
           />
 
-          {nextCursor && (
-            <TouchableOpacity style={styles.loadMore} onPress={loadMore} disabled={loading}>
-              <Text style={styles.loadMoreText}>{loading ? 'Loading…' : 'Load more'}</Text>
+          {/* Submit */}
+          <View style={{ paddingVertical: 12 }}>
+            <TouchableOpacity onPress={submitOrder} style={styles.submitBtn}>
+              <Text style={styles.submitText}>Submit Order</Text>
             </TouchableOpacity>
-          )}
-
-          <FlatList
-            data={lines}
-            keyExtractor={(l) => l.id}
-            ListEmptyComponent={<Text style={styles.muted}>No lines yet. Use Add ×Qty above.</Text>}
-            renderItem={({ item }) => (
-              <View style={styles.line}>
-                <Text style={styles.lineName}>{item.name}</Text>
-                <Text style={styles.lineQty}>× {item.qty}</Text>
-              </View>
-            )}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-            contentContainerStyle={{ paddingVertical: 8 }}
-          />
-
-          <TouchableOpacity style={styles.submit} onPress={submitOrder}>
-            <Text style={styles.submitText}>Submit Order</Text>
-          </TouchableOpacity>
+          </View>
         </>
       )}
     </View>
@@ -302,39 +351,35 @@ export default function OrderEditorScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12 },
-  muted: { color: '#666', padding: 12 },
+  container:{ flex:1, backgroundColor:'#fff', padding:12 },
+  label:{ fontWeight:'800', marginBottom:6 },
+  notes:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, padding:10, minHeight:60 },
+  muted:{ color:'#6b7280' },
 
-  label: { fontWeight: '600', marginBottom: 6 },
-  notes: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, minHeight: 64 },
+  lineCard:{ backgroundColor:'#fff', borderRadius:12, padding:12, marginBottom:10, borderColor:'#eee', borderWidth:1 },
+  lineName:{ fontWeight:'700' },
+  lineControls:{ flexDirection:'row', alignItems:'center', marginTop:8 },
+  bumpBtn:{ paddingHorizontal:14, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#e5e7eb' },
+  qtyText:{ width:56, textAlign:'center', fontWeight:'800' },
+  removeBtn:{ marginLeft:'auto', paddingHorizontal:10, paddingVertical:6 },
 
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  qtyWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  qtyLabel: { color: '#333' },
-  qtyInput: { width: 54, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, textAlign: 'center' },
+  rowBetween:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
+  qtyWrap:{ flexDirection:'row', alignItems:'center', gap:6 },
+  qtyLabel:{ color:'#6b7280' },
+  qtyInput:{ width:52, borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingVertical:4, paddingHorizontal:8, textAlign:'center' },
 
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginTop: 6 },
+  input:{ borderWidth:1, borderColor:'#e5e7eb', borderRadius:10, paddingHorizontal:10, paddingVertical:8, marginTop:8 },
+  browseBtn:{ marginTop:10, paddingVertical:10, alignItems:'center', borderRadius:10, borderWidth:1, borderColor:'#e5e7eb' },
+  browseText:{ fontWeight:'700' },
 
-  browseBtn: { marginTop: 8, alignSelf: 'flex-start' },
-  browseText: { color: '#0a7', fontWeight: '600' },
+  customAdd:{ marginTop:10, paddingVertical:10, alignItems:'center', borderRadius:10, backgroundColor:'#111827' },
+  customAddText:{ color:'#fff', fontWeight:'800' },
 
-  customAdd: { marginTop: 8, backgroundColor: '#eefaf3', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#cfeede' },
-  customAddText: { color: '#0a7', fontWeight: '600' },
+  productRow:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingVertical:10, borderBottomWidth:StyleSheet.hairlineWidth, borderColor:'#eee' },
+  productName:{ fontWeight:'700' },
+  quickAdd:{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, backgroundColor:'#111827' },
+  quickAddText:{ color:'#fff', fontWeight:'700' },
 
-  list: { maxHeight: 280, marginTop: 8, borderWidth: 1, borderColor: '#eee', borderRadius: 8 },
-  productRow: { paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  productName: { fontSize: 15 },
-  quickAdd: { backgroundColor: '#0a7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
-  quickAddText: { color: '#fff', fontWeight: '700' },
-
-  loadMore: { marginTop: 8, alignSelf: 'center' },
-  loadMoreText: { color: '#0a7', fontWeight: '600' },
-
-  line: { paddingHorizontal: 8, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between' },
-  lineName: { fontSize: 16 },
-  lineQty: { fontSize: 16, color: '#444' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: '#e5e5e5', marginHorizontal: 8 },
-
-  submit: { marginTop: 12, backgroundColor: '#0a5', paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
-  submitText: { color: '#fff', fontWeight: '700' },
+  submitBtn:{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' },
+  submitText:{ color:'#fff', fontWeight:'800' },
 });

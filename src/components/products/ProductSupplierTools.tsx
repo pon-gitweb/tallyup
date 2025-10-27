@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  FlatList,
   ScrollView,
   Dimensions,
 } from 'react-native';
@@ -133,20 +132,25 @@ export default function ProductSupplierTools({ existingProducts, onApplied }: Pr
         {ran ? (
           <View style={{ marginTop: 12 }}>
             <Text style={S.subTitle}>Rows: {res.rows.length}</Text>
-            <FlatList
-              data={res.rows}
-              keyExtractor={(_, i) => String(i)}
-              renderItem={({ item, index }) => {
+
+            {/* Non-virtualized list to avoid nesting warnings */}
+            <View>
+              {res.rows.map((item: any, index: number) => {
                 const sug = res.suggestions[index];
                 const tagStyle =
-                  sug?.matchQuality === 'exact' ? S.tagOk : sug?.matchQuality === 'startsWith' ? S.tagWarn : S.tagNeutral;
+                  sug?.matchQuality === 'exact'
+                    ? S.tagOk
+                    : sug?.matchQuality === 'startsWith'
+                    ? S.tagWarn
+                    : S.tagNeutral;
+
                 return (
-                  <View style={S.row}>
+                  <View key={index} style={[S.row, { marginBottom: 6 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={S.rowTitle}>{item.name}</Text>
                       <Text style={S.rowSub}>
                         {item.sku ? `SKU ${item.sku} · ` : ''}
-                        {item.price != null ? `$${item.price.toFixed(2)} · ` : ''}
+                        {item.price != null ? `$${Number(item.price).toFixed(2)} · ` : ''}
                         {item.packSize ? `${item.packSize} · ` : ''}
                         {item.unit ? `${item.unit} · ` : ''}
                         {item.gstPercent != null ? `${item.gstPercent}% GST` : ''}
@@ -158,10 +162,10 @@ export default function ProductSupplierTools({ existingProducts, onApplied }: Pr
                     </View>
                   </View>
                 );
-              }}
-              ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-              contentContainerStyle={{ paddingBottom: 8 }}
-            />
+              })}
+              {res.rows.length === 0 && <Text style={S.rowSub}>No rows to preview.</Text>}
+            </View>
+
             <TouchableOpacity onPress={onApplyExact} style={[S.btn, { marginTop: 12 }]}>
               <Text style={S.btnText}>Apply exact matches (set preferred)</Text>
             </TouchableOpacity>
@@ -177,10 +181,13 @@ const S = StyleSheet.create({
   title: { fontSize: 16, fontWeight: '800' },
   subTitle: { fontSize: 14, fontWeight: '800', marginBottom: 8 },
   hint: { fontSize: 12, color: '#6b7280', marginTop: 4, marginBottom: 8 },
+
   rowInputs: { flexDirection: 'row', gap: 8 },
   col: { flex: 1 },
+
   mapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   mapCol: { width: 150 },
+
   label: { fontSize: 11, color: '#374151', marginBottom: 4 },
   input: {
     borderWidth: 1,
@@ -192,11 +199,14 @@ const S = StyleSheet.create({
     backgroundColor: '#fff',
   },
   csvBox: { minHeight: 120, textAlignVertical: 'top' },
+
   btn: { marginTop: 8, backgroundColor: '#111827', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   btnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+
   row: { paddingVertical: 10, borderBottomWidth: 1, borderColor: '#f3f4f6' },
   rowTitle: { fontSize: 14, fontWeight: '700' },
   rowSub: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+
   tag: { marginTop: 6, fontSize: 11, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, alignSelf: 'flex-start' },
   tagOk: { backgroundColor: '#ecfdf5', color: '#065f46' },
   tagWarn: { backgroundColor: '#fffbeb', color: '#92400e' },

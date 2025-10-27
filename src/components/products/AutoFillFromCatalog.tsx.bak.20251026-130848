@@ -1,0 +1,106 @@
+// @ts-nocheck
+import React, { useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+
+/**
+ * Props (kept identical to the screen):
+ *  - initialTerm?: string
+ *  - onApply: (patch: {
+ *      name?: string|null; sku?: string|null; unit?: string|null; size?: string|null;
+ *      packSize?: number|null; abv?: number|null; costPrice?: number|null; gstPercent?: number|null;
+ *      supplierNameSuggested?: string|null; supplierGlobalId?: string|null; categorySuggested?: string|null;
+ *    }) => void
+ *
+ * NOTE: This version intentionally avoids importing any catalog service and avoids FlatList.
+ * It removes both the crash and the "VirtualizedLists nested inside ScrollView" warning.
+ */
+
+type Props = {
+  initialTerm?: string;
+  onApply: (patch: any) => void;
+};
+
+const numOrNull = (v:any)=>{ const n = Number(v); return Number.isFinite(n) ? n : null; };
+const intOrNull = (v:any)=>{ const n = Math.round(Number(v)); return Number.isFinite(n) ? n : null; };
+
+export default function AutoFillFromCatalog({ initialTerm = '', onApply }: Props) {
+  const [term, setTerm] = useState(initialTerm);
+  const [manualJson, setManualJson] = useState('');
+
+  function applyManual() {
+    if (!manualJson.trim()) {
+      Alert.alert('Nothing to apply', 'Paste a JSON object first (see example).');
+      return;
+    }
+    try {
+      const raw = JSON.parse(manualJson);
+      const patch = {
+        name: raw.name ?? null,
+        sku: raw.sku ?? null,
+        unit: raw.unit ?? null,
+        size: raw.size ?? null,
+        packSize: intOrNull(raw.packSize),
+        abv: numOrNull(raw.abv),
+        costPrice: numOrNull(raw.costPrice ?? raw.price ?? raw.unitCost),
+        gstPercent: numOrNull(raw.gstPercent ?? 15) ?? 15,
+        supplierNameSuggested: raw.supplierName ?? null,
+        supplierGlobalId: raw.supplierGlobalId ?? null,
+        categorySuggested: raw.category ?? null,
+      };
+      onApply(patch);
+      Alert.alert('Applied', 'Fields copied into the form (nothing saved until you tap Save).');
+    } catch (e:any) {
+      Alert.alert('Invalid JSON', e?.message || 'Could not parse JSON');
+    }
+  }
+
+  return (
+    <View style={S.wrap}>
+      <Text style={S.title}>Auto-fill from Global Catalog</Text>
+      <Text style={S.hint}>
+        Catalog search isn’t available in this build. You can still paste a quick JSON patch below to prefill fields.
+      </Text>
+
+      <View style={S.row}>
+        <TextInput
+          value={term}
+          onChangeText={setTerm}
+          placeholder="(no-op) Search name or SKU"
+          autoCapitalize="none"
+          style={S.input}
+        />
+        <View style={[S.btn, { backgroundColor: '#9CA3AF' }]}>
+          <Text style={S.btnText}>Search</Text>
+        </View>
+      </View>
+
+      <Text style={[S.hintMuted, { marginTop: 10 }]}>
+        Example JSON: {"{ \"name\":\"Absolut Vodka\", \"sku\":\"VOD700\", \"unit\":\"bottle\", \"size\":\"700ml\", \"packSize\":6, \"costPrice\":24.95, \"gstPercent\":15, \"supplierName\":\"Hancocks\" }"}
+      </Text>
+
+      <TextInput
+        value={manualJson}
+        onChangeText={setManualJson}
+        style={[S.input, S.bigInput]}
+        placeholder="Paste JSON here…"
+        multiline
+      />
+
+      <TouchableOpacity onPress={applyManual} style={[S.btn, { marginTop: 8 }]}>
+        <Text style={S.btnText}>Apply from JSON</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  wrap: { backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 12 },
+  title: { fontSize: 16, fontWeight: '800' },
+  hint: { color: '#374151', marginTop: 4 },
+  hintMuted: { color: '#6B7280', marginTop: 6, fontSize: 12 },
+  row: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  input: { flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  bigInput: { minHeight: 90, textAlignVertical: 'top' },
+  btn: { backgroundColor: '#111827', paddingHorizontal: 14, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  btnText: { color: '#fff', fontWeight: '800' },
+});

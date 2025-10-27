@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Alert,
   TouchableOpacity,
-  FlatList,
+
   TextInput,
   KeyboardAvoidingView,
   Platform,
@@ -178,26 +178,19 @@ export default function NewOrderScreen() {
           {/* Product list to add */}
           <View style={styles.card}>
             <Text style={styles.label}>Products</Text>
-            <FlatList
-              data={filteredProducts}
-              keyExtractor={(p) => p.id}
-              scrollEnabled={false}
-              ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-              renderItem={({ item: p }) => {
-                return (
-                  <View style={styles.row}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName}>{p.name || p.sku}</Text>
-                      {!!(p as any)?.unit && <Text style={styles.sub}>Unit: {(p as any).unit}</Text>}
-                    </View>
-                    <TouchableOpacity onPress={() => addProduct(p)} style={styles.addBtn}>
-                      <Text style={styles.addText}>Add</Text>
-                    </TouchableOpacity>
+            <View>
+              {filteredProducts.map((p) => (
+                <View key={p.id} style={[styles.row, { marginBottom: 8 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.itemName}>{p.name || p.sku}</Text>
+                    {!!(p as any)?.unit && <Text style={styles.sub}>Unit: {(p as any).unit}</Text>}
                   </View>
-                );
-              }}
-              ListEmptyComponent={<Text style={{ opacity: 0.6 }}>No products match your search.</Text>}
-            />
+                  <TouchableOpacity onPress={() => addProduct(p)} style={styles.addBtn}>
+                    <Text style={styles.addText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
           </View>
 
           {/* Lines (cart) */}

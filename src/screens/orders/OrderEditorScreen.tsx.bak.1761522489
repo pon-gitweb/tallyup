@@ -1,0 +1,21 @@
+// @ts-nocheck
+import React from 'react';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import OrderEditor from '../../components/orders/OrderEditor';
+
+type Params = { orderId: string };
+
+export default function OrderEditorScreen() {
+  const nav = useNavigation<any>();
+  const route = useRoute<RouteProp<Record<string, Params>, string>>();
+  const orderId = route.params?.orderId;
+
+  if (!orderId) return null;
+
+  return (
+    <OrderEditor
+      orderId={orderId}
+      onSubmitted={() => nav.navigate('Orders')}
+    />
+  );
+}

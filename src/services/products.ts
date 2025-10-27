@@ -1,9 +1,11 @@
+// src/services/products.ts
 // @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
   getFirestore, collection, query, orderBy, limit as fblimit, where,
-  getDocs, startAt, endAt
+  getDocs, startAt, endAt, addDoc, doc, updateDoc, deleteDoc, serverTimestamp
 } from 'firebase/firestore';
+import type { Product as FullProduct } from '../types/Product';
 
 export type ProductRow = {
   id: string;
@@ -30,9 +32,7 @@ export async function listProductsBySupplierPage(
     orderBy('name'),
     fblimit(Math.max(1, Math.min(limit, 100)))
   );
-  // For cursor, we use name-based “startAt next value” pagination.
   if (startAfterName && startAfterName.length) {
-    // move past previous name by starting at a string just after it
     const bump = startAfterName + '\u0000';
     qRef = query(
       collection(db, 'venues', venueId, 'products'),
@@ -42,25 +42,14 @@ export async function listProductsBySupplierPage(
       fblimit(Math.max(1, Math.min(limit, 100)))
     );
   }
-  if (onlyActive) {
-    // If you add this filter, you will need index: supplierId ASC, active ASC, name ASC
-    // qRef = query(qRef, where('active', '==', true));
-  }
+  // if (onlyActive) qRef = query(qRef, where('active','==',true)); // optional
   const snap = await getDocs(qRef);
   const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
   const last = items.length ? items[items.length - 1] : null;
   return { items, nextCursor: last?.name ?? null };
 }
 
-/**
- * Supplier-scoped prefix search with pagination.
- * Uses orderBy('name') + startAt(term) + endAt(term+'\uf8ff') limited by `limit`.
- * Cursor is the last `name` from previous page (same term).
- *
- * Required composite index (one-time):
- *   Collection group: products
- *   Fields: supplierId ASC, name ASC
- */
+/** Supplier-scoped prefix search with pagination. */
 export async function searchProductsBySupplierPrefixPage(
   venueId: string,
   supplierId: string,
@@ -73,8 +62,6 @@ export async function searchProductsBySupplierPrefixPage(
   if (!clean) return { items: [], nextCursor: null };
 
   const db = getFirestore(getApp());
-
-  // Base query for first page
   let qRef = query(
     collection(db, 'venues', venueId, 'products'),
     where('supplierId', '==', supplierId),
@@ -84,7 +71,6 @@ export async function searchProductsBySupplierPrefixPage(
     fblimit(Math.max(1, Math.min(limit, 50)))
   );
 
-  // For “next pages”, we start just after the last name we’ve already shown, but keep the same prefix window.
   if (startAfterName && startAfterName.length) {
     const bump = startAfterName + '\u0000';
     qRef = query(
@@ -103,18 +89,56 @@ export async function searchProductsBySupplierPrefixPage(
   return { items, nextCursor: last?.name ?? null };
 }
 
-// (Kept for any other callers that used these before)
-export async function listProducts(venueId: string, opts: ListOpts = {}): Promise<ProductRow[]> {
-  const { limit = 50, onlyActive = true } = opts;
+/** Browse all (ordered by name). */
+export async function listProducts(venueId: string, opts: ListOpts = {}): Promise<FullProduct[]> {
+  const { limit = 50 } = opts;
   if (!venueId) return [];
   const db = getFirestore(getApp());
   let qRef = query(collection(db, 'venues', venueId, 'products'), orderBy('name'), fblimit(Math.max(1, Math.min(limit, 100))));
-  if (onlyActive) {
-    // qRef = query(qRef, where('active', '==', true));
-  }
+  // if (opts.onlyActive) qRef = query(qRef, where('active','==',true)); // optional
   const snap = await getDocs(qRef);
-  return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+  return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as FullProduct[];
 }
 
-const _default = { listProductsBySupplierPage, searchProductsBySupplierPrefixPage, listProducts };
+/** Mutations */
+export async function createProduct(venueId: string, data: Partial<FullProduct>) {
+  if (!venueId) throw new Error('createProduct: venueId required');
+  const db = getFirestore(getApp());
+  const ref = await addDoc(collection(db, 'venues', venueId, 'products'), {
+    ...data,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateProduct(venueId: string, productId: string, data: Partial<FullProduct>) {
+  if (!venueId || !productId) throw new Error('updateProduct: venueId and productId required');
+  const db = getFirestore(getApp());
+  await updateDoc(doc(db, 'venues', venueId, 'products', productId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function upsertProduct(venueId: string, productId: string | undefined, data: Partial<FullProduct>) {
+  if (productId) return updateProduct(venueId, productId, data);
+  return createProduct(venueId, data);
+}
+
+export async function deleteProductById(venueId: string, productId: string) {
+  if (!venueId || !productId) throw new Error('deleteProductById: venueId and productId required');
+  const db = getFirestore(getApp());
+  await deleteDoc(doc(db, 'venues', venueId, 'products', productId));
+}
+
+const _default = {
+  listProductsBySupplierPage,
+  searchProductsBySupplierPrefixPage,
+  listProducts,
+  createProduct,
+  updateProduct,
+  upsertProduct,
+  deleteProductById,
+};
 export default _default;

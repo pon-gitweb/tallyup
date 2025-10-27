@@ -1,0 +1,117 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, FlatList, StyleSheet } from 'react-native';
+import { searchGlobalCatalogByNamePrefix, catalogHitToProductPatch, type CatalogHit } from '../../services/globalCatalog';
+
+type Props = {
+  /** Current product name value from the form (used to prefill the search box). */
+  initialTerm?: string | null;
+  /** Called with a suggested patch (plain object) to merge into form state. */
+  onApply: (patch: any) => void;
+};
+
+export default function AutoFillFromCatalog({ initialTerm, onApply }: Props) {
+  const [term, setTerm] = useState(initialTerm || '');
+  const [loading, setLoading] = useState(false);
+  const [hits, setHits] = useState<CatalogHit[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    const q = (term || '').trim();
+    if (!q) { setHits([]); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await searchGlobalCatalogByNamePrefix(q, 8, 40);
+      setHits(res || []);
+    } catch (e:any) {
+      setError(e?.message || 'Search failed');
+      setHits([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // auto-search when initialTerm provided
+  useEffect(() => {
+    if ((initialTerm || '').trim()) {
+      setTerm(initialTerm!.trim());
+      run().catch(()=>{});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTerm]);
+
+  return (
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Autofill from Global Catalog</Text>
+
+      <View style={styles.row}>
+        <TextInput
+          value={term}
+          onChangeText={setTerm}
+          placeholder="Type a product name (e.g., Steinlager, Absolut, Tonic)…"
+          autoCapitalize="none"
+          style={styles.input}
+        />
+        <TouchableOpacity onPress={run} style={styles.btn}>
+          <Text style={styles.btnText}>Search</Text>
+        </TouchableOpacity>
+      </View>
+
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator /></View>
+      ) : error ? (
+        <Text style={styles.err}>{error}</Text>
+      ) : (
+        <FlatList
+          data={hits}
+          keyExtractor={(_,i)=>String(i)}
+          ItemSeparatorComponent={()=><View style={{height:8}} />}
+          renderItem={({ item }) => {
+            const patch = catalogHitToProductPatch(item);
+            const price = item.priceBottleExGst != null ? `$${item.priceBottleExGst.toFixed(2)} ex GST` : '—';
+            const pack = item.unitsPerCase != null ? `${item.unitsPerCase}` : '—';
+            const size = item.size || '—';
+            const abv  = item.abv != null ? `${item.abv}%` : '—';
+            const unit = item.unit || '—';
+
+            return (
+              <View style={styles.card}>
+                <View style={{flex:1}}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <Text style={styles.sub}>
+                    {item.supplierName} • {size} • {unit} • ABV {abv} • Pack {pack} • {price}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.apply}
+                  onPress={() => onApply(patch)}
+                >
+                  <Text style={styles.applyText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          }}
+          ListEmptyComponent={<Text style={styles.hint}>No matches yet. Try a broader term.</Text>}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, backgroundColor: '#F9FAFB', gap: 10 },
+  title: { fontWeight: '800' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  input: { flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff' },
+  btn: { backgroundColor: '#111827', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 },
+  btnText: { color: '#fff', fontWeight: '700' },
+  center: { alignItems: 'center', padding: 10 },
+  err: { color: '#B91C1C' },
+  hint: { color: '#6B7280' },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 10 },
+  name: { fontWeight: '700' },
+  sub: { color: '#6B7280', marginTop: 2 },
+  apply: { backgroundColor: '#0A84FF', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  applyText: { color: 'white', fontWeight: '700' },
+});

@@ -1,27 +1,149 @@
 // @ts-nocheck
-import React from 'react';
-import { SafeAreaView, View } from 'react-native';
-import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
-import OrderEditor from 'src/components/orders/OrderEditor';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { getApp } from 'firebase/app';
+import {
+  getFirestore, doc, getDoc, onSnapshot, collection, query, orderBy,
+  updateDoc, serverTimestamp, writeBatch
+} from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
 
-type ParamList = { OrderDetail: { orderId: string } };
+type Params = { orderId: string; receiveNow?: boolean };
 
 export default function OrderDetailScreen() {
-  const route = useRoute<RouteProp<ParamList, 'OrderDetail'>>();
   const nav = useNavigation<any>();
-  const orderId = route?.params?.orderId;
+  const route = useRoute<RouteProp<Record<string, Params>, string>>();
+  const venueId = useVenueId();
+  const orderId = route.params?.orderId || '';
+  const receiveNowParam = !!route.params?.receiveNow;
+
+  const [hdr, setHdr] = useState<any>(null);
+  const [lines, setLines] = useState<any[]>([]);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+
+  const db = getFirestore(getApp());
+  const orderRef = venueId && orderId ? doc(db, 'venues', venueId, 'orders', orderId) : null;
+
+  // Header (order doc)
+  useEffect(() => {
+    if (!orderRef) return;
+    const unsub = onSnapshot(orderRef, (snap) => setHdr(snap.exists() ? snap.data() : null));
+    return () => unsub();
+  }, [orderRef]);
+
+  // Lines
+  useEffect(() => {
+    if (!orderRef) return;
+    const col = collection(orderRef, 'lines');
+    const qy = query(col, orderBy('name'));
+    const unsub = onSnapshot(qy, (snap) => {
+      const next: any[] = [];
+      snap.forEach((d) => {
+        const v = d.data() as any;
+        next.push({ id: d.id, name: v?.name ?? d.id, qtyOrdered: Number(v?.qty ?? v?.qtyOrdered ?? 0), receivedQty: Number(v?.receivedQty ?? 0) });
+      });
+      setLines(next);
+    });
+    return () => unsub();
+  }, [orderRef]);
+
+  // Auto-open Receive sheet only if explicitly requested AND not already received
+  useEffect(() => {
+    const status = String(hdr?.status || hdr?.displayStatus || '').toLowerCase();
+    if (receiveNowParam && status !== 'received' && Array.isArray(lines)) {
+      setReceiveOpen(true);
+    } else {
+      setReceiveOpen(false);
+    }
+  }, [receiveNowParam, hdr, lines]);
+
+  const confirmReceive = useCallback(async () => {
+    try {
+      if (!orderRef) throw new Error('No order');
+      // 1) Persist receivedQty for each line (default to ordered qty if none was changed)
+      const batch = writeBatch(db);
+      lines.forEach((ln) => {
+        const lr = doc(orderRef, 'lines', ln.id);
+        const want = Number.isFinite(ln.receivedQty) ? Number(ln.receivedQty) : Number(ln.qtyOrdered || 0);
+        batch.update(lr, { receivedQty: Math.max(0, want) });
+      });
+      // 2) Mark order as received with server timestamps
+      batch.update(orderRef, {
+        status: 'received',
+        displayStatus: 'received',
+        receivedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+
+      // 3) Clear the param so the sheet won't reopen on return/rerender
+      nav.setParams({ receiveNow: false });
+
+      Alert.alert('Received', 'Order marked as received.');
+      setReceiveOpen(false);
+    } catch (e: any) {
+      Alert.alert('Receive', e?.message ?? 'Failed to receive order.');
+    }
+  }, [db, orderRef, lines, nav]);
+
+  // Very small UI (kept minimal; your header wrapper adds the actions)
+  const totalOrdered = useMemo(() => lines.reduce((a,b)=>a+(Number(b.qtyOrdered)||0),0), [lines]);
+  const totalReceived = useMemo(() => lines.reduce((a,b)=>a+(Number(b.receivedQty)||0),0), [lines]);
+
+  if (!hdr) {
+    return <View style={{ padding: 16 }}><Text>Loading…</Text></View>;
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={{ flex: 1 }}>
-        <OrderEditor
-          orderId={orderId}
-          onSubmitted={() => {
-            // After submit, go back to Orders list
-            nav.navigate('Orders');
-          }}
-        />
+    <View style={{ flex:1, backgroundColor:'#fff' }}>
+      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+        <Text style={{ fontWeight: '800' }}>{hdr?.supplierName || 'Supplier'}</Text>
+        <Text style={{ color:'#6b7280' }}>{hdr?.displayStatus || hdr?.status || '—'}</Text>
+        <Text style={{ marginTop: 6, color:'#6b7280' }}>
+          Ordered {totalOrdered} • Received {totalReceived}
+        </Text>
       </View>
-    </SafeAreaView>
+
+      <FlatList
+        data={lines}
+        keyExtractor={(l)=>l.id}
+        contentContainerStyle={{ padding: 12 }}
+        renderItem={({item})=>(
+          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:12, marginBottom:10, borderWidth:1, borderColor:'#eee' }}>
+            <Text style={{ fontWeight:'700' }}>{item.name ?? item.id}</Text>
+            <Text style={{ color:'#6b7280', marginTop:6 }}>
+              Ordered {item.qtyOrdered ?? 0} • Received {item.receivedQty ?? 0}
+            </Text>
+          </View>
+        )}
+      />
+
+      <Modal transparent visible={receiveOpen} onRequestClose={()=>setReceiveOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', padding:18 }}>
+          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:16, maxHeight:'80%' }}>
+            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:10 }}>Confirm received</Text>
+            <Text style={{ color:'#6b7280', marginBottom:12 }}>
+              We’ll mark this order as received and use the ordered quantities
+              (or the edited received quantities if you’ve changed them).
+            </Text>
+
+            <TouchableOpacity
+              onPress={confirmReceive}
+              style={{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#fff', fontWeight:'800' }}>Confirm</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={()=>{ setReceiveOpen(false); }}
+              style={{ marginTop:10, paddingVertical:10, alignItems:'center' }}
+            >
+              <Text style={{ color:'#111827', fontWeight:'700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }

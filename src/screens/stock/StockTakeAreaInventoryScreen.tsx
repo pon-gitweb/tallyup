@@ -1252,7 +1252,7 @@ useEffect(() => {
             ) : histRows.length === 0 ? (
               <Text style={{ color:'#6B7280' }}>No recent audits for this item.</Text>
             ) : (
-              <ScrollView contentContainerStyle={{ gap:8 }}>
+              <View style={{ gap:8 }}>
                 {histRows.map(a => (
                   <View key={a.id} style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
                     <Text style={{ fontWeight:'800' }}>{a.type.replace(/-/g,' ')}</Text>
@@ -1265,7 +1265,7 @@ useEffect(() => {
                     </Text>
                   </View>
                 ))}
-              </ScrollView>
+              </View>
             )}
 
             <TouchableOpacity onPress={closeHistory} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
@@ -1521,7 +1521,7 @@ useEffect(() => {
               {countedCount}/{items.length} counted • {lowCount} low • {flaggedCount} flagged • {progressPct}%
             </Text>
 
-            <ScrollView contentContainerStyle={{ gap:10 }}>
+            <View style={{ gap:10 }}>
               <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
                 <Text style={{ fontWeight:'800', marginBottom:6 }}>Counted this cycle ({reviewCounted.length})</Text>
                 {reviewCounted.length === 0 ? (
@@ -1566,7 +1566,7 @@ useEffect(() => {
                   </TouchableOpacity>
                 ))}
               </View>
-            </ScrollView>
+            </View>
 
             <View style={{ flexDirection:'row', gap:10, marginTop:12 }}>
               <TouchableOpacity onPress={()=>setReviewOpen(false)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>

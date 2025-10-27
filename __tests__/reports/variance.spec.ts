@@ -1,4 +1,4 @@
-import { computeVarianceFromData } from '../../src/services/reports/variance';
+import variance from '../../src/services/reports/variance';
 
 describe('computeVarianceFromData', () => {
   it('classifies shortages/excesses vs par and totals values', () => {
@@ -11,7 +11,7 @@ describe('computeVarianceFromData', () => {
     const received = { vodka: 0, gin: 2, mint: 0 };
     const sold = { vodka: 3, gin: 1, mint: 10 };
 
-    const r = computeVarianceFromData({
+    const r = variance.computeVariance({
       items, lastCountsByItemId: lastCounts, receivedByItemId: received, soldByItemId: sold, filterDepartmentId: 'bar',
     });
 

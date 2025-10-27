@@ -25,9 +25,9 @@ export function useVarianceReport(venueId: string | null | undefined, department
 
     (async () => {
       try {
-        const result = await computeVarianceForDepartment({ venueId, departmentId: departmentId ?? null });
+        const result = await computeVarianceForDepartment(venueId as string, departmentId ?? null);
         if (!mounted.current || cancelled) return;
-        setState({ loading: false, result, error: null });
+        setState({ loading: false, result: (result as any), error: null });
       } catch (e: any) {
         if (!mounted.current || cancelled) return;
         setState({ loading: false, result: null, error: e?.message ?? 'Failed to compute variance' });
