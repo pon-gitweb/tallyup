@@ -41,6 +41,34 @@ function toLines(bucket: any): SuggestedLine[] {
   return out;
 }
 
+/** ---- Dept Merge helper (additive, pure, no side-effects) ---- */
+export type DeptMergeDecision = 'MERGE' | 'SEPARATE';
+
+/** Return unique dept tags present on suggestion lines (truthy, stringified). */
+export function uniqueDeptsFromLines(lines: Array<any>): string[] {
+  return Array.from(
+    new Set(
+      (Array.isArray(lines) ? lines : [])
+        .map(l => (l && typeof l === 'object' ? (l as any).dept : null))
+        .filter(Boolean)
+        .map(String)
+    )
+  );
+}
+
+/**
+ * Decide whether to MERGE or SEPARATE when the same supplier bucket contains multiple depts.
+ * - If >1 unique depts => default MERGE (single order header with deptScope including all depts).
+ * - If 0 or 1 => SEPARATE is moot (only one), return SEPARATE for clarity.
+ * UI can override/ask user later; this only provides a default & the detected depts.
+ */
+export function decideDeptMergeForSupplier(lines: Array<any>): { decision: DeptMergeDecision; depts: string[] } {
+  const depts = uniqueDeptsFromLines(lines);
+  if (depts.length > 1) return { decision: 'MERGE', depts };
+  return { decision: 'SEPARATE', depts };
+}
+/** ---- End Dept Merge helper ---- */
+
 export async function createDraftsFromSuggestions(
   venueId: string,
   suggestions: SuggestedLegacyMap,

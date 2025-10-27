@@ -41,7 +41,15 @@ export default function OrderDetailScreen() {
       const next: any[] = [];
       snap.forEach((d) => {
         const v = d.data() as any;
-        next.push({ id: d.id, name: v?.name ?? d.id, qtyOrdered: Number(v?.qty ?? v?.qtyOrdered ?? 0), receivedQty: Number(v?.receivedQty ?? 0) });
+        next.push({
+          id: d.id,
+          name: v?.name ?? d.id,
+          qtyOrdered: Number(v?.qty ?? v?.qtyOrdered ?? 0),
+          receivedQty: Number(v?.receivedQty ?? 0),
+          // additive:
+          dept: v?.dept ?? null,
+          unitCost: Number(v?.unitCost ?? 0),
+        });
       });
       setLines(next);
     });
@@ -86,9 +94,26 @@ export default function OrderDetailScreen() {
   const totalOrdered = useMemo(() => lines.reduce((a,b)=>a+(Number(b.qtyOrdered)||0),0), [lines]);
   const totalReceived = useMemo(() => lines.reduce((a,b)=>a+(Number(b.receivedQty)||0),0), [lines]);
 
+  // ---- Per-dept aggregates (additive) ----
+  const perDept = useMemo(() => {
+    const acc: Record<string, { qty: number; total: number; lines: number }> = {};
+    lines.forEach((ln) => {
+      const key = String(ln.dept ?? '—');
+      const qty = Number(ln.qtyOrdered) || 0;
+      const cost = Number(ln.unitCost) || 0;
+      if (!acc[key]) acc[key] = { qty: 0, total: 0, lines: 0 };
+      acc[key].qty += qty;
+      acc[key].total += qty * cost;
+      acc[key].lines += 1;
+    });
+    return acc;
+  }, [lines]);
+
   if (!hdr) {
     return <View style={{ padding: 16 }}><Text>Loading…</Text></View>;
   }
+
+  const deptKeys = Object.keys(perDept);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
@@ -98,6 +123,22 @@ export default function OrderDetailScreen() {
         <Text style={{ marginTop: 6, color:'#6b7280' }}>
           Ordered {totalOrdered} • Received {totalReceived}
         </Text>
+
+        {/* Per-dept totals (additive) */}
+        {!!deptKeys.length && (
+          <View style={{ flexDirection:'row', flexWrap:'wrap', marginTop:8 }}>
+            {deptKeys.map((k) => {
+              const d = perDept[k];
+              return (
+                <View key={k} style={{ paddingHorizontal:8, paddingVertical:4, borderRadius:999, backgroundColor:'#F3F4F6', marginRight:6, marginBottom:6 }}>
+                  <Text style={{ fontSize:11, fontWeight:'700', color:'#374151' }}>
+                    {k}: {d.qty} • ${d.total.toFixed(2)}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       <FlatList
@@ -110,6 +151,12 @@ export default function OrderDetailScreen() {
             <Text style={{ color:'#6b7280', marginTop:6 }}>
               Ordered {item.qtyOrdered ?? 0} • Received {item.receivedQty ?? 0}
             </Text>
+            {/* Optional: show line dept as tiny pill */}
+            {item.dept ? (
+              <View style={{ marginTop:6, alignSelf:'flex-start', paddingHorizontal:8, paddingVertical:3, borderRadius:999, backgroundColor:'#F3F4F6' }}>
+                <Text style={{ fontSize:11, fontWeight:'700', color:'#374151' }}>{String(item.dept)}</Text>
+              </View>
+            ) : null}
           </View>
         )}
       />
