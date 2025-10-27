@@ -1,8 +1,10 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { getFirestore, collection, onSnapshot, doc, deleteDoc, getDocs } from 'firebase/firestore';
+import {
+  getFirestore, collection, onSnapshot, doc, deleteDoc, getDocs, query, where
+} from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
 type OrderRow = {
@@ -59,7 +61,7 @@ export default function OrdersScreen(){
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
 
-  // Subscribe to orders
+  // Live subscribe to all orders; keep as-is
   useEffect(()=>{
     if(!venueId) return;
     const ref = collection(db,'venues',venueId,'orders');
@@ -98,20 +100,17 @@ export default function OrdersScreen(){
     return rowsAll.filter(r=>pick(String(r.status||'draft')));
   },[rowsAll,tab]);
 
-  const openRow=useCallback((row:OrderRow)=>{
-    const s=String(row.status||'draft');
-    if(s==='draft'){
-      nav.navigate('OrderEditor',{orderId:row.id,mode:'edit'});
-    }else{
-      nav.navigate('OrderDetail',{orderId:row.id});
-    }
-  },[nav]);
+  // Stale indicator for UI (7d)
+  const isStaleDraft=(r:OrderRow)=>{
+    const now=Date.now();
+    const ms=(x:any)=>x?.toMillis?.()??0;
+    const t = ms(r.createdAt) || r.createdAtClientMs || 0;
+    if(!t) return false;
+    return now - t > 7*24*60*60*1000;
+  };
 
-  const startReceive=useCallback((row:OrderRow)=>{
-    nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
-  },[nav]);
-
-  const deleteDraft=useCallback(async(row:OrderRow)=>{
+  // Manual long-press delete (unchanged)
+  const deleteDraft = useCallback(async(row:OrderRow)=>{
     if(!venueId) return;
     Alert.alert(
       'Delete draft?',
@@ -120,7 +119,6 @@ export default function OrdersScreen(){
         { text:'Cancel', style:'cancel' },
         { text:'Delete', style:'destructive', onPress: async ()=>{
             try{
-              // delete lines then the order
               const linesCol = collection(db,'venues',venueId,'orders',row.id,'lines');
               const snap = await getDocs(linesCol);
               const promises = snap.docs.map(d=>deleteDoc(doc(db,'venues',venueId,'orders',row.id,'lines',d.id)));
@@ -134,13 +132,63 @@ export default function OrdersScreen(){
     );
   },[db,venueId]);
 
-  const isStaleDraft=(r:OrderRow)=>{
-    const now=Date.now();
-    const ms=(x:any)=>x?.toMillis?.()??0;
-    const t = ms(r.createdAt) || r.createdAtClientMs || 0;
-    if(!t) return false;
-    return now - t > 7*24*60*60*1000;
-  };
+  // --- AUTO-CLEAN without composite index ---
+  // Run once per Drafts tab visit. Query only status=='draft', then filter by cutoff in JS.
+  const autoCleanedRef = useRef(false);
+  useEffect(()=>{
+    if(tab!=='drafts') return;
+    if(!venueId) return;
+    if(autoCleanedRef.current) return;
+
+    const cutoffMs = Date.now() - 7*24*60*60*1000;
+    const ordersCol = collection(db,'venues',venueId,'orders');
+    const qRef = query(ordersCol, where('status','==','draft')); // no range filter -> no composite index required
+
+    let cancelled=false;
+    (async()=>{
+      try{
+        const snap = await getDocs(qRef);
+        const stale = snap.docs.filter(d=>{
+          const data:any = d.data()||{};
+          const ts = (data.createdAt && data.createdAt.toMillis && data.createdAt.toMillis()) || data.createdAtClientMs || 0;
+          return ts && ts < cutoffMs;
+        });
+        console.log('[Orders] Auto-clean (no-index) stale count =', stale.length);
+        for(const d of stale){
+          if(cancelled) break;
+          const orderId = d.id;
+          // delete all lines
+          const linesCol = collection(db,'venues',venueId,'orders',orderId,'lines');
+          const linesSnap = await getDocs(linesCol);
+          const lineDeletes = linesSnap.docs.map(ld =>
+            deleteDoc(doc(db,'venues',venueId,'orders',orderId,'lines',ld.id))
+          );
+          await Promise.all(lineDeletes);
+          // delete order
+          await deleteDoc(doc(db,'venues',venueId,'orders',orderId));
+        }
+        console.log('[Orders] Auto-clean complete');
+        autoCleanedRef.current = true;
+      }catch(e){
+        console.log('[Orders] Auto-clean failed', e);
+      }
+    })();
+
+    return ()=>{ cancelled = true; };
+  },[tab,venueId,db]);
+
+  const openRow=useCallback((row:OrderRow)=>{
+    const s=String(row.status||'draft');
+    if(s==='draft'){
+      nav.navigate('OrderEditor',{orderId:row.id,mode:'edit'});
+    }else{
+      nav.navigate('OrderDetail',{orderId:row.id});
+    }
+  },[nav]);
+
+  const startReceive=useCallback((row:OrderRow)=>{
+    nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
+  },[nav]);
 
   const renderItem=useCallback(({item}:{item:OrderRow})=>{
     const bits:string[]=[];
