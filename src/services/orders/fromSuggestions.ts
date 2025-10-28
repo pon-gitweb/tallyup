@@ -37,7 +37,7 @@ export async function createDraftsFromSuggestions(
     // Lines
     const batch = writeBatch(db);
     for (const [productId, line] of entries) {
-      const l = line as SuggestedLine;
+      const l = line as unknown as SuggestedLine;
       const unitCost = Number.isFinite(l.cost as any) ? Number(l.cost) : 0;
       batch.set(doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', productId), {
         productId,

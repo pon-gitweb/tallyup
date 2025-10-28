@@ -8,7 +8,7 @@ import {
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
   getFirestore, collection, getDocs,
-  writeBatch, doc, query, where, serverTimestamp, updateDoc
+  writeBatch, doc, query, where, serverTimestamp
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
@@ -29,7 +29,6 @@ const RECEIVED_SET  = new Set(['received','complete','closed']);
 
 type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
 type Dept = { id:string; name:string };
-type SupplierLite = { id:string; name:string };
 
 function buildSuggestionKey(supplierId:string|null, lines:any[]){
   const parts=(Array.isArray(lines)?lines:[])
@@ -39,6 +38,7 @@ function buildSuggestionKey(supplierId:string|null, lines:any[]){
 }
 
 function sumByProduct(lines:any[]){
+  // Group by productId (sum qty across dept lines)
   const map:Record<string, any> = {};
   for (const l of (Array.isArray(lines)?lines:[])) {
     const pid = String(l.productId);
@@ -49,7 +49,7 @@ function sumByProduct(lines:any[]){
       qty: 0,
       unitCost: Number.isFinite(l?.unitCost) ? Number(l.unitCost) : (Number.isFinite(l?.cost)?Number(l.cost):null),
       packSize: Number.isFinite(l?.packSize)?Number(l.packSize):null,
-      breakdown: {},
+      breakdown: {}, // deptName -> qtyDept
     };
     const addQty = Number.isFinite(l?.qtyDept) ? Number(l.qtyDept) : (Number.isFinite(l?.qty) ? Number(l.qty) : 0);
     map[pid].qty += Math.max(0, Math.round(addQty));
@@ -81,20 +81,7 @@ export default function SuggestedOrderScreen(){
   const [depts,setDepts]=useState<Dept[]>([]);
   const [selectedDeptId,setSelectedDeptId]=useState<string>('ALL');
 
-  // Quick-assign supplier UI state
-  const [assignForProductId,setAssignForProductId]=useState<string|null>(null);
-  const [suppliers,setSuppliers]=useState<SupplierLite[]>([]);
-  const [assignOpen,setAssignOpen]=useState(false);
-
   const didInitRef=useRef(false);
-
-  const loadSuppliers = useCallback(async()=>{
-    if(!venueId){ setSuppliers([]); return; }
-    const snap = await getDocs(collection(db,'venues',venueId,'suppliers'));
-    const arr:SupplierLite[]=[];
-    snap.forEach(d=> arr.push({ id:d.id, name: String((d.data() as any)?.name || 'Supplier') }));
-    setSuppliers(arr);
-  },[db,venueId]);
 
   const loadDepartments = useCallback(async()=>{
     if(!venueId){ setDepts([]); return; }
@@ -105,6 +92,7 @@ export default function SuggestedOrderScreen(){
   },[db,venueId]);
 
   const normalizeCompat=useCallback((compat:any)=>{
+    // compat.buckets: supplierId -> { supplierName, lines[] } where each line may carry deptId/deptName/qtyDept
     const raw:Record<string,{lines:any[];supplierName?:string}>=
       (compat&&compat.buckets&&typeof compat.buckets==='object')?compat.buckets:(compat||{});
     const unStart:any[]=Array.isArray(compat?.unassigned?.lines)?compat.unassigned.lines:[];
@@ -119,6 +107,7 @@ export default function SuggestedOrderScreen(){
     return {buckets:real,unassigned};
   },[]);
 
+  // Venue-wide dedupe: draft + submitted + received
   const loadExistingSuggestionKeys=useCallback(async()=>{
     if(!venueId){setExistingKeys(new Set());return;}
     const ref=collection(db,'venues',venueId,'orders');
@@ -146,8 +135,11 @@ export default function SuggestedOrderScreen(){
     const supSnap=await getDocs(collection(db,'venues',venueId,'suppliers'));
     supSnap.forEach(d=>{ supMap[d.id]=String((d.data() as any)?.name || 'Supplier'); });
 
+    // Helper: filter per-dept or sum for ALL
     const projectLines = (lines:any[])=>{
-      if(selectedDeptId==='ALL') return sumByProduct(lines);
+      if(selectedDeptId==='ALL'){
+        return sumByProduct(lines);
+      }
       return (lines||[]).filter(l => String(l?.deptId||'')===selectedDeptId)
         .map(l => ({
           productId:String(l.productId),
@@ -160,17 +152,20 @@ export default function SuggestedOrderScreen(){
     };
 
     const tmp:BucketRow[]=[];
+    // Unassigned row
     const unLines = projectLines(Array.isArray(unassigned?.lines)?unassigned.lines:[]);
     if(unLines.length>0){
       tmp.push({ id:'unassigned',supplierId:'unassigned',supplierName:'Unassigned',itemsCount:unLines.length });
     }
 
+    // Suppliers
     Object.entries(buckets||{}).forEach(([sid,b]:any)=>{
       const baseLines = Array.isArray(b?.lines)?b.lines:[];
       const lines = projectLines(baseLines);
-      if(lines.length<=0)return;
+      const c = lines.length;
+      if(c<=0)return;
       const label=b?.supplierName||supMap[sid]||`#${String(sid).slice(-4)}`;
-      tmp.push({ id:sid,supplierId:sid,supplierName:label,itemsCount:lines.length });
+      tmp.push({ id:sid,supplierId:sid,supplierName:label,itemsCount:c });
     });
 
     const uIdx=tmp.findIndex(r=>r.id==='unassigned');
@@ -198,20 +193,19 @@ export default function SuggestedOrderScreen(){
     (async()=>{
       setRefreshing(true);
       try{
-        await loadSuppliers();
         await loadDepartments();
         try{ const ent=await checkEntitlement(venueId); setEntitled(!!ent.entitled); }catch{}
         await doRefreshRaw();
       } finally { setRefreshing(false); }
     })();
-  },[venueId,doRefreshRaw,loadDepartments,loadSuppliers]);
+  },[venueId,doRefreshRaw,loadDepartments]);
 
+  // Also refresh on focus
   useFocusEffect(useCallback(()=>{
     let cancelled=false;
     (async()=>{
       try{
         setRefreshing(true);
-        await loadSuppliers();
         await loadDepartments();
         await doRefreshRaw();
       } finally {
@@ -219,7 +213,7 @@ export default function SuggestedOrderScreen(){
       }
     })();
     return ()=>{ cancelled=true; };
-  },[doRefreshRaw,loadDepartments,loadSuppliers]));
+  },[doRefreshRaw,loadDepartments]));
 
   const openSupplierPreview=useCallback((supplierId:string,supplierName:string)=>{
     if(!snapshot)return;
@@ -228,6 +222,7 @@ export default function SuggestedOrderScreen(){
       ? (snapshot.unassigned?.lines||[])
       : (snapshot.buckets?.[supplierId]?.lines||[]));
 
+    // Apply same projection used for rows
     let previewLines:any[] = [];
     if(selectedDeptId==='ALL'){
       previewLines = sumByProduct(baseLines).map(l=>({
@@ -258,12 +253,13 @@ export default function SuggestedOrderScreen(){
     setSupplierOpen(true);
   },[snapshot,existingKeys,selectedDeptId]);
 
+  // Find first existing draft for supplier (null/unassigned queries all drafts)
   const findExistingDraftForSupplier = useCallback(async(supplierId:string|null)=>{
     if(!venueId) return null;
     const ref = collection(db, 'venues', venueId, 'orders');
     let qRef = query(ref, where('status','==','draft'));
     if(supplierId && supplierId !== 'unassigned'){
-      qRef = query(ref, where('status','==','draft'), where('supplierId','==',''+supplierId));
+      qRef = query(ref, where('status','==','draft'), where('supplierId','==',supplierId));
     }
     const snap = await getDocs(qRef);
     let firstId:string|null = null;
@@ -271,6 +267,7 @@ export default function SuggestedOrderScreen(){
     return firstId;
   },[db,venueId]);
 
+  // Merge the given lines into an existing draft (set/merge per productId)
   const mergeIntoExistingDraft = useCallback(async(orderId:string, lines:any[])=>{
     const batch = writeBatch(db);
     const orderRef = doc(db, 'venues', venueId!, 'orders', orderId);
@@ -294,6 +291,7 @@ export default function SuggestedOrderScreen(){
     await batch.commit();
   },[db,venueId]);
 
+  // Merge-aware draft creation
   const createDraftForPreview=useCallback(async()=>{
     if(!venueId||!supplierPreview)return;
     try{
@@ -316,7 +314,7 @@ export default function SuggestedOrderScreen(){
       if(existingId){
         Alert.alert(
           'Draft exists for this supplier',
-          'MERGE these lines into existing draft, or create a SEPARATE draft?',
+          'Would you like to MERGE these lines into the existing draft, or create a SEPARATE draft?',
           [
             { text:'Cancel', style:'cancel' },
             { text:'Separate', onPress: doCreateSeparate },
@@ -337,35 +335,6 @@ export default function SuggestedOrderScreen(){
       Alert.alert('Could not create draft',e?.message||'Please try again.');
     }
   },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft]);
-
-  // Quick-assign supplier for a product (from Unassigned preview)
-  const openAssignForProduct = useCallback(async(productId:string)=>{
-    await loadSuppliers();
-    setAssignForProductId(productId);
-    setAssignOpen(true);
-  },[loadSuppliers]);
-
-  const assignSupplierToProduct = useCallback(async(supplierId:string)=>{
-    if(!venueId || !assignForProductId){ setAssignOpen(false); return; }
-    try{
-      // Lookup supplier name
-      const sdoc = await getDocs(collection(db,'venues',venueId,'suppliers'));
-      let supplierName:string|undefined;
-      sdoc.forEach(d=>{ if(d.id===supplierId) supplierName = (d.data() as any)?.name; });
-      const pRef = doc(db,'venues',venueId,'products',assignForProductId);
-      await updateDoc(pRef,{
-        supplierId,
-        supplierName: supplierName || null,
-        updatedAt: serverTimestamp(),
-      });
-      setAssignOpen(false);
-      setAssignForProductId(null);
-      // Refresh suggestions so this product moves from Unassigned to that supplier
-      await doRefreshRaw();
-    }catch(e:any){
-      Alert.alert('Assign failed', e?.message || 'Could not assign supplier');
-    }
-  },[db,venueId,assignForProductId,doRefreshRaw]);
 
   const onToggleMode=useCallback(async(nextMode:'math'|'ai')=>{
     if(nextMode==='ai'&&!entitled){ setPayOpen(true); return; }
@@ -419,29 +388,23 @@ export default function SuggestedOrderScreen(){
   ),[entitled,mode,aiMeter,onToggleMode]);
 
   const DeptChips=useMemo(()=>(
-    <View style={S.chipsBar}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={S.chipsRow}
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{paddingHorizontal:16, gap:8}}>
+      <TouchableOpacity
+        onPress={()=>{ setSelectedDeptId('ALL'); doRefreshRaw(); }}
+        style={[S.chip, selectedDeptId==='ALL' && S.chipActive]}
       >
+        <Text style={[S.chipText, selectedDeptId==='ALL' && S.chipTextActive]}>All</Text>
+      </TouchableOpacity>
+      {depts.map(d=>(
         <TouchableOpacity
-          onPress={()=>{ setSelectedDeptId('ALL'); doRefreshRaw(); }}
-          style={[S.chip, selectedDeptId==='ALL' && S.chipActive]}
+          key={d.id}
+          onPress={()=>{ setSelectedDeptId(d.id); doRefreshRaw(); }}
+          style={[S.chip, selectedDeptId===d.id && S.chipActive]}
         >
-          <Text style={[S.chipText, selectedDeptId==='ALL' && S.chipTextActive]}>All</Text>
+          <Text style={[S.chipText, selectedDeptId===d.id && S.chipTextActive]}>{d.name}</Text>
         </TouchableOpacity>
-        {depts.map(d=>(
-          <TouchableOpacity
-            key={d.id}
-            onPress={()=>{ setSelectedDeptId(d.id); doRefreshRaw(); }}
-            style={[S.chip, selectedDeptId===d.id && S.chipActive]}
-          >
-            <Text style={[S.chipText, selectedDeptId===d.id && S.chipTextActive]}>{d.name}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
+      ))}
+    </ScrollView>
   ),[depts,selectedDeptId,doRefreshRaw]);
 
   const listHeader=useMemo(()=>(
@@ -475,7 +438,12 @@ export default function SuggestedOrderScreen(){
       />
 
       {/* Supplier Preview */}
-      <Modal visible={supplierOpen} transparent animationType="fade" onRequestClose={()=>setSupplierOpen(false)}>
+      <Modal
+        visible={supplierOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSupplierOpen(false)}
+      >
         <View style={S.modalBack}>
           <View style={S.modalCard}>
             <Text style={S.modalTitle}>
@@ -494,13 +462,6 @@ export default function SuggestedOrderScreen(){
                       {Number.isFinite(l?.cost) && l.cost ? ` · $${Number(l.cost).toFixed(2)}` : ''}
                     </Text>
                   </View>
-
-                  {/* Quick-assign button appears only in Unassigned preview */}
-                  {supplierPreview?.supplierId === 'unassigned' && (
-                    <TouchableOpacity style={S.assignBtn} onPress={()=>openAssignForProduct(l.productId)}>
-                      <Text style={S.assignBtnText}>Assign</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               ))}
               {(supplierPreview?.lines?.length || 0) === 0 && (
@@ -508,17 +469,22 @@ export default function SuggestedOrderScreen(){
               )}
             </ScrollView>
 
+            {/* Actions */}
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity onPress={()=>setSupplierOpen(false)} style={[S.smallBtn,{backgroundColor:'#e5e7eb'}]}>
-                <Text style={[S.smallBtnText,{color:'#111827'}]}>Close</Text>
+              <TouchableOpacity
+                onPress={() => setSupplierOpen(false)}
+                style={[S.smallBtn, { backgroundColor: '#e5e7eb' }]}
+              >
+                <Text style={[S.smallBtnText, { color: '#111827' }]}>Close</Text>
               </TouchableOpacity>
 
-              {/* Creating a draft from Unassigned still works (if you want a catch-all),
-                  but ideally assign suppliers first so lines route correctly. */}
               <TouchableOpacity
                 onPress={createDraftForPreview}
                 disabled={!!supplierPreview?.alreadyDrafted}
-                style={[S.smallBtn, supplierPreview?.alreadyDrafted && { opacity: 0.5 }]}
+                style={[
+                  S.smallBtn,
+                  supplierPreview?.alreadyDrafted && { opacity: 0.5 },
+                ]}
               >
                 <Text style={S.smallBtnText}>
                   {supplierPreview?.alreadyDrafted ? 'Already drafted' : 'Create draft'}
@@ -529,29 +495,7 @@ export default function SuggestedOrderScreen(){
         </View>
       </Modal>
 
-      {/* Assign Supplier Sheet */}
-      <Modal visible={assignOpen} transparent animationType="slide" onRequestClose={()=>setAssignOpen(false)}>
-        <View style={S.modalBack}>
-          <View style={S.modalCard}>
-            <Text style={S.modalTitle}>Assign supplier</Text>
-            <ScrollView>
-              {suppliers.map(s=>(
-                <TouchableOpacity key={s.id} style={S.row} onPress={()=>assignSupplierToProduct(s.id)}>
-                  <Text style={S.rowTitle}>{s.name}</Text>
-                </TouchableOpacity>
-              ))}
-              {suppliers.length===0 && <Text style={S.rowSub}>No suppliers yet.</Text>}
-            </ScrollView>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity onPress={()=>setAssignOpen(false)} style={[S.smallBtn,{backgroundColor:'#e5e7eb'}]}>
-                <Text style={[S.smallBtnText,{color:'#111827'}]}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Paywall */}
+      {/* Paywall (AI gating) */}
       <PaymentSheet
         visible={payOpen}
         onClose={() => setPayOpen(false)}
@@ -581,13 +525,6 @@ const S = StyleSheet.create({
   },
   title: { fontSize: 22, fontWeight: '800' },
 
-  chipsBar: { paddingTop: 8, paddingBottom: 6 },
-  chipsRow: { paddingHorizontal: 16, alignItems: 'center', gap: 8 },
-  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor:'#fff' },
-  chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
-  chipText: { fontSize: 12, fontWeight: '800', color:'#111827' },
-  chipTextActive: { color:'#fff' },
-
   badge: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1 },
   badgeOk: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },
   badgeLock: { backgroundColor: '#fef2f2', borderColor: '#ef4444' },
@@ -603,6 +540,11 @@ const S = StyleSheet.create({
 
   meterPill: { backgroundColor: '#eef2ff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   meterText: { color: '#3730a3', fontSize: 11, fontWeight: '700' },
+
+  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor:'#fff' },
+  chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
+  chipText: { fontSize: 12, fontWeight: '800', color:'#111827' },
+  chipTextActive: { color:'#fff' },
 
   row: {
     paddingHorizontal: 16, paddingVertical: 12,
@@ -623,9 +565,6 @@ const S = StyleSheet.create({
 
   smallBtn: { backgroundColor: '#111827', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
   smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-
-  assignBtn: { backgroundColor: '#0A84FF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginLeft: 10 },
-  assignBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   modalBack: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 },
   modalCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, maxHeight: '75%' },

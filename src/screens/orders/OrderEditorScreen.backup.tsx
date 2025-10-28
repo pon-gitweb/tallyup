@@ -239,20 +239,25 @@ export default function OrderEditorScreen() {
   }, [db, venueId, orderId]);
 
   const submitOrder = useCallback(async () => {
-  try {
-    if (!venueId || !orderId) return;
-    if (!lines.some(l => (l.qty||0) > 0)) {
-      Alert.alert('No lines', 'Add at least one line before submitting.');
-      return;
+    try {
+      if (!venueId || !orderId) return;
+      if (!lines.some(l => (l.qty||0) > 0)) {
+        Alert.alert('No lines', 'Add at least one line before submitting.');
+        return;
+      }
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      await updateDoc(orderRef, {
+        status: 'submitted',
+        displayStatus: 'Submitted',
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      Alert.alert('Submitted', 'Order submitted successfully.');
+      nav.navigate('Orders');
+    } catch (e:any) {
+      Alert.alert('Error', e?.message ?? 'Failed to submit order.');
     }
-    const { submitOrHoldDraftOrder } = await import('../../services/orders/submit');
-    await submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
-    Alert.alert('Submitted', 'Order submitted (or queued to merge before cutoff).');
-    nav.navigate('Orders');
-  } catch (e:any) {
-    Alert.alert('Error', e?.message ?? 'Failed to submit order.');
-  }
-}, [venueId, orderId, lines, nav, supplierId]);
+  }, [db, venueId, orderId, lines, nav]);
 
   const renderProduct = ({ item }: { item: ProductRow }) => (
     <View style={styles.productRow}>
