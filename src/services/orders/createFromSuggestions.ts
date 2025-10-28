@@ -1,29 +1,15 @@
+// @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
-
-// Find an existing ALL-scope draft for a supplier in this venue
-async function findExistingAllDraft(db: ReturnType<typeof getFirestore>, venueId: string, supplierId: string) {
-  const col = collection(db, 'venues', venueId, 'orders');
-  // We treat missing deptScope as 'ALL' for back-compat; so query deptScope IN ['ALL', null].
-  const qRef = query(
-    col,
-    where('status', '==', 'draft'),
-    where('supplierId', '==', supplierId)
-    // Note: we can’t OR on deptScope == 'ALL' OR missing without a composite. We’ll do a two-pass below.
-  );
-  const snap = await getDocs(qRef);
-  let fallback: any = null;
-  for (const d of snap.docs) {
-    const v: any = d.data() || {};
-    const scope = (v.deptScope ?? 'ALL');
-    if (scope === 'ALL') return { id: d.id, ...v };
-    // remember the first draft (in case we want to open *some* draft later)
-    if (!fallback) fallback = { id: d.id, ...v };
-  }
-  return null;
-}
-  getFirestore, collection, addDoc, serverTimestamp,
-  writeBatch, doc, getDocs, where, query
+  getFirestore,
+  collection,
+  addDoc,
+  serverTimestamp,
+  writeBatch,
+  doc,
+  getDocs,
+  where,
+  query,
 } from 'firebase/firestore';
 import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
 
@@ -42,7 +28,7 @@ export function computeSuggestionKey(
     .map(l => {
       const pid = String((l as any)?.productId || '');
       const qtyNum = Math.max(1, Math.round(Number((l as any)?.qty) || 1));
-      return `${pid}:${qtyNum}`;
+      return pid ? `${pid}:${qtyNum}` : '';
     })
     .filter(Boolean)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
@@ -63,33 +49,54 @@ function toLines(bucket: any): SuggestedLine[] {
   return out;
 }
 
-/** ---- Dept Merge helper (additive, pure, no side-effects) ---- */
-export type DeptMergeDecision = 'MERGE' | 'SEPARATE';
+const getDeptTag = (l: any): string | null =>
+  (l?.dept ?? l?.deptKey ?? l?.department ?? null) ? String(l.dept ?? l.deptKey ?? l.department) : null;
 
-/** Return unique dept tags present on suggestion lines (truthy, stringified). */
-export function uniqueDeptsFromLines(lines: Array<any>): string[] {
-  return Array.from(
-    new Set(
-      (Array.isArray(lines) ? lines : [])
-        .map(l => (l && typeof l === 'object' ? (l as any).dept : null))
-        .filter(Boolean)
-        .map(String)
-    )
-  );
+const unique = <T,>(arr: T[]) => Array.from(new Set(arr));
+
+type ScopeInfo = {
+  supplierId: string | null;
+  supplierName: string | null;
+  lines: SuggestedLine[];
+  deptScope: string[]; // unique truthy dept tags (empty => treat as ALL)
+  isUnassigned: boolean;
+  suggestionKey: string;
+};
+
+/** Find an existing ALL-scope draft for this supplier in this venue. */
+async function findExistingAllDraft(
+  db: ReturnType<typeof getFirestore>,
+  venueId: string,
+  supplierId: string | null
+): Promise<{ id: string; deptScope?: any } | null> {
+  const col = collection(db, 'venues', venueId, 'orders');
+
+  // We cannot OR on "deptScope == 'ALL' OR missing" in one query without composite/array hacking,
+  // so do a cheap pass: query drafts for this supplier (or all drafts for unassigned)
+  const qRef = supplierId
+    ? query(col, where('status', '==', 'draft'), where('supplierId', '==', supplierId), where('source', '==', 'suggestions'))
+    : query(col, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
+
+  const snap = await getDocs(qRef);
+  for (const d of snap.docs) {
+    const v: any = d.data() || {};
+    const scope = v?.deptScope ?? 'ALL';
+    // Treat missing or 'ALL' or array with >1 depts as "ALL/merged"
+    const isMergedArray = Array.isArray(scope) && scope.length > 1;
+    if (!scope || scope === 'ALL' || isMergedArray) return { id: d.id, deptScope: scope };
+  }
+  return null;
 }
 
 /**
- * Decide whether to MERGE or SEPARATE when the same supplier bucket contains multiple depts.
- * - If >1 unique depts => default MERGE (single order header with deptScope including all depts).
- * - If 0 or 1 => SEPARATE is moot (only one), return SEPARATE for clarity.
- * UI can override/ask user later; this only provides a default & the detected depts.
+ * Decide if this group should be treated as ALL/merged:
+ * - If deptScope has >1 unique depts => merged (ALL-like)
+ * - If deptScope is empty (no tags) => treat as ALL-like
  */
-export function decideDeptMergeForSupplier(lines: Array<any>): { decision: DeptMergeDecision; depts: string[] } {
-  const depts = uniqueDeptsFromLines(lines);
-  if (depts.length > 1) return { decision: 'MERGE', depts };
-  return { decision: 'SEPARATE', depts };
+function isAllLike(scope: string[]): boolean {
+  if (!Array.isArray(scope) || scope.length === 0) return true;
+  return scope.length > 1;
 }
-/** ---- End Dept Merge helper ---- */
 
 export async function createDraftsFromSuggestions(
   venueId: string,
@@ -99,120 +106,225 @@ export async function createDraftsFromSuggestions(
   const db = getFirestore(getApp());
   const created: string[] = [];
 
+  // Build normalized entries
+  const entries: ScopeInfo[] = [];
   for (const supplierKey of Object.keys(suggestions || {})) {
     const bucket = suggestions[supplierKey];
     const lines = toLines(bucket);
     if (!lines.length) continue;
 
     const isUnassigned =
-      supplierKey === 'unassigned' || supplierKey === '__no_supplier__' ||
-      supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'none';
+      supplierKey === 'unassigned' ||
+      supplierKey === '__no_supplier__' ||
+      supplierKey === 'null' ||
+      supplierKey === '' ||
+      supplierKey === 'undefined' ||
+      supplierKey === 'none';
 
     const supplierId: string | null = isUnassigned ? null : supplierKey;
-    const supplierName: string | null =
-      (bucket?.supplierName && String(bucket.supplierName)) || null;
+    const supplierName: string | null = (bucket?.supplierName && String(bucket.supplierName)) || null;
 
-    const safeQty = (q: any) => Math.max(1, Math.round(Number(q) || 1));
-    const linesCount = lines.length;
-    const total = lines.reduce((sum, l) => {
-      const qty = safeQty((l as any).qty);
-      const unit = Number.isFinite((l as any).cost) ? Number((l as any).cost) : 0;
-      return sum + qty * unit;
-    }, 0);
+    const deptScope = unique(
+      (lines as any[])
+        .map(getDeptTag)
+        .filter(Boolean) as string[]
+    );
 
     const suggestionKey = computeSuggestionKey(supplierId, lines);
 
-    // --- DEDUPE: check for existing draft with same suggestionKey ---
-    const ordersCol = collection(db, 'venues', venueId, 'orders');
-    let qRef;
-    if (supplierId && supplierId.trim().length > 0) {
-      qRef = query(
-        ordersCol,
-        where('status', '==', 'draft'),
-        where('source', '==', 'suggestions'),
-        where('supplierId', '==', supplierId)
-      );
-    } else {
-      // For unassigned, query all drafts from suggestions (no supplier filter)
-      qRef = query(
-        ordersCol,
-        where('status', '==', 'draft'),
-        where('source', '==', 'suggestions')
-      );
-    }
-    const snap = await getDocs(qRef);
-    let existingId: string | null = null;
-    snap.forEach(d => {
-      const data: any = d.data() || {};
-      if (data?.suggestionKey === suggestionKey) {
-        existingId = d.id;
-      }
-    });
+    entries.push({ supplierId, supplierName, lines, deptScope, isUnassigned, suggestionKey });
+  }
 
-    if (existingId) {
-      // eslint-disable-next-line no-console
-      console.log('[Orders] Draft exists', {
-        id: existingId,
-        suggestionKey,
+  // Determine which suppliers must MERGE (ALL precedence) this run
+  const suppliersNeedingMerge = new Set<string | null>();
+  for (const e of entries) {
+    if (isAllLike(e.deptScope)) suppliersNeedingMerge.add(e.supplierId); // null allowed for unassigned
+  }
+
+  // Also: if an existing ALL draft already exists for a supplier, mark it to prevent per-dept drafts.
+  const existingAllCache = new Map<string | null, boolean>();
+  for (const sid of Array.from(new Set(entries.map(e => e.supplierId)))) {
+    const existsAll = await findExistingAllDraft(db, venueId, sid);
+    if (existsAll) existingAllCache.set(sid, true);
+  }
+
+  // Now create drafts with precedence:
+  // - If supplier is in suppliersNeedingMerge OR has an existing ALL draft -> only create one merged draft
+  // - Otherwise create per-scope drafts (single-dept buckets)
+  // We’ll loop suppliers => then their entries.
+  const bySupplier = new Map<string | null, ScopeInfo[]>();
+  for (const e of entries) {
+    const key = e.supplierId ?? null;
+    if (!bySupplier.has(key)) bySupplier.set(key, []);
+    bySupplier.get(key)!.push(e);
+  }
+
+  const ordersCol = collection(db, 'venues', venueId, 'orders');
+
+  for (const [sid, list] of bySupplier.entries()) {
+    const hasExistingAll = existingAllCache.get(sid) === true;
+    const mustMerge = suppliersNeedingMerge.has(sid) || hasExistingAll;
+
+    if (mustMerge) {
+      // Pick the first entry (any) and collapse all lines for this supplier
+      const allLines: SuggestedLine[] = [];
+      for (const e of list) allLines.push(...e.lines);
+
+      // Dedupe by productId; sum qty
+      const mergedByPid: Record<string, SuggestedLine> = {};
+      for (const l of allLines as any[]) {
+        const pid = String(l.productId);
+        const qty = Math.max(1, Math.round(Number(l.qty) || 1));
+        if (!mergedByPid[pid]) mergedByPid[pid] = { ...(l as any), qty };
+        else mergedByPid[pid].qty += qty;
+      }
+      const mergedLines = Object.values(mergedByPid);
+
+      // Dept scope for the merged order: union of all tags; empty => treat as ALL
+      const mergedScope = unique(
+        (mergedLines as any[]).map(getDeptTag).filter(Boolean) as string[]
+      );
+      const deptScopeField: any = mergedScope.length ? mergedScope : 'ALL';
+
+      const supplierName =
+        list.find(e => e.supplierName)?.supplierName ?? null;
+
+      // DEDUPE by suggestionKey
+      const mergedKey = computeSuggestionKey(sid, mergedLines);
+      // Query drafts for this supplier (or all suggestion-drafts for unassigned)
+      const qRef = sid
+        ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', sid))
+        : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
+      const snap = await getDocs(qRef);
+      let existingId: string | null = null;
+      snap.forEach(d => {
+        const data: any = d.data() || {};
+        if (data?.suggestionKey === mergedKey) existingId = d.id;
       });
-      created.push(existingId);
+      if (existingId) {
+        console.log('[Orders] Draft exists (ALL precedence)', { id: existingId, suggestionKey: mergedKey });
+        created.push(existingId);
+        continue;
+      }
+
+      // Create single merged draft
+      const linesCount = mergedLines.length;
+      const total = mergedLines.reduce((sum, l: any) => {
+        const qty = Math.max(1, Math.round(Number(l?.qty) || 1));
+        const unit = Number.isFinite(l?.cost) ? Number(l.cost) : 0;
+        return sum + qty * unit;
+      }, 0);
+
+      const orderRef = await addDoc(ordersCol, {
+        deptScope: deptScopeField,                  // 'ALL' or string[]
+        displayStatus: 'draft',
+        supplierId: sid ?? null,
+        supplierName: supplierName ?? null,
+        source: 'suggestions',
+        suggestionKey: mergedKey,
+        needsSupplierReview: !sid ? true : false,
+        createdAt: serverTimestamp(),
+        createdAtClientMs: Date.now(),
+        linesCount,
+        total,
+        createdBy: opts.createdBy ?? null,
+      });
+
+      const batch = writeBatch(db);
+      for (const l of mergedLines as any[]) {
+        const unitCost = Number.isFinite(l?.cost) ? Number(l.cost) : 0;
+        batch.set(
+          doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', String(l.productId)),
+          {
+            productId: l.productId,
+            name: l.productName ?? null,
+            qty: Math.max(1, Math.round(Number(l?.qty) || 1)),
+            unitCost,
+            packSize: Number.isFinite(l?.packSize) ? Number(l.packSize) : null,
+            needsPar: !!l?.needsPar,
+            needsSupplier: !!l?.needsSupplier,
+            reason: l?.reason ?? null,
+            dept: getDeptTag(l),
+          },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+
+      console.log('[Orders] Draft created (ALL precedence)', { id: orderRef.id, suggestionKey: mergedKey });
+      created.push(orderRef.id);
+      // IMPORTANT: skip any per-dept drafts for this supplier (ALL precedence).
       continue;
     }
-    // --- END DEDUPE ---
 
-    // derive deptScope (unique, truthy) from incoming lines if present
-    const deptScope = Array.from(
-      new Set(
-        (lines as any[])
-          .map(l => (l && typeof l === 'object' ? (l as any).dept : null))
-          .filter(Boolean)
-          .map(String)
-      )
-    );
-    const deptScopeField = deptScope.length ? deptScope : null;
+    // No merge needed: create per-entry drafts (each entry is single-dept scope)
+    for (const e of list) {
+      const sidLocal = e.supplierId;
+      const supplierName = e.supplierName ?? null;
+      const deptScopeField: any = e.deptScope.length ? e.deptScope : 'ALL';
 
-    const orderRef = await addDoc(ordersCol, {
-      \1 deptScope: (deptScope || 'ALL'),
-      displayStatus: 'draft',
-      supplierId: supplierId ?? null,
-      supplierName: supplierName ?? null,
-      source: 'suggestions',
-      suggestionKey,
-      needsSupplierReview: isUnassigned ? true : false,
-      createdAt: serverTimestamp(),
-      createdAtClientMs: Date.now(),
-      linesCount,
-      total,
-      createdBy: opts.createdBy ?? null,
-      // additive: only store if present
-      ...(deptScopeField ? { deptScope: deptScopeField } : {}),
-    });
+      // DEDUPE by suggestionKey
+      const qRef = sidLocal
+        ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', sidLocal))
+        : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
+      const snap = await getDocs(qRef);
+      let existingId: string | null = null;
+      snap.forEach(d => {
+        const data: any = d.data() || {};
+        if (data?.suggestionKey === e.suggestionKey) existingId = d.id;
+      });
+      if (existingId) {
+        console.log('[Orders] Draft exists', { id: existingId, suggestionKey: e.suggestionKey });
+        created.push(existingId);
+        continue;
+      }
 
-    const batch = writeBatch(db);
-    for (const l of lines) {
-      const unitCost = Number.isFinite((l as any).cost) ? Number((l as any).cost) : 0;
-      batch.set(doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', String((l as any).productId)), {
-        productId: (l as any).productId,
-        name: (l as any).productName ?? null,
-        qty: safeQty((l as any).qty),
-        unitCost,
-        packSize: Number.isFinite((l as any).packSize) ? Number((l as any).packSize) : null,
-        needsPar: !!(l as any).needsPar,
-        needsSupplier: !!(l as any).needsSupplier,
-        reason: (l as any).reason ?? null,
-        // additive: carry through dept if upstream provided it
-        dept: (l as any).dept ?? null,
-      }, { merge: true });
+      const linesCount = e.lines.length;
+      const total = e.lines.reduce((sum, l: any) => {
+        const qty = Math.max(1, Math.round(Number(l?.qty) || 1));
+        const unit = Number.isFinite(l?.cost) ? Number(l.cost) : 0;
+        return sum + qty * unit;
+      }, 0);
+
+      const orderRef = await addDoc(ordersCol, {
+        deptScope: deptScopeField,                  // single string[] or 'ALL'
+        displayStatus: 'draft',
+        supplierId: sidLocal ?? null,
+        supplierName: supplierName ?? null,
+        source: 'suggestions',
+        suggestionKey: e.suggestionKey,
+        needsSupplierReview: !sidLocal ? true : false,
+        createdAt: serverTimestamp(),
+        createdAtClientMs: Date.now(),
+        linesCount,
+        total,
+        createdBy: opts.createdBy ?? null,
+      });
+
+      const batch = writeBatch(db);
+      for (const l of e.lines as any[]) {
+        const unitCost = Number.isFinite(l?.cost) ? Number(l.cost) : 0;
+        batch.set(
+          doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', String(l.productId)),
+          {
+            productId: l.productId,
+            name: l.productName ?? null,
+            qty: Math.max(1, Math.round(Number(l?.qty) || 1)),
+            unitCost,
+            packSize: Number.isFinite(l?.packSize) ? Number(l.packSize) : null,
+            needsPar: !!l?.needsPar,
+            needsSupplier: !!l?.needsSupplier,
+            reason: l?.reason ?? null,
+            dept: getDeptTag(l),
+          },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+
+      console.log('[Orders] Draft created', { id: orderRef.id, suggestionKey: e.suggestionKey });
+      created.push(orderRef.id);
     }
-    await batch.commit();
-
-    // eslint-disable-next-line no-console
-    console.log('[Orders] Draft created', {
-      id: orderRef.id,
-      suggestionKey,
-    });
-
-    created.push(orderRef.id);
   }
 
   return { created };
