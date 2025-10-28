@@ -69,18 +69,26 @@ type ExistingFlags = {
   hasPerDeptDraft: boolean;      // at least one single-dept draft already exists
 };
 
+/** Helper: fetch all "suggestion drafts" for a supplier using displayStatus=='draft'. */
+async function fetchDraftSuggestionDocs(
+  db: ReturnType<typeof getFirestore>,
+  venueId: string,
+  supplierId: string | null
+) {
+  const ordersCol = collection(db, 'venues', venueId, 'orders');
+  const qRef = supplierId
+    ? query(ordersCol, where('displayStatus', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
+    : query(ordersCol, where('displayStatus', '==', 'draft'), where('source', '==', 'suggestions'));
+  return getDocs(qRef);
+}
+
 /** Fetch existing suggestion drafts for a supplier (or all for unassigned) and classify. */
 async function scanExistingDrafts(
   db: ReturnType<typeof getFirestore>,
   venueId: string,
   supplierId: string | null
 ): Promise<ExistingFlags> {
-  const ordersCol = collection(db, 'venues', venueId, 'orders');
-  const qRef = supplierId
-    ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
-    : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
-
-  const snap = await getDocs(qRef);
+  const snap = await fetchDraftSuggestionDocs(db, venueId, supplierId);
 
   let hasAllDraft = false;
   let hasPerDeptDraft = false;
@@ -170,6 +178,7 @@ export async function createDraftsFromSuggestions(
     if (incomingHasALL) {
       // We want to create ONE merged draft (ALL) — but only if no per-dept drafts already exist.
       if (existing.hasPerDeptDraft) {
+        console.log('[Orders] SKIP ALL: blocked_by_existing_per_dept', { supplierId: sid });
         skipped.push({ supplierId: sid ?? null, reason: 'blocked_by_existing_per_dept' });
         continue; // don’t create ALL
       }
@@ -191,22 +200,20 @@ export async function createDraftsFromSuggestions(
       const mergedScope = unique((mergedLines as any[]).map(getDeptTag).filter(Boolean) as string[]);
       const deptScopeField: any = mergedScope.length ? mergedScope : 'ALL';
 
-      // DEDUPE by suggestionKey
+      // DEDUPE by suggestionKey (use displayStatus == 'draft')
       const mergedKey = computeSuggestionKey(sid, mergedLines);
-      const qRef = sid
-        ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', sid))
-        : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
-
-      const snap = await getDocs(qRef);
-      let existingId: string | null = null;
-      snap.forEach(d => {
-        const data: any = d.data() || {};
-        if (data?.suggestionKey === mergedKey) existingId = d.id;
-      });
-      if (existingId) {
-        console.log('[Orders] Draft exists (ALL precedence)', { id: existingId, suggestionKey: mergedKey });
-        created.push(existingId);
-        continue;
+      {
+        const snap = await fetchDraftSuggestionDocs(db, venueId, sid);
+        let existingId: string | null = null;
+        snap.forEach(d => {
+          const data: any = d.data() || {};
+          if (data?.suggestionKey === mergedKey) existingId = d.id;
+        });
+        if (existingId) {
+          console.log('[Orders] Draft exists (ALL precedence)', { id: existingId, suggestionKey: mergedKey });
+          created.push(existingId);
+          continue;
+        }
       }
 
       const supplierName = list.find(e => e.supplierName)?.supplierName ?? null;
@@ -262,24 +269,24 @@ export async function createDraftsFromSuggestions(
     for (const e of list) {
       // Block if an ALL draft already exists
       if (existing.hasAllDraft) {
+        console.log('[Orders] SKIP single-dept: blocked_by_existing_all', { supplierId: sid });
         skipped.push({ supplierId: sid ?? null, reason: 'blocked_by_existing_all' });
         continue;
       }
 
-      // DEDUPE by suggestionKey
-      const qRef = sid
-        ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', sid))
-        : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'));
-      const snap = await getDocs(qRef);
-      let existingId: string | null = null;
-      snap.forEach(d => {
-        const data: any = d.data() || {};
-        if (data?.suggestionKey === e.suggestionKey) existingId = d.id;
-      });
-      if (existingId) {
-        console.log('[Orders] Draft exists', { id: existingId, suggestionKey: e.suggestionKey });
-        created.push(existingId);
-        continue;
+      // DEDUPE by suggestionKey (use displayStatus == 'draft')
+      {
+        const snap = await fetchDraftSuggestionDocs(db, venueId, sid);
+        let existingId: string | null = null;
+        snap.forEach(d => {
+          const data: any = d.data() || {};
+          if (data?.suggestionKey === e.suggestionKey) existingId = d.id;
+        });
+        if (existingId) {
+          console.log('[Orders] Draft exists', { id: existingId, suggestionKey: e.suggestionKey });
+          created.push(existingId);
+          continue;
+        }
       }
 
       const supplierName = e.supplierName ?? null;
