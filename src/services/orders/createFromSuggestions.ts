@@ -10,7 +10,9 @@ function firstSupplierName(bucket: any): string | null {
   if (Array.isArray(bucket)) {
     for (const l of bucket as any[]) {
       if (l && typeof l === 'object' && (l as any).supplierName) {
-        return String((l as any).supplierName);
+        
+
+
       }
     }
     return null;
@@ -101,7 +103,9 @@ export async function createDraftsFromSuggestions(
       supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'none';
 
     const supplierId: string | null = isUnassigned ? null : supplierKey;
-    const supplierName: string | null = firstSupplierName(bucket);
+    const supplierName: string | null = (Array.isArray(bucket)
+  ? (bucket.find((x:any)=>String(x?.supplierName||'').trim().length>0)?.supplierName ?? null)
+  : null) ?? (supplierKey==='unassigned' ? 'Unassigned' : null);
 
     const safeQty = (q: any) => Math.max(1, Math.round(Number(q) || 1));
     const linesCount = lines.length;
@@ -208,3 +212,11 @@ export async function createDraftsFromSuggestions(
 
   return { created };
 }
+
+
+try {
+  const _b:any = (result as any)?.buckets || buckets || {};
+  const keys = Object.keys(_b);
+  const total = keys.reduce((acc,k)=>acc + (Array.isArray(_b[k]?.lines)?_b[k].lines.length:0),0);
+  console.log('[SuggestedOrders] summary', JSON.stringify({suppliersWithLines: keys.length, totalLines: total}));
+} catch {}
