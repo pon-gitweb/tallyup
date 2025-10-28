@@ -114,6 +114,43 @@ function isAllLike(scope: string[]): boolean {
   return scope.length > 1;
 }
 
+// ---- Scope helpers (ALL precedence) ----
+function normalizeScope(raw:any): 'ALL' | {type:'DEPT', name:string} {
+  // Accept shapes: null/undefined -> ALL, 'ALL' string, [] -> ALL, ['bar'] -> DEPT, ['bar','kitchen'] -> ALL
+  if (!raw) return 'ALL';
+  if (raw === 'ALL') return 'ALL';
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) return 'ALL';
+    if (raw.length === 1) return { type: 'DEPT', name: String(raw[0]) };
+    return 'ALL';
+  }
+  // any other truthy value that isn't array — treat as ALL for safety
+  return 'ALL';
+}
+
+async function fetchExistingDraftScopes(
+  db: ReturnType<typeof getFirestore>,
+  venueId: string,
+  supplierId: string | null
+): Promise<('ALL' | {type:'DEPT', name:string})[]> {
+  const col = collection(db, 'venues', venueId, 'orders');
+  let qref;
+  if (supplierId) {
+    qref = query(col, where('status','==','draft'), where('source','==','suggestions'), where('supplierId','==', supplierId));
+  } else {
+    // unassigned supplier: scan all suggestion drafts; we’ll normalize client-side
+    qref = query(col, where('status','==','draft'), where('source','==','suggestions'));
+  }
+  const snap = await getDocs(qref);
+  const out:any[] = [];
+  snap.forEach(d => {
+    const v:any = d.data() || {};
+    out.push(normalizeScope(v?.deptScope));
+  });
+  return out;
+}
+// ---- /Scope helpers ----
+
 export async function createDraftsFromSuggestions(
   venueId: string,
   suggestions: SuggestedLegacyMap,
