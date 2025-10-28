@@ -2,7 +2,7 @@ import { getApp } from 'firebase/app';
 import {
   getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc
 } from 'firebase/firestore';
-import type { SuggestedLegacyMap, SuggestedLine } from './suggestTypes';
+import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
 
 type CreateOpts = {
   createdBy?: string | null;
@@ -38,7 +38,8 @@ export async function createDraftsFromSuggestions(
     const batch = writeBatch(db);
     for (const [productId, line] of entries) {
       const l = line as unknown as SuggestedLine;
-      const unitCost = Number.isFinite(l.unitCost as any) ? Number(l.unitCost) : 0;
+      const _rawCost:any = (l as any).unitCost ?? (l as any).cost ?? 0;
+      const unitCost = Number.isFinite(_rawCost) ? Number(_rawCost) : 0;
       batch.set(doc(db, 'venues', venueId, 'orders', orderRef.id, 'lines', productId), {
         productId,
         name: l.productName ?? null,
@@ -55,5 +56,3 @@ export async function createDraftsFromSuggestions(
 
   return { created };
 }
-
-

@@ -1,202 +1,339 @@
-// @ts-nocheck
-/**
- * Department-aware suggestion engine.
- * - Reads optional product.parByDept[deptKey]
- * - Falls back to product.par, then opts.defaultParIfMissing
- * - Computes suggestions per-dept, then produces an "ALL" aggregate by supplier
- * - Preserves legacy type names to avoid breaking older imports
- */
-
+console.log('[SO Service] suggest.ts ACTIVE');
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, collection, getDocs, doc, getDoc, query, where
+  getFirestore,
+  collection,
+  getDocs,
+  getDoc,
+  setDoc,
+  doc,
+  Query,
+  DocumentReference,
 } from 'firebase/firestore';
 
 export type SuggestedLine = {
   productId: string;
-  productName: string;
-  supplierId: string | null;
-  supplierName: string | null;
-  deptKey?: string | null;         // 'bar' | 'kitchen' | 'office' etc.
-  qty: number;                     // suggested order qty
-  unitCost?: number | null;
+  productName?: string | null;
+  qty: number;
+  cost: number;
+  needsPar?: boolean;
+  needsSupplier?: boolean;
+  reason?: string | null;
+};
+
+export type ItemsMap = Record<string, SuggestedLine>;
+export type CompatBucket = ItemsMap & { items: ItemsMap; lines: SuggestedLine[] };
+export type SuggestedLegacyMap = Record<string, CompatBucket>;
+
+export type SuggestOpts = {
+  roundToPack?: boolean;
+  defaultParIfMissing?: number;
+};
+
+type ProductDoc = {
+  id: string;
+  name?: string | null;
+  supplierId?: string | null;
+  supplierName?: string | null;
   packSize?: number | null;
+  price?: number | null;
+  cost?: number | null;
+  par?: number | null;
+  parLevel?: number | null;
 };
 
-export type SupplierBucket = {
-  supplierId: string | null;
-  supplierName: string | null;
-  lines: SuggestedLine[];
+type AreaItemDoc = {
+  id: string;
+  productLinkId?: string | null;
+  name?: string | null;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  packSize?: number | null;
+  price?: number | null;
+  cost?: number | null;
+  value?: number | null;
 };
 
-export type SuggestedMap = Record<string /*supplierId|null:'unassigned'*/, SupplierBucket>;
+// --- Dev-only tracing helpers (no behavior change) ---
+const SO_TAG = '[SuggestedOrders]';
+function dlog(...args: any[]) {
+  if (__DEV__) console.log(SO_TAG, ...args);
+}
+async function traceGetDoc<T = any>(label: string, ref: DocumentReference<T>) {
+  dlog('reading doc', label, (ref as any).path);
+  try {
+    const snap = await getDoc(ref);
+    return snap;
+  } catch (e: any) {
+    dlog('blocked doc', label, (ref as any).path, { code: e?.code, msg: e?.message });
+    throw e;
+  }
+}
+async function traceGetDocs<T = any>(label: string, q: Query<T> | any) {
+  dlog('reading query', label);
+  try {
+    const snaps = await getDocs(q);
+    return snaps;
+  } catch (e: any) {
+    dlog('blocked query', label, { code: e?.code, msg: e?.message });
+    throw e;
+  }
+}
+// --- end tracing ---
 
-export type SuggestedByDept = Record<string /* deptKey | 'ALL' */, SuggestedMap>;
-
-/** Back-compat alias to avoid breaking old imports */
-export type SuggestedLegacyMap = SuggestedByDept;
-
-type BuildOpts = {
-  defaultParIfMissing?: number;  // e.g. 6
-  roundToPack?: boolean;         // round result up to nearest packSize
+const toNumOrNull = (v: any): number | null => {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return Number.isFinite(n) ? Number(n) : null;
 };
 
-/** Util: pick a PAR for a given department with safe fallbacks */
-function parForDept(prod: any, deptKey: string | null | undefined, fallback: number): number {
-  const byDept = (prod?.parByDept && typeof prod.parByDept === 'object') ? prod.parByDept : null;
-  const fromDept = (deptKey && byDept && Number.isFinite(byDept[deptKey])) ? Number(byDept[deptKey]) : null;
-  const globalPar = Number.isFinite(prod?.par) ? Number(prod.par) : null;
-
-  if (Number.isFinite(fromDept) && (fromDept as number) >= 0) return fromDept!;
-  if (Number.isFinite(globalPar) && (globalPar as number) >= 0) return globalPar!;
-  return Number.isFinite(fallback) ? (fallback as number) : 0;
+function newCompatBucket(): CompatBucket {
+  const base: any = {};
+  base.items = {};
+  base.lines = [];
+  return base as CompatBucket;
 }
 
-/** Util: round up to nearest pack size if set and > 1 */
-function maybeRoundToPack(qty: number, packSize?: number | null, on: boolean = false): number {
-  const ps = Number.isFinite(packSize) ? Number(packSize) : null;
-  if (!on || !ps || ps <= 1) return Math.max(0, Math.round(qty));
-  const n = Math.max(0, Math.ceil(qty / ps) * ps);
-  return n;
+function compatFrom(anyBucket: any): CompatBucket {
+  if (!anyBucket || typeof anyBucket !== 'object') return newCompatBucket();
+
+  let items: ItemsMap | null =
+    anyBucket.items && typeof anyBucket.items === 'object'
+      ? (anyBucket.items as ItemsMap)
+      : null;
+
+  if (!items) {
+    const derived: ItemsMap = {};
+    for (const k of Object.keys(anyBucket)) {
+      if (k === 'items' || k === 'lines') continue;
+      const v = anyBucket[k];
+      if (v && typeof v === 'object' && 'productId' in v) {
+        derived[k] = v as SuggestedLine;
+      }
+    }
+    items = derived;
+  }
+
+  const out: any = {};
+  for (const pid of Object.keys(items)) out[pid] = items[pid];
+  out.items = items;
+  out.lines = Object.values(items);
+  return out as CompatBucket;
 }
 
-/**
- * Firestore shape expectations (venue-scoped):
- * - suppliers: id, { name, orderCutoffLocalTime?, mergeWindowHours? }
- * - products:  id, { name, supplierId?, supplierName?, unitCost?, packSize?, par?, parByDept? }
- * - stock, per department, is inferred from latest area item counts the app already writes.
- *   We read department → areas → items: each item has productId and countedQty (or total) per last submission.
- *
- * NOTE: We lean on what's already being written by your live app. If a product has no recent count for a dept,
- * we treat current=0, which encourages a top-up to the dept's PAR.
- */
-export async function buildSuggestedOrdersInMemory(
-  opts: BuildOpts,
-  venueId: string
-): Promise<{ byDept: SuggestedByDept }> {
-  const db = getFirestore(getApp());
-  const defaultPar = Number.isFinite(opts?.defaultParIfMissing) ? Number(opts?.defaultParIfMissing) : 6;
-  const roundPacks = !!opts?.roundToPack;
+function finalizeStore(store: Record<string, any>): SuggestedLegacyMap {
+  const out: SuggestedLegacyMap = {} as any;
+  const memo = new WeakMap<object, CompatBucket>();
 
-  // 1) Suppliers
-  const supSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
-  const suppliers: Record<string, any> = {};
-  supSnap.forEach(d => suppliers[d.id] = { id: d.id, ...(d.data() || {}) });
+  const finalizeRef = (ref: any): CompatBucket => {
+    if (ref && typeof ref === 'object') {
+      const hit = memo.get(ref as object);
+      if (hit) return hit;
+      const compat = compatFrom(ref);
+      memo.set(ref as object, compat);
+      return compat;
+    }
+    return compatFrom(ref);
+  };
 
-  // 2) Products
-  const proSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-  const products: Record<string, any> = {};
-  proSnap.forEach(d => products[d.id] = { id: d.id, ...(d.data() || {}) });
+  for (const k of Object.keys(store)) {
+    out[k] = finalizeRef(store[k]);
+  }
+  return out;
+}
 
-  // 3) Department current counts
-  //    We read departments and their area items. Your app already writes these; we only aggregate.
-  //    Expected shapes:
-  //      venues/{venue}/departments/{deptId}
-  //      venues/{venue}/departments/{deptId}/areas/{areaId}/items/{itemId} -> { productId, qty?:number, countedQty?:number, lastCount?:number }
-  const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-  const deptKeys: string[] = [];
-  deptSnap.forEach(d => {
-    const dk = (d.id || '').trim();
-    if (dk) deptKeys.push(dk);
+async function ensureUnassignedSupplierDoc(db: ReturnType<typeof getFirestore>, venueId: string) {
+  const ref = doc(db, 'venues', venueId, 'suppliers', 'unassigned');
+  const snap = await traceGetDoc('suppliers.unassigned', ref);
+  if (!snap.exists()) {
+    await setDoc(
+      ref,
+      {
+        name: 'Unassigned',
+        createdAt: new Date(),
+        system: true,
+        note: 'Auto-created to host lines with missing supplier.',
+      },
+      { merge: true }
+    );
+  }
+}
+
+async function loadProducts(db: ReturnType<typeof getFirestore>, venueId: string): Promise<ProductDoc[]> {
+  const out: ProductDoc[] = [];
+  const snap = await traceGetDocs('products.list', collection(db, 'venues', venueId, 'products'));
+  snap.forEach(d => {
+    const p = d.data() as any;
+    out.push({
+      id: d.id,
+      name: p?.name ?? p?.productName ?? null,
+      supplierId: p?.supplierId ?? null,
+      supplierName: p?.supplierName ?? null,
+      packSize: toNumOrNull(p?.packSize),
+      price: toNumOrNull(p?.price),
+      cost: toNumOrNull(p?.cost),
+      par: toNumOrNull(p?.par ?? p?.parLevel),
+      parLevel: toNumOrNull(p?.parLevel),
+    });
   });
+  return out;
+}
 
-  // Aggregate product current qty per dept
-  const currentByDept: Record<string, Record<string /*productId*/, number>> = {};
-  for (const dk of deptKeys) {
-    currentByDept[dk] = {};
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dk, 'areas'));
-    const areaIds: string[] = [];
-    areasSnap.forEach(a => areaIds.push(a.id));
-
-    for (const areaId of areaIds) {
-      const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dk, 'areas', areaId, 'items'));
-      itemsSnap.forEach(it => {
-        const iv = (it.data() || {});
-        const pid = String(iv?.productId || '').trim();
-        if (!pid) return;
-        const count = Number.isFinite(iv?.qty) ? Number(iv.qty)
-                    : Number.isFinite(iv?.countedQty) ? Number(iv.countedQty)
-                    : Number.isFinite(iv?.lastCount) ? Number(iv.lastCount)
-                    : 0;
-        currentByDept[dk][pid] = (currentByDept[dk][pid] || 0) + count;
+async function loadAreaItems(db: ReturnType<typeof getFirestore>, venueId: string): Promise<AreaItemDoc[]> {
+  const out: AreaItemDoc[] = [];
+  const deps = await traceGetDocs('departments.list', collection(db, 'venues', venueId, 'departments'));
+  for (const dep of deps.docs) {
+    const areas = await traceGetDocs('areas.list', collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    for (const area of areas.docs) {
+      const items = await traceGetDocs('area.items.list', collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'));
+      items.forEach(d => {
+        const it = d.data() as any;
+        const linkId = it?.productId ?? it?.productRef?.id ?? it?.product?.id ?? null;
+        out.push({
+          id: d.id,
+          productLinkId: linkId,
+          name: it?.name ?? it?.productName ?? null,
+          supplierId: it?.supplierId ?? null,
+          supplierName: it?.supplierName ?? null,
+          packSize: toNumOrNull(it?.packSize),
+          price: toNumOrNull(it?.price),
+          cost: toNumOrNull(it?.cost),
+          value: toNumOrNull(it?.value),
+        });
       });
     }
   }
+  return out;
+}
 
-  // Helper to add a line to a supplier bucket in a given dept map
-  function pushDeptLine(map: SuggestedMap, supId: string | null, supName: string | null, line: SuggestedLine) {
-    const key = supId || 'unassigned';
-    if (!map[key]) {
-      map[key] = { supplierId: supId, supplierName: supName, lines: [] };
+function ensureBucket(store: Record<string, any>, key: string): any {
+  if (!store[key]) store[key] = newCompatBucket();
+  return store[key];
+}
+
+export async function buildSuggestedOrdersInMemory(
+  venueId: string,
+  opts: SuggestOpts = {}
+): Promise<SuggestedLegacyMap> {
+  dlog('ENTER buildSuggestedOrdersInMemory', { venueId, opts });
+  const db = getFirestore(getApp());
+  const roundToPack = !!opts.roundToPack;
+  const defaultPar = Number.isFinite(opts.defaultParIfMissing) ? Number(opts.defaultParIfMissing) : 6;
+
+  const store: Record<string, any> = {};
+  await ensureUnassignedSupplierDoc(db, venueId);
+  const unassigned = ensureBucket(store, 'unassigned');
+
+  for (const alias of ['__no_supplier__', 'no_supplier', 'none', 'null', 'undefined', '']) {
+    store[alias] = unassigned;
+  }
+
+  try {
+    const suppliersSnap = await traceGetDocs('suppliers.list', collection(db, 'venues', venueId, 'suppliers'));
+    suppliersSnap.forEach(s => ensureBucket(store, s.id));
+  } catch (e) {
+    console.log('[SuggestedOrders] suppliers seed error', e);
+  }
+
+  const [products, areaItems] = await Promise.all([
+    loadProducts(db, venueId),
+    loadAreaItems(db, venueId),
+  ]);
+
+  const onHandByProductId: Record<string, number> = {};
+  const orphanAreaItems: AreaItemDoc[] = [];
+  for (const it of areaItems) {
+    const pid = it.productLinkId;
+    const v = Number(it.value ?? 0);
+    if (pid) {
+      if (Number.isFinite(v)) onHandByProductId[pid] = (onHandByProductId[pid] ?? 0) + v;
+    } else {
+      orphanAreaItems.push(it);
     }
-    map[key].lines.push(line);
   }
+  console.log('[SuggestedOrders] countedProductIds', { count: Object.keys(onHandByProductId).length });
 
-  // 4) Build per-dept suggestions
-  const byDept: SuggestedByDept = {};
+  const productById: Record<string, ProductDoc> = {};
+  for (const p of products) productById[p.id] = p;
 
-  for (const dk of deptKeys) {
-    const deptMap: SuggestedMap = {};
-    const cur = currentByDept[dk] || {};
+  for (const pid of Object.keys(onHandByProductId)) {
+    const p = productById[pid] || null;
+    const onHand = onHandByProductId[pid] ?? 0;
 
-    // For products that exist OR have non-zero current, compute target
-    const productIds = new Set<string>([...Object.keys(products), ...Object.keys(cur)]);
-    for (const pid of productIds) {
-      const p = products[pid] || { id: pid, name: pid };
-      const name = p?.name || pid;
-      const supplierId: string | null = p?.supplierId || null;
-      const supplierName: string | null = p?.supplierName || (supplierId ? (suppliers[supplierId]?.name || null) : null);
+    const name = p?.name ?? null;
+    const supplierId = p?.supplierId ?? null;
+    const packSize = Number.isFinite(p?.packSize as any) && (p!.packSize as any) > 0 ? Number(p!.packSize) : 1;
+    const unitCost = Number.isFinite(p?.price as any) ? Number(p!.price)
+                   : Number.isFinite(p?.cost as any) ? Number(p!.cost) : 0;
+    const explicitPar = Number.isFinite(p?.par as any) ? Number(p!.par)
+                      : Number.isFinite(p?.parLevel as any) ? Number(p!.parLevel) : null;
 
-      const unitCost = Number.isFinite(p?.unitCost) ? Number(p.unitCost) : null;
-      const packSize = Number.isFinite(p?.packSize) ? Number(p.packSize) : null;
+    const bucket = ensureBucket(store, supplierId ?? 'unassigned');
 
-      const current = Number(cur[pid] || 0);
-      const targetPar = parForDept(p, dk, defaultPar);
-      let needed = Math.max(0, targetPar - current);
-      needed = maybeRoundToPack(needed, packSize, roundPacks);
-
-      if (needed > 0) {
-        pushDeptLine(deptMap, supplierId, supplierName, {
-          productId: pid,
-          productName: name,
-          supplierId,
-          supplierName,
-          deptKey: dk,
-          qty: needed,
-          unitCost,
-          packSize
-        });
+    if (explicitPar && explicitPar > 0) {
+      const deficit = explicitPar - onHand;
+      if (deficit > 0) {
+        const qty = roundToPack ? Math.ceil(deficit / packSize) * packSize : deficit;
+        const line: SuggestedLine = { productId: pid, productName: name, qty, cost: unitCost };
+        (bucket as any)[pid] = line;
+        bucket.items[pid] = line;
       }
+    } else if (onHand <= 0) {
+      const qty = packSize > 0 ? packSize : Math.max(1, defaultPar);
+      const line: SuggestedLine = {
+        productId: pid, productName: name, qty, cost: unitCost, needsPar: true, reason: 'no_par_zero_stock'
+      };
+      (bucket as any)[pid] = line;
+      bucket.items[pid] = line;
     }
 
-    byDept[dk] = deptMap;
+    if (!supplierId) {
+      const line = bucket.items[pid];
+      if (line) {
+        line.needsSupplier = true;
+        line.reason = line.reason ?? 'no_supplier';
+      }
+    }
   }
 
-  // 5) Build ALL = sum of dept lines by supplier/product
-  const allMap: SuggestedMap = {};
-  for (const dk of Object.keys(byDept)) {
-    const m = byDept[dk];
-    Object.keys(m).forEach(supKey => {
-      const bucket = m[supKey];
-      const supId = bucket.supplierId || null;
-      const supName = bucket.supplierName || null;
+  for (const it of orphanAreaItems) {
+    const onHand = Number.isFinite(it.value as any) ? Number(it.value) : 0;
+    if (onHand > 0) continue;
 
-      if (!allMap[supKey]) {
-        allMap[supKey] = { supplierId: supId, supplierName: supName, lines: [] };
-      }
-      // Merge by productId
-      for (const line of bucket.lines) {
-        const existingIdx = allMap[supKey].lines.findIndex(L => L.productId === line.productId);
-        if (existingIdx >= 0) {
-          allMap[supKey].lines[existingIdx].qty += line.qty;
-        } else {
-          allMap[supKey].lines.push({ ...line, deptKey: undefined }); // drop deptKey in ALL
-        }
-      }
-    });
+    const packSize = Number.isFinite(it.packSize as any) && Number(it.packSize) > 0 ? Number(it.packSize) : 1;
+    const qty = packSize > 0 ? packSize : Math.max(1, defaultPar);
+    const unitCost = Number.isFinite(it.price as any) ? Number(it.price)
+                   : Number.isFinite(it.cost as any) ? Number(it.cost) : 0;
+
+    const bucket = ensureBucket(store, it.supplierId ?? 'unassigned');
+    const pid = it.id;
+    const line: SuggestedLine = {
+      productId: pid,
+      productName: it.name ?? null,
+      qty,
+      cost: unitCost,
+      needsPar: true,
+      needsSupplier: !it.supplierId,
+      reason: !it.supplierId ? 'no_supplier' : 'no_par_zero_stock',
+    };
+    (bucket as any)[pid] = line;
+    bucket.items[pid] = line;
   }
 
-  byDept['ALL'] = allMap;
+  const compat = finalizeStore(store);
 
-  return { byDept };
+  let suppliersWithLines = 0, totalLines = 0;
+  const perSupplierCounts: Record<string, number> = {};
+  const seen = new Set<CompatBucket>();
+  for (const key of Object.keys(compat)) {
+    const b = compat[key];
+    if (seen.has(b)) continue;
+    seen.add(b);
+    const c = b.lines.length;
+    perSupplierCounts[key] = c;
+    if (c > 0) { suppliersWithLines++; totalLines += c; }
+  }
+  console.log('[SuggestedOrders] summary', { suppliersWithLines, totalLines });
+  console.log('[SuggestedOrders] perSupplierCounts', perSupplierCounts);
+
+  return compat;
 }

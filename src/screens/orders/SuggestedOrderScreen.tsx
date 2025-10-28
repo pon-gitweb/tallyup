@@ -568,23 +568,6 @@ export default function SuggestedOrderScreen(){
   );
 }
 
-function normalizeBuckets(input:any): Record<string, any[]> {
-  try {
-    const root = (input && typeof input === 'object')
-      ? (input.buckets && typeof input.buckets === 'object' ? input.buckets : input)
-      : {};
-    const out: Record<string, any[]> = {};
-    for (const k of Object.keys(root)) {
-      const v:any = (root as any)[k];
-      const arr = Array.isArray(v) ? v : (Array.isArray(v?.lines) ? v.lines : []);
-      out[String(k || 'unassigned')] = arr;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
 const S = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#fff' },
   topBar: {
