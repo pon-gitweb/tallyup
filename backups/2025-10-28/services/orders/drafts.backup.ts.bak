@@ -3,7 +3,7 @@ import {
   getFirestore, collection, addDoc, getDocs, getDoc, doc,
   query, where, orderBy, limit
 } from 'firebase/firestore';
-import type { SuggestedLegacyMap, SuggestedLine } from './suggestTypes';
+import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
 
 export type OrderLine = {
   productId: string;
@@ -29,7 +29,7 @@ export type CreateDraftsResult = {
   skippedByGuard?: boolean;
 };
 
-const lineOK = (l: SuggestedLine) => l && Number(l.qty) > 0 && !!l.supplierId;
+const lineOK = (l: SuggestedLine) => l && Number(l.qty) > 0 && !l.needsSupplier;
 
 export function calcTotal(o: Order): number {
   return (o.lines ?? []).reduce((s, l) => s + (Number(l.cost ?? 0) * Number(l.qty ?? 0)), 0);
@@ -108,7 +108,7 @@ export async function createDraftsFromSuggestions(
         productId: l.productId,
         productName: l.productName ?? null,
         qty: l.qty,
-        unitCost: l.unitCost ?? null,
+        cost: l.cost ?? null,
       })),
     } as Order;
     order.total = calcTotal(order);

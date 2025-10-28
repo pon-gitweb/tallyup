@@ -3,21 +3,7 @@ import {
   getFirestore, collection, addDoc, serverTimestamp,
   writeBatch, doc, getDocs, where, query
 } from 'firebase/firestore';
-import type { SuggestedLegacyMap, SuggestedLine } from './suggestTypes';
-
-// Helper: pick a supplierName from a suggestions bucket (array or object)
-function firstSupplierName(bucket: any): string | null {
-  if (Array.isArray(bucket)) {
-    for (const l of bucket as any[]) {
-      if (l && typeof l === 'object' && (l as any).supplierName) {
-        return String((l as any).supplierName);
-      }
-    }
-    return null;
-  }
-  return (bucket as any)?.supplierName ?? null;
-}
-
+import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
 
 /**
  * Canonical suggestion key used across app.
@@ -101,7 +87,8 @@ export async function createDraftsFromSuggestions(
       supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'none';
 
     const supplierId: string | null = isUnassigned ? null : supplierKey;
-    const supplierName: string | null = firstSupplierName(bucket);
+    const supplierName: string | null =
+      (bucket?.supplierName && String(bucket.supplierName)) || null;
 
     const safeQty = (q: any) => Math.max(1, Math.round(Number(q) || 1));
     const linesCount = lines.length;

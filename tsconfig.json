@@ -9,6 +9,8 @@
   },
   "extends": "expo/tsconfig.base",
   "exclude": [
-    "_archive/**"
+    "_archive/**",
+    ".backups/**",
+    "**/*.backup.ts"
   ]
 }
