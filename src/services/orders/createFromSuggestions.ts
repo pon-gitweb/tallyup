@@ -1,5 +1,27 @@
 import { getApp } from 'firebase/app';
 import {
+
+// Find an existing ALL-scope draft for a supplier in this venue
+async function findExistingAllDraft(db: ReturnType<typeof getFirestore>, venueId: string, supplierId: string) {
+  const col = collection(db, 'venues', venueId, 'orders');
+  // We treat missing deptScope as 'ALL' for back-compat; so query deptScope IN ['ALL', null].
+  const qRef = query(
+    col,
+    where('status', '==', 'draft'),
+    where('supplierId', '==', supplierId)
+    // Note: we can’t OR on deptScope == 'ALL' OR missing without a composite. We’ll do a two-pass below.
+  );
+  const snap = await getDocs(qRef);
+  let fallback: any = null;
+  for (const d of snap.docs) {
+    const v: any = d.data() || {};
+    const scope = (v.deptScope ?? 'ALL');
+    if (scope === 'ALL') return { id: d.id, ...v };
+    // remember the first draft (in case we want to open *some* draft later)
+    if (!fallback) fallback = { id: d.id, ...v };
+  }
+  return null;
+}
   getFirestore, collection, addDoc, serverTimestamp,
   writeBatch, doc, getDocs, where, query
 } from 'firebase/firestore';
@@ -87,11 +109,8 @@ export async function createDraftsFromSuggestions(
       supplierKey === 'null' || supplierKey === '' || supplierKey === 'undefined' || supplierKey === 'none';
 
     const supplierId: string | null = isUnassigned ? null : supplierKey;
-    const supplierName: string | null = (
-      Array.isArray(bucket)
-        ? (bucket.find((x:any)=>String(x?.supplierName||'').trim().length>0)?.supplierName ?? null)
-        : ((bucket as any)?.supplierName ?? null)
-    ) ?? (supplierKey==='unassigned' ? 'Unassigned' : null);
+    const supplierName: string | null =
+      (bucket?.supplierName && String(bucket.supplierName)) || null;
 
     const safeQty = (q: any) => Math.max(1, Math.round(Number(q) || 1));
     const linesCount = lines.length;
@@ -153,7 +172,7 @@ export async function createDraftsFromSuggestions(
     const deptScopeField = deptScope.length ? deptScope : null;
 
     const orderRef = await addDoc(ordersCol, {
-      status: 'draft',
+      \1 deptScope: (deptScope || 'ALL'),
       displayStatus: 'draft',
       supplierId: supplierId ?? null,
       supplierName: supplierName ?? null,
