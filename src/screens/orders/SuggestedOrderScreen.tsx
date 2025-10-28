@@ -59,6 +59,8 @@ function sumByProduct(lines:any[]){
   return Object.values(map);
 }
 
+export function __showSuggestToast(msg:string){try{require("react-native").ToastAndroid.show(msg,require("react-native").ToastAndroid.SHORT)}catch{try{require("react-native").Alert.alert("Notice",msg)}catch{}}}
+
 export default function SuggestedOrderScreen(){
   const nav=useNavigation<any>();
   const venueId=useVenueId();
