@@ -9,7 +9,11 @@ import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 
 import { pickParseAndUploadProductsCsv } from 'src/services/imports/pickAndUploadCsv';
-import { uploadText } from 'src/services/firebase/storage';
+import { callProcessProductsCsv } from 'src/services/imports/processProductsCsv';
+
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import Toast from 'react-native-toast-message';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[ReportsIndex]', ...a); };
 
@@ -61,33 +65,66 @@ export default function ReportsIndexScreen() {
     finally { setBusy(false); }
   }, [busy]);
 
-  const importProductsCsv = React.useCallback(async () => {
+  const showCountsToast = (title:string, counts:any) => {
+    const c = counts || {};
+    Toast.show({
+      type: 'success',
+      text1: title,
+      text2: `Created: ${c.created ?? 0} • Updated: ${c.updated ?? 0} • Skipped: ${c.skipped ?? 0}`,
+      position: 'bottom',
+      visibilityTime: 3000,
+    });
+  };
+
+  // Core import flow (force=false by default)
+  const runImport = React.useCallback(async (opts?:{ force?: boolean }) => {
     if (busy) return;
     if (!venueId) { Alert.alert('Not ready', 'No venue selected.'); return; }
     setBusy(true);
+    const force = !!opts?.force;
     try {
+      // 1) Upload to Storage via HTTPS function
       const res = await pickParseAndUploadProductsCsv(venueId);
       if (res.cancelled) return;
-      const msg = [
-        `File: ${res.filename}`,
-        `Rows: ${res.rowsCount}`,
-        `Columns: ${res.headersCount}`,
-        `Path: ${res.storagePath}`,
-        res.downloadURL ? `URL:\n${res.downloadURL}` : null
-      ].filter(Boolean).join('\n');
-      Alert.alert('Products CSV uploaded', msg);
+
+      const path = String(res.storagePath || '');
+      if (!path) throw new Error('Upload returned no storage path');
+
+      // 2) Immediately process to Firestore
+      const proc = await callProcessProductsCsv(venueId, path, force);
+      const c = proc?.counts || {};
+
+      Alert.alert(
+        force ? 'Products reprocessed' : 'Products imported',
+        `Path: ${path}\n\n${c.created ?? 0} created\n${c.updated ?? 0} updated\n${c.skipped ?? 0} skipped`
+      );
+      showCountsToast(force ? 'Reprocess complete' : 'Import complete', c);
     } catch (e:any) {
-      Alert.alert('Import failed', e?.message || 'Could not import CSV');
+      Alert.alert('Import failed', e?.message || 'Could not import/process CSV');
+      Toast.show({ type: 'error', text1: 'Import failed', text2: e?.message || 'Error' });
     } finally {
       setBusy(false);
     }
   }, [busy, venueId]);
 
-  // DEV-ONLY: long-press to import a built-in sample without picking a file
-  const devUploadSampleProductsCsv = React.useCallback(async () => {
-    if (!__DEV__) return;
+  const importProductsCsv = React.useCallback(async () => {
+    return runImport({ force: false });
+  }, [runImport]);
+
+  const importProductsCsvForce = React.useCallback(async () => {
+    Alert.alert(
+      'Force reprocess?',
+      'This will update all matching products even if nothing changed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reprocess', style: 'destructive', onPress: () => runImport({ force: true }) },
+      ]
+    );
+  }, [runImport]);
+
+  // Create a sharable sample CSV file so testers can save it to device
+  const createSampleCsvAndShare = React.useCallback(async () => {
     if (busy) return;
-    if (!venueId) { Alert.alert('Not ready', 'No venue selected.'); return; }
     setBusy(true);
     try {
       const sample = [
@@ -98,17 +135,23 @@ export default function ReportsIndexScreen() {
         'Heineken 330ml,beer-hein-330,beerco,Beer Co,1.15,bottle,24,48',
         'Lemon,fruit-lemons,fruitco,Fruit Co,0.40,each,50,24',
       ].join('\n');
-      const out = await uploadText(venueId, 'sample_products.csv', sample, 'text/csv');
-      const msg = out.downloadURL
-        ? `Path: ${out.fullPath}\nURL:\n${out.downloadURL}`
-        : `Path: ${out.fullPath}`;
-      Alert.alert('Sample uploaded', msg);
+
+      const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+      const filename = `tallyup-sample-products-${stamp}.csv`;
+      const fileUri = FileSystem.cacheDirectory + filename;
+      await FileSystem.writeAsStringAsync(fileUri, sample, { encoding: FileSystem.EncodingType.UTF8 });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Save sample CSV' });
+      } else {
+        Alert.alert('Saved to cache', `Path: ${fileUri}`);
+      }
     } catch (e:any) {
-      Alert.alert('Sample upload failed', e?.message || 'Unknown error');
+      Alert.alert('Could not create sample', e?.message || 'Unknown error');
     } finally {
       setBusy(false);
     }
-  }, [busy, venueId]);
+  }, [busy]);
 
   const go = (name:string, params?:any) => () => {
     if (!busy && venueId) nav.navigate(name as never, { venueId, ...(params||{}) } as never);
@@ -119,8 +162,8 @@ export default function ReportsIndexScreen() {
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={350}
-      disabled={!venueId && title !== 'Share PDF — Summary' && title !== 'Export CSV — Summary'}
-      style={{ opacity: venueId || title.includes('Summary') ? 1 : 0.6, backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
+      disabled={!venueId && title !== 'Share PDF — Summary' && title !== 'Export CSV — Summary' && title !== 'Create sample CSV (share)'}
+      style={{ opacity: (venueId || title.includes('Summary') || title.includes('sample')) ? 1 : 0.6, backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
       <Text style={{ color:'#fff', fontWeight:'900', fontSize:16 }}>{title}</Text>
       {subtitle ? <Text style={{ color:'#F3F4F6', marginTop:4 }}>{subtitle}</Text> : null}
     </TouchableOpacity>
@@ -143,13 +186,19 @@ export default function ReportsIndexScreen() {
           <Tile title="Export CSV — Summary" onPress={exportQuickCsv} color={busy ? '#334155' : '#3B82F6'} />
           <Tile title="Share PDF — Summary" onPress={shareQuickPdf} color={busy ? '#4338CA' : '#7C3AED'} />
 
-          {/* --- Imports (S3.4-A) --- */}
+          {/* Imports */}
           <Tile
             title="Import Products CSV"
-            subtitle="Pick .csv, parse & upload"
+            subtitle="Tap = import • Long-press = force"
             onPress={importProductsCsv}
-            onLongPress={devUploadSampleProductsCsv} 
+            onLongPress={importProductsCsvForce}
             color={busy ? '#52525B' : '#1D4ED8'}
+          />
+          <Tile
+            title="Create sample CSV (share)"
+            subtitle="Save a sample to device for testing"
+            onPress={createSampleCsvAndShare}
+            color={busy ? '#374151' : '#2563EB'}
           />
 
           <Tile title="Variance Snapshot" subtitle="Compare on-hand vs expected" onPress={go('VarianceSnapshot')} color="#0EA5E9" />
