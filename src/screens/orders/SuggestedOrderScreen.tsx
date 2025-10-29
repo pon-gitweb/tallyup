@@ -16,10 +16,11 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
 import { runAISuggest } from '../../services/orders/suggestAI';
 import { createDraftsFromSuggestions } from '../../services/orders/createFromSuggestions';
+import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
 
-const dlog = (...a:any[]) => console.log('[Suggested]', ...a);
+const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};;
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
 const n = (v:any,d=0)=>{const x=Number(v);return Number.isFinite(x)?x:d;};
 const m1=(v:any)=>{const x=Number(v);return Number.isFinite(x)?Math.max(1,Math.round(x)):1;};
@@ -89,6 +90,8 @@ export default function SuggestedOrderScreen(){
   const [assignOpen,setAssignOpen]=useState(false);
 
   const didInitRef=useRef(false);
+  const createBusyRef=useRef(false);
+  const toggleBusyRef=useRef(false);
 
   const loadSuppliers = useCallback(async()=>{
     if(!venueId){ setSuppliers([]); return; }
@@ -296,10 +299,63 @@ export default function SuggestedOrderScreen(){
     await batch.commit();
   },[db,venueId]);
 
+  // ===== Robust preflight lock checker =====
+  /**
+   * - Looks for ANY draft for this supplier (no source filter).
+   * - Supports legacy scope fields: deptScope, deptScopeField, dept, department.
+   * Semantics:
+   *   ALL scope: 'ALL' | null/undefined | array length > 1
+   *   Dept scope: single string OR array length === 1
+   */
+  async function __probeSupplierLocks(
+    venueId: string,
+    supplierId: string | null,
+    wantAll: boolean
+  ): Promise<'ALL_EXISTS' | 'DEPT_EXISTS' | null> {
+    const colRef = collection(db, 'venues', venueId, 'orders');
+    const qRef = supplierId != null
+      ? query(colRef, where('status','==','draft'), where('supplierId','==', String(supplierId)))
+      : query(colRef, where('status','==','draft'), where('supplierId','==', null));
+
+    const snap = await getDocs(qRef);
+    const docs:any[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+    const readScope = (d:any) => d?.deptScope ?? d?.deptScopeField ?? d?.dept ?? d?.department ?? null;
+
+    const anyALL = docs.some(d => {
+      const s = readScope(d);
+      if (s === 'ALL' || s == null) return true;
+      if (Array.isArray(s) && s.length > 1) return true;
+      return false;
+    });
+
+    const anyDept = docs.some(d => {
+      const s = readScope(d);
+      if (s === 'ALL' || s == null) return false;
+      if (Array.isArray(s)) return s.length === 1;
+      return typeof s === 'string' && s.trim().length > 0;
+    });
+
+    console.log('[OrdersLockProbe]', {
+      supplierId, wantAll, docs: docs.length, anyALL, anyDept,
+      sample: docs.slice(0,3).map(d => ({ id: d.id, scope: readScope(d), status: d.status }))
+    });
+
+    if (wantAll) return anyDept ? 'DEPT_EXISTS' : null;
+    return anyALL ? 'ALL_EXISTS' : null;
+  }
+
   const createDraftForPreview=useCallback(async()=>{
     if(!venueId||!supplierPreview)return;
     try{
       const key = supplierPreview.supplierId || 'unassigned';
+      const supplierIdOrNull = key==='unassigned' ? null : key;
+
+      // ---- Preflight lock (blocks double-handling) ----
+      const lock = await __probeSupplierLocks(venueId, supplierIdOrNull, selectedDeptId==='ALL');
+      if (lock === 'ALL_EXISTS') { showToast('Blocked: ALL order already exists for this supplier.'); return; }
+      if (lock === 'DEPT_EXISTS') { showToast('Blocked: Department draft(s) already exist for this supplier.'); return; }
+
       const existingId = await findExistingDraftForSupplier(key==='unassigned'?null:key);
 
       const doCreateSeparate = async()=>{
@@ -307,6 +363,14 @@ export default function SuggestedOrderScreen(){
           [key]: { supplierName: supplierPreview.supplierName ?? null, lines: supplierPreview.lines || [] },
         };
         const res = await createDraftsFromSuggestions(venueId, legacyMap, { createdBy: uid });
+        if (!res || !Array.isArray(res.created)) { showToast('Could not create draft.'); return; }
+        if ((res as any).blockedReason) {
+          const why = (res as any).blockedReason;
+          if (why === 'ALL_EXISTS') showToast('Blocked: ALL order already exists for this supplier.');
+          if (why === 'DEPT_EXISTS') showToast('Blocked: Department draft(s) already exist for this supplier.');
+          if (why === 'NEED_MANAGER') showToast('Only managers can create an ALL-scope draft.');
+          return;
+        }
         if (Array.isArray(res?.created) && res.created.length > 0) {
           setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
         }
@@ -338,7 +402,7 @@ export default function SuggestedOrderScreen(){
     }catch(e:any){
       Alert.alert('Could not create draft',e?.message||'Please try again.');
     }
-  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft]);
+  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,selectedDeptId]);
 
   // Quick-assign supplier for a product (from Unassigned preview)
   const openAssignForProduct = useCallback(async(productId:string)=>{
@@ -515,8 +579,6 @@ export default function SuggestedOrderScreen(){
                 <Text style={[S.smallBtnText,{color:'#111827'}]}>Close</Text>
               </TouchableOpacity>
 
-              {/* Creating a draft from Unassigned still works (if you want a catch-all),
-                  but ideally assign suppliers first so lines route correctly. */}
               <TouchableOpacity
                 onPress={createDraftForPreview}
                 disabled={!!supplierPreview?.alreadyDrafted}
@@ -588,7 +650,7 @@ const S = StyleSheet.create({
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor:'#fff' },
   chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
   chipText: { fontSize: 12, fontWeight: '800', color:'#111827' },
-  chipTextActive: { color:'#fff' },
+  chipTextActive: { color: '#fff' },
 
   badge: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1 },
   badgeOk: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },

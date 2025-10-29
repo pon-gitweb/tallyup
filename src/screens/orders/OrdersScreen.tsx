@@ -15,6 +15,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { deleteDraft as deleteDraftSvc } from '../../services/orders/deleteDraft';
 
 type OrderRow = {
   id: string;
@@ -123,26 +124,21 @@ export default function OrdersScreen(){
     nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
   },[nav]);
 
-  // UPDATED: delete draft + all its lines, batched
+  // Delete draft via service (cascades lines + clears lock if last)
   const confirmDelete=useCallback(async (row:OrderRow)=>{
     Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
       { text:'Cancel', style:'cancel' },
       { text:'Delete', style:'destructive', onPress: async ()=>{
         try{
-          if(!venueId) return;
-          const orderRef = doc(db,'venues',venueId,'orders',row.id);
-          const linesCol = collection(orderRef,'lines');
-          const lineSnap = await getDocs(linesCol);
-          const batch = writeBatch(db);
-          lineSnap.forEach(d => batch.delete(doc(orderRef,'lines',d.id)));
-          batch.delete(orderRef);
-          await batch.commit();
-        }catch(e:any){
-          Alert.alert('Delete failed', e?.message || 'Could not delete draft.');
+          if (!venueId) return;
+          await deleteDraftSvc(venueId, row.id);
+        }catch(e){
+          const msg = (e && (e as any).message) ? (e as any).message : 'Could not delete draft.';
+          Alert.alert('Delete failed', msg);
         }
       }}
     ]);
-  },[db,venueId]);
+  },[venueId]);
 
   const renderItem=useCallback(({item}:{item:OrderRow})=>{
     const bits:string[]=[];

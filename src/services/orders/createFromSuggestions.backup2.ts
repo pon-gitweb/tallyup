@@ -10,16 +10,13 @@ import {
   getDocs,
   where,
   query,
-  runTransaction,
-  arrayUnion,
-  setDoc,
-  getDoc,
 } from 'firebase/firestore';
 import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
 
-const TAG = '[OrdersServiceLocks:v2]';
-
-// ========= Utilities =========
+/**
+ * Canonical suggestion key used across app.
+ * Format: "<supplierId||unassigned>|productId:roundedQty[,productId:roundedQty...]"
+ */
 export function computeSuggestionKey(
   supplierId: string | null | undefined,
   lines: Array<{ productId: string; qty: number | null | undefined }>
@@ -50,9 +47,8 @@ function toLines(bucket: any): SuggestedLine[] {
   return out;
 }
 
-// Derive dept scope from lines (exactly one dept → that dept, otherwise 'ALL').
-function deriveDeptScope(lines: Array<any>): string | 'ALL' {
-  const depts = Array.from(
+function uniqueDeptsFromLines(lines: Array<any>): string[] {
+  return Array.from(
     new Set(
       (Array.isArray(lines) ? lines : [])
         .map(l => (l && typeof l === 'object' ? (l as any).dept : null))
@@ -60,28 +56,28 @@ function deriveDeptScope(lines: Array<any>): string | 'ALL' {
         .map(String)
     )
   );
-  return depts.length === 1 ? depts[0] : 'ALL';
 }
 
-// ========= Locking model =========
-// One lock doc per supplier: venues/{venueId}/orderLocks/{supplierId|null_as_UNASSIGNED}
-// Data shape:
-//  {
-//    mode: 'ALL' | 'DEPTS',
-//    depts: string[]            // present when mode==='DEPTS'
-//    updatedAt: Timestamp
-//  }
-//
-// Rules:
-//  - If mode === 'ALL'  → block any dept create
-//  - If mode === 'DEPTS' and depts.length > 0 → block ALL create
-//  - Otherwise, allow and set the appropriate lock state
-//
-// This avoids false negatives/positives from inconsistent data and is atomic.
+/** Drafts for a supplier (ANY scope) exist? */
+async function anyDraftsForSupplier(db: ReturnType<typeof getFirestore>, venueId: string, supplierId: string | null) {
+  const col = collection(db, 'venues', venueId, 'orders');
+  const qRef = supplierId
+    ? query(col, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
+    : query(col, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', null));
+  const snap = await getDocs(qRef);
+  return !snap.empty;
+}
 
-function lockDocRef(db: ReturnType<typeof getFirestore>, venueId: string, supplierId: string | null) {
-  const sid = supplierId ?? '__UNASSIGNED__';
-  return doc(db, 'venues', venueId, 'orderLocks', String(sid));
+/** There is an existing ALL-scope draft for this supplier? */
+async function hasAllDraftForSupplier(db: ReturnType<typeof getFirestore>, venueId: string, supplierId: string | null) {
+  const col = collection(db, 'venues', venueId, 'orders');
+  const base = supplierId
+    ? query(col, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
+    : query(col, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', null));
+  // We store ALL explicitly as string 'ALL'
+  const qRef = query(base, where('deptScope', '==', 'ALL'));
+  const snap = await getDocs(qRef);
+  return !snap.empty;
 }
 
 export async function createDraftsFromSuggestions(
@@ -91,7 +87,6 @@ export async function createDraftsFromSuggestions(
 ): Promise<{ created: string[]; blockedReason?: 'ALL_EXISTS' | 'DEPT_EXISTS' | 'NEED_MANAGER' }> {
   const db = getFirestore(getApp());
   const created: string[] = [];
-  console.log(TAG, 'ENTRY', { venueId });
 
   for (const supplierKey of Object.keys(suggestions || {})) {
     const bucket = suggestions[supplierKey];
@@ -106,62 +101,37 @@ export async function createDraftsFromSuggestions(
     const supplierName: string | null =
       (bucket?.supplierName && String(bucket.supplierName)) || null;
 
-    const deptScopeField: string | 'ALL' = deriveDeptScope(lines);
-    const wantAll = deptScopeField === 'ALL';
-    const lockRef = lockDocRef(db, venueId, supplierId);
+    // Determine scope from incoming lines: one dept => DEPT, otherwise => ALL
+    const deptList = uniqueDeptsFromLines(lines);
+    const isDeptSpecific = deptList.length === 1;
+    const deptScopeField: string | string[] | null = isDeptSpecific ? deptList : 'ALL';
 
-    // --- Transaction for atomic lock + visibility
-    const blockedReason = await runTransaction(db, async (tx) => {
-      const snap = await tx.get(lockRef);
-      const now = serverTimestamp();
-
-      if (!snap.exists()) {
-        // No lock yet → establish initial lock for this scope
-        if (wantAll) {
-          tx.set(lockRef, { mode: 'ALL', depts: [], updatedAt: now });
-        } else {
-          tx.set(lockRef, { mode: 'DEPTS', depts: [deptScopeField], updatedAt: now });
-        }
-        return null;
+    // --- Supplier-level locking rules ---
+    if (deptScopeField === 'ALL') {
+      // Creating ALL → block if ANY draft already exists for this supplier (dept or ALL)
+      if (await anyDraftsForSupplier(db, venueId, supplierId)) {
+        return { created, blockedReason: 'DEPT_EXISTS' };
       }
-
-      const data: any = snap.data() || {};
-      const mode: 'ALL' | 'DEPTS' = data.mode === 'ALL' ? 'ALL' : 'DEPTS';
-      const depts: string[] = Array.isArray(data.depts) ? data.depts.map(String) : [];
-
-      if (wantAll) {
-        // Creating ALL: block if any dept already locked
-        if (mode === 'DEPTS' && depts.length > 0) return 'DEPT_EXISTS';
-        // Otherwise, promote to ALL
-        tx.set(lockRef, { mode: 'ALL', depts: [], updatedAt: now }, { merge: true });
-        return null;
-      } else {
-        // Creating a single department draft: block if ALL is already locked
-        if (mode === 'ALL') return 'ALL_EXISTS';
-        // Otherwise, add this dept to lock set
-        const next = new Set(depts);
-        next.add(deptScopeField);
-        tx.set(lockRef, { mode: 'DEPTS', depts: Array.from(next), updatedAt: now }, { merge: true });
-        return null;
+    } else {
+      // Creating DEPT → block if an ALL draft exists for this supplier
+      if (await hasAllDraftForSupplier(db, venueId, supplierId)) {
+        return { created, blockedReason: 'ALL_EXISTS' };
       }
-    });
-
-    if (blockedReason) {
-      console.log(TAG, 'BLOCK', { supplierId, deptScopeField, reason: blockedReason });
-      return { created, blockedReason };
     }
 
-    // ========== De-dupe by suggestionKey among current drafts ==========
+    // Suggestion-key dedupe (same supplier + same rounded lines)
     const suggestionKey = computeSuggestionKey(supplierId, lines);
     const ordersCol = collection(db, 'venues', venueId, 'orders');
     const qRef = supplierId
-      ? query(ordersCol, where('displayStatus', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
-      : query(ordersCol, where('displayStatus', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', null));
+      ? query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', supplierId))
+      : query(ordersCol, where('status', '==', 'draft'), where('source', '==', 'suggestions'), where('supplierId', '==', null));
     const snap = await getDocs(qRef);
     let existingId: string | null = null;
     snap.forEach(d => {
       const data: any = d.data() || {};
-      if (data?.suggestionKey === suggestionKey) existingId = d.id;
+      if (data?.suggestionKey === suggestionKey) {
+        existingId = d.id;
+      }
     });
     if (existingId) {
       console.log('[Orders] Draft exists', { id: existingId, suggestionKey });
@@ -169,7 +139,6 @@ export async function createDraftsFromSuggestions(
       continue;
     }
 
-    // ========== Create order draft ==========
     const safeQty = (q: any) => Math.max(1, Math.round(Number(q) || 1));
     const linesCount = lines.length;
     const total = lines.reduce((sum, l) => {
@@ -179,9 +148,8 @@ export async function createDraftsFromSuggestions(
     }, 0);
 
     const orderRef = await addDoc(ordersCol, {
-      deptScope: deptScopeField,               // 'ALL' or dept name
+      deptScope: deptScopeField,                 // 'ALL' | string[]
       displayStatus: 'draft',
-      status: 'draft',                         // keep both for compatibility
       supplierId: supplierId ?? null,
       supplierName: supplierName ?? null,
       source: 'suggestions',
@@ -211,7 +179,11 @@ export async function createDraftsFromSuggestions(
     }
     await batch.commit();
 
-    console.log('[Orders] Draft created', { id: orderRef.id, suggestionKey, deptScopeField });
+    console.log('[Orders] Draft created', {
+      id: orderRef.id,
+      suggestionKey,
+    });
+
     created.push(orderRef.id);
   }
 
