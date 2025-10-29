@@ -7,9 +7,7 @@ import { useNavigation } from '@react-navigation/native';
 import { exportCsv, exportPdf } from '../../utils/exporters';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
-
 import { pickParseAndUploadProductsCsv } from 'src/services/imports/pickAndUploadCsv';
-import { uploadText } from 'src/services/firebase/storage';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[ReportsIndex]', ...a); };
 
@@ -67,44 +65,13 @@ export default function ReportsIndexScreen() {
     setBusy(true);
     try {
       const res = await pickParseAndUploadProductsCsv(venueId);
-      if (res.cancelled) return;
-      const msg = [
-        `File: ${res.filename}`,
-        `Rows: ${res.rowsCount}`,
-        `Columns: ${res.headersCount}`,
-        `Path: ${res.storagePath}`,
-        res.downloadURL ? `URL:\n${res.downloadURL}` : null
-      ].filter(Boolean).join('\n');
-      Alert.alert('Products CSV uploaded', msg);
+      if (res?.cancelled) return;
+      Alert.alert(
+        'Products CSV uploaded',
+        `File: ${res.filename}\nRows: ${res.rowsCount}\nColumns: ${res.headersCount}\nPath: ${res.storagePath}`
+      );
     } catch (e:any) {
       Alert.alert('Import failed', e?.message || 'Could not import CSV');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, venueId]);
-
-  // DEV-ONLY: long-press to import a built-in sample without picking a file
-  const devUploadSampleProductsCsv = React.useCallback(async () => {
-    if (!__DEV__) return;
-    if (busy) return;
-    if (!venueId) { Alert.alert('Not ready', 'No venue selected.'); return; }
-    setBusy(true);
-    try {
-      const sample = [
-        'name,sku,supplierId,supplierName,costPrice,unit,packSize,parLevel',
-        'Lime,fruit-limes,fruitco,Fruit Co,0.45,each,50,24',
-        'Coca-Cola 330ml,coke-330,8LTkJoQLiaBkmVmJlbQc,Coke,0.65,bottle,24,48',
-        'House Wine 750ml,wine-house-750,8LTkJoQLiaBkmVmJlbQc,WineCo,7.80,bottle,12,12',
-        'Heineken 330ml,beer-hein-330,beerco,Beer Co,1.15,bottle,24,48',
-        'Lemon,fruit-lemons,fruitco,Fruit Co,0.40,each,50,24',
-      ].join('\n');
-      const out = await uploadText(venueId, 'sample_products.csv', sample, 'text/csv');
-      const msg = out.downloadURL
-        ? `Path: ${out.fullPath}\nURL:\n${out.downloadURL}`
-        : `Path: ${out.fullPath}`;
-      Alert.alert('Sample uploaded', msg);
-    } catch (e:any) {
-      Alert.alert('Sample upload failed', e?.message || 'Unknown error');
     } finally {
       setBusy(false);
     }
@@ -114,13 +81,11 @@ export default function ReportsIndexScreen() {
     if (!busy && venueId) nav.navigate(name as never, { venueId, ...(params||{}) } as never);
   };
 
-  const Tile = ({title, subtitle, onPress, onLongPress, color}:{title:string;subtitle?:string;onPress:()=>void;onLongPress?:()=>void;color:string}) => (
+  const Tile = ({title, subtitle, onPress, color}:{title:string;subtitle?:string;onPress:()=>void;color:string}) => (
     <TouchableOpacity
       onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={350}
-      disabled={!venueId && title !== 'Share PDF — Summary' && title !== 'Export CSV — Summary'}
-      style={{ opacity: venueId || title.includes('Summary') ? 1 : 0.6, backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
+      disabled={!venueId}
+      style={{ opacity: venueId ? 1 : 0.6, backgroundColor: color, paddingVertical:14, paddingHorizontal:16, borderRadius:12 }}>
       <Text style={{ color:'#fff', fontWeight:'900', fontSize:16 }}>{title}</Text>
       {subtitle ? <Text style={{ color:'#F3F4F6', marginTop:4 }}>{subtitle}</Text> : null}
     </TouchableOpacity>
@@ -136,6 +101,7 @@ export default function ReportsIndexScreen() {
               Share, export, and deep-dive analytics.
             </Text>
           </View>
+          {/* Personalised badge */}
           <IdentityBadge align="right" />
         </View>
 
@@ -148,7 +114,6 @@ export default function ReportsIndexScreen() {
             title="Import Products CSV"
             subtitle="Pick .csv, parse & upload"
             onPress={importProductsCsv}
-            onLongPress={devUploadSampleProductsCsv} 
             color={busy ? '#52525B' : '#1D4ED8'}
           />
 

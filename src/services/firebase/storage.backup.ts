@@ -15,12 +15,8 @@ export function buildDatedUploadPath(venueId:string, filename:string): string {
 }
 
 /**
- * Upload UTF-8 text as a percent-encoded data URL to avoid Blob/ArrayBuffer.
- * This path is Expo Go safe (no binary, no Blob).
- *
- * NOTE:
- *  - Do NOT pass metadata; keep it purely 'data_url' so the SDK never touches Blob.
- *  - contentType should look like 'text/csv' or 'text/plain'.
+ * Upload text content (e.g., CSV) to Firebase Storage.
+ * Uses uploadString(..., 'raw') to avoid Blob dependencies.
  */
 export async function uploadText(
   venueId:string,
@@ -29,17 +25,10 @@ export async function uploadText(
   contentType:string='text/plain'
 ): Promise<{ fullPath:string; downloadURL?:string }> {
   if (!venueId) throw new Error('venueId required');
-
   const storage = getStorage(getApp());
   const path = buildDatedUploadPath(venueId, filename);
   const r = ref(storage, path);
-
-  // Percent-encode (no base64 needed) to entirely avoid ArrayBuffer/Blob in the SDK
-  const safeType = String(contentType || 'text/plain');
-  const dataUrl = `data:${safeType};charset=utf-8,${encodeURIComponent(String(content ?? ''))}`;
-
-  // IMPORTANT: format = 'data_url' and no metadata argument
-  await uploadString(r, dataUrl, 'data_url');
-
+  await uploadString(r, String(content||''), 'raw', { contentType });
+  // Optional: obtaining downloadURL needs getDownloadURL; we don’t require it here.
   return { fullPath: path };
 }

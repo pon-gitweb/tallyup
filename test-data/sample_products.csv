@@ -1,0 +1,6 @@
+Product,Unit,CostPrice,PackSize,ParLevel,SupplierName,SupplierId
+Coca Cola 330ml Bottle,Each,1.45,24,48,Coca Cola Amatil,SUP-CCA
+Heineken 330ml Bottle,Each,1.80,24,48,Lion,SUP-LION
+San Pellegrino 500ml,Each,2.10,12,24,Bidfood,SUP-BID
+Lemon Juice 1L,Bottle,3.50,6,12,Service Foods,SUP-SF
+Beef Sirloin 1kg,Kg,19.95,1,5,Service Foods,SUP-SF

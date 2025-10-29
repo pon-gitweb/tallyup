@@ -1,0 +1,6 @@
+name,sku,supplierId,supplierName,costPrice,unit,packSize,parLevel
+Lime,fruit-limes,fruitco,Fruit Co,0.45,each,50,24
+Coca-Cola 330ml,coke-330,8LTkJoQLiaBkmVmJlbQc,Coke,0.65,bottle,24,48
+House Wine 750ml,wine-house-750,8LTkJoQLiaBkmVmJlbQc,WineCo,7.80,bottle,12,12
+Heineken 330ml,beer-hein-330,beerco,Beer Co,1.15,bottle,24,48
+Lemon,fruit-lemons,fruitco,Fruit Co,0.40,each,50,24
