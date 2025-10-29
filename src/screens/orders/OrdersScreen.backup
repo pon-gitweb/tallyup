@@ -67,9 +67,6 @@ export default function OrdersScreen(){
   const venueId = useVenueId();
   const db = getFirestore();
 
-  // Inline quick-test toggle for Products CSV Import
-  const [showImport, setShowImport] = useState(false);
-
   const [tab,setTab]=useState<'drafts'|'submitted'|'received'>('drafts');
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
@@ -106,22 +103,7 @@ export default function OrdersScreen(){
       });
       setRowsAll(out);
     },()=>setRowsAll([]));
-    if (showImport) {
-    return (
-      <View style={{flex:1, backgroundColor:'#fff'}}>
-        <View style={S.top}>
-          <TouchableOpacity onPress={() => setShowImport(false)} style={S.addBtn}>
-            <Text style={S.addText}>Back</Text>
-          </TouchableOpacity>
-          <Text style={S.title}>Products CSV Import</Text>
-          <View style={{width:12}}/>
-        </View>
-        <ProductsCsvImportScreen />
-      </View>
-    );
-  }
-
-  return ()=>unsub();
+    return ()=>unsub();
   },[db,venueId]);
 
   const rows=useMemo(()=>{
@@ -256,7 +238,7 @@ export default function OrdersScreen(){
             </TouchableOpacity>
           </View>
         </View>
-        <TouchableOpacity onPress={()=>nav.navigate('ProductsCsvImport')} style={S.addBtn}>
+        <TouchableOpacity onPress={()=>nav.navigate('NewOrder')} style={S.addBtn}>
           <Text style={S.addText}>New Order</Text>
         </TouchableOpacity>
       </View>
