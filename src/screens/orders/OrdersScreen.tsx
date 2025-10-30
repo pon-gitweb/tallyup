@@ -6,13 +6,10 @@ import {
   getFirestore,
   collection,
   onSnapshot,
-  doc,
   deleteDoc,
   query,
   where,
   getDocs,
-  writeBatch,
-  Timestamp
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { deleteDraft as deleteDraftSvc } from '../../services/orders/deleteDraft';
@@ -29,8 +26,9 @@ type OrderRow = {
   receivedAt?: any;
   linesCount?: number | null;
   total?: number | null;
-  // additive: may exist if upstream set it
-  deptScope?: string[] | null;
+  submitHoldUntil?: number | null;
+  cutoffAt?: number | null;
+  deptScope?: string[] | string | null;
 };
 
 const S = StyleSheet.create({
@@ -50,16 +48,35 @@ const S = StyleSheet.create({
   rowSub:{color:'#6B7280',marginTop:2},
   pill:{marginTop:6,alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#F3F4F6'},
   pillText:{fontSize:11,fontWeight:'700',color:'#374151'},
+  warnPill:{marginTop:6,alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#FEF3C7'},
+  warnPillText:{fontSize:11,fontWeight:'800',color:'#92400E'},
   smallBtn:{backgroundColor:'#111827',paddingVertical:6,paddingHorizontal:10,borderRadius:8},
   smallBtnText:{color:'#fff',fontSize:12,fontWeight:'700'},
   empty:{padding:24,alignItems:'center'},
   emptyText:{color:'#6B7280'},
 });
 
+// Submitted-like states per sprint note; we will also accept submittedAt (but exclude received-like)
+const SUBMITTED_STATES = ['submitted','sent','placed','approved','awaiting','processing','queued','holding','onhold','consolidating'];
+
 const STATUS_GROUPS = {
-  drafts: (s:string)=>s==='draft',
-  submitted: (s:string)=>['submitted','sent','placed','approved','awaiting','processing'].includes(s),
-  received: (s:string)=>['received','complete','closed'].includes(s),
+  drafts: (r:OrderRow)=>{
+    const s = String((r.status||r.displayStatus||'draft')).toLowerCase();
+    if (s === 'cancelled' || s === 'canceled') return false;
+    return s === 'draft' || s === 'pending_merge' || s === 'pending';
+  },
+  submitted: (r:OrderRow)=>{
+    const s = String((r.status||r.displayStatus||'')).toLowerCase().trim();
+    const hasSubmittedAt = !!(r.submittedAt && (r.submittedAt.toMillis?.() || Number(r.submittedAt)));
+    if (s === 'cancelled' || s === 'canceled') return false;
+    // Exclude received-like even if submittedAt exists
+    if (['received','complete','closed'].includes(s)) return false;
+    return SUBMITTED_STATES.includes(s) || hasSubmittedAt;
+  },
+  received: (r:OrderRow)=>{
+    const s = String((r.status||r.displayStatus||'')).toLowerCase().trim();
+    return ['received','complete','closed'].includes(s);
+  },
 };
 
 export default function OrdersScreen(){
@@ -67,14 +84,11 @@ export default function OrdersScreen(){
   const venueId = useVenueId();
   const db = getFirestore();
 
-  // Inline quick-test toggle for Products CSV Import
-  const [showImport, setShowImport] = useState(false);
-
   const [tab,setTab]=useState<'drafts'|'submitted'|'received'>('drafts');
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
 
-  // Subscribe to orders (newest first by any available timestamp)
+  // Live subscribe to venue orders and keep a unified, newest-first list
   useEffect(()=>{
     if(!venueId) return;
     const ref = collection(db,'venues',venueId,'orders');
@@ -82,7 +96,7 @@ export default function OrdersScreen(){
       const out:OrderRow[]=[];
       snap.forEach((docSnap)=>{
         const d:any=docSnap.data()||{};
-        const s=String(d.status||d.displayStatus||'draft').toLowerCase();
+        const s=String((d.status||d.displayStatus||'draft')).toLowerCase();
         out.push({
           id:docSnap.id,
           supplierId:d.supplierId??null,
@@ -95,7 +109,9 @@ export default function OrdersScreen(){
           receivedAt:d.receivedAt??null,
           linesCount:Number.isFinite(d.linesCount)?Number(d.linesCount):null,
           total:Number.isFinite(d.total)?Number(d.total):null,
-          deptScope: Array.isArray(d.deptScope) ? d.deptScope : null, // additive
+          submitHoldUntil: typeof d.submitHoldUntil === 'number' ? d.submitHoldUntil : (Number(d.submitHoldUntil)||null),
+          cutoffAt: typeof d.cutoffAt === 'number' ? d.cutoffAt : (Number(d.cutoffAt)||null),
+          deptScope: Array.isArray(d.deptScope) ? d.deptScope : (d.deptScope ?? null),
         });
       });
       const ms=(x:any)=>x?.toMillis?.()??0;
@@ -106,32 +122,28 @@ export default function OrdersScreen(){
       });
       setRowsAll(out);
     },()=>setRowsAll([]));
-    if (showImport) {
-    return (
-      <View style={{flex:1, backgroundColor:'#fff'}}>
-        <View style={S.top}>
-          <TouchableOpacity onPress={() => setShowImport(false)} style={S.addBtn}>
-            <Text style={S.addText}>Back</Text>
-          </TouchableOpacity>
-          <Text style={S.title}>Products CSV Import</Text>
-          <View style={{width:12}}/>
-        </View>
-        <ProductsCsvImportScreen />
-      </View>
-    );
-  }
-
-  return ()=>unsub();
+    return ()=>unsub();
   },[db,venueId]);
 
   const rows=useMemo(()=>{
     const pick=STATUS_GROUPS[tab];
-    return rowsAll.filter(r=>pick(String(r.status||'draft')));
+    const filtered = rowsAll.filter(r=>pick(r));
+    // Dev insight: how many in each bucket
+    if (__DEV__) {
+      const c = { drafts:0, submitted:0, received:0 };
+      rowsAll.forEach(r=>{
+        if (STATUS_GROUPS.drafts(r)) c.drafts++;
+        else if (STATUS_GROUPS.received(r)) c.received++;
+        else if (STATUS_GROUPS.submitted(r)) c.submitted++;
+      });
+      console.log('[OrdersScreen] buckets', c);
+    }
+    return filtered;
   },[rowsAll,tab]);
 
   const openRow=useCallback((row:OrderRow)=>{
     const s=String(row.status||'draft');
-    if(s==='draft'){
+    if(s==='draft' || s==='pending_merge'){
       nav.navigate('OrderEditor',{orderId:row.id,mode:'edit'});
     }else{
       nav.navigate('OrderDetail',{orderId:row.id});
@@ -142,7 +154,6 @@ export default function OrdersScreen(){
     nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
   },[nav]);
 
-  // Delete draft via service (cascades lines + clears lock if last)
   const confirmDelete=useCallback(async (row:OrderRow)=>{
     Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
       { text:'Cancel', style:'cancel' },
@@ -164,8 +175,12 @@ export default function OrdersScreen(){
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
     const pillText=item.displayStatus||item.status||'—';
-    const isSubmitted=STATUS_GROUPS.submitted(String(item.status||'draft'));
-    const isDraft = String(item.status||'draft')==='draft';
+    const isSubmitted=STATUS_GROUPS.submitted(item);
+    const isDraft = STATUS_GROUPS.drafts(item);
+
+    const holdMs = Number(item.submitHoldUntil ?? item.cutoffAt ?? 0);
+    const isHeld = isSubmitted && holdMs > Date.now();
+
     return(
       <View style={S.row}>
         <TouchableOpacity
@@ -178,9 +193,15 @@ export default function OrdersScreen(){
           <Text style={S.rowTitle}>{item.supplierName||'Supplier'}</Text>
           <Text style={S.rowSub}>{subtitle||'—'}</Text>
           <View style={S.pill}><Text style={S.pillText}>{pillText}</Text></View>
-          {/* additive: show dept scope if present */}
+          {isHeld ? (
+            <View style={S.warnPill}>
+              <Text style={S.warnPillText}>
+                Held until {new Date(holdMs).toLocaleTimeString()}
+              </Text>
+            </View>
+          ) : null}
           {Array.isArray(item.deptScope) && item.deptScope.length>0 ? (
-            <View style={S.pill}><Text style={S.pillText}>{item.deptScope.join(' · ')}</Text></View>
+            <View style={S.pill}><Text style={S.pillText}>{(item.deptScope as string[]).join(' · ')}</Text></View>
           ) : null}
         </TouchableOpacity>
         {isSubmitted ? (
@@ -192,10 +213,7 @@ export default function OrdersScreen(){
     );
   },[openRow,startReceive,confirmDelete]);
 
-  const onRefresh=useCallback(()=>{
-    setRefreshing(true);
-    setTimeout(()=>setRefreshing(false),200);
-  },[]);
+  const onRefresh=useCallback(()=>{ setRefreshing(true); setTimeout(()=>setRefreshing(false),200); },[]);
 
   // ---- Auto-clean stale drafts (>=7 days) with index-aware fallback
   const cleanedRef = useRef(false);
@@ -216,7 +234,7 @@ export default function OrdersScreen(){
         await Promise.all(stale.map(d => deleteDoc(d.ref)));
         console.log('[Orders] Auto-clean complete');
       }catch(err:any){
-        console.log('[Orders] Auto-clean failed', err);
+        console.log('[Orders] Auto-clean failed (index likely missing). Falling back to client filter.', err?.message || err);
         try{
           const snapAll = await getDocs(ref);
           const staleAll = snapAll.docs.filter(d=>{
@@ -256,7 +274,7 @@ export default function OrdersScreen(){
             </TouchableOpacity>
           </View>
         </View>
-        <TouchableOpacity onPress={()=>nav.navigate('ProductsCsvImport')} style={S.addBtn}>
+        <TouchableOpacity onPress={()=>nav.navigate('NewOrder')} style={S.addBtn}>
           <Text style={S.addText}>New Order</Text>
         </TouchableOpacity>
       </View>
