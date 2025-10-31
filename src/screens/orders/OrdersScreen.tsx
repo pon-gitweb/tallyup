@@ -231,7 +231,7 @@ export default function OrdersScreen(){
     if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':'s'}`);
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
-    const statusText=item.displayStatus || item.status || '—';
+    const statusText = (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
     const isSubmitted=STATUS_GROUPS.submitted(item);
     const isDraft = STATUS_GROUPS.drafts(item);
 
