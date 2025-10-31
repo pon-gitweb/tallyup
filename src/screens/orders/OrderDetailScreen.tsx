@@ -1,13 +1,24 @@
+import { useReceiveModal } from './receive/useReceiveModal';
 // @ts-nocheck
+import { useReceiveModal } from './receive/useReceiveModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { useReceiveModal } from './receive/useReceiveModal';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { useReceiveModal } from './receive/useReceiveModal';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useReceiveModal } from './receive/useReceiveModal';
 import { useVenueId } from '../../context/VenueProvider';
+import { useReceiveModal } from './receive/useReceiveModal';
 import {
+import { useReceiveModal } from './receive/useReceiveModal';
   getFirestore, doc, getDoc, collection, getDocs
+import { useReceiveModal } from './receive/useReceiveModal';
 } from 'firebase/firestore';
+import { useReceiveModal } from './receive/useReceiveModal';
 import * as DocumentPicker from 'expo-document-picker';
+import { useReceiveModal } from './receive/useReceiveModal';
 import * as FileSystem from 'expo-file-system';
+import { useReceiveModal } from './receive/useReceiveModal';
 
 import ReceiveOptionsModal from '../../components/orders/ReceiveOptionsModal';
 import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
@@ -26,6 +37,8 @@ export default function OrderDetailScreen(){
   const [orderMeta, setOrderMeta] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
+  // Receive modal host
+  const { openReceive, modalNode } = useReceiveModal({ orderId: order?.id || id, orderLines: lines });
 
   // Receive modal state
   const [receiveOpen, setReceiveOpen] = useState(false);
@@ -221,3 +234,6 @@ const S = StyleSheet.create({
   receiveBtnText:{color:'#fff',fontWeight:'800'},
   loading:{flex:1,justifyContent:'center',alignItems:'center'},
 });
+
+{/* Receive modal */}
+{modalNode}
