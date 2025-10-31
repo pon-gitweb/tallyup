@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
   getFirestore,
@@ -18,8 +18,9 @@ type OrderRow = {
   id: string;
   supplierId?: string | null;
   supplierName?: string | null;
-  status?: string | null;
+  status: string;
   displayStatus?: string | null;
+  poNumber?: string | null;
   createdAt?: any;
   createdAtClientMs?: number | null;
   submittedAt?: any;
@@ -33,49 +34,81 @@ type OrderRow = {
 
 const S = StyleSheet.create({
   wrap:{flex:1,backgroundColor:'#fff'},
-  top:{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB',flexDirection:'row',alignItems:'center',justifyContent:'space-between'},
-  title:{fontSize:22,fontWeight:'800'},
+  top:{paddingHorizontal:16,paddingTop:12,paddingBottom:8,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  title:{fontSize:22,fontWeight:'800',marginBottom:8},
   segWrap:{flexDirection:'row',borderWidth:1,borderColor:'#E5E7EB',borderRadius:999,overflow:'hidden'},
   segBtn:{paddingVertical:8,paddingHorizontal:12,backgroundColor:'#fff'},
   segActive:{backgroundColor:'#111827'},
   segText:{fontSize:13,fontWeight:'800',color:'#111827'},
   segTextActive:{color:'#fff'},
-  addBtn:{backgroundColor:'#111827',paddingVertical:8,paddingHorizontal:12,borderRadius:10},
-  addText:{color:'#fff',fontWeight:'800'},
+
   row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
   left:{flex:1},
   rowTitle:{fontSize:16,fontWeight:'700'},
   rowSub:{color:'#6B7280',marginTop:2},
-  pill:{marginTop:6,alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#F3F4F6'},
+  pillRow:{flexDirection:'row',gap:6,marginTop:6,flexWrap:'wrap'},
+  pill:{alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#F3F4F6'},
   pillText:{fontSize:11,fontWeight:'700',color:'#374151'},
-  warnPill:{marginTop:6,alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#FEF3C7'},
+  warnPill:{alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#FEF3C7'},
   warnPillText:{fontSize:11,fontWeight:'800',color:'#92400E'},
   smallBtn:{backgroundColor:'#111827',paddingVertical:6,paddingHorizontal:10,borderRadius:8},
   smallBtnText:{color:'#fff',fontSize:12,fontWeight:'700'},
   empty:{padding:24,alignItems:'center'},
   emptyText:{color:'#6B7280'},
+
+  // FAB
+  fab:{position:'absolute',right:16,bottom:24,backgroundColor:'#111827',paddingVertical:14,paddingHorizontal:18,borderRadius:999,shadowColor:'#000',shadowOpacity:0.2,shadowRadius:6,elevation:4},
+  fabText:{color:'#fff',fontWeight:'800'}
 });
 
-// Submitted-like states per sprint note; we will also accept submittedAt (but exclude received-like)
-const SUBMITTED_STATES = ['submitted','sent','placed','approved','awaiting','processing','queued','holding','onhold','consolidating'];
+// canonical map
+const CANON = {
+  draft: 'draft',
+  pending: 'pending',
+  'pending_merge': 'pending_merge',
+  submitted: 'submitted',
+  sent: 'submitted',
+  placed: 'submitted',
+  approved: 'submitted',
+  awaiting: 'submitted',
+  processing: 'submitted',
+  queued: 'submitted',
+  holding: 'submitted',
+  onhold: 'submitted',
+  consolidating: 'submitted',
+  received: 'received',
+  'partially_received': 'received',
+  complete: 'received',
+  closed: 'received',
+  canceled: 'cancelled',
+  cancelled: 'cancelled',
+};
+
+function canonicalizeStatus(statusRaw: any, displayRaw: any): string {
+  const s = String(statusRaw ?? '').toLowerCase().trim();
+  if (s && CANON[s as keyof typeof CANON]) return CANON[s as keyof typeof CANON];
+  const d = String(displayRaw ?? '').toLowerCase().trim();
+  if (d && CANON[d as keyof typeof CANON]) return CANON[d as keyof typeof CANON];
+  if (__DEV__) console.log('[OrdersScreen] legacy/unknown status → draft', { statusRaw, displayRaw });
+  return 'draft';
+}
 
 const STATUS_GROUPS = {
   drafts: (r:OrderRow)=>{
-    const s = String((r.status||r.displayStatus||'draft')).toLowerCase();
-    if (s === 'cancelled' || s === 'canceled') return false;
-    return s === 'draft' || s === 'pending_merge' || s === 'pending';
+    const s = (r.status||'').toLowerCase().trim();
+    if (s === 'cancelled') return false;
+    return s === 'draft' || s === 'pending' || s === 'pending_merge';
   },
   submitted: (r:OrderRow)=>{
-    const s = String((r.status||r.displayStatus||'')).toLowerCase().trim();
+    const s = (r.status||'').toLowerCase().trim();
     const hasSubmittedAt = !!(r.submittedAt && (r.submittedAt.toMillis?.() || Number(r.submittedAt)));
-    if (s === 'cancelled' || s === 'canceled') return false;
-    // Exclude received-like even if submittedAt exists
-    if (['received','complete','closed'].includes(s)) return false;
-    return SUBMITTED_STATES.includes(s) || hasSubmittedAt;
+    if (s === 'cancelled') return false;
+    if (s === 'received') return false;
+    return s === 'submitted' || hasSubmittedAt;
   },
   received: (r:OrderRow)=>{
-    const s = String((r.status||r.displayStatus||'')).toLowerCase().trim();
-    return ['received','complete','closed'].includes(s);
+    const s = (r.status||'').toLowerCase().trim();
+    return s === 'received';
   },
 };
 
@@ -87,8 +120,8 @@ export default function OrdersScreen(){
   const [tab,setTab]=useState<'drafts'|'submitted'|'received'>('drafts');
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
+  const [receiveFor,setReceiveFor] = useState<OrderRow|null>(null);
 
-  // Live subscribe to venue orders and keep a unified, newest-first list
   useEffect(()=>{
     if(!venueId) return;
     const ref = collection(db,'venues',venueId,'orders');
@@ -96,15 +129,25 @@ export default function OrdersScreen(){
       const out:OrderRow[]=[];
       snap.forEach((docSnap)=>{
         const d:any=docSnap.data()||{};
-        const s=String((d.status||d.displayStatus||'draft')).toLowerCase();
+        const canon = canonicalizeStatus(d.status, d.displayStatus);
+
+        if (__DEV__) {
+          const rawS = String(d.status ?? '').toLowerCase().trim();
+          const rawD = String(d.displayStatus ?? '').toLowerCase().trim();
+          if ((d.submittedAt && canon !== 'submitted' && canon !== 'received')) {
+            console.log('[OrdersScreen] has submittedAt but not canonical submitted', { id: docSnap.id, rawD, rawS });
+          }
+        }
+
         out.push({
           id:docSnap.id,
           supplierId:d.supplierId??null,
           supplierName:d.supplierName??'Supplier',
-          status:s,
-          displayStatus:d.displayStatus??s,
+          status:canon,
+          displayStatus:d.displayStatus ?? null,
+          poNumber: d.poNumber ?? null,
           createdAt:d.createdAt??null,
-          createdAtClientMs:d.createdAtClientMs??null,
+          createdAtClientMs: Number.isFinite(d.createdAtClientMs) ? Number(d.createdAtClientMs) : (d.createdAtClientMs ? Number(d.createdAtClientMs) : null),
           submittedAt:d.submittedAt??null,
           receivedAt:d.receivedAt??null,
           linesCount:Number.isFinite(d.linesCount)?Number(d.linesCount):null,
@@ -121,38 +164,44 @@ export default function OrdersScreen(){
         return tb - ta;
       });
       setRowsAll(out);
-    },()=>setRowsAll([]));
+    },(err)=>{
+      console.warn('[OrdersScreen] onSnapshot error', err);
+      setRowsAll([]);
+    });
     return ()=>unsub();
   },[db,venueId]);
+
+  const counts = useMemo(()=>{
+    let d=0,s=0,r=0;
+    rowsAll.forEach(row=>{
+      if (STATUS_GROUPS.drafts(row)) d++;
+      else if (STATUS_GROUPS.received(row)) r++;
+      else if (STATUS_GROUPS.submitted(row)) s++;
+    });
+    if (__DEV__) console.log('[OrdersScreen] buckets', {drafts:d, submitted:s, received:r});
+    return {drafts:d, submitted:s, received:r};
+  },[rowsAll]);
 
   const rows=useMemo(()=>{
     const pick=STATUS_GROUPS[tab];
     const filtered = rowsAll.filter(r=>pick(r));
-    // Dev insight: how many in each bucket
     if (__DEV__) {
-      const c = { drafts:0, submitted:0, received:0 };
-      rowsAll.forEach(r=>{
-        if (STATUS_GROUPS.drafts(r)) c.drafts++;
-        else if (STATUS_GROUPS.received(r)) c.received++;
-        else if (STATUS_GROUPS.submitted(r)) c.submitted++;
-      });
-      console.log('[OrdersScreen] buckets', c);
+      const sample = filtered.slice(0,3).map(r=>({id:r.id,status:r.status,linesCount:r.linesCount,displayStatus:r.displayStatus}));
+      console.log(`[OrdersScreen] sample(${tab})`, sample);
     }
     return filtered;
   },[rowsAll,tab]);
 
   const openRow=useCallback((row:OrderRow)=>{
     const s=String(row.status||'draft');
-    if(s==='draft' || s==='pending_merge'){
+    if(s==='draft' || s==='pending' || s==='pending_merge'){
       nav.navigate('OrderEditor',{orderId:row.id,mode:'edit'});
     }else{
       nav.navigate('OrderDetail',{orderId:row.id});
     }
   },[nav]);
 
-  const startReceive=useCallback((row:OrderRow)=>{
-    nav.navigate('OrderDetail',{orderId:row.id,receiveNow:true});
-  },[nav]);
+  const startReceive=useCallback((row:OrderRow)=>{ setReceiveFor(row); },[]);
 
   const confirmDelete=useCallback(async (row:OrderRow)=>{
     Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
@@ -174,7 +223,7 @@ export default function OrdersScreen(){
     if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':'s'}`);
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
-    const pillText=item.displayStatus||item.status||'—';
+    const statusText=item.displayStatus || item.status || '—';
     const isSubmitted=STATUS_GROUPS.submitted(item);
     const isDraft = STATUS_GROUPS.drafts(item);
 
@@ -192,18 +241,25 @@ export default function OrdersScreen(){
         >
           <Text style={S.rowTitle}>{item.supplierName||'Supplier'}</Text>
           <Text style={S.rowSub}>{subtitle||'—'}</Text>
-          <View style={S.pill}><Text style={S.pillText}>{pillText}</Text></View>
-          {isHeld ? (
-            <View style={S.warnPill}>
-              <Text style={S.warnPillText}>
-                Held until {new Date(holdMs).toLocaleTimeString()}
-              </Text>
-            </View>
-          ) : null}
-          {Array.isArray(item.deptScope) && item.deptScope.length>0 ? (
-            <View style={S.pill}><Text style={S.pillText}>{(item.deptScope as string[]).join(' · ')}</Text></View>
-          ) : null}
+
+          <View style={S.pillRow}>
+            <View style={S.pill}><Text style={S.pillText}>{statusText}</Text></View>
+            {isSubmitted && item.poNumber ? (
+              <View style={S.pill}><Text style={S.pillText}>PO {item.poNumber}</Text></View>
+            ) : null}
+            {isHeld ? (
+              <View style={S.warnPill}>
+                <Text style={S.warnPillText}>
+                  Held until {new Date(holdMs).toLocaleTimeString()}
+                </Text>
+              </View>
+            ) : null}
+            {Array.isArray(item.deptScope) && item.deptScope.length>0 ? (
+              <View style={S.pill}><Text style={S.pillText}>{(item.deptScope as string[]).join(' · ')}</Text></View>
+            ) : null}
+          </View>
         </TouchableOpacity>
+
         {isSubmitted ? (
           <TouchableOpacity style={S.smallBtn} onPress={()=>startReceive(item)}>
             <Text style={S.smallBtnText}>Receive</Text>
@@ -215,7 +271,7 @@ export default function OrdersScreen(){
 
   const onRefresh=useCallback(()=>{ setRefreshing(true); setTimeout(()=>setRefreshing(false),200); },[]);
 
-  // ---- Auto-clean stale drafts (>=7 days) with index-aware fallback
+  // ---- Auto-clean stale drafts
   const cleanedRef = useRef(false);
   useEffect(()=>{
     if(!venueId || cleanedRef.current) return;
@@ -239,8 +295,8 @@ export default function OrdersScreen(){
           const snapAll = await getDocs(ref);
           const staleAll = snapAll.docs.filter(d=>{
             const v:any = d.data()||{};
-            const s = String(v.status||v.displayStatus||'draft').toLowerCase();
-            if(s!=='draft') return false;
+            const canon = canonicalizeStatus(v.status, v.displayStatus);
+            if(canon!=='draft' && canon!=='pending' && canon!=='pending_merge') return false;
             const clientMs = Number(v.createdAtClientMs||0);
             const serverMs = v.createdAt?.toMillis?.() ?? 0;
             const ts = clientMs || serverMs || 0;
@@ -256,37 +312,81 @@ export default function OrdersScreen(){
     })();
   },[db,venueId]);
 
+  const SegBtn = ({label,active,onPress}:{label:string;active:boolean;onPress:()=>void})=>(
+    <TouchableOpacity onPress={onPress} style={[S.segBtn, active && S.segActive]}>
+      <Text style={[S.segText, active && S.segTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
   return(
     <View style={S.wrap}>
       <View style={S.top}>
-        <View>
-          <Text style={S.title}>Orders</Text>
-          <View style={{height:8}}/>
-          <View style={S.segWrap}>
-            <TouchableOpacity onPress={()=>setTab('drafts')} style={[S.segBtn,tab==='drafts'&&S.segActive]}>
-              <Text style={[S.segText,tab==='drafts'&&S.segTextActive]}>Drafts</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={()=>setTab('submitted')} style={[S.segBtn,tab==='submitted'&&S.segActive]}>
-              <Text style={[S.segText,tab==='submitted'&&S.segTextActive]}>Submitted</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={()=>setTab('received')} style={[S.segBtn,tab==='received'&&S.segActive]}>
-              <Text style={[S.segText,tab==='received'&&S.segTextActive]}>Received</Text>
-            </TouchableOpacity>
-          </View>
+        <Text style={S.title}>Orders</Text>
+        <View style={S.segWrap}>
+          <SegBtn label={`Drafts (${counts.drafts})`} active={tab==='drafts'} onPress={()=>setTab('drafts')} />
+          <SegBtn label={`Submitted (${counts.submitted})`} active={tab==='submitted'} onPress={()=>setTab('submitted')} />
+          <SegBtn label={`Received (${counts.received})`} active={tab==='received'} onPress={()=>setTab('received')} />
         </View>
-        <TouchableOpacity onPress={()=>nav.navigate('NewOrder')} style={S.addBtn}>
-          <Text style={S.addText}>New Order</Text>
-        </TouchableOpacity>
       </View>
 
       <FlatList
         data={rows}
-        keyExtractor={(r)=>r.id}
+        keyExtractor={(x)=>x.id}
         renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListEmptyComponent={<View style={S.empty}><Text style={S.emptyText}>No {tab} orders.</Text></View>}
-        contentContainerStyle={{paddingBottom:20}}
+        ListEmptyComponent={<View style={S.empty}><Text style={S.emptyText}>No orders</Text></View>}
       />
+
+      {/* FAB for New Order */}
+      <TouchableOpacity style={S.fab} onPress={()=>nav.navigate('NewOrderStart' as never)}>
+        <Text style={S.fabText}>New Order</Text>
+      </TouchableOpacity>
+
+      {/* Receive Options Modal */}
+      <Modal visible={!!receiveFor} transparent animationType="fade" onRequestClose={()=>setReceiveFor(null)}>
+        <TouchableOpacity activeOpacity={1} style={{flex:1,justifyContent:'flex-end',backgroundColor:'rgba(0,0,0,0.3)'}} onPress={()=>setReceiveFor(null)}>
+          <View style={{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16}}>
+            <Text style={{fontSize:18,fontWeight:'800',marginBottom:8}}>Receive Order</Text>
+            <Text style={{color:'#6B7280',marginBottom:12}}>Choose how you want to receive this submitted order.</Text>
+
+            <TouchableOpacity style={{paddingVertical:12}} onPress={()=>{
+              const id = receiveFor?.id;
+              setReceiveFor(null);
+              if(id) nav.navigate('OrderDetail',{orderId:id, receiveNow:true, receiveMode:'manual'});
+            }}>
+              <Text style={{fontSize:16,fontWeight:'700'}}>Enter manually (edit quantities)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={{paddingVertical:12}} onPress={()=>{
+              const id = receiveFor?.id;
+              setReceiveFor(null);
+              if(id) nav.navigate('OrderDetail',{orderId:id, receiveNow:true, receiveMode:'scan'});
+            }}>
+              <Text style={{fontSize:16,fontWeight:'700'}}>Scan delivery (barcode/camera)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={{paddingVertical:12}} onPress={()=>{
+              const id = receiveFor?.id;
+              setReceiveFor(null);
+              if(id) nav.navigate('OrderDetail',{orderId:id, receiveNow:true, receiveMode:'upload'});
+            }}>
+              <Text style={{fontSize:16,fontWeight:'700'}}>Upload invoice (PDF/photo)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={{paddingVertical:12}} onPress={()=>{
+              const id = receiveFor?.id;
+              setReceiveFor(null);
+              if(id) nav.navigate('OrderDetail',{orderId:id});
+            }}>
+              <Text style={{fontSize:16,fontWeight:'700'}}>Open order (no receive)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={{marginTop:8,alignSelf:'flex-end'}} onPress={()=>setReceiveFor(null)}>
+              <Text style={{fontWeight:'700'}}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

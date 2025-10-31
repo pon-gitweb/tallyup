@@ -1,201 +1,246 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View, Modal } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { getApp } from 'firebase/app';
-import {
-  getFirestore, doc, onSnapshot, collection, query, orderBy,
-  serverTimestamp, writeBatch
-} from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import {
+  getFirestore, doc, getDoc, collection, getDocs,
+  addDoc, serverTimestamp, updateDoc
+} from 'firebase/firestore';
 
-type Params = { orderId: string; receiveNow?: boolean };
+type Params = {
+  orderId: string;
+  receiveNow?: boolean;
+  receiveMode?: 'manual' | 'scan' | 'upload';
+};
 
-export default function OrderDetailScreen() {
+type Line = {
+  id: string;
+  productId: string;
+  name?: string | null;
+  qty: number;        // ordered qty
+  unitCost: number;
+};
+
+const S = StyleSheet.create({
+  wrap:{flex:1,backgroundColor:'#fff'},
+  top:{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  title:{fontSize:20,fontWeight:'800'},
+  meta:{color:'#6B7280',marginTop:4},
+
+  row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  left:{flex:1,paddingRight:12},
+  nm:{fontSize:16,fontWeight:'700'},
+  sub:{color:'#6B7280',marginTop:2},
+  qtyBox:{width:90,borderWidth:1,borderColor:'#E5E7EB',borderRadius:10,paddingHorizontal:10,paddingVertical:8,textAlign:'right'},
+
+  bar:{flexDirection:'row',gap:10,padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  btn:{flex:1,backgroundColor:'#111827',paddingVertical:12,borderRadius:10,alignItems:'center'},
+  btnText:{color:'#fff',fontWeight:'800'},
+  btnAlt:{flex:1,backgroundColor:'#F3F4F6',paddingVertical:12,borderRadius:10,alignItems:'center'},
+  btnAltText:{fontWeight:'800',color:'#111827'},
+  loading:{flex:1,justifyContent:'center',alignItems:'center'}
+});
+
+export default function OrderDetailScreen(){
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
-  const orderId = route.params?.orderId || '';
-  const receiveNowParam = !!route.params?.receiveNow;
+  const db = getFirestore();
 
-  const [hdr, setHdr] = useState<any>(null);
-  const [lines, setLines] = useState<any[]>([]);
-  const [receiveOpen, setReceiveOpen] = useState(false);
+  const orderId = (route.params as any)?.orderId;
+  const receiveMode = (route.params as any)?.receiveMode;
+  const [orderMeta, setOrderMeta] = useState<any>(null);
+  const [lines, setLines] = useState<Line[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [rx, setRx] = useState<Record<string, number>>({}); // received qty per line id
 
-  const db = getFirestore(getApp());
-  const orderRef = venueId && orderId ? doc(db, 'venues', venueId, 'orders', orderId) : null;
+  const isManualReceive = receiveMode === 'manual';
 
-  // Header (order doc)
-  useEffect(() => {
-    if (!orderRef) return;
-    const unsub = onSnapshot(orderRef, (snap) => setHdr(snap.exists() ? snap.data() : null));
-    return () => unsub();
-  }, [orderRef]);
+  useEffect(()=>{
+    (async ()=>{
+      if (!venueId || !orderId) return;
+      try{
+        const oref = doc(db,'venues',venueId,'orders',orderId);
+        const osnap = await getDoc(oref);
+        if (!osnap.exists()) {
+          Alert.alert('Not found', 'Order not found'); 
+          nav.goBack(); 
+          return;
+        }
+        const ov = osnap.data() || {};
+        setOrderMeta({ id: osnap.id, ...ov });
 
-  // Lines
-  useEffect(() => {
-    if (!orderRef) return;
-    const col = collection(orderRef, 'lines');
-    const qy = query(col, orderBy('name'));
-    const unsub = onSnapshot(qy, (snap) => {
-      const next: any[] = [];
-      snap.forEach((d) => {
-        const v = d.data() as any;
-        next.push({
-          id: d.id,
-          name: v?.name ?? d.id,
-          qtyOrdered: Number(v?.qty ?? v?.qtyOrdered ?? 0),
-          receivedQty: Number(v?.receivedQty ?? 0),
-          // additive:
-          dept: v?.dept ?? null,
-          unitCost: Number(v?.unitCost ?? 0),
+        const lref = collection(db,'venues',venueId,'orders',orderId,'lines');
+        const lsnap = await getDocs(lref);
+        const L: Line[] = lsnap.docs.map(d=>{
+          const v:any = d.data()||{};
+          return {
+            id: d.id,
+            productId: v.productId ?? d.id,
+            name: v.name ?? null,
+            qty: Number(v.qty ?? 0),
+            unitCost: Number(v.unitCost ?? 0),
+          };
         });
-      });
-      setLines(next);
-    });
-    return () => unsub();
-  }, [orderRef]);
+        setLines(L);
 
-  // Auto-open Receive sheet only if explicitly requested AND not already received
-  useEffect(() => {
-    const status = String(hdr?.status || hdr?.displayStatus || '').toLowerCase();
-    if (receiveNowParam && status !== 'received' && Array.isArray(lines)) {
-      setReceiveOpen(true);
-    } else {
-      setReceiveOpen(false);
+        // default manual receive = ordered qty
+        if (isManualReceive) {
+          const init: Record<string, number> = {};
+          L.forEach(l => { init[l.id] = Number.isFinite(l.qty) ? l.qty : 0; });
+          setRx(init);
+        }
+      }catch(e){
+        Alert.alert('Error', String((e as any)?.message||e));
+      }finally{
+        setLoading(false);
+      }
+    })();
+  },[db,venueId,orderId,isManualReceive,nav]);
+
+  const totalOrdered = useMemo(()=>lines.reduce((s,l)=>s + l.qty * l.unitCost, 0),[lines]);
+  const totalReceived = useMemo(()=>{
+    if (!isManualReceive) return 0;
+    return lines.reduce((s,l)=>s + (Number(rx[l.id]||0) * l.unitCost), 0);
+  },[lines,rx,isManualReceive]);
+
+  const updateRx = useCallback((id:string, val:string)=>{
+    const n = Math.max(0, Number(val.replace(/[^0-9.]/g,'')) || 0);
+    setRx(prev=>({...prev,[id]:n}));
+  },[]);
+
+  const renderItem = useCallback(({item}:{item:Line})=>{
+    const subBits = [`Ordered ${item.qty}`];
+    if (isManualReceive) subBits.push(`@ $${item.unitCost.toFixed(2)}`);
+    const sub = subBits.join(' • ');
+    return (
+      <View style={S.row}>
+        <View style={S.left}>
+          <Text style={S.nm}>{item.name || item.productId}</Text>
+          <Text style={S.sub}>{sub}</Text>
+        </View>
+        {isManualReceive ? (
+          <TextInput
+            style={S.qtyBox}
+            keyboardType="numeric"
+            value={String(rx[item.id] ?? 0)}
+            onChangeText={(t)=>updateRx(item.id,t)}
+            placeholder="0"
+          />
+        ) : (
+          <Text style={{fontWeight:'800'}}>× {item.qty}</Text>
+        )}
+      </View>
+    );
+  },[isManualReceive,rx,updateRx]);
+
+  const confirmReceive = useCallback(async ()=>{
+    try{
+      if (!venueId || !orderId) return;
+      if (!isManualReceive) return;
+
+      // build receipt lines
+      const receiptLines = lines.map(l=>({
+        productId: l.productId,
+        name: l.name ?? null,
+        unitCost: Number(l.unitCost)||0,
+        orderedQty: Number(l.qty)||0,
+        receivedQty: Number(rx[l.id]||0),
+      }));
+
+      // write receipt doc under /receipts
+      const rref = collection(db,'venues',venueId,'orders',orderId,'receipts');
+      await addDoc(rref, {
+        createdAt: serverTimestamp(),
+        mode: 'manual',
+        lines: receiptLines
+      });
+
+      // If at least one line received > 0, mark order received
+      const anyReceived = receiptLines.some(r=> (r.receivedQty||0) > 0);
+      if (anyReceived) {
+        const oref = doc(db,'venues',venueId,'orders',orderId);
+        await updateDoc(oref, { status:'received', displayStatus:'received', receivedAt: serverTimestamp() });
+      }
+
+      Alert.alert('Received', 'Receipt saved.');
+      nav.goBack();
+    }catch(e){
+      Alert.alert('Receive failed', String((e as any)?.message||e));
     }
-  }, [receiveNowParam, hdr, lines]);
+  },[db,venueId,orderId,lines,rx,isManualReceive,nav]);
 
-  const confirmReceive = useCallback(async () => {
-    try {
-      if (!orderRef) throw new Error('No order');
-      const batch = writeBatch(db);
-      lines.forEach((ln) => {
-        const lr = doc(orderRef, 'lines', ln.id);
-        const want = Number.isFinite(ln.receivedQty) ? Number(ln.receivedQty) : Number(ln.qtyOrdered || 0);
-        batch.update(lr, { receivedQty: Math.max(0, want) });
-      });
-      batch.update(orderRef, {
-        status: 'received',
-        displayStatus: 'received',
-        receivedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      await batch.commit();
+  const rejectAll = useCallback(async ()=>{
+    try{
+      if (!venueId || !orderId) return;
+      if (!isManualReceive) return;
 
-      nav.setParams({ receiveNow: false });
-      Alert.alert('Received', 'Order marked as received.');
-      setReceiveOpen(false);
-    } catch (e: any) {
-      Alert.alert('Receive', e?.message ?? 'Failed to receive order.');
+      const zeroLines = lines.map(l=>({
+        productId: l.productId,
+        name: l.name ?? null,
+        unitCost: Number(l.unitCost)||0,
+        orderedQty: Number(l.qty)||0,
+        receivedQty: 0,
+      }));
+
+      const rref = collection(db,'venues',venueId,'orders',orderId,'receipts');
+      await addDoc(rref, {
+        createdAt: serverTimestamp(),
+        mode: 'manual',
+        lines: zeroLines,
+        note: 'Rejected all'
+      });
+
+      Alert.alert('Saved', 'All lines set to 0. Order stays submitted.');
+      nav.goBack();
+    }catch(e){
+      Alert.alert('Failed', String((e as any)?.message||e));
     }
-  }, [db, orderRef, lines, nav]);
+  },[db,venueId,orderId,lines,isManualReceive,nav]);
 
-  const totalOrdered = useMemo(() => lines.reduce((a,b)=>a+(Number(b.qtyOrdered)||0),0), [lines]);
-  const totalReceived = useMemo(() => lines.reduce((a,b)=>a+(Number(b.receivedQty)||0),0), [lines]);
-
-  // ---- Per-dept aggregates (additive) ----
-  const perDept = useMemo(() => {
-    const acc: Record<string, { qty: number; total: number; lines: number }> = {};
-    lines.forEach((ln) => {
-      const key = String(ln.dept ?? '—');
-      const qty = Number(ln.qtyOrdered) || 0;
-      const cost = Number(ln.unitCost) || 0;
-      if (!acc[key]) acc[key] = { qty: 0, total: 0, lines: 0 };
-      acc[key].qty += qty;
-      acc[key].total += qty * cost;
-      acc[key].lines += 1;
-    });
-    return acc;
-  }, [lines]);
-
-  if (!hdr) {
-    return <View style={{ padding: 16 }}><Text>Loading…</Text></View>;
+  if (loading) {
+    return <View style={S.loading}><ActivityIndicator/></View>;
   }
 
-  const deptKeys = Object.keys(perDept);
+  const title = orderMeta?.supplierName || 'Order';
+  const meta = [
+    orderMeta?.status ? `Status: ${orderMeta.status}` : null,
+    orderMeta?.poNumber ? `PO: ${orderMeta.poNumber}` : null
+  ].filter(Boolean).join(' • ');
 
   return (
-    <View style={{ flex:1, backgroundColor:'#fff' }}>
-      <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-        <Text style={{ fontWeight: '800' }}>{hdr?.supplierName || 'Supplier'}</Text>
-        <Text style={{ color:'#6b7280' }}>{hdr?.displayStatus || hdr?.status || '—'}</Text>
-        <Text style={{ marginTop: 6, color:'#6b7280' }}>
-          Ordered {totalOrdered} • Received {totalReceived}
-        </Text>
-
-        {/* Per-dept totals (additive) */}
-        {!!deptKeys.length && (
-          <View style={{ flexDirection:'row', flexWrap:'wrap', marginTop:8 }}>
-            {deptKeys.map((k) => {
-              const d = perDept[k];
-              return (
-                <View key={k} style={{ paddingHorizontal:8, paddingVertical:4, borderRadius:999, backgroundColor:'#F3F4F6', marginRight:6, marginBottom:6 }}>
-                  <Text style={{ fontSize:11, fontWeight:'700', color:'#374151' }}>
-                    {k}: {d.qty} • ${d.total.toFixed(2)}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
+    <View style={S.wrap}>
+      <View style={S.top}>
+        <Text style={S.title}>{title}</Text>
+        <Text style={S.meta}>{meta || '—'}</Text>
       </View>
 
       <FlatList
         data={lines}
-        keyExtractor={(l)=>l.id}
-        contentContainerStyle={{ padding: 12 }}
-        renderItem={({item})=>(
-          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:12, marginBottom:10, borderWidth:1, borderColor:'#eee' }}>
-            <Text style={{ fontWeight:'700' }}>{item.name ?? item.id}</Text>
-            <Text style={{ color:'#6b7280', marginTop:6 }}>
-              Ordered {item.qtyOrdered ?? 0} • Received {item.receivedQty ?? 0}
-            </Text>
-            {/* Optional: show line dept as tiny pill */}
-            {item.dept ? (
-              <View style={{ marginTop:6, alignSelf:'flex-start', paddingHorizontal:8, paddingVertical:3, borderRadius:999, backgroundColor:'#F3F4F6' }}>
-                <Text style={{ fontSize:11, fontWeight:'700', color:'#374151' }}>{String(item.dept)}</Text>
-              </View>
-            ) : null}
-          </View>
-        )}
+        keyExtractor={(x)=>x.id}
+        renderItem={renderItem}
+        ListFooterComponent={
+          isManualReceive ? (
+            <View style={{padding:16, borderTopWidth:StyleSheet.hairlineWidth, borderColor:'#E5E7EB'}}>
+              <Text style={{fontWeight:'800'}}>Totals</Text>
+              <Text style={{color:'#6B7280', marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
+              <Text style={{color:'#6B7280'}}>Received: ${totalReceived.toFixed(2)}</Text>
+            </View>
+          ) : null
+        }
       />
 
-      <Modal transparent visible={receiveOpen} onRequestClose={()=>setReceiveOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', padding:18 }}>
-          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:16, maxHeight:'80%' }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:10 }}>Confirm received</Text>
-            <Text style={{ color:'#6b7280', marginBottom:12 }}>
-              We’ll mark this order as received and use the ordered quantities
-              (or the edited received quantities if you’ve changed them).
-            </Text>
-
-            {/* Confirm (manual) */}
-            <TouchableOpacity
-              onPress={confirmReceive}
-              style={{ backgroundColor:'#111827', paddingVertical:12, borderRadius:10, alignItems:'center' }}
-            >
-              <Text style={{ color:'#fff', fontWeight:'800' }}>Confirm</Text>
-            </TouchableOpacity>
-
-            {/* Scan (stub) – no navigation until Receive route is registered */}
-            <TouchableOpacity
-              onPress={()=>{ setReceiveOpen(false); nav.setParams({ receiveNow:false }); Alert.alert('Scan Invoice','Invoice OCR coming soon.'); }}
-              style={{ marginTop:10, backgroundColor:'#f3f4f6', paddingVertical:12, borderRadius:10, alignItems:'center' }}
-            >
-              <Text style={{ color:'#111827', fontWeight:'800' }}>Scan (coming soon)</Text>
-            </TouchableOpacity>
-
-            {/* Cancel */}
-            <TouchableOpacity
-              onPress={()=>{ setReceiveOpen(false); }}
-              style={{ marginTop:10, paddingVertical:10, alignItems:'center' }}
-            >
-              <Text style={{ color:'#111827', fontWeight:'700' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+      {isManualReceive ? (
+        <View style={S.bar}>
+          <TouchableOpacity style={S.btnAlt} onPress={rejectAll}>
+            <Text style={S.btnAltText}>Reject All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.btn} onPress={confirmReceive}>
+            <Text style={S.btnText}>Confirm Receive</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
+      ) : null}
     </View>
   );
 }
