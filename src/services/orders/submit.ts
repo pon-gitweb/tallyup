@@ -1,37 +1,99 @@
 // src/services/orders/submit.ts
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, doc, updateDoc, serverTimestamp, getDoc, Timestamp
+  getFirestore, doc, updateDoc, serverTimestamp, getDoc, Timestamp, deleteField, runTransaction, setDoc
 } from 'firebase/firestore';
 
-/** Legacy immediate submit (kept for compatibility) */
-export async function submitDraftOrder(venueId: string, orderId: string, uid?: string) {
-  const db = getFirestore(getApp());
+function yyyymmdd(d: Date){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}${m}${day}`;
+}
+function venueShort(venueId: string){
+  const s = String(venueId||'').replace(/[^a-zA-Z0-9]/g,'');
+  return s.slice(-5) || 'VENUE';
+}
+
+async function ensurePoFields(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string){
   const ref = doc(db, 'venues', venueId, 'orders', orderId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const v: any = snap.data() || {};
+  if (v.poNumber && v.poDate) return; // already set
+
+  const now = new Date();
+  const dateKey = yyyymmdd(now);
+  const counterRef = doc(db, 'venues', venueId, 'counters', 'orders', dateKey);
+
+  const nextSeq = await runTransaction(db, async (tx) => {
+    const cs = await tx.get(counterRef);
+    let seq = 1;
+    if (cs.exists()) {
+      const cur = Number(cs.get('seq') || 0);
+      seq = (cur || 0) + 1;
+      tx.update(counterRef, { seq });
+    } else {
+      tx.set(counterRef, { seq: 1, dateKey, createdAt: serverTimestamp() });
+      seq = 1;
+    }
+    return seq;
+  });
+
+  const seq4 = String(nextSeq).padStart(4, '0');
+  const poNumber = `PO-${dateKey}-${venueShort(venueId)}-${seq4}`;
+
   await updateDoc(ref, {
-    status: 'submitted',
-    displayStatus: 'Submitted',
-    submittedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    submittedBy: uid ?? null,
-    updatedBy: uid ?? null,
+    poNumber,
+    poDate: serverTimestamp(),
   });
 }
 
 /**
- * Submit with optional merge-hold.
- * Reads per-supplier policy:
- *   - mergeWindowHours (number, optional)
- *   - orderCutoffLocalTime (string "HH:mm", optional)
- *
- * If either is present, we schedule a plannedSubmitAt = now + windowHours,
- * clamped to 30 minutes before the cutoff. Else we submit immediately.
- *
- * When holding:
- *   status: 'pending_merge'
- *   displayStatus: 'Pending merge'
- *   plannedSubmitAt: <Timestamp>
- *   merge: { supplierId, policy: 'window+cutoff', windowHours, cutoffLocalTime, groupKey }
+ * Finalize an order to clean "submitted" state and scrub any merge/hold flags.
+ * This is the single source of truth for a clean Submitted write.
+ */
+export async function finalizeToSubmitted(
+  venueId: string,
+  orderId: string,
+  uid?: string
+) {
+  const db = getFirestore(getApp());
+  const ref = doc(db, 'venues', venueId, 'orders', orderId);
+
+  // 1) Set submitted status and scrub flags
+  await updateDoc(ref, {
+    status: 'submitted',
+    displayStatus: 'submitted',
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    submittedBy: uid ?? null,
+    updatedBy: uid ?? null,
+
+    plannedSubmitAt: deleteField(),
+    isConsolidating: deleteField(),
+    submitHoldUntil: deleteField(),
+    cutoffAt: deleteField(),
+    merge: deleteField(),
+    queued: deleteField(),
+    pending: deleteField(),
+    pendingReason: deleteField(),
+  });
+
+  // 2) Ensure PO fields present (idempotent)
+  await ensurePoFields(db, venueId, orderId);
+}
+
+/** Legacy immediate submit (kept for compatibility) */
+export async function submitDraftOrder(venueId: string, orderId: string, uid?: string) {
+  await finalizeToSubmitted(venueId, orderId, uid);
+}
+
+/**
+ * Submit with optional merge-hold policy.
+ * If no effective policy → immediate submit (finalizeToSubmitted).
+ * If there is a policy → mark pending_merge and plannedSubmitAt (no submittedAt yet).
  */
 export async function submitOrHoldDraftOrder(
   venueId: string,
@@ -57,13 +119,13 @@ export async function submitOrHoldDraftOrder(
         cutoffLocal = rawCut && /^\d{2}:\d{2}$/.test(rawCut) ? rawCut : null;
       }
     } catch {
-      // ignore; fallback to immediate submit below
+      // ignore
     }
   }
 
-  // No policy → immediate submit
+  // No policy → immediate submit (and scrub flags + ensure PO)
   if (!mergeWindowHours && !cutoffLocal) {
-    await submitDraftOrder(venueId, orderId, opts?.uid);
+    await finalizeToSubmitted(venueId, orderId, opts?.uid);
     return;
   }
 
@@ -85,11 +147,11 @@ export async function submitOrHoldDraftOrder(
 
   // If somehow not in the future, submit now
   if (planned.getTime() <= now.getTime()) {
-    await submitDraftOrder(venueId, orderId, opts?.uid);
+    await finalizeToSubmitted(venueId, orderId, opts?.uid);
     return;
   }
 
-  // Mark pending_merge with plannedSubmitAt
+  // Pending merge (no submittedAt yet)
   const ref = doc(db, 'venues', venueId, 'orders', orderId);
   const groupKey = `${supplierId || 'unassigned'}:${planned.toISOString().slice(0, 13)}`; // hourly bucket
   await updateDoc(ref, {
@@ -105,5 +167,8 @@ export async function submitOrHoldDraftOrder(
       cutoffLocalTime: cutoffLocal,
       groupKey,
     },
+
+    submittedAt: deleteField(),
+    submittedBy: deleteField(),
   });
 }
