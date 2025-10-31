@@ -1,0 +1,33 @@
+import { callAIEndpoint } from "../ai";
+import { runMathBaseline } from "./suggest"; // your existing baseline producer
+import {
+  composeMergedResult,
+  type Baseline,
+  type OverlayResponse,
+  type MergedResult,
+} from "./overlay";
+
+/**
+ * runAISuggest
+ * - Produces math baseline
+ * - Calls AI overlay endpoint
+ * - Merges overlay deltas into baseline
+ * - Respects quota headers (retry/backoff) and client-side cache
+ */
+export async function runAISuggest(args: {
+  venueId: string;
+  context: any; // whatever you currently pass into math baseline
+}): Promise<MergedResult> {
+  const baseline: Baseline = await runMathBaseline(args);
+
+  // Post baseline for overlay; server will use it to produce deltas.
+  const { data, headers } = await callAIEndpoint<OverlayResponse>({
+    path: "/api/suggest",
+    method: "POST",
+    body: { baseline },
+  });
+
+  // Merge overlay + rationale, handle cache/backoff using headers
+  const merged = composeMergedResult(baseline, data, headers);
+  return merged;
+}

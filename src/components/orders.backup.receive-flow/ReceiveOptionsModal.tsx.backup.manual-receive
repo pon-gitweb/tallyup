@@ -1,0 +1,41 @@
+import React, { useState } from 'react';
+import { Modal, View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
+
+type Props = {
+  visible: boolean;
+  onClose: () => void;
+  onCsvSelected: () => Promise<void>;
+  onConfirmManual: () => Promise<void>;
+  onUploadPdf?: () => Promise<void>;
+  onScanOcr?: () => Promise<void>;
+};
+
+export default function ReceiveOptionsModal({ visible, onClose, onCsvSelected, onConfirmManual, onUploadPdf, onScanOcr }: Props){
+  const [busy, setBusy] = useState(false);
+  const run = async (fn?: ()=>Promise<void>)=>{ if(!fn||busy) return; setBusy(true); try{ await fn(); } finally { setBusy(false); } };
+
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <View style={S.backdrop}>
+        <View style={S.card}>
+          <Text style={S.title}>Receive order</Text>
+          <TouchableOpacity style={S.btn} onPress={()=>run(onCsvSelected)} disabled={busy}><Text style={S.btnText}>Upload invoice CSV</Text></TouchableOpacity>
+          <TouchableOpacity style={S.btn} onPress={()=>run(onConfirmManual)} disabled={busy}><Text style={S.btnText}>Confirm manually</Text></TouchableOpacity>
+          <TouchableOpacity style={S.btn} onPress={()=>run(onUploadPdf)} disabled={busy}><Text style={S.btnText}>Upload PDF (stub)</Text></TouchableOpacity>
+          <TouchableOpacity style={S.btn} onPress={()=>run(onScanOcr)} disabled={busy}><Text style={S.btnText}>Scan / OCR (stub)</Text></TouchableOpacity>
+          {busy ? <View style={{marginTop:12}}><ActivityIndicator /></View> : null}
+          <TouchableOpacity style={S.cancel} onPress={onClose} disabled={busy}><Text style={S.cancelText}>Close</Text></TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+const S = StyleSheet.create({
+  backdrop:{flex:1,backgroundColor:'rgba(0,0,0,0.45)',alignItems:'center',justifyContent:'center'},
+  card:{width:'88%',backgroundColor:'#fff',borderRadius:16,padding:16},
+  title:{fontSize:18,fontWeight:'800',marginBottom:12},
+  btn:{backgroundColor:'#111827',paddingVertical:10,paddingHorizontal:12,borderRadius:10,marginTop:10},
+  btnText:{color:'#fff',fontWeight:'800',textAlign:'center'},
+  cancel:{paddingVertical:10,marginTop:12},
+  cancelText:{textAlign:'center',fontWeight:'700',color:'#374151'},
+});

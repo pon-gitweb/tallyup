@@ -1,0 +1,250 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useVenueId } from '../../context/VenueProvider';
+import {
+  getFirestore, doc, getDoc, collection, getDocs
+} from 'firebase/firestore';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+
+import ReceiveOptionsModal from '../../components/orders/ReceiveOptionsModal';
+import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
+import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
+import { finalizeReceiveFromCsv, finalizeReceiveManual } from '../../services/orders/receive';
+
+type Params = { orderId: string };
+type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
+
+export default function OrderDetailScreen(){
+  const nav = useNavigation<any>();
+  const route = useRoute<RouteProp<Record<string, Params>, string>>();
+  const venueId = useVenueId();
+  const orderId = (route.params as any)?.orderId as string;
+
+  const [orderMeta, setOrderMeta] = useState<any>(null);
+  const [lines, setLines] = useState<Line[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Receive modal state
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [csvReview, setCsvReview] = useState<null | {
+    storagePath: string;
+    confidence?: number;
+    warnings?: string[];
+    lines: Array<{ productId?: string; code?: string; name: string; qty: number; unitPrice?: number }>;
+    invoice: any;
+    matchReport?: any;
+  }>(null);
+
+  const db = getFirestore();
+
+  useEffect(()=>{
+    let alive = true;
+    (async ()=>{
+      try{
+        if (!venueId || !orderId) return;
+        // order
+        const oSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+        const oVal:any = oSnap.exists() ? oSnap.data() : {};
+        if (!alive) return;
+
+        // lines
+        const lSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
+        const l:Line[] = lSnap.docs.map(d=>{
+          const v:any = d.data()||{};
+          return { id:d.id, productId:v.productId ?? d.id, name:v.name ?? null, qty:Number(v.qty||0), unitCost:Number(v.unitCost||0) };
+        });
+
+        setOrderMeta({ id:oSnap.id, ...oVal });
+        setLines(l);
+        setLoading(false);
+      }catch(e){
+        setLoading(false);
+        Alert.alert('Load failed', String((e as any)?.message || e));
+      }
+    })();
+    return ()=>{ alive=false; };
+  },[db,venueId,orderId]);
+
+  const totalOrdered = useMemo(()=>lines.reduce((s,l)=> s + (Number(l.qty||0)*Number(l.unitCost||0)), 0),[lines]);
+
+  const pickCsvAndProcess = useCallback(async ()=>{
+    try{
+      if (!venueId || !orderId) return;
+      console.log('[OrderDetail] receive: starting csv upload');
+
+      const pick = await DocumentPicker.getDocumentAsync({ type: 'text/csv', multiple: false, copyToCacheDirectory: true });
+      if (pick.canceled || !pick.assets?.length) return;
+      const uri = pick.assets[0].uri;
+      const csvText = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+
+      const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, csvText);
+      const parsed = await processInvoicesCsv({ venueId, orderId, storagePath });
+
+      console.log('[OrderDetail] receive: csv processed ok', { confidence: parsed?.confidence });
+      setCsvReview({
+        storagePath,
+        confidence: parsed?.confidence,
+        warnings: (parsed as any)?.warnings || (parsed as any)?.matchReport?.warnings || [],
+        lines: parsed?.lines || [],
+        invoice: parsed?.invoice || null,
+        matchReport: parsed?.matchReport || null,
+      });
+    }catch(e:any){
+      Alert.alert('CSV upload failed', String(e?.message || e));
+    }
+  },[venueId,orderId]);
+
+  const confirmCsvReceive = useCallback(async ()=>{
+    try{
+      if (!venueId || !orderId || !csvReview) return;
+      await finalizeReceiveFromCsv({
+        venueId,
+        orderId,
+        parsed: {
+          invoice: csvReview.invoice,
+          lines: csvReview.lines,
+          matchReport: csvReview.matchReport,
+          confidence: csvReview.confidence,
+          warnings: (csvReview as any).warnings || (csvReview as any)?.matchReport?.warnings || []
+        },
+        poNumber: orderMeta?.poNumber ?? null,
+        poDate: orderMeta?.poDate ?? null
+      });
+      console.log('[OrderDetail] receive: finalize ok');
+      Alert.alert('Received', 'Invoice posted and order marked received.');
+      setReceiveOpen(false);
+      setCsvReview(null);
+      nav.goBack();
+    }catch(e:any){
+      Alert.alert('Receive failed', String(e?.message || e));
+    }
+  },[venueId,orderId,csvReview,nav,orderMeta]);
+
+  const confirmManualReceive = useCallback(async (quantities: Array<{ productId: string; receivedQty: number }>)=>{
+    try{
+      if (!venueId || !orderId) return;
+      
+      // Use the manual receive service with edited quantities
+      await finalizeReceiveManual(venueId, orderId, quantities);
+      
+      console.log('[OrderDetail] manual receive: finalized ok');
+      Alert.alert('Received', 'Order marked received manually.');
+      setReceiveOpen(false);
+      
+      // Refresh order data to show new status
+      const oSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+      const oVal = oSnap.exists() ? oSnap.data() : {};
+      setOrderMeta({ id: oSnap.id, ...oVal });
+      
+    }catch(e:any){
+      console.error('[OrderDetail] manual receive failed', e);
+      Alert.alert('Receive failed', String(e?.message || e));
+    }
+  },[venueId, orderId, db]);
+
+  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.top}>
+        <View>
+          <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
+          <Text style={S.meta}>
+            {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
+          </Text>
+        </View>
+        {String(orderMeta?.status).toLowerCase()==='submitted' ? (
+          <TouchableOpacity style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={()=>setReceiveOpen(true)}>
+            <Text style={S.receiveBtnText}>Receive</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {csvReview ? (
+        <ScrollView style={{flex:1}}>
+          <View style={{padding:16}}>
+            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
+            {(csvReview as any).warnings || (csvReview as any).matchReport?.warnings || [] && (csvReview as any).warnings || (csvReview as any).matchReport?.warnings || [].length>0 ? (
+              <View style={{marginBottom:8}}>
+                {(csvReview as any).warnings || (csvReview as any).matchReport?.warnings || [].map((w,idx)=>(<Text key={idx} style={{color:'#92400E'}}>• {w}</Text>))}
+              </View>
+            ) : null}
+            <Text style={{color:'#6B7280',marginBottom:12}}>
+              Confidence: {csvReview.confidence != null ? Math.round(csvReview.confidence*100) : '—'}%
+            </Text>
+            {(csvReview.lines||[]).slice(0,40).map((pl,idx)=>(
+              <View key={idx} style={{paddingVertical:6,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty {pl.qty ?? 0} @ ${Number(pl.unitPrice||0).toFixed(2)}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={S.bar}>
+            <TouchableOpacity style={S.btnAlt} onPress={()=>setCsvReview(null)}>
+              <Text style={S.btnAltText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[S.btn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={confirmCsvReceive}>
+              <Text style={S.btnText}>Confirm Receive</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      ) : (
+        <FlatList
+          data={lines}
+          keyExtractor={(x)=>x.id}
+          renderItem={({item})=>(
+            <View style={S.row}>
+              <View style={{flex:1}}>
+                <Text style={S.rowTitle}>{item.name || item.productId}</Text>
+                <Text style={S.rowSub}>Ordered {item.qty ?? 0} @ ${Number(item.unitCost||0).toFixed(2)}</Text>
+              </View>
+            </View>
+          )}
+          ListFooterComponent={
+            <View style={{padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+              <Text style={{fontWeight:'800'}}>Totals</Text>
+              <Text style={{color:'#6B7280',marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
+            </View>
+          }
+        />
+      )}
+
+      <ReceiveOptionsModal
+        visible={receiveOpen}
+        onClose={()=>setReceiveOpen(false)}
+        onCsvSelected={pickCsvAndProcess}
+        onConfirmManual={confirmManualReceive}
+        onUploadPdf={async ()=>{
+          Alert.alert('Upload PDF', 'Stub uploaded, pending parse.');
+          // (Optional) implement pending intake later
+        }}
+        onScanOcr={async ()=>{
+          Alert.alert('Scan/OCR', 'Stub captured, pending OCR.');
+          // (Optional) implement pending intake later
+        }}
+        orderLines={lines}
+      />
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  wrap:{flex:1,backgroundColor:'#fff'},
+  top:{padding:16,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  title:{fontSize:18,fontWeight:'800'},
+  meta:{marginTop:4,color:'#6B7280'},
+  loading:{flex:1,alignItems:'center',justifyContent:'center'},
+  row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  rowTitle:{fontWeight:'700'},
+  rowSub:{color:'#6B7280',marginTop:2},
+  bar:{flexDirection:'row',gap:12,padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  btn:{flex:1,backgroundColor:'#111827',paddingVertical:12,alignItems:'center',borderRadius:10},
+  btnText:{color:'#fff',fontWeight:'800'},
+  btnAlt:{flex:1,backgroundColor:'#F3F4F6',paddingVertical:12,alignItems:'center',borderRadius:10},
+  btnAltText:{color:'#111827',fontWeight:'800'},
+  receiveBtn:{backgroundColor:'#111827',paddingVertical:8,paddingHorizontal:12,borderRadius:10},
+  receiveBtnText:{color:'#fff',fontWeight:'800'}
+});

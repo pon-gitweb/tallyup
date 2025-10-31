@@ -1,0 +1,434 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { getApp } from 'firebase/app';
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDocs,
+  query,
+  where,
+  serverTimestamp,
+  writeBatch,
+  Timestamp,
+} from 'firebase/firestore';
+import { useLastStockTakeCompletedAt } from '../../hooks/useLastStockTakeCompletedAt';
+import { formatDateTime } from '../../utils/format';
+
+type SuggestionItem = {
+  id: string;
+  productId: string;
+  productName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  parQty?: number;
+  suggestedQty: number;
+};
+
+type SupplierGroup = {
+  supplierId: string;
+  supplierName: string;
+  items: SuggestionItem[];
+};
+
+type OrderDraft = {
+  id: string;
+  supplierId: string;
+  supplierName?: string;
+  status: 'draft';
+  source?: 'suggested';
+  suggestionCycleId?: string;
+};
+
+/** Paths (adjust here if your schema differs) */
+function suggestionsRoot(db: ReturnType<typeof getFirestore>, venueId: string) {
+  return collection(db, 'venues', venueId, 'suggestions');
+}
+function ordersCol(db: ReturnType<typeof getFirestore>, venueId: string) {
+  return collection(db, 'venues', venueId, 'orders');
+}
+function orderDoc(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string) {
+  return doc(db, 'venues', venueId, 'orders', orderId);
+}
+
+function makeSuggestionCycleId(completedAt: Timestamp | null): string {
+  return completedAt ? `cycle_${completedAt.toMillis()}` : 'cycle_unknown';
+}
+
+type Props = {
+  venueId: string;
+  onNavigateSetSupplier?: () => void;
+  onNavigateSetPar?: () => void;
+  onOpenOrders?: () => void;
+};
+
+const SuggestedOrderScreen: React.FC<Props> = ({
+  venueId,
+  onNavigateSetPar,
+  onNavigateSetSupplier,
+  onOpenOrders,
+}) => {
+  const db = getFirestore(getApp());
+  const { loading: bannerLoading, completedAt: lastCompletedAt, error: bannerError } =
+    useLastStockTakeCompletedAt(venueId);
+  const cycleId = useMemo(() => makeSuggestionCycleId(lastCompletedAt), [lastCompletedAt]);
+
+  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<SuggestionItem[]>([]);
+  const [draftsBySupplier, setDraftsBySupplier] = useState<Record<string, OrderDraft>>({});
+  const [loadingDraft, setLoadingDraft] = useState(false);
+  const [emptyReasons, setEmptyReasons] = useState<{ noSupplier: boolean; noPar: boolean }>({
+    noSupplier: false,
+    noPar: false,
+  });
+  const [isStale, setIsStale] = useState(false);
+
+  const loadSuggestions = useCallback(async () => {
+    if (!venueId) return;
+    setLoading(true);
+    try {
+      const root = suggestionsRoot(db, venueId);
+      const cycleDoc = doc(root, cycleId);
+      const itemsCol = collection(cycleDoc, 'items');
+      const snap = await getDocs(itemsCol);
+
+      const next: SuggestionItem[] = [];
+      let missingSupplier = false;
+      let missingPar = false;
+
+      snap.forEach((d) => {
+        const v = d.data() as any;
+        const item: SuggestionItem = {
+          id: d.id,
+          productId: String(v?.productId || ''),
+          productName: v?.productName,
+          supplierId: v?.supplierId,
+          supplierName: v?.supplierName,
+          parQty: typeof v?.parQty === 'number' ? v.parQty : undefined,
+          suggestedQty: Number(v?.suggestedQty ?? 0),
+        };
+        if (!item.supplierId) missingSupplier = true;
+        if (typeof item.parQty !== 'number') missingPar = true;
+        if (item.suggestedQty > 0) next.push(item);
+      });
+
+      setItems(next);
+      setEmptyReasons({ noPar: missingPar, noSupplier: missingSupplier });
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [db, venueId, cycleId]);
+
+  const loadExistingDrafts = useCallback(async () => {
+    if (!venueId) return;
+    const q1 = query(
+      ordersCol(db, venueId),
+      where('status', '==', 'draft'),
+      where('source', '==', 'suggested'),
+      where('suggestionCycleId', '==', cycleId)
+    );
+    const snap = await getDocs(q1);
+    const map: Record<string, OrderDraft> = {};
+    snap.forEach((d) => {
+      const v = d.data() as any;
+      if (v?.supplierId) {
+        map[v.supplierId] = {
+          id: d.id,
+          supplierId: v.supplierId,
+          supplierName: v?.supplierName,
+          status: 'draft',
+          source: 'suggested',
+          suggestionCycleId: v?.suggestionCycleId,
+        };
+      }
+    });
+    setDraftsBySupplier(map);
+  }, [db, venueId, cycleId]);
+
+  const detectStale = useCallback(async () => {
+    if (!venueId) return;
+    try {
+      const root = suggestionsRoot(db, venueId);
+      const cyclesSnap = await getDocs(root);
+      const ids = cyclesSnap.docs.map((d) => d.id);
+      setIsStale(ids.length > 0 && !ids.includes(cycleId));
+    } catch {
+      setIsStale(false);
+    }
+  }, [db, venueId, cycleId]);
+
+  const groups: SupplierGroup[] = useMemo(() => {
+    const m = new Map<string, SupplierGroup>();
+    for (const it of items) {
+      const sid = it.supplierId || 'unknown';
+      const sname = it.supplierName || 'Unassigned Supplier';
+      if (!m.has(sid)) m.set(sid, { supplierId: sid, supplierName: sname, items: [] });
+      m.get(sid)!.items.push(it);
+    }
+    return Array.from(m.values()).sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+  }, [items]);
+
+  const onGenerateDrafts = useCallback(async () => {
+    if (!venueId) return;
+    if (items.length === 0) {
+      Alert.alert('Nothing to generate', 'There are no suggested quantities > 0.');
+      return;
+    }
+    setLoadingDraft(true);
+    try {
+      const now = serverTimestamp();
+      const batch = writeBatch(db);
+
+      const bySupplier = new Map<string, SuggestionItem[]>();
+      items.forEach((it) => {
+        if (!it.supplierId) return;
+        const arr = bySupplier.get(it.supplierId) || [];
+        arr.push(it);
+        bySupplier.set(it.supplierId, arr);
+      });
+
+      for (const [supplierId, lines] of bySupplier.entries()) {
+        const existing = draftsBySupplier[supplierId];
+        if (existing) {
+          const orderRef = orderDoc(db, venueId, existing.id);
+          for (const it of lines) {
+            const lineRef = doc(orderRef, 'lines', it.productId);
+            batch.set(
+              lineRef,
+              {
+                productId: it.productId,
+                name: it.productName || '',
+                qty: it.suggestedQty, // idempotent per cycle
+                updatedAt: now,
+              },
+              { merge: true }
+            );
+          }
+          batch.set(
+            orderRef,
+            {
+              status: 'draft',
+              supplierId,
+              supplierName: lines[0]?.supplierName || '',
+              source: 'suggested',
+              suggestionCycleId: cycleId,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+        } else {
+          const newOrderRef = doc(ordersCol(db, venueId));
+          batch.set(newOrderRef, {
+            status: 'draft',
+            supplierId,
+            supplierName: lines[0]?.supplierName || '',
+            source: 'suggested',
+            suggestionCycleId: cycleId,
+            createdAt: now,
+            updatedAt: now,
+          });
+          for (const it of lines) {
+            const lineRef = doc(newOrderRef, 'lines', it.productId);
+            batch.set(lineRef, {
+              productId: it.productId,
+              name: it.productName || '',
+              qty: it.suggestedQty,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+      }
+
+      await batch.commit();
+      await loadExistingDrafts();
+
+      const merged = Object.keys(draftsBySupplier).length > 0;
+      Alert.alert(merged ? 'Merged into existing draft(s)' : 'Drafts created',
+        merged
+          ? 'Updated existing supplier drafts with latest suggested lines.'
+          : 'Created new supplier drafts from suggestions.');
+    } catch (e: any) {
+      Alert.alert('Failed to generate drafts', String(e?.message || e));
+    } finally {
+      setLoadingDraft(false);
+    }
+  }, [db, venueId, items, draftsBySupplier, cycleId, loadExistingDrafts]);
+
+  useEffect(() => {
+    loadSuggestions();
+    loadExistingDrafts();
+    detectStale();
+  }, [loadSuggestions, loadExistingDrafts, detectStale]);
+
+  const hasAnySupplier = useMemo(() => groups.some((g) => g.supplierId !== 'unknown'), [groups]);
+
+  const Banner = () => (
+    <View style={{ padding: 12, backgroundColor: '#f2f7ff', borderBottomWidth: 1, borderBottomColor: '#e0e7ff' }}>
+      <Text style={{ fontWeight: '600' }}>Last stock take completed at:</Text>
+      {bannerLoading ? (
+        <Text>Loading…</Text>
+      ) : bannerError ? (
+        <Text style={{ color: '#b00020' }}>Failed to load: {bannerError}</Text>
+      ) : lastCompletedAt ? (
+        <Text>{formatDateTime(lastCompletedAt.toMillis())}</Text>
+      ) : (
+        <Text>—</Text>
+      )}
+    </View>
+  );
+
+  const EmptyState = () => {
+    if (loading) return null;
+    if (isStale) {
+      return (
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>No suggestions for the latest stock take.</Text>
+          <Text>It looks like a newer stock take was completed. Old suggestions are hidden automatically.</Text>
+        </View>
+      );
+    }
+    if (items.length > 0) return null;
+
+    const notes: string[] = [];
+    if (emptyReasons.noSupplier) notes.push('Assign a Supplier to products');
+    if (emptyReasons.noPar) notes.push('Set a PAR level for products');
+
+    return (
+      <View style={{ padding: 16 }}>
+        <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 6 }}>No suggestions</Text>
+        <Text style={{ marginBottom: 12 }}>
+          {notes.length
+            ? `Nothing to suggest yet.\nTo enable suggestions:\n• ${notes.join('\n• ')}`
+            : 'Nothing to suggest yet.'}
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {emptyReasons.noSupplier ? (
+            <TouchableOpacity
+              onPress={() => onNavigateSetSupplier?.()}
+              style={{ backgroundColor: '#111827', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, marginRight: 8 }}
+            >
+              <Text style={{ color: 'white', fontWeight: '600' }}>Set Supplier</Text>
+            </TouchableOpacity>
+          ) : null}
+          {emptyReasons.noPar ? (
+            <TouchableOpacity
+              onPress={() => onNavigateSetPar?.()}
+              style={{ backgroundColor: '#111827', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 }}
+            >
+              <Text style={{ color: 'white', fontWeight: '600' }}>Set PAR</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    );
+  };
+
+  const SupplierHeader: React.FC<{ group: SupplierGroup }> = ({ group }) => {
+    const draft = draftsBySupplier[group.supplierId];
+    return (
+      <View style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#f9fafb', borderTopWidth: 1, borderTopColor: '#e5e7eb' }}>
+        <Text style={{ fontWeight: '700' }}>
+          {group.supplierName}{' '}
+          {draft ? <Text style={{ color: '#059669' }}>• Draft generated</Text> : null}
+        </Text>
+      </View>
+    );
+  };
+
+  const ItemRow: React.FC<{ item: SuggestionItem }> = ({ item }) => {
+    const drafted = item.supplierId ? !!draftsBySupplier[item.supplierId] : false;
+    return (
+      <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' }}>
+        <Text style={{ fontWeight: '600' }}>{item.productName || item.productId}</Text>
+        <Text>Suggested: {item.suggestedQty}</Text>
+        {typeof item.parQty === 'number' ? <Text>PAR: {item.parQty}</Text> : <Text style={{ color: '#6b7280' }}>PAR: —</Text>}
+        <Text style={{ color: '#6b7280' }}>
+          Supplier: {item.supplierName || (item.supplierId ? item.supplierId : 'Unassigned')}
+        </Text>
+        {drafted ? <Text style={{ color: '#059669', marginTop: 2 }}>Draft generated</Text> : null}
+      </View>
+    );
+  };
+
+  const Toolbar = () => {
+    const disabled = loadingDraft || loading || isStale || items.length === 0 || !hasAnySupplier;
+    return (
+      <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb', backgroundColor: 'white' }}>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity
+            onPress={onGenerateDrafts}
+            disabled={disabled}
+            style={{
+              backgroundColor: disabled ? '#9ca3af' : '#111827',
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              borderRadius: 10,
+              marginRight: 10,
+              flex: 1,
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '700' }}>
+              {Object.keys(draftsBySupplier).length > 0 ? 'Merge into Drafts' : 'Generate Drafts'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => onOpenOrders?.()}
+            style={{
+              backgroundColor: 'white',
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: '#e5e7eb',
+              flex: 1,
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ fontWeight: '700' }}>Open Orders</Text>
+          </TouchableOpacity>
+        </View>
+
+        {loadingDraft ? <Text style={{ marginTop: 8 }}>Updating drafts…</Text> : null}
+      </View>
+    );
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: 'white' }}>
+      <Banner />
+
+      {loading ? (
+        <View style={{ padding: 16 }}>
+          <ActivityIndicator />
+        </View>
+      ) : isStale ? (
+        <EmptyState />
+      ) : items.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <FlatList
+          data={groups}
+          keyExtractor={(g) => g.supplierId}
+          renderItem={({ item: group }) => (
+            <View>
+              <SupplierHeader group={group} />
+              {group.items.map((it) => (
+                <ItemRow key={it.id} item={it} />
+              ))}
+            </View>
+          )}
+          ListFooterComponent={<View style={{ height: 16 }} />}
+        />
+      )}
+
+      <Toolbar />
+    </View>
+  );
+};
+
+export default SuggestedOrderScreen;

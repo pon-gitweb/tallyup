@@ -1,0 +1,231 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, FlatList, TouchableOpacity, Alert, Modal, TextInput, ScrollView } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { getFirestore, doc, getDoc, collection, getDocs, orderBy, query as fsQuery, updateDoc, serverTimestamp, writeBatch, increment } from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+
+const S = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: '#fff' },
+  top: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#E5E7EB', flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
+  title: { fontSize: 22, fontWeight: '800' },
+  sub: { color: '#6B7280', marginTop: 2 },
+
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#E5E7EB' },
+  name: { fontSize: 15, fontWeight: '700' },
+  meta: { color: '#6B7280', marginTop: 2 },
+
+  empty: { padding: 24, alignItems: 'center' },
+  emptyText: { color: '#6B7280' },
+
+  smallBtn: { backgroundColor: '#111827', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  smallBtnText: { color: '#fff', fontWeight: '800' },
+
+  modalBack:{flex:1,backgroundColor:'rgba(0,0,0,0.35)',justifyContent:'center',padding:24},
+  modalCard:{backgroundColor:'#fff',borderRadius:12,padding:12,maxHeight:'80%'},
+  modalTitle:{fontSize:18,fontWeight:'800',marginBottom:8},
+  recvRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingVertical:8,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#eee'},
+  qtyInput:{borderWidth:1,borderColor:'#e5e7eb',borderRadius:8,paddingHorizontal:8,paddingVertical:6,minWidth:64,textAlign:'center'},
+  pill:{marginTop:6,alignSelf:'flex-start',paddingHorizontal:8,paddingVertical:3,borderRadius:999,backgroundColor:'#F3F4F6'},
+  pillText:{fontSize:11,fontWeight:'700',color:'#374151'},
+  actionsRow:{flexDirection:'row',gap:10,justifyContent:'flex-end',marginTop:10},
+  btnSecondary:{paddingVertical:10,paddingHorizontal:14,borderRadius:10,backgroundColor:'#E5E7EB'},
+  btnSecondaryText:{fontWeight:'800',color:'#111827'},
+  btnPrimary:{paddingVertical:10,paddingHorizontal:14,borderRadius:10,backgroundColor:'#16A34A'},
+  btnPrimaryText:{fontWeight:'800',color:'#fff'},
+});
+
+export default function OrderDetailScreen() {
+  const route = useRoute<any>();
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const db = getFirestore();
+
+  const orderId = route?.params?.orderId as string;
+  const receiveNowParam = !!route?.params?.receiveNow;
+
+  const [loading, setLoading] = useState(true);
+  const [hdr, setHdr] = useState<any>(null);
+  const [lines, setLines] = useState<any[]>([]);
+
+  // Receive modal
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [recv, setRecv] = useState<Record<string, { qty: number }>>({}); // per lineId => edited qty
+
+  const load = useCallback(async () => {
+    if (!venueId || !orderId) return;
+    setLoading(true);
+    try {
+      const h = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+      const header = { id: orderId, ...(h.exists() ? (h.data() || {}) : {}) };
+      setHdr(header);
+
+      const ref = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+      const snap = await getDocs(fsQuery(ref, orderBy('name')));
+      const out: any[] = [];
+      snap.forEach((d) => out.push({ id: d.id, ...(d.data() || {}) }));
+      setLines(out);
+
+      // seed receive editor with ordered qty
+      const seed: Record<string, {qty:number}> = {};
+      out.forEach(l => { seed[l.id] = { qty: Number(l?.qty || 0) }; });
+      setRecv(seed);
+    } finally {
+      setLoading(false);
+    }
+  }, [db, venueId, orderId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (receiveNowParam && hdr && Array.isArray(lines) && lines.length >= 0) {
+      setReceiveOpen(true);
+    }
+  }, [receiveNowParam, hdr, lines]);
+
+  const status = String(hdr?.displayStatus || hdr?.status || 'submitted');
+  const count = lines.length;
+  const isSubmitted = ['submitted','sent','placed','approved','awaiting','processing'].includes(status);
+  const isReceived = ['received','complete','closed'].includes(status);
+
+  const keyExtractor = useCallback((r: any) => r.id, []);
+  const renderItem = useCallback(({ item }) => {
+    const qty = Number(item?.qty || 0);
+    const cost = Number(item?.unitCost || 0);
+    const ps = Number.isFinite(item?.packSize) ? Number(item.packSize) : null;
+    const pill = ps ? `${qty} × pack(${ps})` : `${qty} units`;
+    return (
+      <View style={S.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={S.name}>{item?.name || item?.productName || item?.productId || 'Item'}</Text>
+          <Text style={S.meta}>${cost.toFixed(2)} each</Text>
+          <View style={S.pill}><Text style={S.pillText}>{pill}</Text></View>
+        </View>
+        <Text style={{ color: '#94A3B8' }}>›</Text>
+      </View>
+    );
+  }, []);
+
+  const computeDelta = (line: any, qtyRaw: any) => {
+    const qty = Math.max(0, Math.round(Number(qtyRaw || 0)));
+    const pack = Math.max(1, Math.round(Number(line?.packSize || 1)));
+    return qty * pack;
+  };
+
+  const confirmReceive = useCallback(async () => {
+    if (!venueId || !orderId) return;
+    if (!Array.isArray(lines) || lines.length === 0) {
+      Alert.alert('Nothing to receive', 'This order has no lines.');
+      return;
+    }
+    try {
+      const batch = writeBatch(db);
+
+      // 1) Update each line with receivedQty (kept separate from ordered qty)
+      lines.forEach((l) => {
+        const edited = recv[l.id]?.qty;
+        const receivedQty = Math.max(0, Math.round(Number(edited ?? l.qty ?? 0)));
+        const lineRef = doc(db, 'venues', venueId, 'orders', orderId, 'lines', l.id);
+        batch.update(lineRef, { receivedQty });
+      });
+
+      // 2) Increment product stock
+      lines.forEach((l) => {
+        const edited = recv[l.id]?.qty;
+        const deltaUnits = computeDelta(l, edited ?? l.qty ?? 0);
+        const pid = String(l?.productId || '');
+        if (!pid) return;
+        const prodRef = doc(db, 'venues', venueId, 'products', pid);
+        // If onHandQty missing, increment handles creating the field safely
+        batch.set(prodRef, { onHandQty: increment(deltaUnits) }, { merge: true });
+      });
+
+      // 3) Set order status to received
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      batch.update(orderRef, {
+        status: 'received',
+        displayStatus: 'received',
+        receivedAt: serverTimestamp(),
+      });
+
+      await batch.commit();
+      setReceiveOpen(false);
+      Alert.alert('Received', 'Stock levels updated.');
+      await load();
+    } catch (e: any) {
+      Alert.alert('Receive failed', e?.message || 'Please try again.');
+    }
+  }, [db, venueId, orderId, lines, recv, load]);
+
+  if (!orderId) {
+    return <View style={S.empty}><Text style={S.emptyText}>Missing order id.</Text></View>;
+  }
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.top}>
+        <View>
+          <Text style={S.title}>{hdr?.supplierName || 'Order'}</Text>
+          <Text style={S.sub}>{status} • {count} line{count === 1 ? '' : 's'}</Text>
+        </View>
+        {isSubmitted && !isReceived ? (
+          <TouchableOpacity onPress={() => setReceiveOpen(true)} style={S.smallBtn}>
+            <Text style={S.smallBtnText}>Receive</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <View style={S.empty}><ActivityIndicator /><Text style={S.sub}>Loading…</Text></View>
+      ) : (
+        <FlatList
+          data={lines}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          ListEmptyComponent={<View style={S.empty}><Text style={S.emptyText}>No lines.</Text></View>}
+          contentContainerStyle={{ paddingBottom: 20 }}
+        />
+      )}
+
+      {/* Receive Sheet */}
+      <Modal visible={receiveOpen} transparent animationType="fade" onRequestClose={() => setReceiveOpen(false)}>
+        <View style={S.modalBack}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Confirm received quantities</Text>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {lines.map((l) => {
+                const v = recv[l.id]?.qty ?? Number(l?.qty || 0);
+                const ps = Number.isFinite(l?.packSize) ? Number(l.packSize) : null;
+                return (
+                  <View key={l.id} style={S.recvRow}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={{ fontWeight: '700' }}>{l?.name || l?.productName || l?.productId || 'Item'}</Text>
+                      <Text style={{ color: '#6B7280' }}>
+                        Ordered: {Number(l?.qty||0)}{ps?` × pack(${ps})`:''}
+                      </Text>
+                    </View>
+                    <TextInput
+                      value={String(v)}
+                      onChangeText={(t)=>setRecv((prev)=>({ ...prev, [l.id]: { qty: Math.max(0, Math.round(Number(t.replace(/[^0-9]/g,'')) || 0)) } }))}
+                      keyboardType="number-pad"
+                      style={S.qtyInput}
+                    />
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <View style={S.actionsRow}>
+              <TouchableOpacity onPress={()=>setReceiveOpen(false)} style={S.btnSecondary}>
+                <Text style={S.btnSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={confirmReceive} style={S.btnPrimary}>
+                <Text style={S.btnPrimaryText}>Confirm receive</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}

@@ -1,0 +1,223 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import {
+  getFirestore, collection, onSnapshot, query, orderBy, getDocs,
+} from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
+
+type OrderRow = {
+  id: string;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  status?: string | null;
+  displayStatus?: string | null;
+  createdAt?: any;
+  createdAtClientMs?: number | null; // <— NEW fallback
+  submittedAt?: any;
+  receivedAt?: any;
+  linesCount?: number | null;
+  total?: number | null;
+};
+
+const S = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: '#fff' },
+  top: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  title: { fontSize: 22, fontWeight: '800' },
+  segWrap: { flexDirection: 'row', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 999, overflow: 'hidden' },
+  segBtn: { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#fff' },
+  segActive: { backgroundColor: '#111827' },
+  segText: { fontSize: 13, fontWeight: '800', color: '#111827' },
+  segTextActive: { color: '#fff' },
+  addBtn: { backgroundColor: '#111827', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  addText: { color: '#fff', fontWeight: '800' },
+
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#E5E7EB' },
+  left: { flex: 1 },
+  rowTitle: { fontSize: 16, fontWeight: '700' },
+  rowSub: { color: '#6B7280', marginTop: 2 },
+  pill: { marginTop: 6, alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: '#F3F4F6' },
+  pillText: { fontSize: 11, fontWeight: '700', color: '#374151' },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  smallBtn: { backgroundColor: '#111827', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
+  smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+
+  empty: { padding: 24, alignItems: 'center' },
+  emptyText: { color: '#6B7280' },
+});
+
+const STATUS_GROUPS = {
+  drafts: (s: string) => s === 'draft',
+  submitted: (s: string) => ['submitted','sent','placed','approved','awaiting','processing'].includes(s),
+  received: (s: string) => ['received','complete','closed'].includes(s),
+};
+
+async function getLastStockTakeCompletedAt(db: any, venueId: string): Promise<number | null> {
+  let latest: number | null = null;
+  const deps = await getDocs(collection(db,'venues',venueId,'departments'));
+  for (const dep of deps.docs) {
+    const areas = await getDocs(collection(db,'venues',venueId,'departments',dep.id,'areas'));
+    areas.forEach(a => {
+      const c: any = (a.data() || {})?.completedAt;
+      if (c && typeof c.toMillis === 'function') {
+        const ms = c.toMillis();
+        if (latest == null || ms > latest) latest = ms;
+      }
+    });
+  }
+  return latest;
+}
+
+export default function OrdersScreen() {
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const db = getFirestore();
+
+  const [tab, setTab] = useState<'drafts'|'submitted'|'received'>('drafts');
+  const [rowsAll, setRowsAll] = useState<OrderRow[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [cutoffDraftMs, setCutoffDraftMs] = useState<number | null>(null);
+
+  const normalize = useCallback((d: any): OrderRow => {
+    const s = String((d?.status || d?.displayStatus || 'draft') || '').toLowerCase();
+    return {
+      id: d.id,
+      supplierId: d.supplierId ?? null,
+      supplierName: d.supplierName ?? null,
+      status: s,
+      displayStatus: d.displayStatus ?? s,
+      createdAt: d.createdAt ?? null,
+      createdAtClientMs: Number.isFinite(d?.createdAtClientMs) ? Number(d.createdAtClientMs) : null, // <—
+      submittedAt: d.submittedAt ?? null,
+      receivedAt: d.receivedAt ?? null,
+      linesCount: Number.isFinite(d?.linesCount) ? Number(d.linesCount) : null,
+      total: Number.isFinite(d?.total) ? Number(d.total) : null,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!venueId) return;
+    const ref = collection(db, 'venues', venueId, 'orders');
+    const q = query(ref, orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const out: OrderRow[] = [];
+      snap.forEach((doc) => out.push(normalize({ id: doc.id, ...doc.data() })));
+      setRowsAll(out);
+    }, () => setRowsAll([]));
+    return () => unsub && unsub();
+  }, [db, venueId, normalize]);
+
+  const recomputeCutoff = useCallback(async () => {
+    if (!venueId) { setCutoffDraftMs(null); return; }
+    const ms = await getLastStockTakeCompletedAt(db, venueId);
+    setCutoffDraftMs(ms);
+  }, [db, venueId]);
+
+  useEffect(() => { recomputeCutoff(); }, [recomputeCutoff]);
+
+  const rows = useMemo(() => {
+    const pick = STATUS_GROUPS[tab];
+    let r = rowsAll.filter(r => pick(String(r.status || 'draft')));
+
+    if (tab === 'drafts' && cutoffDraftMs != null) {
+      r = r.filter((d) => {
+        const ts =
+          (d.createdAt && d.createdAt.toMillis && d.createdAt.toMillis()) ||
+          d.createdAtClientMs || 0; // <— use client fallback when server ts not resolved yet
+        return ts >= cutoffDraftMs;
+      });
+    }
+
+    return r;
+  }, [rowsAll, tab, cutoffDraftMs]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await recomputeCutoff(); } finally { setTimeout(()=>setRefreshing(false), 200); }
+  }, [recomputeCutoff]);
+
+  const openRow = useCallback((row: OrderRow) => {
+    const s = String(row.status || 'draft');
+    if (s === 'draft') {
+      nav.navigate('OrderEditor', { orderId: row.id, mode: 'edit' });
+    } else {
+      nav.navigate('OrderDetail', { orderId: row.id });
+    }
+  }, [nav]);
+
+  const createNewOrder = useCallback(() => {
+    nav.navigate('NewOrder');
+  }, [nav]);
+
+  const startReceive = useCallback((row: OrderRow) => {
+    nav.navigate('OrderDetail', { orderId: row.id, receiveNow: true });
+  }, [nav]);
+
+  const keyExtractor = useCallback((r: OrderRow) => r.id, []);
+  const renderItem = useCallback(({ item }: { item: OrderRow }) => {
+    const subtitleBits: string[] = [];
+    if (item.linesCount != null) subtitleBits.push(`${item.linesCount} line${item.linesCount === 1 ? '' : 's'}`);
+    if (item.total != null) subtitleBits.push(`$${item.total.toFixed(2)}`);
+    const subtitle = subtitleBits.join(' • ');
+    const pillText = item.displayStatus || item.status || '—';
+    const isSubmitted = STATUS_GROUPS.submitted(String(item.status || 'draft'));
+
+    return (
+      <View style={S.row}>
+        <TouchableOpacity style={S.left} onPress={() => openRow(item)} activeOpacity={0.8}>
+          <Text style={S.rowTitle}>{item.supplierName || 'Supplier'}</Text>
+          <Text style={S.rowSub}>{subtitle || '—'}</Text>
+          <View style={S.pill}><Text style={S.pillText}>{pillText}</Text></View>
+        </TouchableOpacity>
+
+        <View style={S.actions}>
+          {isSubmitted ? (
+            <TouchableOpacity style={S.smallBtn} onPress={() => startReceive(item)}>
+              <Text style={S.smallBtnText}>Receive</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    );
+  }, [openRow, startReceive]);
+
+  return (
+    <View style={S.wrap}>
+      <View style={S.top}>
+        <View>
+          <Text style={S.title}>Orders</Text>
+          <View style={{ height: 8 }} />
+          <View style={S.segWrap}>
+            <TouchableOpacity onPress={() => setTab('drafts')} style={[S.segBtn, tab === 'drafts' && S.segActive]}>
+              <Text style={[S.segText, tab === 'drafts' && S.segTextActive]}>Drafts</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setTab('submitted')} style={[S.segBtn, tab === 'submitted' && S.segActive]}>
+              <Text style={[S.segText, tab === 'submitted' && S.segTextActive]}>Submitted</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setTab('received')} style={[S.segBtn, tab === 'received' && S.segActive]}>
+              <Text style={[S.segText, tab === 'received' && S.segTextActive]}>Received</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <TouchableOpacity onPress={createNewOrder} style={S.addBtn}>
+          <Text style={S.addText}>New Order</Text>
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={rows}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListEmptyComponent={
+          <View style={S.empty}><Text style={S.emptyText}>No {tab} orders.</Text></View>
+        }
+        contentContainerStyle={{ paddingBottom: 20 }}
+      />
+    </View>
+  );
+}

@@ -15,6 +15,12 @@ import NewOrderScreen from '../screens/orders/NewOrderScreen';
 import NewOrderStartScreen from '../screens/orders/NewOrderStartScreen';
 import OrderDetailScreen from '../screens/orders/OrderDetailScreen';
 
+// Receive flow screens
+import ManualReceiveScreen from '../screens/orders/receive/ManualReceiveScreen';
+import GenericCsvProcessorScreen from '../screens/orders/receive/GenericCsvProcessorScreen';
+import PdfReceiveScreen from '../screens/orders/receive/PdfReceiveScreen';
+import ScanReceiveScreen from '../screens/orders/receive/ScanReceiveScreen';
+
 // Stock-take
 import DepartmentSelection from '../screens/stock/DepartmentSelectionScreen';
 
@@ -37,6 +43,12 @@ export default function AppNavigator() {
       <Stack.Screen name="NewOrderStart" component={NewOrderStartScreen} options={{ title: 'Choose Supplier' }} />
       <Stack.Screen name="OrderEditor" component={OrderEditorScreen} options={{ title: 'Edit Order' }} />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
+      
+      {/* Receive flow screens */}
+      <Stack.Screen name="ManualReceive" component={ManualReceiveScreen} options={{ title: 'Manual Receive' }} />
+      <Stack.Screen name="GenericCsvProcessor" component={GenericCsvProcessorScreen} options={{ title: 'Process CSV' }} />
+      <Stack.Screen name="PdfReceive" component={PdfReceiveScreen} options={{ title: 'PDF Receive' }} />
+      <Stack.Screen name="ScanReceive" component={ScanReceiveScreen} options={{ title: 'Scan Receive' }} />
     </Stack.Navigator>
   );
 }

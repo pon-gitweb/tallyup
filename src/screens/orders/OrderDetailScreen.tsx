@@ -1,246 +1,223 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import {
-  getFirestore, doc, getDoc, collection, getDocs,
-  addDoc, serverTimestamp, updateDoc
+  getFirestore, doc, getDoc, collection, getDocs
 } from 'firebase/firestore';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 
-type Params = {
-  orderId: string;
-  receiveNow?: boolean;
-  receiveMode?: 'manual' | 'scan' | 'upload';
-};
+import ReceiveOptionsModal from '../../components/orders/ReceiveOptionsModal';
+import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
+import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
+import { finalizeReceiveFromCsv } from '../../services/orders/receive';
 
-type Line = {
-  id: string;
-  productId: string;
-  name?: string | null;
-  qty: number;        // ordered qty
-  unitCost: number;
-};
-
-const S = StyleSheet.create({
-  wrap:{flex:1,backgroundColor:'#fff'},
-  top:{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
-  title:{fontSize:20,fontWeight:'800'},
-  meta:{color:'#6B7280',marginTop:4},
-
-  row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
-  left:{flex:1,paddingRight:12},
-  nm:{fontSize:16,fontWeight:'700'},
-  sub:{color:'#6B7280',marginTop:2},
-  qtyBox:{width:90,borderWidth:1,borderColor:'#E5E7EB',borderRadius:10,paddingHorizontal:10,paddingVertical:8,textAlign:'right'},
-
-  bar:{flexDirection:'row',gap:10,padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
-  btn:{flex:1,backgroundColor:'#111827',paddingVertical:12,borderRadius:10,alignItems:'center'},
-  btnText:{color:'#fff',fontWeight:'800'},
-  btnAlt:{flex:1,backgroundColor:'#F3F4F6',paddingVertical:12,borderRadius:10,alignItems:'center'},
-  btnAltText:{fontWeight:'800',color:'#111827'},
-  loading:{flex:1,justifyContent:'center',alignItems:'center'}
-});
+type Params = { orderId: string };
+type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
 
 export default function OrderDetailScreen(){
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
-  const db = getFirestore();
+  const orderId = (route.params as any)?.orderId as string;
 
-  const orderId = (route.params as any)?.orderId;
-  const receiveMode = (route.params as any)?.receiveMode;
   const [orderMeta, setOrderMeta] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rx, setRx] = useState<Record<string, number>>({}); // received qty per line id
 
-  const isManualReceive = receiveMode === 'manual';
+  // Receive modal state
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [csvReview, setCsvReview] = useState<null | {
+    storagePath: string;
+    confidence?: number;
+    warnings?: string[];
+    lines: Array<{ productId?: string; code?: string; name: string; qty: number; unitPrice?: number }>;
+    invoice: any;
+    matchReport?: any;
+  }>(null);
+
+  const db = getFirestore();
 
   useEffect(()=>{
+    let alive = true;
     (async ()=>{
-      if (!venueId || !orderId) return;
       try{
-        const oref = doc(db,'venues',venueId,'orders',orderId);
-        const osnap = await getDoc(oref);
-        if (!osnap.exists()) {
-          Alert.alert('Not found', 'Order not found'); 
-          nav.goBack(); 
-          return;
-        }
-        const ov = osnap.data() || {};
-        setOrderMeta({ id: osnap.id, ...ov });
+        if (!venueId || !orderId) return;
+        // order
+        const oSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+        const oVal:any = oSnap.exists() ? oSnap.data() : {};
+        if (!alive) return;
+        setOrderMeta({ id: oSnap.id, ...oVal });
 
-        const lref = collection(db,'venues',venueId,'orders',orderId,'lines');
-        const lsnap = await getDocs(lref);
-        const L: Line[] = lsnap.docs.map(d=>{
-          const v:any = d.data()||{};
-          return {
-            id: d.id,
-            productId: v.productId ?? d.id,
-            name: v.name ?? null,
-            qty: Number(v.qty ?? 0),
-            unitCost: Number(v.unitCost ?? 0),
-          };
+        // lines
+        const linesSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
+        const linesData:Line[] = [];
+        linesSnap.forEach((docSnap)=>{
+          const d:any = docSnap.data()||{};
+          linesData.push({
+            id: docSnap.id,
+            productId: d.productId,
+            name: d.name,
+            qty: Number.isFinite(d.qty) ? Number(d.qty) : (d.qty||0),
+            unitCost: Number.isFinite(d.unitCost) ? Number(d.unitCost) : (d.unitCost||0),
+          });
         });
-        setLines(L);
-
-        // default manual receive = ordered qty
-        if (isManualReceive) {
-          const init: Record<string, number> = {};
-          L.forEach(l => { init[l.id] = Number.isFinite(l.qty) ? l.qty : 0; });
-          setRx(init);
-        }
+        setLines(linesData);
       }catch(e){
-        Alert.alert('Error', String((e as any)?.message||e));
+        console.warn('[OrderDetail] load fail', e);
       }finally{
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
-  },[db,venueId,orderId,isManualReceive,nav]);
+    return ()=>{ alive=false; };
+  },[db,venueId,orderId]);
 
-  const totalOrdered = useMemo(()=>lines.reduce((s,l)=>s + l.qty * l.unitCost, 0),[lines]);
-  const totalReceived = useMemo(()=>{
-    if (!isManualReceive) return 0;
-    return lines.reduce((s,l)=>s + (Number(rx[l.id]||0) * l.unitCost), 0);
-  },[lines,rx,isManualReceive]);
-
-  const updateRx = useCallback((id:string, val:string)=>{
-    const n = Math.max(0, Number(val.replace(/[^0-9.]/g,'')) || 0);
-    setRx(prev=>({...prev,[id]:n}));
-  },[]);
-
-  const renderItem = useCallback(({item}:{item:Line})=>{
-    const subBits = [`Ordered ${item.qty}`];
-    if (isManualReceive) subBits.push(`@ $${item.unitCost.toFixed(2)}`);
-    const sub = subBits.join(' • ');
-    return (
-      <View style={S.row}>
-        <View style={S.left}>
-          <Text style={S.nm}>{item.name || item.productId}</Text>
-          <Text style={S.sub}>{sub}</Text>
-        </View>
-        {isManualReceive ? (
-          <TextInput
-            style={S.qtyBox}
-            keyboardType="numeric"
-            value={String(rx[item.id] ?? 0)}
-            onChangeText={(t)=>updateRx(item.id,t)}
-            placeholder="0"
-          />
-        ) : (
-          <Text style={{fontWeight:'800'}}>× {item.qty}</Text>
-        )}
-      </View>
-    );
-  },[isManualReceive,rx,updateRx]);
-
-  const confirmReceive = useCallback(async ()=>{
+  const pickCsvAndProcess = useCallback(async ()=>{
     try{
-      if (!venueId || !orderId) return;
-      if (!isManualReceive) return;
+      const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv' });
+      if (res.canceled || !res.assets?.[0]) return;
 
-      // build receipt lines
-      const receiptLines = lines.map(l=>({
-        productId: l.productId,
-        name: l.name ?? null,
-        unitCost: Number(l.unitCost)||0,
-        orderedQty: Number(l.qty)||0,
-        receivedQty: Number(rx[l.id]||0),
-      }));
+      const asset = res.assets[0];
+      console.log('[OrderDetail] picked csv', asset);
 
-      // write receipt doc under /receipts
-      const rref = collection(db,'venues',venueId,'orders',orderId,'receipts');
-      await addDoc(rref, {
-        createdAt: serverTimestamp(),
-        mode: 'manual',
-        lines: receiptLines
-      });
+      const contents = await FileSystem.readAsStringAsync(asset.uri);
+      console.log('[OrderDetail] csv length', contents.length);
 
-      // If at least one line received > 0, mark order received
-      const anyReceived = receiptLines.some(r=> (r.receivedQty||0) > 0);
-      if (anyReceived) {
-        const oref = doc(db,'venues',venueId,'orders',orderId);
-        await updateDoc(oref, { status:'received', displayStatus:'received', receivedAt: serverTimestamp() });
-      }
+      const storagePath = await uploadCsvTextToStorage(venueId, contents, 'invoice-import');
 
-      Alert.alert('Received', 'Receipt saved.');
-      nav.goBack();
-    }catch(e){
-      Alert.alert('Receive failed', String((e as any)?.message||e));
+      const review = await processInvoicesCsv(venueId, orderId, contents, storagePath);
+      console.log('[OrderDetail] processInvoicesCsv result', review);
+
+      setCsvReview(review);
+    }catch(e:any){
+      console.error('[OrderDetail] csv pick/process fail', e);
+      Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[db,venueId,orderId,lines,rx,isManualReceive,nav]);
+  },[venueId,orderId]);
 
-  const rejectAll = useCallback(async ()=>{
+  const confirmCsvReceive = useCallback(async ()=>{
     try{
-      if (!venueId || !orderId) return;
-      if (!isManualReceive) return;
-
-      const zeroLines = lines.map(l=>({
-        productId: l.productId,
-        name: l.name ?? null,
-        unitCost: Number(l.unitCost)||0,
-        orderedQty: Number(l.qty)||0,
-        receivedQty: 0,
-      }));
-
-      const rref = collection(db,'venues',venueId,'orders',orderId,'receipts');
-      await addDoc(rref, {
-        createdAt: serverTimestamp(),
-        mode: 'manual',
-        lines: zeroLines,
-        note: 'Rejected all'
+      if (!venueId || !orderId || !csvReview) return;
+      await finalizeReceiveFromCsv(venueId, orderId, csvReview, {
+        supplierId: orderMeta?.supplierId ?? null,
+        supplierName: orderMeta?.supplierName ?? null,
+        poNumber: orderMeta?.poNumber ?? null,
+        poDate: orderMeta?.poDate ?? null
       });
-
-      Alert.alert('Saved', 'All lines set to 0. Order stays submitted.');
+      console.log('[OrderDetail] receive: finalize ok');
+      Alert.alert('Received', 'Invoice posted and order marked received.');
+      setReceiveOpen(false);
+      setCsvReview(null);
       nav.goBack();
-    }catch(e){
-      Alert.alert('Failed', String((e as any)?.message||e));
+    }catch(e:any){
+      Alert.alert('Receive failed', String(e?.message || e));
     }
-  },[db,venueId,orderId,lines,isManualReceive,nav]);
+  },[venueId,orderId,csvReview,nav,orderMeta]);
 
-  if (loading) {
-    return <View style={S.loading}><ActivityIndicator/></View>;
-  }
+  const totalOrdered = useMemo(()=>{
+    return lines.reduce((sum,line)=>{
+      const cost = line.unitCost||0;
+      const qty = line.qty||0;
+      return sum + (cost * qty);
+    },0);
+  },[lines]);
 
-  const title = orderMeta?.supplierName || 'Order';
-  const meta = [
-    orderMeta?.status ? `Status: ${orderMeta.status}` : null,
-    orderMeta?.poNumber ? `PO: ${orderMeta.poNumber}` : null
-  ].filter(Boolean).join(' • ');
+  // Safe warning extraction to avoid hook order issues
+  const warnings = useMemo(() => {
+    if (!csvReview) return [];
+    return (csvReview.warnings || csvReview.matchReport?.warnings || []);
+  }, [csvReview]);
+
+  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
 
   return (
     <View style={S.wrap}>
       <View style={S.top}>
-        <Text style={S.title}>{title}</Text>
-        <Text style={S.meta}>{meta || '—'}</Text>
+        <View>
+          <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
+          <Text style={S.meta}>
+            {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
+          </Text>
+        </View>
+        {String(orderMeta?.status).toLowerCase()==='submitted' ? (
+          <TouchableOpacity style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={()=>setReceiveOpen(true)}>
+            <Text style={S.receiveBtnText}>Receive</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      <FlatList
-        data={lines}
-        keyExtractor={(x)=>x.id}
-        renderItem={renderItem}
-        ListFooterComponent={
-          isManualReceive ? (
-            <View style={{padding:16, borderTopWidth:StyleSheet.hairlineWidth, borderColor:'#E5E7EB'}}>
-              <Text style={{fontWeight:'800'}}>Totals</Text>
-              <Text style={{color:'#6B7280', marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
-              <Text style={{color:'#6B7280'}}>Received: ${totalReceived.toFixed(2)}</Text>
-            </View>
-          ) : null
-        }
-      />
+      {csvReview ? (
+        <ScrollView style={{flex:1}}>
+          <View style={{padding:16}}>
+            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
+            {warnings.length > 0 ? (
+              <View style={{marginBottom:8}}>
+                {warnings.map((w,idx)=>(<Text key={idx} style={{color:'#92400E'}}>• {w}</Text>))}
+              </View>
+            ) : null}
+            <Text style={{color:'#6B7280',marginBottom:12}}>
+              Confidence: {csvReview.confidence != null ? Math.round(csvReview.confidence*100) : '—'}%
+            </Text>
+            {(csvReview.lines||[]).slice(0,40).map((pl,idx)=>(
+              <View key={idx} style={{paddingVertical:6,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
+              </View>
+            ))}
+            {(csvReview.lines||[]).length>40 ? <Text style={{marginTop:8,color:'#6B7280'}}>... and {csvReview.lines.length-40} more lines</Text> : null}
 
-      {isManualReceive ? (
-        <View style={S.bar}>
-          <TouchableOpacity style={S.btnAlt} onPress={rejectAll}>
-            <Text style={S.btnAltText}>Reject All</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={S.btn} onPress={confirmReceive}>
-            <Text style={S.btnText}>Confirm Receive</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#F3F4F6',borderRadius:8}} onPress={()=>setCsvReview(null)}>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={confirmCsvReceive}>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm Receive</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      ) : (
+        lines.length>0 && (
+          <FlatList
+            data={lines}
+            keyExtractor={(x)=>x.id}
+            renderItem={({item})=>(
+              <View style={{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+                <Text style={{fontWeight:'700'}}>{item.name||item.productId||'Line'}</Text>
+                <Text style={{color:'#6B7280',marginTop:4}}>
+                  Qty: {item.qty||0} • Unit: ${(item.unitCost||0).toFixed(2)} • Line: ${((item.unitCost||0)*(item.qty||0)).toFixed(2)}
+                </Text>
+              </View>
+            )}
+            ListFooterComponent={
+              <View style={{padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+                <Text style={{fontWeight:'800'}}>Totals</Text>
+                <Text style={{color:'#6B7280',marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
+              </View>
+            }
+          />
+        )
+      )}
+
+      <ReceiveOptionsModal
+        visible={receiveOpen}
+        onClose={()=>setReceiveOpen(false)}
+        onCsvSelected={pickCsvAndProcess}
+        orderId={orderId}
+        orderLines={lines}
+      />
     </View>
   );
 }
+
+const S = StyleSheet.create({
+  wrap:{flex:1,backgroundColor:'#fff'},
+  top:{padding:16,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+  title:{fontSize:18,fontWeight:'800'},
+  meta:{color:'#6B7280',marginTop:2},
+  receiveBtn:{backgroundColor:'#111827',paddingVertical:10,paddingHorizontal:16,borderRadius:8},
+  receiveBtnText:{color:'#fff',fontWeight:'800'},
+  loading:{flex:1,justifyContent:'center',alignItems:'center'},
+});

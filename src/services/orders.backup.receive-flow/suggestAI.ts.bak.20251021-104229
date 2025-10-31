@@ -1,0 +1,39 @@
+import { callAIEndpoint } from "../ai";
+import { buildSuggestedOrdersInMemory } from "./suggest"; // ✅ your actual baseline function
+import {
+  composeMergedResult,
+  type Baseline,
+  type OverlayResponse,
+  type MergedResult,
+} from "./overlay";
+
+/**
+ * runAISuggest
+ * - Builds math baseline via buildSuggestedOrdersInMemory
+ * - Calls AI overlay endpoint at "/suggest-orders" (EXPO_PUBLIC_AI_URL already ends with /api)
+ * - Merges overlay deltas into baseline
+ * - Respects quota headers (retry/backoff) and client-side cache
+ */
+export async function runAISuggest(args: {
+  venueId: string;
+  context: any; // whatever you pass into baseline
+}): Promise<MergedResult> {
+  // Produce math baseline
+  const math = await buildSuggestedOrdersInMemory(args as any);
+
+  // Normalise to Baseline shape
+  const baseline: Baseline = {
+    venueId: args.venueId,
+    suppliers: (math && (math as any).suppliers) ? (math as any).suppliers : (math as any),
+  };
+
+  // Post baseline for overlay (note: no extra /api here)
+  const { data, headers } = await callAIEndpoint<OverlayResponse>({
+    path: "/suggest-orders",
+    method: "POST",
+    body: { baseline },
+  });
+
+  // Merge overlay + rationale, handle cache/backoff
+  return composeMergedResult(baseline, data, headers);
+}

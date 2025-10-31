@@ -1,0 +1,374 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  Modal,
+  SafeAreaView,
+  ScrollView,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { getApp } from 'firebase/app';
+import {
+  getFirestore,
+  collection,
+  collectionGroup,
+  getDocs,
+  doc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import {
+  buildSuggestedOrdersInMemory,
+  listSuppliers,
+  createDraftsFromSuggestions,
+} from 'src/services/orders';
+import { useVenueId } from 'src/context/VenueProvider';
+import { useNavigation } from '@react-navigation/native';
+
+type Supplier = { id: string; name?: string | null };
+type SuggestedLine = {
+  productId: string;
+  productName?: string | null;
+  qty: number;
+  cost: number;
+  needsPar?: boolean;
+  needsSupplier?: boolean;
+  reason?: string | null;
+};
+type CompatBucket = { items: Record<string, SuggestedLine>; lines: SuggestedLine[] };
+
+/** Ensure product doc exists so subsequent writes succeed */
+async function ensureProductIfMissing(venueId: string, productId: string, nameHint?: string | null) {
+  const db = getFirestore(getApp());
+  const ref = doc(db, 'venues', venueId, 'products', productId);
+  await setDoc(
+    ref,
+    { name: nameHint ?? productId, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+/**
+ * Link orphan area items (no productId) to a canonical product.
+ * Heuristics: match by (item.id === productId) OR (item.name === nameHint).
+ * Also (optionally) copy supplier onto the item during migration so current suggest pass re-buckets.
+ */
+async function linkAreaItemsToProduct(
+  venueId: string,
+  productId: string,
+  nameHint?: string | null,
+  copySupplier?: { supplierId?: string | null; supplierName?: string | null }
+) {
+  const db = getFirestore(getApp());
+
+  // Walk departments/*/areas/*/items/*
+  const deps = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  for (const dep of deps.docs) {
+    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+    for (const area of areasSnap.docs) {
+      const itemsSnap = await getDocs(
+        collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items')
+      );
+      for (const it of itemsSnap.docs) {
+        const data = it.data() as any;
+        const hasLink = !!(data?.productId || data?.productRef?.id || data?.product?.id);
+        if (hasLink) continue;
+
+        const idMatch = it.id === productId;
+        const nameMatch = (data?.name ?? data?.productName ?? '') === (nameHint ?? productId);
+        if (idMatch || nameMatch) {
+          const ref = doc(
+            db,
+            'venues',
+            venueId,
+            'departments',
+            dep.id,
+            'areas',
+            area.id,
+            'items',
+            it.id
+          );
+          const update: any = { productId, updatedAt: serverTimestamp() };
+          if (copySupplier) {
+            if (copySupplier.supplierId) update.supplierId = copySupplier.supplierId;
+            if (copySupplier.supplierName) update.supplierName = copySupplier.supplierName;
+          }
+          console.log('[linkAreaItemsToProduct] linking item', {
+            path: ref.path,
+            to: productId,
+            supplierId: update.supplierId,
+          });
+          await updateDoc(ref, update);
+        }
+      }
+    }
+  }
+}
+
+export default function SuggestedOrderScreen() {
+  const venueId = useVenueId();
+  const nav = useNavigation<any>();
+  const [loading, setLoading] = useState(false);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [buckets, setBuckets] = useState<Record<string, CompatBucket>>({});
+  const [picker, setPicker] = useState<{
+    visible: boolean;
+    bucketKey: string | null;
+    productId: string | null; // when set => per-item assignment
+  }>({ visible: false, bucketKey: null, productId: null });
+
+  const load = useCallback(async () => {
+    if (!venueId) return;
+    setLoading(true);
+    try {
+      const compat = await buildSuggestedOrdersInMemory(venueId, {
+        roundToPack: true,
+        defaultParIfMissing: 6,
+      });
+      setBuckets(compat);
+      const ss = await listSuppliers(venueId);
+      setSuppliers(ss);
+
+      const vals = Object.values(compat);
+      console.log('[SuggestedOrders] load summary', {
+        raw: vals.length,
+        aggregated: new Set(vals).size,
+      });
+    } catch (e) {
+      console.warn('[SuggestedOrders] load failed', e);
+      Alert.alert('Suggested Orders', 'Failed to load suggestions.');
+    } finally {
+      setLoading(false);
+    }
+  }, [venueId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Deduplicate buckets so aliases render once
+  const uniqueBucketKeys = useMemo(() => {
+    const seen = new WeakSet<object>();
+    const out: string[] = [];
+    for (const [k, b] of Object.entries(buckets)) {
+      if (b && typeof b === 'object' && !seen.has(b as object) && (b.lines?.length ?? 0) > 0) {
+        seen.add(b as object);
+        out.push(k);
+      }
+    }
+    return out;
+  }, [buckets]);
+
+  const assignSupplierGroup = useCallback(
+    async (bucketKey: string, supplierId: string) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        const bucket = buckets[bucketKey];
+        if (!bucket) return;
+        const db = getFirestore(getApp());
+        const name = suppliers.find((s) => s.id === supplierId)?.name ?? null;
+
+        for (const line of bucket.lines) {
+          const pid = line.productId;
+          if (!pid) continue;
+
+          // Create/ensure product
+          await ensureProductIfMissing(venueId, pid, line.productName ?? pid);
+          // Link orphans across all areas to this product and copy supplier for immediate re-bucket
+          await linkAreaItemsToProduct(venueId, pid, line.productName ?? pid, {
+            supplierId,
+            supplierName: name,
+          });
+
+          // Also set supplier on product (canonical)
+          const pref = doc(db, 'venues', venueId, 'products', pid);
+          console.log('[assignSupplier:product] writing', { path: pref.path, supplierId });
+          await setDoc(pref, { supplierId, supplierName: name, updatedAt: serverTimestamp() }, { merge: true });
+        }
+
+        Alert.alert('Supplier', 'Supplier assigned to all items in this group.');
+        setPicker({ visible: false, bucketKey: null, productId: null });
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setSupplier (group) failed', { code: e?.code, msg: e?.message });
+        Alert.alert('Supplier', `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set supplier.'}`);
+      }
+    },
+    [venueId, buckets, suppliers, load]
+  );
+
+  const assignSupplierOne = useCallback(
+    async (productId: string, productName: string | null | undefined, supplierId: string) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        const db = getFirestore(getApp());
+        const name = suppliers.find((s) => s.id === supplierId)?.name ?? null;
+
+        await ensureProductIfMissing(venueId, productId, productName ?? productId);
+        await linkAreaItemsToProduct(venueId, productId, productName ?? productId, {
+          supplierId,
+          supplierName: name,
+        });
+
+        const pref = doc(db, 'venues', venueId, 'products', productId);
+        console.log('[assignSupplier:item] writing', { path: pref.path, supplierId });
+        await setDoc(pref, { supplierId, supplierName: name, updatedAt: serverTimestamp() }, { merge: true });
+
+        setPicker({ visible: false, bucketKey: null, productId: null });
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setSupplier (one) failed', { code: e?.code, msg: e?.message });
+        Alert.alert('Supplier', `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set supplier.'}`);
+      }
+    },
+    [venueId, suppliers, load]
+  );
+
+  const updatePar = useCallback(
+    async (productId: string, parStr: string, nameHint?: string) => {
+      try {
+        if (!venueId) throw new Error('No venue selected');
+        if (!productId) {
+          Alert.alert('Set Par', 'This row has no product ID and cannot be updated.');
+          return;
+        }
+        const n = Number(String(parStr ?? '').trim());
+        if (!Number.isFinite(n) || n < 0) {
+          Alert.alert('Set Par', 'Enter a non-negative number.');
+          return;
+        }
+
+        await ensureProductIfMissing(venueId, productId, nameHint ?? productId);
+        // Link all orphans for this product ID/name so on-hand aggregation works
+        await linkAreaItemsToProduct(venueId, productId, nameHint ?? productId);
+
+        const db = getFirestore(getApp());
+        const pref = doc(db, 'venues', venueId, 'products', productId);
+        console.log('[updatePar] writing', { path: pref.path, par: n });
+        await setDoc(pref, { par: n, parLevel: n, updatedAt: serverTimestamp() }, { merge: true });
+
+        Alert.alert('Set Par', 'Par updated.');
+        await load();
+      } catch (e: any) {
+        console.warn('[SuggestedOrderScreen] setPar failed', { code: e?.code, msg: e?.message });
+        Alert.alert('Set Par', `[${e?.code ?? 'unknown'}] ${e?.message ?? 'Failed to set par.'}`);
+      }
+    },
+    [venueId, load]
+  );
+
+  const createDrafts = useCallback(async () => {
+    try {
+      if (!venueId) throw new Error('No venue selected');
+      const res = await createDraftsFromSuggestions(venueId, { roundToPack: true, defaultParIfMissing: 6 });
+      Alert.alert('Drafts', `Created ${res?.created ?? 0} draft order(s).`);
+      nav.navigate('Orders'); // or your actual route
+    } catch (e: any) {
+      console.warn('[SuggestedOrderScreen] createDrafts failed', e);
+      Alert.alert('Drafts', e?.message ?? 'Failed to create drafts.');
+    }
+  }, [venueId, nav]);
+
+  const renderBucket = ({ item: key }: { item: string }) => {
+    const b = buckets[key];
+    const count = b?.lines?.length ?? 0;
+    if (!b || !count) return null;
+
+    return (
+      <View style={{ margin: 12, padding: 12, borderRadius: 12, backgroundColor: '#fff', elevation: 2 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <Text style={{ fontWeight: '700' }}>{key || 'unassigned'} — {count} item{count > 1 ? 's' : ''}</Text>
+          <TouchableOpacity onPress={() => setPicker({ visible: true, bucketKey: key, productId: null })}>
+            <Text style={{ textDecorationLine: 'underline' }}>Assign supplier to group…</Text>
+          </TouchableOpacity>
+        </View>
+
+        {b.lines.map((line) => (
+          <View key={line.productId || `${line.productName}-${Math.random().toString(36).slice(2)}`}
+                style={{ paddingVertical: 8, borderTopWidth: 0.5, borderColor: '#eee' }}>
+            <Text style={{ fontWeight: '600' }}>{line.productName ?? line.productId}</Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+              <TouchableOpacity onPress={() => updatePar(line.productId, '6', line.productName ?? undefined)}>
+                <Text style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2', borderRadius: 8, marginRight: 8 }}>
+                  Set PAR 6
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => updatePar(line.productId, '12', line.productName ?? undefined)}>
+                <Text style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2', borderRadius: 8, marginRight: 8 }}>
+                  Set PAR 12
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setPicker({ visible: true, bucketKey: null, productId: line.productId })}>
+                <Text style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2', borderRadius: 8 }}>
+                  Assign supplier…
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fafafa' }}>
+      <View style={{ padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ fontSize: 18, fontWeight: '800' }}>Suggested Orders</Text>
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity onPress={load} style={{ marginRight: 12 }}>
+            <Text style={{ textDecorationLine: 'underline' }}>{loading ? 'Loading…' : 'Refresh'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={createDrafts}>
+            <Text style={{ textDecorationLine: 'underline' }}>Create Drafts</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <FlatList
+        data={uniqueBucketKeys}
+        keyExtractor={(k) => k}
+        renderItem={renderBucket}
+        contentContainerStyle={{ paddingBottom: 48 }}
+      />
+
+      <Modal visible={picker.visible} transparent animationType="fade"
+             onRequestClose={() => setPicker({ visible: false, bucketKey: null, productId: null })}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 12, maxHeight: '70%' }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>Choose Supplier</Text>
+            <ScrollView>
+              {suppliers.map((s) => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => {
+                    if (picker.productId) {
+                      assignSupplierOne(picker.productId, null, s.id);
+                    } else if (picker.bucketKey) {
+                      assignSupplierGroup(picker.bucketKey, s.id);
+                    }
+                  }}
+                >
+                  <View style={{ paddingVertical: 10, borderBottomWidth: 0.5, borderColor: '#eee' }}>
+                    <Text>{s.name ?? s.id}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              {!suppliers.length && <Text>No suppliers found.</Text>}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() => setPicker({ visible: false, bucketKey: null, productId: null })}
+              style={{ alignSelf: 'flex-end', marginTop: 8 }}
+            >
+              <Text style={{ textDecorationLine: 'underline' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}

@@ -1,0 +1,41 @@
+--- a/src/screens/orders/OrderDetailScreen.tsx
++++ b/src/screens/orders/OrderDetailScreen.tsx
+@@ -123,15 +123,25 @@
+     }
+   },[venueId,orderId,csvReview,nav,orderMeta]);
+ 
+-  const confirmManualReceive = useCallback(async ()=>{
+-    try{
+-      if (!venueId || !orderId) return;
+-      await 
+-    navigation.navigate("OrderEditor", { orderId: order.id, mode: "receive-manual", poNumber: order?.poNumber || null, poDate: order?.poDate || null });
+-  
+-      Alert.alert('Received', 'Order marked received.');
+-      setReceiveOpen(false);
+-      nav.goBack();
+-    }catch(e:any){
+-      Alert.alert('Receive failed', String(e?.message || e));
+-    }
+-  },[venueId,orderId,nav,orderMeta]);
++  const confirmManualReceive = useCallback(async ()=>{
++    try{
++      if (!venueId || !orderId) return;
++      
++      // Use the manual receive service with current line quantities
++      await finalizeReceiveManual(
++        venueId, 
++        orderId, 
++        lines.map(line => ({
++          productId: line.productId || line.id,
++          receivedQty: line.qty || 0
++        }))
++      );
++      
++      console.log('[OrderDetail] manual receive: finalized ok');
++      Alert.alert('Received', 'Order marked received manually.');
++      setReceiveOpen(false);
++    }catch(e:any){
++      console.error('[OrderDetail] manual receive failed', e);
++      Alert.alert('Receive failed', String(e?.message || e));
++    }
++  },[venueId, orderId, lines]);
