@@ -1,26 +1,14 @@
-import { useReceiveModal } from './receive/useReceiveModal';
 // @ts-nocheck
-import { useReceiveModal } from './receive/useReceiveModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { useReceiveModal } from './receive/useReceiveModal';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { useReceiveModal } from './receive/useReceiveModal';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { useReceiveModal } from './receive/useReceiveModal';
 import { useVenueId } from '../../context/VenueProvider';
-import { useReceiveModal } from './receive/useReceiveModal';
-import {
-import { useReceiveModal } from './receive/useReceiveModal';
-  getFirestore, doc, getDoc, collection, getDocs
-import { useReceiveModal } from './receive/useReceiveModal';
-} from 'firebase/firestore';
-import { useReceiveModal } from './receive/useReceiveModal';
+import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
-import { useReceiveModal } from './receive/useReceiveModal';
 import * as FileSystem from 'expo-file-system';
-import { useReceiveModal } from './receive/useReceiveModal';
 
-import ReceiveOptionsModal from '../../components/orders/ReceiveOptionsModal';
+import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
+import ManualReceiveScreen from './receive/ManualReceiveScreen';
 import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
@@ -37,11 +25,11 @@ export default function OrderDetailScreen(){
   const [orderMeta, setOrderMeta] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
-  // Receive modal host
-  const { openReceive, modalNode } = useReceiveModal({ orderId: order?.id || id, orderLines: lines });
 
-  // Receive modal state
+  // Receive modals
   const [receiveOpen, setReceiveOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+
   const [csvReview, setCsvReview] = useState<null | {
     storagePath: string;
     confidence?: number;
@@ -58,13 +46,11 @@ export default function OrderDetailScreen(){
     (async ()=>{
       try{
         if (!venueId || !orderId) return;
-        // order
         const oSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
         const oVal:any = oSnap.exists() ? oSnap.data() : {};
         if (!alive) return;
         setOrderMeta({ id: oSnap.id, ...oVal });
 
-        // lines
         const linesSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
         const linesData:Line[] = [];
         linesSnap.forEach((docSnap)=>{
@@ -93,17 +79,12 @@ export default function OrderDetailScreen(){
       if (res.canceled || !res.assets?.[0]) return;
 
       const asset = res.assets[0];
-      console.log('[OrderDetail] picked csv', asset);
-
       const contents = await FileSystem.readAsStringAsync(asset.uri);
-      console.log('[OrderDetail] csv length', contents.length);
 
-      const storagePath = await uploadCsvTextToStorage(venueId, contents, 'invoice-import');
+      const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
+      const review = await processInvoicesCsv({ venueId, orderId, storagePath });
 
-      const review = await processInvoicesCsv(venueId, orderId, contents, storagePath);
-      console.log('[OrderDetail] processInvoicesCsv result', review);
-
-      setCsvReview(review);
+      setCsvReview({ ...review, storagePath });
     }catch(e:any){
       console.error('[OrderDetail] csv pick/process fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
@@ -113,13 +94,17 @@ export default function OrderDetailScreen(){
   const confirmCsvReceive = useCallback(async ()=>{
     try{
       if (!venueId || !orderId || !csvReview) return;
-      await finalizeReceiveFromCsv(venueId, orderId, csvReview, {
-        supplierId: orderMeta?.supplierId ?? null,
-        supplierName: orderMeta?.supplierName ?? null,
-        poNumber: orderMeta?.poNumber ?? null,
-        poDate: orderMeta?.poDate ?? null
+      await finalizeReceiveFromCsv({
+        venueId,
+        orderId,
+        parsed: {
+          invoice: csvReview.invoice,
+          lines: csvReview.lines,
+          matchReport: csvReview.matchReport,
+          confidence: csvReview.confidence,
+          warnings: csvReview.warnings
+        }
       });
-      console.log('[OrderDetail] receive: finalize ok');
       Alert.alert('Received', 'Invoice posted and order marked received.');
       setReceiveOpen(false);
       setCsvReview(null);
@@ -127,7 +112,7 @@ export default function OrderDetailScreen(){
     }catch(e:any){
       Alert.alert('Receive failed', String(e?.message || e));
     }
-  },[venueId,orderId,csvReview,nav,orderMeta]);
+  },[venueId,orderId,csvReview,nav]);
 
   const totalOrdered = useMemo(()=>{
     return lines.reduce((sum,line)=>{
@@ -137,7 +122,6 @@ export default function OrderDetailScreen(){
     },0);
   },[lines]);
 
-  // Safe warning extraction to avoid hook order issues
   const warnings = useMemo(() => {
     if (!csvReview) return [];
     return (csvReview.warnings || csvReview.matchReport?.warnings || []);
@@ -214,13 +198,37 @@ export default function OrderDetailScreen(){
         )
       )}
 
+      {/* Receive options sheet */}
       <ReceiveOptionsModal
         visible={receiveOpen}
         onClose={()=>setReceiveOpen(false)}
         onCsvSelected={pickCsvAndProcess}
+        onManualSelected={()=>setManualOpen(true)}
         orderId={orderId}
         orderLines={lines}
       />
+
+      {/* Manual receive modal (inline; no nav changes) */}
+      <Modal visible={manualOpen} transparent animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+        <View style={{flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end'}}>
+          <View style={{maxHeight:'85%', backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16}}>
+            <ManualReceiveScreen
+              venueId={venueId}
+              orderId={orderId}
+              orderLines={lines.map(l => ({ id: l.id, productId: l.productId, name: l.name, orderedQty: l.qty }))}
+              onDone={()=>{
+                setManualOpen(false);
+                Alert.alert('Received', 'Manual receive saved.');
+                nav.goBack();
+              }}
+              embed
+            />
+            <TouchableOpacity onPress={()=>setManualOpen(false)} style={{alignSelf:'center', marginTop:8, padding:8}}>
+              <Text style={{fontWeight:'700'}}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -234,6 +242,3 @@ const S = StyleSheet.create({
   receiveBtnText:{color:'#fff',fontWeight:'800'},
   loading:{flex:1,justifyContent:'center',alignItems:'center'},
 });
-
-{/* Receive modal */}
-{modalNode}
