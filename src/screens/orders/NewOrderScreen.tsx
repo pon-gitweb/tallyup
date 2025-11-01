@@ -1,36 +1,43 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Alert,
-  TouchableOpacity,
-
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, Text, StyleSheet, Alert, TouchableOpacity, TextInput,
+  KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
 import { listSuppliers, Supplier } from '../../services/suppliers';
-import { listProducts, Product } from '../../services/products';
+import { listProducts, Product } from '../../services/products'; // keeps existing API
 import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
+import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 
 type Line = OrderLine & { key: string };
+type Params = { supplierId?: string; supplierName?: string };
 
 export default function NewOrderScreen() {
   const insets = useSafeAreaInsets();
   const venueId = useVenueId();
+  const route = useRoute<RouteProp<Record<string, Params>, string>>();
+  const nav = useNavigation<any>();
+
+  const supplierIdParam = route.params?.supplierId ?? null;
+  const supplierNameParam = route.params?.supplierName ?? null;
 
   const [loading, setLoading] = useState(true);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [supplierId, setSupplierId] = useState<string | null>(null);
+  const [supplierId, setSupplierId] = useState<string | null>(supplierIdParam);
   const [search, setSearch] = useState('');
   const [note, setNote] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
+
+  useEffect(() => {
+    if (supplierNameParam) {
+      nav.setOptions({ title: `New Order — ${supplierNameParam}` });
+    } else {
+      nav.setOptions({ title: 'New Order' });
+    }
+  }, [nav, supplierNameParam]);
 
   useEffect(() => {
     let mounted = true;
@@ -42,8 +49,8 @@ export default function NewOrderScreen() {
         if (!mounted) return;
         setSuppliers(ss);
         setProducts(ps);
-        // preselect first supplier if none
-        if (!supplierId && ss.length > 0) setSupplierId(ss[0].id);
+        // Only auto-select if no param provided
+        if (!supplierIdParam && !supplierId && ss.length > 0) setSupplierId(ss[0].id);
       } catch (e: any) {
         Alert.alert('Load failed', e?.message || 'Unknown error');
       } finally {
@@ -57,11 +64,8 @@ export default function NewOrderScreen() {
     const q = search.trim().toLowerCase();
     return products
       .filter(p => {
-        // Supplier-scoped list (client-side only)
         if (!supplierId) return false;
         if ((p as any)?.supplierId !== supplierId) return false;
-
-        // Optional search on name/SKU
         if (!q) return true;
         const name = (p.name || '').toLowerCase();
         const sku  = (p.sku  || '').toLowerCase();
@@ -101,7 +105,6 @@ export default function NewOrderScreen() {
     if (Number.isNaN(qty) || qty < 0) qty = 0;
     setLines(ls => ls.map(l => l.productId === productId ? { ...l, qty } : l));
   }
-
   function removeLine(productId: string) {
     setLines(ls => ls.filter(l => l.productId !== productId));
   }
@@ -122,16 +125,16 @@ export default function NewOrderScreen() {
       return Alert.alert('Nothing to save', 'Add at least one product with a quantity.');
     }
     try {
-      const __oid = await createDraftOrderWithLines(venueId, supplierId, nonZero, note || null);
-      const orderId = typeof __oid === 'string' ? __oid : (__oid?.orderId ?? '');
+      const { id } = await createDraftOrderWithLines(venueId, supplierId, nonZero, note || null, supplierNameParam ?? null);
       Alert.alert('Draft created', 'Your order was saved as a draft.');
-      console.log('[Orders] save draft ok', JSON.stringify({ orderId, supplierId }));
+      // Optionally jump to editor
+      // nav.navigate('OrderEditor', { orderId: id, supplierName: supplierNameParam ?? 'Supplier' });
+      nav.navigate('Orders');
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Unknown error');
     }
   }
 
-  // Sticky footer is always visible; add spacer at bottom of ScrollView so content isn't hidden.
   const footerHeight = 72 + insets.bottom;
 
   return (
@@ -144,7 +147,7 @@ export default function NewOrderScreen() {
         >
           <Text style={styles.title}>New Order</Text>
 
-          {/* Supplier selector (simple) */}
+          {/* Supplier selector */}
           <View style={styles.card}>
             <Text style={styles.label}>Supplier</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -175,7 +178,7 @@ export default function NewOrderScreen() {
             />
           </View>
 
-          {/* Product list to add */}
+          {/* Product list */}
           <View style={styles.card}>
             <Text style={styles.label}>Products</Text>
             <View>
@@ -193,7 +196,7 @@ export default function NewOrderScreen() {
             </View>
           </View>
 
-          {/* Lines (cart) */}
+          {/* Lines */}
           <View style={styles.card}>
             <Text style={styles.label}>Order Lines</Text>
             {lines.length === 0 ? (

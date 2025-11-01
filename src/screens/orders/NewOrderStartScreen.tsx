@@ -1,11 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
-import {
-  getFirestore, collection, query, orderBy, onSnapshot,
-  addDoc, serverTimestamp
-} from 'firebase/firestore';
+import { getFirestore, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
 type SupplierRow = {
@@ -25,10 +22,7 @@ export default function NewOrderStartScreen() {
     if (!venueId) return;
     const db = getFirestore(getApp());
     const ref = collection(db, 'venues', venueId, 'suppliers');
-
-    // Dev-safe: only orderBy (no where) to avoid composite index requirement.
     const q = query(ref, orderBy('name'));
-
     const unsub = onSnapshot(q, (snap) => {
       const rows: SupplierRow[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
       setSuppliers(rows);
@@ -41,29 +35,10 @@ export default function NewOrderStartScreen() {
     return () => unsub();
   }, [venueId]);
 
-  const createDraft = useCallback(async (supplier: SupplierRow) => {
-    try {
-      console.log('[NewOrderStart] supplier tapped', supplier?.id, supplier?.name);
-      if (!venueId) { Alert.alert('No venue', 'Missing venue context.'); return; }
-      if (!supplier?.id) { Alert.alert('Invalid supplier', 'Cannot create draft for this supplier.'); return; }
-      const db = getFirestore(getApp());
-      const docRef = await addDoc(collection(db, 'venues', venueId, 'orders'), {
-        venueId,
-        supplierId: supplier.id,
-        supplierName: supplier.name ?? null,
-        status: 'draft',
-        displayStatus: 'Draft',
-        origin: 'manual',
-        source: 'manual',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      nav.navigate('OrderEditor', { orderId: docRef.id, supplierName: supplier.name ?? 'Supplier' });
-    } catch (e: any) {
-      console.warn('[NewOrderStart] createDraft error', e);
-      Alert.alert('Error', e?.message ?? 'Failed to create draft.');
-    }
-  }, [venueId, nav]);
+  const openSupplier = (s: SupplierRow) => {
+    // Do NOT create a draft yet — go to product picker first
+    nav.navigate('NewOrder', { supplierId: s.id, supplierName: s.name ?? 'Supplier' });
+  };
 
   if (loading) {
     return (
@@ -89,7 +64,7 @@ export default function NewOrderStartScreen() {
         data={suppliers}
         keyExtractor={(s) => s.id}
         renderItem={({ item }) => (
-          <TouchableOpacity testID={`supplier-${item.id}`} style={styles.supplier} onPress={() => createDraft(item)}>
+          <TouchableOpacity testID={`supplier-${item.id}`} style={styles.supplier} onPress={() => openSupplier(item)}>
             <Text style={styles.name}>{item.name ?? 'Supplier'}</Text>
             <Text style={styles.chev}>›</Text>
           </TouchableOpacity>
