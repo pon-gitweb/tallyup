@@ -346,7 +346,7 @@ export default function OrdersScreen(){
         <Text style={S.fabText}>New Order</Text>
       </TouchableOpacity>
 
-      {/* Receive Options Modal */}
+      {/* Receive Options Modal (baseline) */}
       <Modal visible={!!receiveFor} transparent animationType="fade" onRequestClose={()=>setReceiveFor(null)}>
         <TouchableOpacity activeOpacity={1} style={{flex:1,justifyContent:'flex-end',backgroundColor:'rgba(0,0,0,0.3)'}} onPress={()=>setReceiveFor(null)}>
           <View style={{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16}}>
