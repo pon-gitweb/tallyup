@@ -1,0 +1,606 @@
+diff --git a/src/screens/invoices/InvoiceEditScreen.tsx b/src/screens/invoices/InvoiceEditScreen.tsx
+index b6e5213..866ed42 100644
+--- a/src/screens/invoices/InvoiceEditScreen.tsx
++++ b/src/screens/invoices/InvoiceEditScreen.tsx
+@@ -2,11 +2,9 @@
+ import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+ import { Alert, FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+ import { NativeStackScreenProps } from '@react-navigation/native-stack';
+-import { useNavigation } from '@react-navigation/native';
+ import { fetchOrderWithLines, upsertInvoiceFromOrder, InvoiceLineInput } from '../../services/invoices';
+-import { useVenue } from '../../context/VenueProvider'; // Assumes this exists and provides { venueId, user }
+-import { doc, getDoc } from 'firebase/firestore';
+-import { db } from '../../lib/firebase';
++import { useVenue } from '../../context/VenueProvider'; // provides { venueId, user }
++import { importInvoiceFromPdf } from '../../services/invoices/importFromPdf';
+ 
+ type RootStackParamList = {
+   InvoiceEdit: { orderId: string; status?: string; existingInvoiceId?: string };
+@@ -16,7 +14,7 @@ type RootStackParamList = {
+ type Props = NativeStackScreenProps<RootStackParamList, 'InvoiceEdit'>;
+ 
+ export default function InvoiceEditScreen({ route, navigation }: Props) {
+-  const { venueId, user } = useVenue() as any;
++  const { venueId, user } = (useVenue() as any) || {};
+   const { orderId } = route.params;
+ 
+   const [loading, setLoading] = useState(true);
+@@ -25,16 +23,72 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
+   const [invoiceDateISO, setInvoiceDateISO] = useState<string>(() => new Date().toISOString().slice(0,10)); // YYYY-MM-DD
+   const [lines, setLines] = useState<InvoiceLineInput[]>([]);
+ 
++  const handleImportPdf = React.useCallback(async () => {
++    try {
++      if (!venueId) throw new Error('No venue');
++      setLoading(true);
++      const result = await importInvoiceFromPdf(venueId, orderId);
++      // Hydrate fields only if present (don’t clobber user edits)
++      if (result.invoiceNumber) setInvoiceNumber(result.invoiceNumber);
++      if (result.invoiceDateISO) setInvoiceDateISO(result.invoiceDateISO);
++      if (Array.isArray(result.lines) && result.lines.length) {
++        setLines(result.lines);
++      } else {
++        Alert.alert('PDF Import', 'No lines could be matched to this order. Unmatched lines are skipped in Phase-1.');
++      }
++      Alert.alert('PDF Import', 'Invoice data imported. Please review and Post.');
++    } catch (e:any) {
++      Alert.alert('PDF Import', e?.message || 'Import failed.');
++    } finally {
++      setLoading(false);
++    }
++  }, [venueId, orderId]);
++
++  const onPost = React.useCallback(async () => {
++    try {
++      if (!venueId) throw new Error('No venue');
++      if (!user?.uid) throw new Error('No user');
++      if (!invoiceNumber.trim()) {
++        Alert.alert('Invoice', 'Please enter an invoice number.');
++        return;
++      }
++      if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDateISO)) {
++        Alert.alert('Invoice', 'Please enter a date as YYYY-MM-DD.');
++        return;
++      }
++      if (!lines.length) {
++        Alert.alert('Invoice', 'There are no lines to post.');
++        return;
++      }
++      await upsertInvoiceFromOrder(venueId, user.uid, {
++        orderId,
++        invoiceNumber,
++        invoiceDateISO,
++        lines,
++      });
++      Alert.alert('Invoice', 'Invoice posted.', [
++        { text: 'OK', onPress: () => navigation.navigate('OrderDetail' as any, { orderId, status: route.params?.status }) },
++      ]);
++    } catch (e: any) {
++      Alert.alert('Invoice', e?.message || 'Failed to post invoice.');
++    }
++  }, [venueId, user?.uid, orderId, invoiceNumber, invoiceDateISO, lines]);
++
+   useLayoutEffect(() => {
+     navigation.setOptions({
+       title: 'Invoice',
+       headerRight: () => (
+-        <TouchableOpacity onPress={onPost} style={{ paddingHorizontal: 12 }}>
+-          <Text style={{ fontSize: 16, fontWeight: '600' }}>Post</Text>
+-        </TouchableOpacity>
++        <View style={{ flexDirection: 'row' }}>
++          <TouchableOpacity onPress={handleImportPdf} style={{ paddingHorizontal: 12 }}>
++            <Text style={{ fontSize: 16, fontWeight: '600' }}>Import PDF</Text>
++          </TouchableOpacity>
++          <TouchableOpacity onPress={onPost} style={{ paddingHorizontal: 12 }}>
++            <Text style={{ fontSize: 16, fontWeight: '600' }}>Post</Text>
++          </TouchableOpacity>
++        </View>
+       ),
+     });
+-  }, [navigation, onPost, invoiceNumber, invoiceDateISO, lines]);
++  }, [navigation, onPost, handleImportPdf, invoiceNumber, invoiceDateISO, lines]);
+ 
+   useEffect(() => {
+     let mounted = true;
+@@ -43,10 +97,8 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
+         if (!venueId) throw new Error('No venue');
+         const { order, lines: orderLines } = await fetchOrderWithLines(venueId, orderId);
+         if (!mounted) return;
+-
+         setSupplierName(order.supplierName || '');
+-
+-        // Pre-fill invoice lines from order lines (qty/cost are editable)
++        // Prefill editable invoice lines from order
+         const preset: InvoiceLineInput[] = orderLines.map(ol => ({
+           lineId: ol.id,
+           productId: ol.productId,
+@@ -55,11 +107,7 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
+           cost: ol.cost ?? 0,
+         }));
+         setLines(preset);
+-
+-        // Optional: If you store an invoice number hint on order, hydrate it
+-        // (kept conservative; no hard assumptions)
+       } catch (e: any) {
+-        console.error('[Invoices] prefill error', e);
+         Alert.alert('Invoice', e?.message || 'Failed to load order lines.');
+         navigation.goBack();
+       } finally {
+@@ -70,42 +118,11 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
+   }, [venueId, orderId]);
+ 
+   const onChangeLine = (lineId: string, field: 'qty'|'cost', value: string) => {
+-    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: field === 'qty' ? Number(value) : Number(value) } : l));
++    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: Number(value) || 0 } : l));
+   };
+ 
+   const subtotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.qty)||0)*(Number(l.cost)||0), 0), [lines]);
+ 
+-  const onPost = React.useCallback(async () => {
+-    try {
+-      if (!venueId) throw new Error('No venue');
+-      if (!user?.uid) throw new Error('No user');
+-      if (!invoiceNumber.trim()) {
+-        Alert.alert('Invoice', 'Please enter an invoice number.');
+-        return;
+-      }
+-      if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDateISO)) {
+-        Alert.alert('Invoice', 'Please enter a date as YYYY-MM-DD.');
+-        return;
+-      }
+-      if (!lines.length) {
+-        Alert.alert('Invoice', 'There are no lines to post.');
+-        return;
+-      }
+-      const result = await upsertInvoiceFromOrder(venueId, user.uid, {
+-        orderId,
+-        invoiceNumber,
+-        invoiceDateISO,
+-        lines,
+-      });
+-      Alert.alert('Invoice', 'Invoice posted.', [
+-        { text: 'OK', onPress: () => navigation.navigate('OrderDetail' as any, { orderId, status: route.params?.status }) },
+-      ]);
+-    } catch (e: any) {
+-      console.error('[Invoices] post error', e);
+-      Alert.alert('Invoice', e?.message || 'Failed to post invoice.');
+-    }
+-  }, [venueId, user?.uid, orderId, invoiceNumber, invoiceDateISO, lines]);
+-
+   if (loading) {
+     return <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}><Text>Loading…</Text></View>;
+   }
+diff --git a/src/screens/orders/OrderDetailScreen.tsx b/src/screens/orders/OrderDetailScreen.tsx
+index 0763ec3..f8a0a1e 100644
+--- a/src/screens/orders/OrderDetailScreen.tsx
++++ b/src/screens/orders/OrderDetailScreen.tsx
+@@ -1,232 +1,199 @@
+ // @ts-nocheck
+-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
+-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+-import { useVenueId } from '../../context/VenueProvider';
++import React, { useEffect, useMemo, useState } from 'react';
++import { View, Text, StyleSheet, ActivityIndicator, Alert, FlatList, TouchableOpacity, Modal, ScrollView } from 'react-native';
++import { useRoute, useNavigation } from '@react-navigation/native';
+ import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
+ import * as DocumentPicker from 'expo-document-picker';
+-import * as FileSystem from 'expo-file-system';
+-
+-import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
+-import ManualReceiveScreen from './receive/ManualReceiveScreen';
+-import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
+-import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
+-import { finalizeReceiveFromCsv } from '../../services/orders/receive';
++import { useVenueId } from '../../context/VenueProvider';
+ 
+-type Params = { orderId: string };
+-type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
++import { uploadPdfToStorage } from '../../services/uploads/uploadPdfToStorage';
++import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
++import { mapParsedToInvoiceLines } from '../../services/invoices/mapParsedToInvoice';
++import { upsertInvoiceFromOrder, fetchOrderWithLines, type InvoiceLineInput } from '../../services/invoices';
+ 
+-export default function OrderDetailScreen(){
++export default function OrderDetailScreen() {
+   const nav = useNavigation<any>();
+-  const route = useRoute<RouteProp<Record<string, Params>, string>>();
++  const route = useRoute<any>();
+   const venueId = useVenueId();
+-  const orderId = (route.params as any)?.orderId as string;
+-
+-  const [orderMeta, setOrderMeta] = useState<any>(null);
+-  const [lines, setLines] = useState<Line[]>([]);
+-  const [loading, setLoading] = useState(true);
+-
+-  // Receive modals
+-  const [receiveOpen, setReceiveOpen] = useState(false);
+-  const [manualOpen, setManualOpen] = useState(false);
+-
+-  const [csvReview, setCsvReview] = useState<null | {
+-    storagePath: string;
+-    confidence?: number;
+-    warnings?: string[];
+-    lines: Array<{ productId?: string; code?: string; name: string; qty: number; unitPrice?: number }>;
+-    invoice: any;
+-    matchReport?: any;
+-  }>(null);
++  const orderId: string = route.params?.orderId;
++  const receiveMode: 'manual'|'scan'|'upload'|undefined = route.params?.receiveMode;
+ 
+   const db = getFirestore();
+ 
+-  useEffect(()=>{
+-    let alive = true;
+-    (async ()=>{
+-      try{
+-        if (!venueId || !orderId) return;
+-        const oSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+-        const oVal:any = oSnap.exists() ? oSnap.data() : {};
+-        if (!alive) return;
+-        setOrderMeta({ id: oSnap.id, ...oVal });
+-
+-        const linesSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
+-        const linesData:Line[] = [];
+-        linesSnap.forEach((docSnap)=>{
+-          const d:any = docSnap.data()||{};
+-          linesData.push({
+-            id: docSnap.id,
+-            productId: d.productId,
+-            name: d.name,
+-            qty: Number.isFinite(d.qty) ? Number(d.qty) : (d.qty||0),
+-            unitCost: Number.isFinite(d.unitCost) ? Number(d.unitCost) : (d.unitCost||0),
+-          });
+-        });
+-        setLines(linesData);
+-      }catch(e){
+-        console.warn('[OrderDetail] load fail', e);
+-      }finally{
+-        if (alive) setLoading(false);
++  const [loading, setLoading] = useState(true);
++  const [order, setOrder] = useState<any>(null);
++  const [orderLines, setOrderLines] = useState<any[]>([]);
++  const [error, setError] = useState<string|null>(null);
++
++  // Phase-1 Review modal state
++  const [reviewOpen, setReviewOpen] = useState(false);
++  const [reviewInvoiceNo, setReviewInvoiceNo] = useState<string>('');
++  const [reviewInvoiceDateISO, setReviewInvoiceDateISO] = useState<string>('');
++  const [reviewLines, setReviewLines] = useState<InvoiceLineInput[]>([]);
++
++  useEffect(() => {
++    let mounted = true;
++    (async () => {
++      try {
++        if (!venueId || !orderId) throw new Error('Missing venue or order');
++        const { order, lines } = await fetchOrderWithLines(venueId, orderId);
++        if (!mounted) return;
++        setOrder(order);
++        setOrderLines(lines);
++        setError(null);
++      } catch (e: any) {
++        setError(e?.message || 'Load failed');
++      } finally {
++        if (mounted) setLoading(false);
+       }
+     })();
+-    return ()=>{ alive=false; };
+-  },[db,venueId,orderId]);
+-
+-  const pickCsvAndProcess = useCallback(async ()=>{
+-    try{
+-      const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv' });
+-      if (res.canceled || !res.assets?.[0]) return;
+-
+-      const asset = res.assets[0];
+-      const contents = await FileSystem.readAsStringAsync(asset.uri);
+-
+-      const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
+-      const review = await processInvoicesCsv({ venueId, orderId, storagePath });
+-
+-      setCsvReview({ ...review, storagePath });
+-    }catch(e:any){
+-      console.error('[OrderDetail] csv pick/process fail', e);
+-      Alert.alert('Upload failed', String(e?.message || e));
++    return () => { mounted = false; };
++  }, [venueId, orderId]);
++
++  // When launched from Orders modal with receiveMode 'upload', auto-start the PDF import once
++  useEffect(() => {
++    if (receiveMode === 'upload') {
++      (async () => {
++        try {
++          // 1) Pick a PDF
++          const pick = await DocumentPicker.getDocumentAsync({
++            multiple: false,
++            type: 'application/pdf',
++            copyToCacheDirectory: true,
++          });
++          if (pick.canceled || !pick.assets?.[0]) {
++            console.log('[OrderDetail] PDF import cancelled');
++            return;
++          }
++          const file = pick.assets[0];
++
++          // 2) Read as base64 (Expo DocumentPicker returns uri; fetch and convert)
++          const resp = await fetch(file.uri);
++          const blob = await resp.blob();
++          const arrBuf = await blob.arrayBuffer();
++          const bytes = new Uint8Array(arrBuf);
++          let binary = '';
++          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
++          const base64 = typeof btoa !== 'undefined'
++            ? btoa(binary)
++            : globalThis.Buffer?.from(binary, 'binary')?.toString('base64');
++
++          if (!base64) throw new Error('Base64 encode failed');
++
++          // 3) Upload to Storage (phase-1 path)
++          const { storagePath } = await uploadPdfToStorage(venueId, orderId, base64);
++
++          // 4) Call parser
++          const parsed = await processInvoicesPdf({ venueId, orderId, storagePath });
++
++          // 5) Pre-fill review buffer
++          const invNo = (parsed.invoice?.poNumber ?? '').toString();
++          const invDate = (parsed.invoice?.poDate ?? new Date().toISOString().slice(0,10)).toString();
++          const mappedLines = mapParsedToInvoiceLines(parsed.lines || []);
++
++          if (!mappedLines.length) {
++            Alert.alert('PDF Imported', 'No lines matched. (Phase-1 skips unmatched lines.)');
++          }
++
++          setReviewInvoiceNo(invNo);
++          setReviewInvoiceDateISO(invDate);
++          setReviewLines(mappedLines);
++          setReviewOpen(true);
++        } catch (e: any) {
++          console.log('[OrderDetail] PDF import error', e?.message || e);
++          Alert.alert('Import failed', e?.message || 'Could not import PDF.');
++        }
++      })();
+     }
+-  },[venueId,orderId]);
++  }, [receiveMode, venueId, orderId]);
++
++  const subtotal = useMemo(
++    () => reviewLines.reduce((s, l) => s + (Number(l.qty)||0)*(Number(l.cost)||0), 0),
++    [reviewLines]
++  );
+ 
+-  const confirmCsvReceive = useCallback(async ()=>{
+-    try{
+-      if (!venueId || !orderId || !csvReview) return;
+-      await finalizeReceiveFromCsv({
+-        venueId,
++  async function postReviewedInvoice() {
++    try {
++      if (!venueId) throw new Error('No venue');
++      if (!orderId) throw new Error('No order');
++      if (!reviewLines.length) {
++        Alert.alert('Invoice', 'There are no matched lines to post.');
++        return;
++      }
++      await upsertInvoiceFromOrder(venueId, 'system', {
+         orderId,
+-        parsed: {
+-          invoice: csvReview.invoice,
+-          lines: csvReview.lines,
+-          matchReport: csvReview.matchReport,
+-          confidence: csvReview.confidence,
+-          warnings: csvReview.warnings
+-        }
++        invoiceNumber: reviewInvoiceNo || 'INV-UNKNOWN',
++        invoiceDateISO: reviewInvoiceDateISO || new Date().toISOString().slice(0,10),
++        lines: reviewLines,
+       });
+-      Alert.alert('Received', 'Invoice posted and order marked received.');
+-      setReceiveOpen(false);
+-      setCsvReview(null);
+-      nav.goBack();
+-    }catch(e:any){
+-      Alert.alert('Receive failed', String(e?.message || e));
++      setReviewOpen(false);
++      Alert.alert('Invoice', 'Invoice posted. (Order not auto-received in Phase-1.)');
++    } catch (e: any) {
++      Alert.alert('Invoice', e?.message || 'Failed to post invoice.');
+     }
+-  },[venueId,orderId,csvReview,nav]);
+-
+-  const totalOrdered = useMemo(()=>{
+-    return lines.reduce((sum,line)=>{
+-      const cost = line.unitCost||0;
+-      const qty = line.qty||0;
+-      return sum + (cost * qty);
+-    },0);
+-  },[lines]);
+-
+-  const warnings = useMemo(() => {
+-    if (!csvReview) return [];
+-    return (csvReview.warnings || csvReview.matchReport?.warnings || []);
+-  }, [csvReview]);
++  }
+ 
+-  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
++  if (loading) return (<View style={S.center}><ActivityIndicator /><Text>Loading…</Text></View>);
++  if (error) return (<View style={S.center}><Text style={{color:'#B00020'}}>{error}</Text></View>);
+ 
+   return (
+     <View style={S.wrap}>
+-      <View style={S.top}>
+-        <View>
+-          <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
+-          <Text style={S.meta}>
+-            {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
+-          </Text>
+-        </View>
+-        {String(orderMeta?.status).toLowerCase()==='submitted' ? (
+-          <TouchableOpacity style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={()=>setReceiveOpen(true)}>
+-            <Text style={S.receiveBtnText}>Receive</Text>
+-          </TouchableOpacity>
+-        ) : null}
+-      </View>
+-
+-      {csvReview ? (
+-        <ScrollView style={{flex:1}}>
+-          <View style={{padding:16}}>
+-            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
+-            {warnings.length > 0 ? (
+-              <View style={{marginBottom:8}}>
+-                {warnings.map((w,idx)=>(<Text key={idx} style={{color:'#92400E'}}>• {w}</Text>))}
+-              </View>
+-            ) : null}
+-            <Text style={{color:'#6B7280',marginBottom:12}}>
+-              Confidence: {csvReview.confidence != null ? Math.round(csvReview.confidence*100) : '—'}%
+-            </Text>
+-            {(csvReview.lines||[]).slice(0,40).map((pl,idx)=>(
+-              <View key={idx} style={{paddingVertical:6,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+-                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+-                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
++      <Text style={S.title}>Order</Text>
++      <Text style={S.sub}>ID: {orderId}</Text>
++      <Text style={S.sub}>Supplier: {order?.supplierName || order?.supplierId || '—'}</Text>
++
++      <FlatList
++        data={orderLines}
++        keyExtractor={(l:any)=>l.id}
++        contentContainerStyle={{paddingVertical:8}}
++        ItemSeparatorComponent={()=> <View style={{height:8}}/>}
++        renderItem={({item})=>(
++          <View style={S.line}>
++            <View style={{flex:1}}>
++              <Text style={S.lineName}>{item.productName || item.productId}</Text>
++              <Text style={S.mute}>qty {item.qty ?? 0} @ {item.cost != null ? Number(item.cost).toFixed(2) : '—'}</Text>
++            </View>
++          </View>
++        )}
++      />
++
++      {/* Phase-1 Review & Post modal */}
++      <Modal visible={reviewOpen} transparent animationType="slide" onRequestClose={()=>setReviewOpen(false)}>
++        <View style={S.modalWrap}>
++          <View style={S.sheet}>
++            <Text style={S.sheetTitle}>Review invoice (PDF)</Text>
++            <Text style={S.mute}>Inv #: {reviewInvoiceNo || '—'}</Text>
++            <Text style={S.mute}>Date: {reviewInvoiceDateISO || '—'}</Text>
++
++            <View style={{height:8}}/>
++            <View style={S.card}>
++              <Text style={{fontWeight:'800', marginBottom:6}}>Matched lines ({reviewLines.length})</Text>
++              <ScrollView style={{maxHeight:240}}>
++                {reviewLines.map((l, i)=>(
++                  <View key={i} style={{flexDirection:'row', justifyContent:'space-between', marginVertical:4}}>
++                    <Text style={{flex:1, marginRight:8}} numberOfLines={1}>
++                      {l.productName || l.productId}
++                    </Text>
++                    <Text style={{width:64, textAlign:'right'}}>{Number(l.qty||0)}</Text>
++                    <Text style={{width:96, textAlign:'right'}}>{Number(l.cost||0).toFixed(2)}</Text>
++                  </View>
++                ))}
++              </ScrollView>
++              <View style={{flexDirection:'row', justifyContent:'space-between', marginTop:8}}>
++                <Text style={{fontWeight:'900'}}>Subtotal</Text>
++                <Text style={{fontWeight:'900'}}>{subtotal.toFixed(2)}</Text>
+               </View>
+-            ))}
+-            {(csvReview.lines||[]).length>40 ? <Text style={{marginTop:8,color:'#6B7280'}}>... and {csvReview.lines.length-40} more lines</Text> : null}
++            </View>
+ 
+-            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+-              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#F3F4F6',borderRadius:8}} onPress={()=>setCsvReview(null)}>
+-                <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
++            <View style={{flexDirection:'row', gap:10, marginTop:8}}>
++              <TouchableOpacity style={[S.btn, S.btnGhost]} onPress={()=>setReviewOpen(false)}>
++                <Text style={S.btnGhostText}>Cancel</Text>
+               </TouchableOpacity>
+-              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={confirmCsvReceive}>
+-                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm Receive</Text>
++              <TouchableOpacity style={[S.btn, S.btnPrimary]} onPress={postReviewedInvoice}>
++                <Text style={S.btnPrimaryText}>Post Invoice</Text>
+               </TouchableOpacity>
+             </View>
+           </View>
+-        </ScrollView>
+-      ) : (
+-        lines.length>0 && (
+-          <FlatList
+-            data={lines}
+-            keyExtractor={(x)=>x.id}
+-            renderItem={({item})=>(
+-              <View style={{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+-                <Text style={{fontWeight:'700'}}>{item.name||item.productId||'Line'}</Text>
+-                <Text style={{color:'#6B7280',marginTop:4}}>
+-                  Qty: {item.qty||0} • Unit: ${(item.unitCost||0).toFixed(2)} • Line: ${((item.unitCost||0)*(item.qty||0)).toFixed(2)}
+-                </Text>
+-              </View>
+-            )}
+-            ListFooterComponent={
+-              <View style={{padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
+-                <Text style={{fontWeight:'800'}}>Totals</Text>
+-                <Text style={{color:'#6B7280',marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
+-              </View>
+-            }
+-          />
+-        )
+-      )}
+-
+-      {/* Receive options sheet */}
+-      <ReceiveOptionsModal
+-        visible={receiveOpen}
+-        onClose={()=>setReceiveOpen(false)}
+-        onCsvSelected={pickCsvAndProcess}
+-        onManualSelected={()=>setManualOpen(true)}
+-        orderId={orderId}
+-        orderLines={lines}
+-      />
+-
+-      {/* Manual receive modal (inline; no nav changes) */}
+-      <Modal visible={manualOpen} transparent animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+-        <View style={{flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end'}}>
+-          <View style={{maxHeight:'85%', backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16}}>
+-            <ManualReceiveScreen
+-              venueId={venueId}
+-              orderId={orderId}
+-              orderLines={lines.map(l => ({ id: l.id, productId: l.productId, name: l.name, orderedQty: l.qty }))}
+-              onDone={()=>{
+-                setManualOpen(false);
+-                Alert.alert('Received', 'Manual receive saved.');
+-                nav.goBack();
+-              }}
+-              embed
+-            />
+-            <TouchableOpacity onPress={()=>setManualOpen(false)} style={{alignSelf:'center', marginTop:8, padding:8}}>
+-              <Text style={{fontWeight:'700'}}>Close</Text>
+-            </TouchableOpacity>
+-          </View>
+         </View>
+       </Modal>
+     </View>
+@@ -234,11 +201,20 @@ export default function OrderDetailScreen(){
+ }
+ 
+ const S = StyleSheet.create({
+-  wrap:{flex:1,backgroundColor:'#fff'},
+-  top:{padding:16,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
+-  title:{fontSize:18,fontWeight:'800'},
+-  meta:{color:'#6B7280',marginTop:2},
+-  receiveBtn:{backgroundColor:'#111827',paddingVertical:10,paddingHorizontal:16,borderRadius:8},
+-  receiveBtnText:{color:'#fff',fontWeight:'800'},
+-  loading:{flex:1,justifyContent:'center',alignItems:'center'},
++  wrap:{flex:1,padding:16},
++  center:{flex:1,alignItems:'center',justifyContent:'center',gap:8},
++  title:{fontSize:22,fontWeight:'800'},
++  sub:{opacity:0.7},
++  line:{flexDirection:'row',alignItems:'center',gap:10,backgroundColor:'#F3F4F6',padding:10,borderRadius:12},
++  mute:{opacity:0.6},
++  // modal sheet
++  modalWrap:{flex:1,backgroundColor:'rgba(0,0,0,0.35)',justifyContent:'flex-end'},
++  sheet:{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16},
++  sheetTitle:{fontSize:18,fontWeight:'800',marginBottom:6},
++  card:{backgroundColor:'#F9FAFB',padding:12,borderRadius:12},
++  btn:{flex:1,alignItems:'center',paddingVertical:12,borderRadius:10},
++  btnPrimary:{backgroundColor:'#111827'},
++  btnPrimaryText:{color:'#fff',fontWeight:'800'},
++  btnGhost:{borderWidth:1,borderColor:'#D1D5DB'},
++  btnGhostText:{fontWeight:'800',color:'#111827'},
+ });

@@ -2,11 +2,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
 import { fetchOrderWithLines, upsertInvoiceFromOrder, InvoiceLineInput } from '../../services/invoices';
-import { useVenue } from '../../context/VenueProvider'; // Assumes this exists and provides { venueId, user }
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { useVenue } from '../../context/VenueProvider'; // provides { venueId, user }
+import { importInvoiceFromPdf } from '../../services/invoices/importFromPdf';
 
 type RootStackParamList = {
   InvoiceEdit: { orderId: string; status?: string; existingInvoiceId?: string };
@@ -16,7 +14,7 @@ type RootStackParamList = {
 type Props = NativeStackScreenProps<RootStackParamList, 'InvoiceEdit'>;
 
 export default function InvoiceEditScreen({ route, navigation }: Props) {
-  const { venueId, user } = useVenue() as any;
+  const { venueId, user } = (useVenue() as any) || {};
   const { orderId } = route.params;
 
   const [loading, setLoading] = useState(true);
@@ -25,55 +23,26 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
   const [invoiceDateISO, setInvoiceDateISO] = useState<string>(() => new Date().toISOString().slice(0,10)); // YYYY-MM-DD
   const [lines, setLines] = useState<InvoiceLineInput[]>([]);
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      title: 'Invoice',
-      headerRight: () => (
-        <TouchableOpacity onPress={onPost} style={{ paddingHorizontal: 12 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600' }}>Post</Text>
-        </TouchableOpacity>
-      ),
-    });
-  }, [navigation, onPost, invoiceNumber, invoiceDateISO, lines]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        if (!venueId) throw new Error('No venue');
-        const { order, lines: orderLines } = await fetchOrderWithLines(venueId, orderId);
-        if (!mounted) return;
-
-        setSupplierName(order.supplierName || '');
-
-        // Pre-fill invoice lines from order lines (qty/cost are editable)
-        const preset: InvoiceLineInput[] = orderLines.map(ol => ({
-          lineId: ol.id,
-          productId: ol.productId,
-          productName: ol.productName,
-          qty: ol.qty ?? 0,
-          cost: ol.cost ?? 0,
-        }));
-        setLines(preset);
-
-        // Optional: If you store an invoice number hint on order, hydrate it
-        // (kept conservative; no hard assumptions)
-      } catch (e: any) {
-        console.error('[Invoices] prefill error', e);
-        Alert.alert('Invoice', e?.message || 'Failed to load order lines.');
-        navigation.goBack();
-      } finally {
-        if (mounted) setLoading(false);
+  const handleImportPdf = React.useCallback(async () => {
+    try {
+      if (!venueId) throw new Error('No venue');
+      setLoading(true);
+      const result = await importInvoiceFromPdf(venueId, orderId);
+      // Hydrate fields only if present (don’t clobber user edits)
+      if (result.invoiceNumber) setInvoiceNumber(result.invoiceNumber);
+      if (result.invoiceDateISO) setInvoiceDateISO(result.invoiceDateISO);
+      if (Array.isArray(result.lines) && result.lines.length) {
+        setLines(result.lines);
+      } else {
+        Alert.alert('PDF Import', 'No lines could be matched to this order. Unmatched lines are skipped in Phase-1.');
       }
-    })();
-    return () => { mounted = false; };
+      Alert.alert('PDF Import', 'Invoice data imported. Please review and Post.');
+    } catch (e:any) {
+      Alert.alert('PDF Import', e?.message || 'Import failed.');
+    } finally {
+      setLoading(false);
+    }
   }, [venueId, orderId]);
-
-  const onChangeLine = (lineId: string, field: 'qty'|'cost', value: string) => {
-    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: field === 'qty' ? Number(value) : Number(value) } : l));
-  };
-
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.qty)||0)*(Number(l.cost)||0), 0), [lines]);
 
   const onPost = React.useCallback(async () => {
     try {
@@ -91,7 +60,7 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
         Alert.alert('Invoice', 'There are no lines to post.');
         return;
       }
-      const result = await upsertInvoiceFromOrder(venueId, user.uid, {
+      await upsertInvoiceFromOrder(venueId, user.uid, {
         orderId,
         invoiceNumber,
         invoiceDateISO,
@@ -101,10 +70,58 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
         { text: 'OK', onPress: () => navigation.navigate('OrderDetail' as any, { orderId, status: route.params?.status }) },
       ]);
     } catch (e: any) {
-      console.error('[Invoices] post error', e);
       Alert.alert('Invoice', e?.message || 'Failed to post invoice.');
     }
   }, [venueId, user?.uid, orderId, invoiceNumber, invoiceDateISO, lines]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: 'Invoice',
+      headerRight: () => (
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity onPress={handleImportPdf} style={{ paddingHorizontal: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600' }}>Import PDF</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onPost} style={{ paddingHorizontal: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600' }}>Post</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation, onPost, handleImportPdf, invoiceNumber, invoiceDateISO, lines]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        if (!venueId) throw new Error('No venue');
+        const { order, lines: orderLines } = await fetchOrderWithLines(venueId, orderId);
+        if (!mounted) return;
+        setSupplierName(order.supplierName || '');
+        // Prefill editable invoice lines from order
+        const preset: InvoiceLineInput[] = orderLines.map(ol => ({
+          lineId: ol.id,
+          productId: ol.productId,
+          productName: ol.productName,
+          qty: ol.qty ?? 0,
+          cost: ol.cost ?? 0,
+        }));
+        setLines(preset);
+      } catch (e: any) {
+        Alert.alert('Invoice', e?.message || 'Failed to load order lines.');
+        navigation.goBack();
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [venueId, orderId]);
+
+  const onChangeLine = (lineId: string, field: 'qty'|'cost', value: string) => {
+    setLines(curr => curr.map(l => l.lineId === lineId ? { ...l, [field]: Number(value) || 0 } : l));
+  };
+
+  const subtotal = useMemo(() => lines.reduce((s, l) => s + (Number(l.qty)||0)*(Number(l.cost)||0), 0), [lines]);
 
   if (loading) {
     return <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}><Text>Loading…</Text></View>;
