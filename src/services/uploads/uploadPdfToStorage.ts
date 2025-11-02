@@ -1,9 +1,13 @@
 /**
- * Phase-1 PDF upload helper.
+ * Phase-1 PDF upload helper (Blob-free).
  * Uploads a picked PDF into:
  *   venues/{venueId}/invoices/raw/{orderId}/{filename}
+ *
+ * Uses Expo FileSystem to read base64 and Firebase Storage uploadString('base64')
+ * to avoid Blob/ArrayBuffer pitfalls on React Native.
  */
-import { getStorage, ref, uploadBytes } from 'firebase/storage';
+import * as FileSystem from 'expo-file-system';
+import { getStorage, ref, uploadString } from 'firebase/storage';
 
 function safeName(name: string) {
   return String(name || 'invoice.pdf')
@@ -21,11 +25,14 @@ export async function uploadPdfToStorage(opts: {
   if (!venueId || !orderId) {
     throw new Error('uploadPdfToStorage: missing venueId or orderId');
   }
+  if (!fileUri) {
+    throw new Error('uploadPdfToStorage: missing fileUri');
+  }
 
-  // Fetch URI -> Blob (Expo-safe)
-  const resp = await fetch(fileUri);
-  if (!resp.ok) throw new Error(`Failed to read file: ${resp.status}`);
-  const blob = await resp.blob();
+  // Read the PDF as base64 (Expo-safe, no Blob)
+  const base64 = await FileSystem.readAsStringAsync(fileUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
 
   const storage = getStorage();
   const finalName =
@@ -33,6 +40,6 @@ export async function uploadPdfToStorage(opts: {
   const fullPath = `venues/${venueId}/invoices/raw/${orderId}/${finalName}`;
   const storageRef = ref(storage, fullPath);
 
-  await uploadBytes(storageRef, blob, { contentType: 'application/pdf' });
+  await uploadString(storageRef, base64, 'base64', { contentType: 'application/pdf' });
   return { fullPath, fileName: finalName };
 }
