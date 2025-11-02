@@ -9,6 +9,7 @@ export default function ReceiveOptionsModal({
   orderLines = [],
   onCsvSelected,
   onManualSelected,
+  onPdfSelected, // accepts callback from parent
 }: {
   visible: boolean;
   onClose: () => void;
@@ -16,6 +17,7 @@ export default function ReceiveOptionsModal({
   orderLines: any[];
   onCsvSelected?: () => void;
   onManualSelected?: () => void;
+  onPdfSelected?: () => void;
 }) {
   const Item = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <TouchableOpacity style={styles.btn} onPress={onPress}>
@@ -32,7 +34,7 @@ export default function ReceiveOptionsModal({
 
           <Item label="Upload invoice CSV" onPress={() => { onClose(); onCsvSelected?.(); }} />
           <Item label="Confirm manually"  onPress={() => { onClose(); onManualSelected?.(); }} />
-          <Item label="Upload PDF (stub)" onPress={() => { onClose(); console.log('[Receive] PDF stub'); }} />
+          <Item label="Upload PDF"        onPress={() => { onClose(); onPdfSelected?.(); }} />
           <Item label="Scan / OCR (stub)" onPress={() => { onClose(); console.log('[Receive] OCR stub'); }} />
 
           <TouchableOpacity onPress={onClose} style={styles.close}>

@@ -12,6 +12,7 @@ import ManualReceiveScreen from './receive/ManualReceiveScreen';
 import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
+import { uploadPdfToStorage } from '../../services/uploads/uploadPdfToStorage'; // <-- ADD
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -87,6 +88,33 @@ export default function OrderDetailScreen(){
       setCsvReview({ ...review, storagePath });
     }catch(e:any){
       console.error('[OrderDetail] csv pick/process fail', e);
+      Alert.alert('Upload failed', String(e?.message || e));
+    }
+  },[venueId,orderId]);
+
+  // ---- NEW: PDF picker + upload (Phase-1: upload only, no parsing)
+  const pickPdfAndUpload = useCallback(async ()=>{
+    try{
+      const res = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+
+      const asset = res.assets[0];
+      await uploadPdfToStorage({
+        venueId,
+        orderId,
+        fileUri: asset.uri,
+        fileName: asset.name || 'invoice.pdf',
+      });
+
+      if (__DEV__) console.log('[OrderDetail] PDF uploaded to Storage');
+      Alert.alert('Uploaded', 'PDF uploaded to Storage.');
+      setReceiveOpen(false); // keep state stable by closing the modal after success
+    }catch(e:any){
+      if (__DEV__) console.log('[OrderDetail] pdf upload fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
   },[venueId,orderId]);
@@ -206,6 +234,7 @@ export default function OrderDetailScreen(){
         onManualSelected={()=>setManualOpen(true)}
         orderId={orderId}
         orderLines={lines}
+        onPdfSelected={pickPdfAndUpload} // <-- ADD
       />
 
       {/* Manual receive modal (inline; no nav changes) */}
