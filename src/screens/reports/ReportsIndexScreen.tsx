@@ -17,14 +17,6 @@ import Toast from 'react-native-toast-message';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[ReportsIndex]', ...a); };
 
-async function onImportProductsPdf(){
-  const res = await importProductsPdf();
-  if (res) {
-    Alert.alert('Products PDF Uploaded', `Path: ${res.fullPath}`);
-  }
-}
-
-
 export default function ReportsIndexScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
@@ -218,11 +210,3 @@ export default function ReportsIndexScreen() {
     </LocalThemeGate>
   );
 }
-  <TouchableOpacity onPress={onImportProductsPdf} style={{padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginHorizontal:16, marginTop:8}}>
-    <Text style={{fontWeight:'700'}}>Import Products PDF</Text>
-    <Text style={{opacity:0.8, marginTop:2}}>Upload a supplier PDF using the same storage flow as Products CSV.</Text>
-  </TouchableOpacity>
-
-</View>
-
-export default
