@@ -22,7 +22,7 @@ const confirmManualReceive = useCallback(async ()=>{
     const oVal = oSnap.exists() ? oSnap.data() : {};
     setOrderMeta({ id: oSnap.id, ...oVal });
     
-  }catch(e){
+  }catch(e:any){
     console.error('[OrderDetail] manual receive failed', e);
     Alert.alert('Receive failed', String(e?.message || e));
   }

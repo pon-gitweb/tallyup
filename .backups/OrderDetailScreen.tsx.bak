@@ -10,9 +10,9 @@ import * as FileSystem from 'expo-file-system';
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
 import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
-
+import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
-
+import { uploadPdfToStorage } from '../../services/uploads/uploadPdfToStorage';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 type Params = { orderId: string };
@@ -105,7 +105,7 @@ export default function OrderDetailScreen(){
       const contents = await FileSystem.readAsStringAsync(asset.uri);
 
       const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
-      const review = await uploadInvoiceCsv(venueId, orderId);
+      const review = await processInvoicesCsv({ venueId, orderId, storagePath });
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
@@ -139,7 +139,12 @@ export default function OrderDetailScreen(){
       if (res.canceled || !res.assets?.[0]) return;
 
       const asset = res.assets[0];
-      const { fullPath } = await uploadFileAsBase64({ venueId, orderId, fileUri: (a && (a.uri || a.fileUri)) || '', fileName: (a && (a.name || a.fileName)) || 'invoice_upload' });
+      const { fullPath } = await uploadPdfToStorage({
+        venueId,
+        orderId,
+        fileUri: asset.uri,
+        fileName: asset.name || 'invoice.pdf',
+      });
 
       const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: fullPath });
 
@@ -183,7 +188,7 @@ export default function OrderDetailScreen(){
       const isCsv = mime.includes('csv') || name.endsWith('.csv') || name.endsWith('.txt');
 
       if (isPdf) {
-        const { fullPath } = await uploadFileAsBase64({ venueId, orderId, fileUri: (a && (a.uri || a.fileUri)) || '', fileName: (a && (a.name || a.fileName)) || 'invoice_upload' });
+        const { fullPath } = await uploadPdfToStorage({ venueId, orderId, fileUri: a.uri, fileName: a.name||'invoice.pdf' });
         const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: fullPath });
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
@@ -200,7 +205,7 @@ export default function OrderDetailScreen(){
       if (isCsv) {
         const contents = await FileSystem.readAsStringAsync(a.uri);
         const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
-        const review = await uploadInvoiceCsv(venueId, orderId);
+        const review = await processInvoicesCsv({ venueId, orderId, storagePath });
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
         if (orderPo && parsedPo && orderPo !== parsedPo) {

@@ -1,45 +1,29 @@
-// @ts-nocheck
 import { getApp } from 'firebase/app';
-import { getStorage, ref, uploadString } from 'firebase/storage';
+import { getStorage, ref, uploadString, getDownloadURL, UploadMetadata } from 'firebase/storage';
+
+type Opts = {
+  destPath: string;         // e.g. "uploads/invoices/abc.csv"
+  dataUrl: string;          // data URL or base64; use "data_url" format
+  contentType?: string;     // e.g. "text/csv"
+  cacheControl?: string;    // optional cache control
+};
 
 /**
- * Build a dated upload path under /uploads/{venueId}/YYYY-MM-DD/{filename}
+ * Upload a base64/data-URL string to Firebase Storage (Expo-safe).
+ * Returns { fullPath, downloadURL }.
  */
-export function buildDatedUploadPath(venueId:string, filename:string): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  const safe = String(filename||'file.txt').replace(/[^\w.\-]/g,'_');
-  return `uploads/${venueId}/${yyyy}-${mm}-${dd}/${safe}`;
-}
-
-/**
- * Upload UTF-8 text as a percent-encoded data URL to avoid Blob/ArrayBuffer.
- * This path is Expo Go safe (no binary, no Blob).
- *
- * NOTE:
- *  - Do NOT pass metadata; keep it purely 'data_url' so the SDK never touches Blob.
- *  - contentType should look like 'text/csv' or 'text/plain'.
- */
-export async function uploadText(
-  venueId:string,
-  filename:string,
-  content:string,
-  contentType:string='text/plain'
-): Promise<{ fullPath:string; downloadURL?:string }> {
-  if (!venueId) throw new Error('venueId required');
+export async function uploadFileAsBase64(opts: Opts): Promise<{ fullPath: string; downloadURL: string }> {
+  const { destPath, dataUrl, contentType, cacheControl } = opts;
+  if (!destPath || !dataUrl) throw new Error('uploadFileAsBase64: missing destPath/dataUrl');
 
   const storage = getStorage(getApp());
-  const path = buildDatedUploadPath(venueId, filename);
-  const r = ref(storage, path);
+  const r = ref(storage, destPath);
 
-  // Percent-encode (no base64 needed) to entirely avoid ArrayBuffer/Blob in the SDK
-  const safeType = String(contentType || 'text/plain');
-  const dataUrl = `data:${safeType};charset=utf-8,${encodeURIComponent(String(content ?? ''))}`;
+  const metadata: UploadMetadata = {};
+  if (contentType) metadata.contentType = contentType;
+  if (cacheControl) metadata.cacheControl = cacheControl;
 
-  // IMPORTANT: format = 'data_url' and no metadata argument
-  await uploadString(r, dataUrl, 'data_url');
-
-  return { fullPath: path };
+  await uploadString(r, dataUrl, 'data_url', metadata);
+  const downloadURL = await getDownloadURL(r);
+  return { fullPath: r.fullPath, downloadURL };
 }

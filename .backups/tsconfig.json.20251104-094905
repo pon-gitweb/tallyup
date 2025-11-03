@@ -11,9 +11,6 @@
   "exclude": [
     "_archive/**",
     ".backups/**",
-    "**/*.backup.ts",
-    "node_modules",
-    "backups/**",
-    ".backups/**"
+    "**/*.backup.ts"
   ]
 }

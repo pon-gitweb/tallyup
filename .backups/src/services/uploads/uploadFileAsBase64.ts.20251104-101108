@@ -1,0 +1,34 @@
+// Expo-safe: read file as base64 and upload with Firebase Storage using 'base64' format.
+// No Blob, no ArrayBuffer, no data_url.
+import * as FileSystem from 'expo-file-system';
+import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
+
+type Opts = {
+  venueId: string;
+  orderId: string;
+  fileUri: string;      // e.g. file:///...
+  fileName: string;     // e.g. invoice.pdf or invoice.csv
+  contentType: string;  // 'application/pdf' | 'text/csv'
+};
+
+export async function uploadFileAsBase64(opts: Opts): Promise<{ fullPath: string; downloadURL: string; }> {
+  const { venueId, orderId, fileUri, fileName, contentType } = opts;
+  if (!venueId || !orderId) throw new Error('uploadFileAsBase64: missing venueId or orderId');
+  if (!fileUri) throw new Error('uploadFileAsBase64: missing fileUri');
+
+  console.log('[uploadFileAsBase64] reading file', fileUri);
+
+  // Read file contents as base64 string
+  const base64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+
+  // Upload with 'base64' format (prevents any Blob/ArrayBuffer creation in RN)
+  const storage = getStorage();
+  const fullPath = `venues/${venueId}/invoices/raw/${orderId}/${fileName}`;
+  console.log('[uploadFileAsBase64] uploading to', fullPath);
+
+  const r = ref(storage, fullPath);
+  await uploadString(r, base64, 'base64', { contentType });
+
+  const url = await getDownloadURL(r);
+  return { fullPath, downloadURL: url };
+}

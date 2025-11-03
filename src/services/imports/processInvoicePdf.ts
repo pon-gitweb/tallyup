@@ -1,14 +1,13 @@
-// Identical style to products: POST to Express with storage fullPath
-type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string };
+type ProcessInvoicePdfArgs = { venueId: string; orderId: string; storagePath: string };
 type ParsedInvoicePayload = any;
 
 const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
   ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
   : '';
 
-export async function processInvoicesCsv(args: ProcessInvoicesCsvArgs): Promise<ParsedInvoicePayload> {
+export async function processInvoicePdf(args: ProcessInvoicePdfArgs): Promise<ParsedInvoicePayload> {
   if (!BASE) throw new Error('Missing EXPO_PUBLIC_AI_URL');
-  const res = await fetch(`${BASE}/process-invoices-csv`, {
+  const res = await fetch(`${BASE}/process-invoice-pdf`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(args),

@@ -1,0 +1,13 @@
+import { uploadFileAsBase64 } from './uploadFileAsBase64';
+
+export async function uploadPdfToStorage(opts: {
+  venueId: string;
+  orderId: string;
+  fileUri: string;
+  fileName: string;
+}) {
+  return uploadFileAsBase64({
+    ...opts,
+    contentType: 'application/pdf',
+  });
+}

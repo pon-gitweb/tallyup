@@ -1,0 +1,23 @@
+import { uploadFileAsBase64 } from './uploadFileAsBase64';
+
+type Args = {
+  venueId: string;
+  orderId: string;
+  uri: string;        // local file URI from picker
+  fileName?: string;  // optional (defaults to 'invoice.pdf')
+};
+
+/**
+ * Upload a PDF to Storage using the proven base64 pipeline.
+ * Delegates to uploadFileAsBase64 (which handles path + contentType inference).
+ */
+export async function uploadPdfToStorage({ venueId, orderId, uri, fileName }: Args) {
+  return uploadFileAsBase64({
+    venueId,
+    orderId,
+    uri,
+    fileName: fileName ?? 'invoice.pdf',
+  });
+}
+
+export default uploadPdfToStorage;

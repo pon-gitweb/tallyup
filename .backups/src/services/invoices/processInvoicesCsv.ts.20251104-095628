@@ -1,0 +1,28 @@
+type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string; };
+type ParsedInvoicePayload = any;
+
+/**
+ * EXPO_PUBLIC_AI_URL must be like:
+ *   https://us-central1-tallyup-f1463.cloudfunctions.net/api
+ * (no trailing slash)
+ */
+const BASE =
+  (typeof process !== 'undefined' &&
+    (process as any).env &&
+    (process as any).env.EXPO_PUBLIC_AI_URL
+      ? String((process as any).env.EXPO_PUBLIC_AI_URL)
+      : '').replace(/\/+$/, '');
+
+export async function processInvoicesCsv(args: ProcessInvoicesCsvArgs): Promise<ParsedInvoicePayload> {
+  const url = `${BASE}/process-invoices-csv`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`process-invoices-csv failed ${res.status} ${txt}`);
+  }
+  return res.json();
+}

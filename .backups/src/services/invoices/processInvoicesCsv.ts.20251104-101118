@@ -1,0 +1,21 @@
+type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string; };
+type ParsedInvoicePayload = any;
+
+const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
+  ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
+  : '';
+
+export async function processInvoicesCsv(args: ProcessInvoicesCsvArgs): Promise<ParsedInvoicePayload> {
+  if (!BASE) throw new Error('processInvoicesCsv: BASE not set (EXPO_PUBLIC_AI_URL)');
+  const url = `${BASE}/process-invoices-csv`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`process-invoices-csv failed ${res.status} ${txt}`);
+  }
+  return res.json();
+}

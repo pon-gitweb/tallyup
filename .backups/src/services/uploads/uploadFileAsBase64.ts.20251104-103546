@@ -1,0 +1,53 @@
+import * as FileSystem from 'expo-file-system';
+import { uploadFileAsBase64 as coreUpload } from '../imports/storageTextUpload';
+
+/**
+ * Compatibility wrapper used by screens:
+ *   uploadFileAsBase64({ venueId, orderId, uri, fileName? })
+ * Returns: { fullPath, downloadURL }
+ *
+ * Internally, we reuse the proven base64 uploader in src/services/imports/storageTextUpload.ts
+ */
+type Opts = {
+  venueId: string;
+  orderId: string;
+  uri: string;           // local file URI from DocumentPicker
+  fileName?: string;     // optional filename hint (to infer contentType)
+};
+
+function guessContentType(name?: string): string {
+  const n = (name || '').toLowerCase();
+  if (n.endsWith('.csv')) return 'text/csv';
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.txt')) return 'text/plain';
+  return 'application/octet-stream';
+}
+
+function sanitizeName(name?: string): string {
+  if (!name) return 'upload';
+  return name.replace(/[^a-z0-9._-]+/gi, '_').slice(0, 64);
+}
+
+export async function uploadFileAsBase64(opts: Opts): Promise<{ fullPath: string; downloadURL: string; }> {
+  const { venueId, orderId, uri, fileName } = opts || ({} as any);
+  if (!venueId || !orderId) throw new Error('uploadFileAsBase64: missing venueId or orderId');
+  if (!uri) throw new Error('uploadFileAsBase64: missing fileUri');
+
+  const ts = Date.now();
+  const safe = sanitizeName(fileName);
+  const destPath = `uploads/venues/${venueId}/orders/${orderId}/invoices/${ts}-${safe}`;
+  const contentType = guessContentType(fileName);
+
+  // Read file → data URL (base64), then hand off to the core uploader
+  const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  const dataUrl = `data:${contentType};base64,${b64}`;
+
+  return coreUpload({
+    destPath,
+    dataUrl,
+    contentType,
+    cacheControl: 'private, max-age=0, no-transform',
+  });
+}
+
+export default uploadFileAsBase64;

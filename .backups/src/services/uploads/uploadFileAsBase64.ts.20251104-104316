@@ -1,0 +1,73 @@
+// Compatibility wrapper used by OrderDetailScreen, but internally reuses
+// the exact same base64→uploadString('data_url') pipeline as products.
+import * as FileSystem from 'expo-file-system';
+import { uploadFileAsBase64 as uploadDataUrlCompat } from '../imports/storageTextUpload';
+
+type Opts = {
+  // Preferred inputs from existing callsites:
+  venueId?: string;
+  orderId?: string;
+  fileName?: string;
+  uri?: string;        // DocumentPicker uri
+  fileUri?: string;    // alias
+  // Optional direct control:
+  destPath?: string;
+  dataUrl?: string;
+  contentType?: string;
+  cacheControl?: string;
+};
+
+/** Very light filename safe */
+function safeName(name: string) {
+  return String(name || 'file')
+    .replace(/[^\w.\-]+/g, '_')
+    .slice(0, 120);
+}
+
+function inferContentType(name: string, fallback?: string) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.csv')) return 'text/csv';
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  return fallback || 'application/octet-stream';
+}
+
+/**
+ * Returns: { fullPath, downloadURL }
+ * If destPath is not provided, builds:
+ *   uploads/{venueId}/invoices/{orderId}/{fileName}
+ */
+export async function uploadFileAsBase64(opts: Opts): Promise<{ fullPath: string; downloadURL: string; }> {
+  const {
+    venueId, orderId, fileName,
+    uri, fileUri,
+    destPath, dataUrl, contentType, cacheControl
+  } = opts || ({} as any);
+
+  let finalPath = destPath;
+  let name = fileName;
+
+  // If no explicit destPath, build the invoices-style path (like products flow but in invoices folder)
+  if (!finalPath) {
+    if (!venueId || !orderId) throw new Error('uploadFileAsBase64: missing venueId/orderId');
+    name = safeName(name || 'invoice_upload');
+    finalPath = `uploads/${venueId}/invoices/${orderId}/${name}`;
+  }
+
+  // Build a data URL either from provided dataUrl or by reading the local file URI
+  let finalDataUrl = dataUrl;
+  if (!finalDataUrl) {
+    const chosenUri = fileUri || uri;
+    if (!chosenUri) throw new Error('uploadFileAsBase64: missing fileUri');
+    const ct = contentType || inferContentType(name || 'file');
+    const b64 = await FileSystem.readAsStringAsync(chosenUri, { encoding: FileSystem.EncodingType.Base64 });
+    finalDataUrl = `data:${ct};base64,${b64}`;
+  }
+
+  // Reuse the products uploader pipeline underneath
+  return uploadDataUrlCompat({
+    destPath: finalPath,
+    dataUrl: finalDataUrl,
+    contentType,
+    cacheControl,
+  });
+}

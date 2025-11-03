@@ -1,0 +1,32 @@
+import { getApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { withTimeout } from '../http/withTimeout';
+
+type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string; };
+
+export type ParsedInvoiceLine = {
+  name: string; qty: number; unitPrice?: number; code?: string;
+  matched?: { productId?: string; confidence?: number; reason?: string };
+};
+
+export type ParsedInvoicePayload = {
+  invoice: { total?: number; subtotal?: number; gst?: number; poNumber?: string | null; poDate?: string | null; supplierId?: string | null; source?: 'csv'; };
+  lines: ParsedInvoiceLine[];
+  matchReport?: any;
+  confidence?: number;
+  warnings?: string[];
+};
+
+export async function processInvoicesCsv(args: ProcessInvoicesCsvArgs): Promise<ParsedInvoicePayload> {
+  const fn = httpsCallable(getFunctions(getApp()), 'processInvoicesCsv');
+  const res: any = await withTimeout(fn(args), 20000, 'processInvoicesCsv');
+  const payload = res?.data ?? res;
+
+  return {
+    invoice: { source: 'csv', ...(payload?.invoice || {}) },
+    lines: payload?.lines || [],
+    matchReport: payload?.matchReport,
+    confidence: payload?.confidence,
+    warnings: payload?.warnings || []
+  } as ParsedInvoicePayload;
+}

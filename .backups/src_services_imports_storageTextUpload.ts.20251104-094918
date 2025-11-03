@@ -1,0 +1,35 @@
+import * as FileSystem from 'expo-file-system';
+import { uploadFileAsBase64 } from '../uploads/uploadFileAsBase64';
+
+/**
+ * Expo-safe CSV text upload: writes text to a temp file, then uploads as base64.
+ * Avoids Buffer/Blob entirely.
+ */
+export async function uploadTextAsDataUrl(path: string, text: string, contentType = 'text/csv', opts?: { venueId?: string; orderId?: string }) {
+  const tmp = FileSystem.cacheDirectory + `csv-${Date.now()}.txt`;
+  await FileSystem.writeAsStringAsync(tmp, text, { encoding: FileSystem.EncodingType.UTF8 });
+
+  // If venue/order provided, prefer structured path under invoices/raw/{orderId}/
+  if (opts?.venueId && opts?.orderId) {
+    const { url } = await uploadFileAsBase64({
+      venueId: opts.venueId,
+      orderId: opts.orderId,
+      uri: tmp,
+      mime: contentType,
+      fileName: path.split('/').pop() || 'invoice.csv',
+    });
+    try { await FileSystem.deleteAsync(tmp, { idempotent: true }); } catch {}
+    return url;
+  }
+
+  // Fallback: generic path (kept for backward compatibility if some callers pass only 'path')
+  const { url } = await uploadFileAsBase64({
+    venueId: 'unknown-venue',
+    orderId: 'unknown-order',
+    uri: tmp,
+    mime: contentType,
+    fileName: path.split('/').pop() || 'file.csv',
+  });
+  try { await FileSystem.deleteAsync(tmp, { idempotent: true }); } catch {}
+  return url;
+}

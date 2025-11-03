@@ -30,6 +30,10 @@
       "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
       "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
       "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e"
-    }
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font"
+    ]
   }
 }

@@ -9,7 +9,8 @@ export default function ReceiveOptionsModal({
   orderLines = [],
   onCsvSelected,
   onManualSelected,
-  onPdfSelected, // accepts callback from parent
+  onPdfSelected,       // existing
+  onFileSelected,      // NEW: unified file picker handler
 }: {
   visible: boolean;
   onClose: () => void;
@@ -18,6 +19,7 @@ export default function ReceiveOptionsModal({
   onCsvSelected?: () => void;
   onManualSelected?: () => void;
   onPdfSelected?: () => void;
+  onFileSelected?: () => void; // NEW
 }) {
   const Item = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <TouchableOpacity style={styles.btn} onPress={onPress}>
@@ -32,6 +34,10 @@ export default function ReceiveOptionsModal({
           <Text style={styles.title}>Receive order</Text>
           <Text style={styles.sub}>PO: {orderId || '-'}</Text>
 
+          {/* NEW unified entry */}
+          <Item label="Upload file (PDF/CSV)" onPress={() => { onClose(); onFileSelected?.(); }} />
+
+          {/* Existing options retained (no regressions) */}
           <Item label="Upload invoice CSV" onPress={() => { onClose(); onCsvSelected?.(); }} />
           <Item label="Confirm manually"  onPress={() => { onClose(); onManualSelected?.(); }} />
           <Item label="Upload PDF"        onPress={() => { onClose(); onPdfSelected?.(); }} />
