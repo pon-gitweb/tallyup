@@ -1,64 +1,34 @@
-import { getApp } from 'firebase/app';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { withTimeout } from '../http/withTimeout';
+const API_BASE =
+  process.env.EXPO_PUBLIC_AI_URL ||
+  'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
-type ProcessInvoicesPdfArgs = { venueId: string; orderId: string; storagePath: string; };
-
-export type ParsedInvoiceLine = {
-  name: string;
-  qty: number;
-  unitPrice?: number;
-  code?: string;
-  matched?: { productId?: string; confidence?: number; reason?: string };
+export type PdfProcessResult = {
+  invoice: { source: 'pdf'; storagePath: string; poNumber?: string | null };
+  lines: Array<{ code?: string; name: string; qty: number; unitPrice?: number }>;
+  matchReport: { warnings?: string[] } | null;
+  confidence: number;
+  warnings: string[];
 };
 
-export type ParsedInvoicePayload = {
-  invoice: {
-    total?: number;
-    subtotal?: number;
-    gst?: number;
-    poNumber?: string | null;
-    poDate?: string | null;
-    supplierId?: string | null;
-    source?: 'pdf';
-    storagePath?: string;
-  };
-  lines: ParsedInvoiceLine[];
-  matchReport?: any;
-  confidence?: number;
-  warnings?: string[];
-};
+export async function processInvoicesPdfREST(input: {
+  venueId: string;
+  orderId: string;
+  storagePath: string;
+}): Promise<PdfProcessResult> {
+  const res = await fetch(`${API_BASE}/api/process-invoices-pdf`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 
-export async function processInvoicesPdf(args: ProcessInvoicesPdfArgs): Promise<ParsedInvoicePayload> {
-  const { venueId, orderId, storagePath } = args;
-
-  try {
-    const fn = httpsCallable(getFunctions(getApp()), 'processInvoicesPdf');
-    const res: any = await withTimeout(fn({ venueId, orderId, storagePath }), 25000, 'processInvoicesPdf');
-    const payload = res?.data ?? res;
-    if (payload) {
-      return {
-        invoice: { source: 'pdf', storagePath, ...(payload?.invoice || {}) },
-        lines: payload?.lines || [],
-        matchReport: payload?.matchReport,
-        confidence: payload?.confidence,
-        warnings: payload?.warnings || []
-      } as ParsedInvoicePayload;
-    }
-  } catch (err) {
-    if (__DEV__) console.log('[processInvoicesPdf] callable failed, falling back to stub:', err);
+  if (!res.ok) {
+    const msg = await res.text().catch(() => res.statusText);
+    throw new Error(`process-invoices-pdf failed: ${res.status} ${msg}`);
   }
-
-  // Fallback stub to unblock Phase-2 wiring
-  return {
-    invoice: {
-      source: 'pdf',
-      storagePath,
-      poNumber: null,
-    },
-    lines: [],
-    matchReport: null,
-    confidence: 0.0,
-    warnings: ['PDF parser not available; using local stub.'],
-  };
+  return res.json();
 }
+
+/** Back-compat shim: keep the old name so existing call sites don't break */
+export const processInvoicesPdf = processInvoicesPdfREST;
+
+export default processInvoicesPdf;
