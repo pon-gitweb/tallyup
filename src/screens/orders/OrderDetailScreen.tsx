@@ -5,20 +5,19 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+
+// ✅ Correct helpers for invoices (URI-only → server write)
+import { uploadInvoiceCsv, uploadInvoicePdf } from '../../services/invoices/invoiceUpload';
+import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
+import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
-import { uploadCsvTextToStorage } from '../../services/uploads/uploadCsvTextToStorage';
-
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
-
-import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
 
-/** Confidence tier helper */
 function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   const x = Number.isFinite(c as any) ? Number(c) : -1;
   if (x >= 0.95) return 'high';
@@ -26,7 +25,7 @@ function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   return 'low';
 }
 
-export default function OrderDetailScreen(){
+export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
@@ -36,7 +35,6 @@ export default function OrderDetailScreen(){
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Receive modals
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
@@ -58,9 +56,7 @@ export default function OrderDetailScreen(){
     matchReport?: any;
   }>(null);
 
-  // prevent duplicate auto-confirms
   const autoConfirmedRef = useRef(false);
-
   const db = getFirestore();
 
   useEffect(()=>{
@@ -95,147 +91,142 @@ export default function OrderDetailScreen(){
     return ()=>{ alive=false; };
   },[db,venueId,orderId]);
 
-  /** CSV picker + upload + parse + PO pre-check */
+  /** CSV: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickCsvAndProcess = useCallback(async ()=>{
     try{
-      const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv' });
+      const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv', multiple: false, copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      const uri = a.uri || a.file || '';
+      const name = a.name || 'invoice.csv';
+      if (!uri) throw new Error('No file uri from DocumentPicker');
 
-      const asset = res.assets[0];
-      const contents = await FileSystem.readAsStringAsync(asset.uri);
+      if (__DEV__) console.log('[Receive][CSV] picked', { uri, name });
+      const up = await uploadInvoiceCsv(venueId, orderId, uri, name);
+      if (__DEV__) console.log('[Receive][CSV] uploaded', up);
 
-      const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
-      const review = await uploadInvoiceCsv(venueId, orderId);
+      const review = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
+      if (__DEV__) console.log('[Receive][CSV] processed', { lines: review?.lines?.length ?? 0 });
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
       if (orderPo && parsedPo && orderPo !== parsedPo) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Manual Receive', onPress: ()=> setManualOpen(true) },
-          ]
-        );
+        Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
         return;
       }
-
-      setCsvReview({ ...review, storagePath });
-    }catch(e:any){
+      setCsvReview({ ...review, storagePath: up.fullPath });
+      setReceiveOpen(false);
+    }catch(e){
       console.error('[OrderDetail] csv pick/process fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
   },[venueId,orderId,orderMeta]);
 
-  /** PDF picker + upload + parse + PO pre-check */
+  /** PDF: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickPdfAndUpload = useCallback(async ()=>{
     try{
-      const res = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
-        multiple: false,
-        copyToCacheDirectory: true,
-      });
+      const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', multiple: false, copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      const uri = a.uri || a.file || '';
+      const name = a.name || 'invoice.pdf';
+      if (!uri) throw new Error('No file uri from DocumentPicker');
 
-      const asset = res.assets[0];
-      const { fullPath } = await uploadFileAsBase64({ venueId, orderId, fileUri: (a && (a.uri || a.fileUri)) || '', fileName: (a && (a.name || a.fileName)) || 'invoice_upload' });
+      if (__DEV__) console.log('[Receive][PDF] picked', { uri, name });
+      const up = await uploadInvoicePdf(venueId, orderId, uri, name);
+      if (__DEV__) console.log('[Receive][PDF] uploaded', up);
 
-      const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: fullPath });
+      const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: up.fullPath });
+      if (__DEV__) console.log('[Receive][PDF] processed', { lines: parsed?.lines?.length ?? 0 });
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-
       if (orderPo && parsedPo && orderPo !== parsedPo) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Manual Receive', onPress: ()=> setManualOpen(true) },
-          ]
-        );
+        Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
         return;
       }
-
-      setPdfReview({ ...parsed, storagePath: fullPath });
+      setPdfReview({ ...parsed, storagePath: up.fullPath });
       setReceiveOpen(false);
-
-      if (__DEV__) console.log('[OrderDetail] PDF parsed and staged', { lines: parsed?.lines?.length ?? 0, po: parsedPo || null });
-    }catch(e:any){
-      if (__DEV__) console.log('[OrderDetail] pdf upload/parse fail', e);
+    }catch(e){
+      console.error('[OrderDetail] pdf upload/parse fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
   },[venueId,orderId,orderMeta]);
 
-  /** NEW: Unified file picker that routes to PDF/CSV flows */
+  /** Unified file picker routes to PDF/CSV flows */
   const pickFileAndRoute = useCallback(async ()=>{
-    try {
+    try{
       const res = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf','text/csv','text/comma-separated-values','text/plain'],
-        multiple: false, copyToCacheDirectory: true,
+        multiple: false, copyToCacheDirectory: true
       });
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       const name = (a.name||'').toLowerCase();
-      const mime = (a.mimeType||'').toLowerCase();
-      const isPdf = mime.includes('pdf') || name.endsWith('.pdf');
-      const isCsv = mime.includes('csv') || name.endsWith('.csv') || name.endsWith('.txt');
+      const uri = a.uri || a.file || '';
+      if (!uri) throw new Error('No file uri from DocumentPicker');
+      const isPdf = name.endsWith('.pdf');
+      const isCsv = isPdf ? false : (name.endsWith('.csv') || name.endsWith('.txt'));
+
+      if (__DEV__) console.log('[Receive][FILE] picked', { uri, name, isPdf, isCsv });
 
       if (isPdf) {
-        const { fullPath } = await uploadFileAsBase64({ venueId, orderId, fileUri: (a && (a.uri || a.fileUri)) || '', fileName: (a && (a.name || a.fileName)) || 'invoice_upload' });
-        const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: fullPath });
+        const up = await uploadInvoicePdf(venueId, orderId, uri, a.name||'invoice.pdf');
+        if (__DEV__) console.log('[Receive][FILE][PDF] uploaded', up);
+        const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: up.fullPath });
+        if (__DEV__) console.log('[Receive][FILE][PDF] processed', { lines: parsed?.lines?.length ?? 0 });
+
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
         if (orderPo && parsedPo && orderPo !== parsedPo) {
-          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
             [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
           return;
         }
-        setPdfReview({ ...parsed, storagePath: fullPath });
+        setPdfReview({ ...parsed, storagePath: up.fullPath });
         setReceiveOpen(false);
         return;
       }
 
       if (isCsv) {
-        const contents = await FileSystem.readAsStringAsync(a.uri);
-        const { storagePath } = await uploadCsvTextToStorage(venueId, orderId, contents);
-        const review = await uploadInvoiceCsv(venueId, orderId);
+        const up = await uploadInvoiceCsv(venueId, orderId, uri, a.name||'invoice.csv');
+        if (__DEV__) console.log('[Receive][FILE][CSV] uploaded', up);
+        const review = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
+        if (__DEV__) console.log('[Receive][FILE][CSV] processed', { lines: review?.lines?.length ?? 0 });
+
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
         if (orderPo && parsedPo && orderPo !== parsedPo) {
-          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
             [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
           return;
         }
-        setCsvReview({ ...review, storagePath });
+        setCsvReview({ ...review, storagePath: up.fullPath });
         setReceiveOpen(false);
         return;
       }
 
       Alert.alert('Unsupported file', 'Please choose a PDF or CSV invoice.');
-    } catch (e:any) {
+    }catch(e){
+      console.error('[OrderDetail] file pick route fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
   },[venueId, orderId, orderMeta]);
 
-  /** Confidence banner */
   const ConfidenceBanner = ({ kind, score }:{ kind:'csv'|'pdf'; score?:number })=>{
     const t = tierForConfidence(score);
     const msg =
       t==='low'    ? 'Low confidence: results may be inaccurate. Consider Manual Receive.'
     : t==='medium' ? 'Medium confidence: please review carefully before confirming.'
     :                 'High confidence: looks good.';
-    const bg =
-      t==='low'    ? '#FEF3C7'
-    : t==='medium' ? '#E0E7FF'
-    :                 '#DCFCE7';
-    const fg =
-      t==='low'    ? '#92400E'
-    : t==='medium' ? '#1E3A8A'
-    :                 '#065F46';
-
-    if (__DEV__) console.log('[Receive][confidence]', { kind, score, tier: t });
+    const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
+    const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
 
     return (
       <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}>
@@ -249,7 +240,7 @@ export default function OrderDetailScreen(){
     );
   };
 
-  /** Auto-confirm CSV on high confidence (≥0.95) once */
+  // Auto-confirm CSV on very high confidence
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
     const t = tierForConfidence(csvReview.confidence);
@@ -272,7 +263,7 @@ export default function OrderDetailScreen(){
           setReceiveOpen(false);
           setCsvReview(null);
           nav.goBack();
-        }catch(e:any){
+        }catch(e){
           autoConfirmedRef.current = false;
           Alert.alert('Auto-receive failed', String(e?.message || e));
         }
@@ -305,7 +296,7 @@ export default function OrderDetailScreen(){
       <View style={S.top}>
         <View>
           <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
-        <Text style={S.meta}>
+          <Text style={S.meta}>
             {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
           </Text>
         </View>
@@ -356,12 +347,12 @@ export default function OrderDetailScreen(){
                   setReceiveOpen(false);
                   setCsvReview(null);
                   nav.goBack();
-                }catch(e:any){
+                }catch(e){
                   autoConfirmedRef.current = false;
                   Alert.alert('Receive failed', String(e?.message || e));
                 }
               }}>
-                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm Receive</Text>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm & Post</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -386,77 +377,64 @@ export default function OrderDetailScreen(){
 
             <View style={{flexDirection:'row',gap:12,marginTop:16}}>
               <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#F3F4F6',borderRadius:8}} onPress={()=>setPdfReview(null)}>
-                <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Close</Text>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={()=>{
+                Alert.alert('Pending', 'PDF posting not wired to finalize yet.');
+              }}>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm (stub)</Text>
               </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
       ) : (
-        lines.length>0 && (
+        <View style={{flex:1}}>
           <FlatList
             data={lines}
-            keyExtractor={(x)=>x.id}
+            keyExtractor={(it)=>it.id}
+            contentContainerStyle={{padding:16}}
+            ItemSeparatorComponent={()=> <View style={{height:8}}/>}
             renderItem={({item})=>(
-              <View style={{paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
-                <Text style={{fontWeight:'700'}}>{item.name||item.productId||'Line'}</Text>
-                <Text style={{color:'#6B7280',marginTop:4}}>
-                  Qty: {item.qty||0} • Unit: ${(item.unitCost||0).toFixed(2)} • Line: ${((item.unitCost||0)*(item.qty||0)).toFixed(2)}
-                </Text>
+              <View style={S.line}>
+                <Text style={{fontWeight:'700'}}>{item.name || item.productId || item.id}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
               </View>
             )}
-            ListFooterComponent={
-              <View style={{padding:16,borderTopWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
-                <Text style={{fontWeight:'800'}}>Totals</Text>
-                <Text style={{color:'#6B7280',marginTop:4}}>Ordered: ${totalOrdered.toFixed(2)}</Text>
+            ListHeaderComponent={(
+              <View style={{paddingBottom:8}}>
+                <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
+                <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
               </View>
-            }
+            )}
           />
-        )
+        </View>
       )}
 
-      {/* Receive options sheet */}
       <ReceiveOptionsModal
         visible={receiveOpen}
         onClose={()=>setReceiveOpen(false)}
-        onCsvSelected={pickCsvAndProcess}
-        onManualSelected={()=>setManualOpen(true)}
         orderId={orderId}
         orderLines={lines}
+        onCsvSelected={pickCsvAndProcess}
         onPdfSelected={pickPdfAndUpload}
         onFileSelected={pickFileAndRoute}
+        onManualSelected={()=>setManualOpen(true)}
       />
 
-      {/* Manual receive modal (inline; no nav changes) */}
-      <Modal visible={manualOpen} transparent animationType="slide" onRequestClose={()=>setManualOpen(false)}>
-        <View style={{flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end'}}>
-          <View style={{maxHeight:'85%', backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16}}>
-            <ManualReceiveScreen
-              venueId={venueId}
-              orderId={orderId}
-              orderLines={lines.map(l => ({ id: l.id, productId: l.productId, name: l.name, orderedQty: l.qty }))}
-              onDone={()=>{
-                setManualOpen(false);
-                Alert.alert('Received', 'Manual receive saved.');
-                nav.goBack();
-              }}
-              embed
-            />
-            <TouchableOpacity onPress={()=>setManualOpen(false)} style={{alignSelf:'center', marginTop:8, padding:8}}>
-              <Text style={{fontWeight:'700'}}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+      <Modal visible={manualOpen} animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+        <ManualReceiveScreen orderId={orderId} onClose={()=>setManualOpen(false)} />
       </Modal>
     </View>
   );
 }
 
 const S = StyleSheet.create({
-  wrap:{flex:1,backgroundColor:'#fff'},
-  top:{padding:16,flexDirection:'row',alignItems:'center',justifyContent:'space-between',borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
-  title:{fontSize:18,fontWeight:'800'},
-  meta:{color:'#6B7280',marginTop:2},
-  receiveBtn:{backgroundColor:'#111827',paddingVertical:10,paddingHorizontal:16,borderRadius:8},
-  receiveBtnText:{color:'#fff',fontWeight:'800'},
-  loading:{flex:1,justifyContent:'center',alignItems:'center'},
+  wrap: { flex:1, backgroundColor:'#fff' },
+  top: { padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#E5E7EB' },
+  title: { fontSize:20, fontWeight:'800' },
+  meta: { marginTop:4, color:'#6B7280' },
+  line: { padding:12, backgroundColor:'#F9FAFB', borderRadius:10 },
+  loading: { flex:1, alignItems:'center', justifyContent:'center' },
+  receiveBtn: { backgroundColor:'#111', paddingHorizontal:14, paddingVertical:10, borderRadius:10 },
+  receiveBtnText: { color:'#fff', fontWeight:'800' },
 });
