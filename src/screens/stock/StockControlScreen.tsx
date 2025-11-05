@@ -10,6 +10,9 @@ import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import SuppliersScreen from '../setup/SuppliersScreen';
 import ProductsScreen from '../setup/ProductsScreen';
 
+// NEW: read-only reconciliations panel
+import ReconciliationsPanel from './ReconciliationsPanel';
+
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
   const auth = getAuth();
@@ -58,6 +61,9 @@ export default function StockControlScreen() {
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
         <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings' as never)} />
+
+        {/* Read-only: reconciliations summary */}
+        <ReconciliationsPanel />
       </View>
 
       {/* Suppliers: full-screen modal with your rich screen */}

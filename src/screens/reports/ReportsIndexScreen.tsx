@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import { exportCsv, exportPdf } from '../../utils/exporters';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
+import ReconciliationCard from './components/ReconciliationCard';
 
 import { pickParseAndUploadProductsCsv } from 'src/services/imports/pickAndUploadCsv';
 import { callProcessProductsCsv } from 'src/services/imports/processProductsCsv';
@@ -214,6 +215,7 @@ export default function ReportsIndexScreen() {
           <Tile title="Last Cycle Summary" subtitle="Session KPIs & top variances" onPress={go('LastCycleSummary')} color="#059669" />
           <Tile title="Budgets" subtitle="Spend by period & supplier" onPress={go('Budgets')} color="#F59E0B" />
           <Tile title="Department Variance" subtitle="Shortage & excess by department" onPress={go('DepartmentVariance')} color="#10B981" />
+          <ReconciliationCard venueId={venueId} onOpenOrder={(id)=>nav.navigate('OrderDetail', { orderId: id })} />
         </ScrollView>
       </View>
     </LocalThemeGate>
