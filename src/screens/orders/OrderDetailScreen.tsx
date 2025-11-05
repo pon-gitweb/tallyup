@@ -3,13 +3,15 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
-import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
 
 // ✅ Correct helpers for invoices (URI-only → server write)
 import { uploadInvoiceCsv, uploadInvoicePdf } from '../../services/invoices/invoiceUpload';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
+// NEW: reconciliation
+import { reconcileInvoiceREST } from '../../services/invoices/reconcile';
 
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
@@ -18,147 +20,6 @@ import { finalizeReceiveFromCsv } from '../../services/orders/receive';
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
 
-/* ----------------------------- Quality Gate ----------------------------- */
-/**
- * Lightweight name normalizer: lowercases, strips punctuation/extra spaces.
- */
-function normName(s?: string) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Returns true if two names look similar enough to be the same product.
- * We avoid heavy algorithms on-device; this heuristic is intentionally simple.
- */
-function namesSimilar(a?: string, b?: string) {
-  const A = normName(a);
-  const B = normName(b);
-  if (!A || !B) return false;
-  if (A === B) return true;
-  if (A.length >= 4 && B.includes(A)) return true;
-  if (B.length >= 4 && A.includes(B)) return true;
-  return false;
-}
-
-/**
- * Compute a conservative quality score comparing parsed invoice lines vs submitted order lines.
- * - Penalizes low line overlap
- * - Penalizes price variance where both sides have a price
- * - Very conservative: you will rarely get ≥0.95 unless it's a strong match
- */
-function computeQualityScore(orderLines: Line[], parsedLines: Array<{ name?: string; code?: string; unitPrice?: number; qty?: number }>) {
-  const o = Array.isArray(orderLines) ? orderLines : [];
-  const p = Array.isArray(parsedLines) ? parsedLines : [];
-
-  // Build a simple index by normalized name and by productId (if any)
-  const byName: Record<string, Line[]> = {};
-  for (const ol of o) {
-    const key = normName(ol.name || '');
-    if (!key) continue;
-    if (!byName[key]) byName[key] = [];
-    byName[key].push(ol);
-  }
-
-  let matched = 0;
-  let priceDiffs: number[] = [];
-  let nameMisses = 0;
-
-  for (const pl of p) {
-    const pn = normName(pl.name || '');
-    let best: Line | null = null;
-
-    if (pn && byName[pn] && byName[pn].length) {
-      best = byName[pn][0];
-    } else {
-      // fuzzy-ish include check over a small subset (cheap)
-      let candidate: Line | null = null;
-      for (const ol of o) {
-        if (namesSimilar(ol.name, pl.name)) { candidate = ol; break; }
-      }
-      best = candidate;
-    }
-
-    if (best) {
-      matched++;
-      const op = Number(best.unitCost || 0);
-      const pp = Number(pl.unitPrice || 0);
-      if (op > 0 && pp > 0) {
-        const denom = Math.max(op, pp);
-        const rel = Math.min(1, Math.abs(op - pp) / denom); // 0 = same price, 1 = 100% off
-        priceDiffs.push(rel);
-      }
-    } else {
-      nameMisses++;
-    }
-  }
-
-  // Overlap: matches out of the larger list length
-  const denomCount = Math.max(1, Math.max(o.length, p.length));
-  const overlapRatio = matched / denomCount; // 0..1
-
-  // Price penalty: mean relative difference, scaled
-  const avgPriceDiff = priceDiffs.length
-    ? priceDiffs.reduce((a, b) => a + b, 0) / priceDiffs.length
-    : 0;
-
-  // Name penalty if many misses
-  const missRatio = p.length ? nameMisses / p.length : 0;
-
-  // Score components (weights tuned conservatively)
-  const overlapWeight = 0.65;
-  const priceWeight = 0.25;
-  const nameWeight = 0.10;
-
-  const score =
-    (overlapWeight * overlapRatio) +
-    (priceWeight * (1 - Math.min(1, avgPriceDiff))) +
-    (nameWeight * (1 - missRatio));
-
-  // Clamp to [0.15, 0.98] so we never overstate
-  const clamped = Math.max(0.15, Math.min(0.98, score));
-
-  return {
-    score: clamped,
-    overlapRatio,
-    avgPriceDiff,
-    missRatio,
-    matched,
-    counts: { order: o.length, parsed: p.length }
-  };
-}
-
-/**
- * Apply hard PO rule + conservative penalties to a raw parser confidence.
- * - If PO mismatch → force confidence 0 and flag for UI.
- * - Else combine parserConfidence with quality score (take the MIN).
- */
-function applyQualityGate(params: {
-  orderPo: string;
-  parsedPo: string;
-  parserConfidence?: number;
-  orderLines: Line[];
-  parsedLines: Array<{ name?: string; code?: string; unitPrice?: number; qty?: number }>;
-}) {
-  const { orderPo, parsedPo, parserConfidence, orderLines, parsedLines } = params;
-
-  const poMismatch = !!(orderPo && parsedPo && orderPo !== parsedPo);
-  if (poMismatch) {
-    return { finalConfidence: 0, poMismatch: true, quality: null as any };
-  }
-
-  const quality = computeQualityScore(orderLines, parsedLines);
-  // Use the MIN so quality penalties always win over optimistic parser values
-  const raw = Number.isFinite(parserConfidence) ? Number(parserConfidence) : 0.5;
-  const finalConfidence = Math.min(raw, quality.score);
-
-  return { finalConfidence, poMismatch: false, quality };
-}
-
-/* ----------------------------- UI helpers ------------------------------ */
 function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   const x = Number.isFinite(c as any) ? Number(c) : -1;
   if (x >= 0.95) return 'high';
@@ -166,7 +27,6 @@ function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   return 'low';
 }
 
-/* -------------------------------- Screen -------------------------------- */
 export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
@@ -187,8 +47,6 @@ export default function OrderDetailScreen() {
     lines: Array<{ productId?: string; code?: string; name: string; qty: number; unitPrice?: number }>;
     invoice: any;
     matchReport?: any;
-    // quality-gate telemetry (optional)
-    quality?: any;
   }>(null);
 
   const [pdfReview, setPdfReview] = useState<null | {
@@ -198,8 +56,6 @@ export default function OrderDetailScreen() {
     lines: Array<{ name: string; qty: number; unitPrice?: number; code?: string }>;
     invoice: any;
     matchReport?: any;
-    // quality-gate telemetry (optional)
-    quality?: any;
   }>(null);
 
   const autoConfirmedRef = useRef(false);
@@ -237,7 +93,7 @@ export default function OrderDetailScreen() {
     return ()=>{ alive=false; };
   },[db,venueId,orderId]);
 
-  /** CSV: pick -> upload URI (no Blob) -> process -> PO/quality gate -> stage review */
+  /** CSV: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickCsvAndProcess = useCallback(async ()=>{
     try{
       const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv', multiple: false, copyToCacheDirectory: true });
@@ -251,43 +107,26 @@ export default function OrderDetailScreen() {
       const up = await uploadInvoiceCsv(venueId, orderId, uri, name);
       if (__DEV__) console.log('[Receive][CSV] uploaded', up);
 
-      const parsed = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
-      if (__DEV__) console.log('[Receive][CSV] processed', { lines: parsed?.lines?.length ?? 0 });
+      const review = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
+      if (__DEV__) console.log('[Receive][CSV] processed', { lines: review?.lines?.length ?? 0 });
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
-      const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-
-      const { finalConfidence, poMismatch, quality } = applyQualityGate({
-        orderPo,
-        parsedPo,
-        parserConfidence: parsed?.confidence,
-        orderLines: lines,
-        parsedLines: parsed?.lines || [],
-      });
-
-      if (poMismatch) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
-        );
+      const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
+      if (orderPo && parsedPo && orderPo !== parsedPo) {
+        Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
         return;
       }
-
-      setCsvReview({
-        ...parsed,
-        storagePath: up.fullPath,
-        confidence: finalConfidence,
-        quality,
-      });
+      setCsvReview({ ...review, storagePath: up.fullPath });
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] csv pick/process fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[venueId,orderId,orderMeta,lines]);
+  },[venueId,orderId,orderMeta]);
 
-  /** PDF: pick -> upload URI (no Blob) -> process -> PO/quality gate -> stage review */
+  /** PDF: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickPdfAndUpload = useCallback(async ()=>{
     try{
       const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', multiple: false, copyToCacheDirectory: true });
@@ -306,38 +145,21 @@ export default function OrderDetailScreen() {
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-
-      const { finalConfidence, poMismatch, quality } = applyQualityGate({
-        orderPo,
-        parsedPo,
-        parserConfidence: parsed?.confidence,
-        orderLines: lines,
-        parsedLines: parsed?.lines || [],
-      });
-
-      if (poMismatch) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
-        );
+      if (orderPo && parsedPo && orderPo !== parsedPo) {
+        Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
         return;
       }
-
-      setPdfReview({
-        ...parsed,
-        storagePath: up.fullPath,
-        confidence: finalConfidence,
-        quality,
-      });
+      setPdfReview({ ...parsed, storagePath: up.fullPath });
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] pdf upload/parse fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[venueId,orderId,orderMeta,lines]);
+  },[venueId,orderId,orderMeta]);
 
-  /** Unified file picker routes to PDF/CSV flows with the same quality/PO checks */
+  /** Unified file picker routes to PDF/CSV flows */
   const pickFileAndRoute = useCallback(async ()=>{
     try{
       const res = await DocumentPicker.getDocumentAsync({
@@ -354,24 +176,21 @@ export default function OrderDetailScreen() {
 
       if (__DEV__) console.log('[Receive][FILE] picked', { uri, name, isPdf, isCsv });
 
-      const orderPo = String(orderMeta?.poNumber ?? '').trim();
-
       if (isPdf) {
         const up = await uploadInvoicePdf(venueId, orderId, uri, a.name||'invoice.pdf');
         if (__DEV__) console.log('[Receive][FILE][PDF] uploaded', up);
         const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: up.fullPath });
         if (__DEV__) console.log('[Receive][FILE][PDF] processed', { lines: parsed?.lines?.length ?? 0 });
 
+        const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-        const { finalConfidence, poMismatch, quality } = applyQualityGate({
-          orderPo, parsedPo, parserConfidence: parsed?.confidence, orderLines: lines, parsedLines: parsed?.lines || []
-        });
-        if (poMismatch) {
-          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+        if (orderPo && parsedPo && orderPo !== parsedPo) {
+          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
             [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
           return;
         }
-        setPdfReview({ ...parsed, storagePath: up.fullPath, confidence: finalConfidence, quality });
+        setPdfReview({ ...parsed, storagePath: up.fullPath });
         setReceiveOpen(false);
         return;
       }
@@ -379,19 +198,18 @@ export default function OrderDetailScreen() {
       if (isCsv) {
         const up = await uploadInvoiceCsv(venueId, orderId, uri, a.name||'invoice.csv');
         if (__DEV__) console.log('[Receive][FILE][CSV] uploaded', up);
-        const parsed = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
-        if (__DEV__) console.log('[Receive][FILE][CSV] processed', { lines: parsed?.lines?.length ?? 0 });
+        const review = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
+        if (__DEV__) console.log('[Receive][FILE][CSV] processed', { lines: review?.lines?.length ?? 0 });
 
-        const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-        const { finalConfidence, poMismatch, quality } = applyQualityGate({
-          orderPo, parsedPo, parserConfidence: parsed?.confidence, orderLines: lines, parsedLines: parsed?.lines || []
-        });
-        if (poMismatch) {
-          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+        const orderPo = String(orderMeta?.poNumber ?? '').trim();
+        const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
+        if (orderPo && parsedPo && orderPo !== parsedPo) {
+          Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
+Use Manual Receive to proceed.`,
             [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
           return;
         }
-        setCsvReview({ ...parsed, storagePath: up.fullPath, confidence: finalConfidence, quality });
+        setCsvReview({ ...review, storagePath: up.fullPath });
         setReceiveOpen(false);
         return;
       }
@@ -401,9 +219,9 @@ export default function OrderDetailScreen() {
       console.error('[OrderDetail] file pick route fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[venueId, orderId, orderMeta, lines]);
+  },[venueId, orderId, orderMeta]);
 
-  const ConfidenceBanner = ({ kind, score, quality }:{ kind:'csv'|'pdf'; score?:number; quality?:any })=>{
+  const ConfidenceBanner = ({ kind, score }:{ kind:'csv'|'pdf'; score?:number })=>{
     const t = tierForConfidence(score);
     const msg =
       t==='low'    ? 'Low confidence: results may be inaccurate. Consider Manual Receive.'
@@ -415,11 +233,6 @@ export default function OrderDetailScreen() {
     return (
       <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}>
         <Text style={{color:fg, fontWeight:'700'}}>{msg} {Number.isFinite(score)? `(confidence ${(score!*100).toFixed(0)}%)`:''}</Text>
-        {quality ? (
-          <Text style={{color:fg, opacity:0.8, marginTop:4}}>
-            Overlap {(quality.overlapRatio*100|0)}% · Price variance {(quality.avgPriceDiff*100|0)}% · Miss {(quality.missRatio*100|0)}%
-          </Text>
-        ) : null}
         {t==='low' ? (
           <TouchableOpacity onPress={()=>setManualOpen(true)} style={{marginTop:8, alignSelf:'flex-start', backgroundColor:'#111', paddingVertical:8, paddingHorizontal:12, borderRadius:8}}>
             <Text style={{color:'#fff', fontWeight:'700'}}>Open Manual Receive</Text>
@@ -429,7 +242,7 @@ export default function OrderDetailScreen() {
     );
   };
 
-  // Auto-confirm CSV only when final confidence is truly high (≥0.95) and we already passed PO gate
+  // Auto-confirm CSV on very high confidence → now reconciles before posting
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
     const t = tierForConfidence(csvReview.confidence);
@@ -437,6 +250,29 @@ export default function OrderDetailScreen() {
       autoConfirmedRef.current = true;
       (async ()=>{
         try{
+          // 1) Reconcile (server writes reconciliation doc)
+          const rec = await reconcileInvoiceREST(venueId, orderId, {
+            invoice: { source:'csv', storagePath: csvReview.storagePath, poNumber: csvReview?.invoice?.poNumber ?? null },
+            lines: csvReview.lines,
+            confidence: csvReview.confidence,
+            warnings: csvReview.warnings || [],
+          });
+          if (!rec?.ok) throw new Error(rec?.error || 'Reconcile failed');
+
+          // 2) Store varianceCard snapshot on order for Reports
+          const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+          await updateDoc(orderRef, {
+            lastReconciliationId: rec.reconciliationId || null,
+            varianceCard: {
+              createdAt: serverTimestamp(),
+              source: 'csv',
+              summary: rec.summary || null,
+              confidence: csvReview.confidence ?? null,
+              warnings: csvReview.warnings || [],
+            }
+          });
+
+          // 3) Finalize receive (status → received, etc.)
           await finalizeReceiveFromCsv({
             venueId,
             orderId,
@@ -448,6 +284,7 @@ export default function OrderDetailScreen() {
               warnings: csvReview.warnings
             }
           });
+
           Alert.alert('Received', 'High-confidence invoice auto-accepted and posted.');
           setReceiveOpen(false);
           setCsvReview(null);
@@ -499,7 +336,7 @@ export default function OrderDetailScreen() {
       {csvReview ? (
         <ScrollView style={{flex:1}}>
           <View style={{padding:16}}>
-            <ConfidenceBanner kind="csv" score={csvReview.confidence} quality={csvReview.quality} />
+            <ConfidenceBanner kind="csv" score={csvReview.confidence} />
             <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
             {csvWarnings.length > 0 ? (
               <View style={{marginBottom:8}}>
@@ -519,8 +356,29 @@ export default function OrderDetailScreen() {
                 <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={async ()=>{
-                autoConfirmedRef.current = true;
                 try{
+                  // 1) Reconcile (server writes doc, client stores varianceCard)
+                  const rec = await reconcileInvoiceREST(venueId, orderId, {
+                    invoice: { source:'csv', storagePath: csvReview.storagePath, poNumber: csvReview?.invoice?.poNumber ?? null },
+                    lines: csvReview.lines,
+                    confidence: csvReview.confidence,
+                    warnings: csvReview.warnings || [],
+                  });
+                  if (!rec?.ok) throw new Error(rec?.error || 'Reconcile failed');
+
+                  const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+                  await updateDoc(orderRef, {
+                    lastReconciliationId: rec.reconciliationId || null,
+                    varianceCard: {
+                      createdAt: serverTimestamp(),
+                      source: 'csv',
+                      summary: rec.summary || null,
+                      confidence: csvReview.confidence ?? null,
+                      warnings: csvReview.warnings || [],
+                    }
+                  });
+
+                  // 2) Finalize receive
                   await finalizeReceiveFromCsv({
                     venueId,
                     orderId,
@@ -532,12 +390,12 @@ export default function OrderDetailScreen() {
                       warnings: csvReview.warnings
                     }
                   });
+
                   Alert.alert('Received', 'Invoice posted and order marked received.');
                   setReceiveOpen(false);
                   setCsvReview(null);
                   nav.goBack();
                 }catch(e){
-                  autoConfirmedRef.current = false;
                   Alert.alert('Receive failed', String(e?.message || e));
                 }
               }}>
@@ -549,7 +407,7 @@ export default function OrderDetailScreen() {
       ) : pdfReview ? (
         <ScrollView style={{flex:1}}>
           <View style={{padding:16}}>
-            <ConfidenceBanner kind="pdf" score={pdfReview.confidence} quality={pdfReview.quality} />
+            <ConfidenceBanner kind="pdf" score={pdfReview.confidence} />
             <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (PDF)</Text>
             {pdfWarnings.length > 0 ? (
               <View style={{marginBottom:8}}>

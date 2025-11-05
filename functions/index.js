@@ -1,7 +1,13 @@
 /**
- * Stable Cloud Functions entry.
- * - Express REST under exports.api (region us-central1)
- * - Callable: processInvoicesPdf (region us-central1) with basic line extraction
+ * Stable Cloud Functions entry with Express (region us-central1).
+ * Routes:
+ *   - GET  /api/entitlement
+ *   - POST /api/validate-promo
+ *   - POST /api/suggest-orders
+ *   - POST /api/upload-file
+ *   - POST /api/process-invoices-csv
+ *   - POST /api/process-invoices-pdf
+ *   - POST /api/reconcile-invoice     <-- NEW
  */
 const functions = require('firebase-functions');
 const express = require('express');
@@ -11,23 +17,15 @@ const { parse: csvParseSync } = require('csv-parse/sync');
 
 try { admin.app(); } catch { admin.initializeApp(); }
 
-// ----------------------------------------------------------------------------
-// Express app (REST)
-// ----------------------------------------------------------------------------
 const app = express();
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '15mb' })); // allow base64 payloads
+app.use(express.json({ limit: '15mb' }));
 
 // ---------------------- Entitlement (kept) ----------------------
 app.get('/api/entitlement', (req, res) => {
   res.setHeader('x-ai-remaining', '99');
   res.setHeader('x-ai-retry-after', '0');
   return res.json({ ok: true, entitled: true });
-});
-app.post('/api/entitlement/dev-grant', (req, res) => {
-  res.setHeader('x-ai-remaining', '99');
-  res.setHeader('x-ai-retry-after', '0');
-  return res.json({ ok: true, granted: true });
 });
 app.post('/api/validate-promo', (req, res) => {
   res.setHeader('x-ai-remaining', '99');
@@ -58,9 +56,8 @@ app.post('/api/suggest-orders', (req, res) => {
 app.post(['/upload-file','/api/upload-file'], async (req, res) => {
   try {
     const { destPath, dataUrl, cacheControl } = req.body || {};
-    if (!destPath || !dataUrl) {
-      return res.status(400).json({ ok: false, error: 'destPath and dataUrl required' });
-    }
+    if (!destPath || !dataUrl) return res.status(400).json({ ok:false, error:'destPath and dataUrl required' });
+
     const m = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
     if (!m) return res.status(400).json({ ok:false, error:'Invalid dataUrl' });
 
@@ -83,6 +80,31 @@ app.post(['/upload-file','/api/upload-file'], async (req, res) => {
     return res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
 });
+
+// ------------------------- PDF processor ------------------------
+function extractPdfLines(text) {
+  // Very basic heuristic extractor: "name ... qty x price"
+  // You can refine this later per supplier template.
+  const lines = [];
+  const warnings = [];
+  const rows = String(text || '').split(/\n+/);
+  for (const row of rows) {
+    const s = row.trim();
+    if (!s) continue;
+    // try to find quantity and price at the end
+    const m = s.match(/(.+?)\s+(\d+(?:\.\d+)?)\s+[xX*]\s*\$?(\d+(?:\.\d+)?)/);
+    if (m) {
+      const name = m[1].trim();
+      const qty = Number(m[2]);
+      const unitPrice = Number(m[3]);
+      if (name && Number.isFinite(qty) && Number.isFinite(unitPrice)) {
+        lines.push({ name, qty, unitPrice });
+      }
+    }
+  }
+  if (!lines.length) warnings.push('No obvious line items detected in PDF text.');
+  return { lines, warnings };
+}
 
 app.post('/api/process-invoices-pdf', async (req, res) => {
   try {
@@ -130,9 +152,7 @@ app.post('/api/process-invoices-pdf', async (req, res) => {
   }
 });
 
-
-
-// --------------------- Process Invoices CSV ---------------------
+// ------------------------- CSV processor ------------------------
 function _normHeader(s) {
   return String(s || '').toLowerCase().trim().replace(/[\s\-_]+/g, '');
 }
@@ -226,379 +246,202 @@ app.post(['/process-invoices-csv','/api/process-invoices-csv'], async (req, res)
   }
 });
 
-// ----------------------------------------------------------------------------
-// Callable: processInvoicesPdf (robust pdf-parse import + basic line extraction)
-// ----------------------------------------------------------------------------
-const pdfParseModule = require('pdf-parse');
-const pdfParse =
-  (typeof pdfParseModule === 'function')
-    ? pdfParseModule
-    : (pdfParseModule && (pdfParseModule.default || pdfParseModule.pdfParse || null));
-
-function _normNum(v) {
-  if (v == null) return undefined;
-  const s = String(v).replace(/[,$\s]/g, '');
-  const n = Number(s);
-  return Number.isFinite(n) ? n : undefined;
+// ----------------------- Reconcile (NEW) ------------------------
+function toKey(x) {
+  if (!x) return '';
+  return String(x).toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9]/g,'');
 }
-function _likelyCode(tok) {
-  const s = String(tok || '').trim();
-  if (!s) return false;
-  return /^[A-Za-z0-9][A-Za-z0-9\-./]{2,16}$/.test(s);
+function priceEq(a,b,tol=0.009) {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a-b) <= tol;
 }
-function _isQty(tok) {
-  const n = _normNum(tok);
-  if (n == null) return false;
-  return n >= 0 && n <= 9999;
-}
-function _isPrice(tok) {
-  const s = String(tok || '').trim();
-  if (!s) return false;
-  return /\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,4})?$/.test(s);
-}
-function _splitColumns(line) {
-  const by2 = line.split(/\s{2,}/).map(t => t.trim()).filter(Boolean);
-  if (by2.length >= 2) return by2;
-  return line.split(/\s+/).map(t => t.trim()).filter(Boolean);
-}
-function extractPdfLines(text) {
-  const lines = [];
-  const warnings = [];
-
-  const raw = String(text || '')
-    .replace(/\r/g, '')
-    .split('\n')
-    .map(l => l.replace(/\u00A0/g, ' ').trim())
-    .filter(Boolean);
-
-  // --- Path 1: CSV-like header + rows inside PDF text ---
-  // Look for a header with commas containing something like SKU,Name,Qty,UnitPrice
-  let csvHeaderIdx = -1;
-  let csvHeaderCols = null;
-  for (let i = 0; i < Math.min(raw.length, 80); i++) {
-    const l = raw[i];
-    if (l.includes(',')) {
-      const cols = l.split(',').map(t => t.trim());
-      const norm = cols.map(c => c.toLowerCase().replace(/[\s_\-]+/g,''));
-      // must include a name/desc, qty, and possibly price
-      const hasName = norm.some(x => ['name','description','item','product'].includes(x));
-      const hasQty  = norm.some(x => ['qty','quantity','receivedqty','units','received'].includes(x));
-      const hasPrice= norm.some(x => ['unitprice','price','costprice','cost','unitcost','exprice','exgst','netprice'].includes(x));
-      if (hasName && hasQty) {
-        csvHeaderIdx = i;
-        csvHeaderCols = { cols, norm };
-        break;
-      }
-    }
-  }
-  if (csvHeaderIdx >= 0 && csvHeaderCols) {
-    const idxOf = (aliases) => csvHeaderCols.norm.findIndex(x => aliases.includes(x));
-    const codeIdx = idxOf(['code','sku','productcode','itemcode']);
-    const nameIdx = idxOf(['name','description','item','product','desc']);
-    const qtyIdx  = idxOf(['qty','quantity','receivedqty','units','received']);
-    const unitIdx = idxOf(['unitprice','price','costprice','cost','unitcost','exprice','exgst','netprice']);
-
-    for (let i = csvHeaderIdx + 1; i < raw.length; i++) {
-      const l = raw[i];
-      if (!l.includes(',')) break; // stop at end of csv block
-      const cols = l.split(',').map(t => t.trim());
-      if (cols.length < 2) continue;
-
-      const get = (idx) => (idx >= 0 && idx < cols.length ? cols[idx] : undefined);
-      const name = get(nameIdx) || get(codeIdx) || '';
-      const qty = (() => {
-        const v = get(qtyIdx);
-        if (v == null) return 0;
-        const n = Number(String(v).replace(/[\s,]/g,''));
-        return Number.isFinite(n) ? n : 0;
-      })();
-      const unitPrice = (() => {
-        const v = get(unitIdx);
-        if (v == null || v === '') return undefined;
-        const n = Number(String(v).replace(/[$\s,]/g,''));
-        return Number.isFinite(n) ? n : undefined;
-      })();
-      if (!name && !get(codeIdx) && qty === 0 && (unitPrice == null)) continue;
-      lines.push({
-        code: get(codeIdx) || undefined,
-        name: name || '(item)',
-        qty,
-        unitPrice
-      });
-    }
-  }
-
-  // If CSV path found few or no lines, fall back to column/price heuristics.
-  if (lines.length < 1) {
-    // Helpers from the outer scope
-    const by2 = (line) => line.split(/\s{2,}/).map(t => t.trim()).filter(Boolean);
-    const splitCols = (line) => {
-      const two = by2(line);
-      if (two.length >= 2) return two;
-      return line.split(/\s+/).map(t => t.trim()).filter(Boolean);
-    };
-    for (let i = 0; i < raw.length; i++) {
-      const l = raw[i];
-      if (/^subtotal\b|^total\b|^gst\b|^vat\b|^invoice\b|^page\b/i.test(l)) continue;
-      const cols = splitCols(l);
-
-      if (cols.length >= 3 && cols.length <= 7) {
-        const qtyIdx = cols.findIndex(_isQty);
-        let unitIdx = -1;
-        for (let c = cols.length - 1; c >= 0; c--) {
-          if (_isPrice(cols[c])) { unitIdx = c; break; }
-        }
-        if (qtyIdx !== -1 && unitIdx !== -1 && unitIdx !== qtyIdx) {
-          const nameRegion = cols.slice(0, Math.min(qtyIdx, unitIdx) + 1);
-          let code;
-          if (nameRegion.length >= 1 && _likelyCode(nameRegion[0])) code = nameRegion.shift();
-          const name = nameRegion.join(' ').trim();
-          const qty = _normNum(cols[qtyIdx]);
-          const unitPrice = _normNum(cols[unitIdx]);
-          if (name && qty != null) {
-            lines.push({ code: code || undefined, name, qty, unitPrice: unitPrice ?? 0 });
-            continue;
-          }
-        }
-      }
-      const m2 = l.match(/^(?:\s*(?<code>[A-Za-z0-9][A-Za-z0-9\-./]{2,16})\s+)?(?<name>.+?)\s+(?<qty>\d+(?:\.\d+)?)\s*@\s*(?<unit>\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,4})?)\s*$/);
-      if (m2 && m2.groups) {
-        const { code, name, qty, unit } = m2.groups;
-        const nQty = _normNum(qty);
-        const nUnit = _normNum(unit);
-        if (name && nQty != null) {
-          lines.push({ code: code || undefined, name: name.trim(), qty: nQty, unitPrice: nUnit ?? 0 });
-          continue;
-        }
-      }
-    }
-  }
-
-  if (!lines.length) {
-    warnings.push('No item lines detected from PDF text (layout may be image-based or atypical).');
-  }
-  return { lines, warnings };
-}
-
-
-exports.processInvoicesPdf = functions.region('us-central1').https.onCall(async (data, context) => {
+app.post('/api/reconcile-invoice', async (req, res) => {
   try {
-    const venueId = String(data?.venueId || '');
-    const orderId = String(data?.orderId || '');
-    const storagePath = String(data?.storagePath || '');
-    if (!venueId || !orderId || !storagePath) {
-      throw new Error('venueId, orderId, storagePath are required');
+    const { venueId, orderId, invoice, lines } = req.body || {};
+    if (!venueId || !orderId || !invoice || !Array.isArray(lines)) {
+      return res.status(400).json({ ok:false, error:"missing venueId/orderId/invoice/lines" });
     }
-    if (!pdfParse) throw new Error('pdf-parse module did not resolve to a function');
 
-    const bucket = admin.storage().bucket();
-    const file = bucket.file(storagePath);
-    const [buf] = await file.download({ validation: false });
-    if (!buf || !buf.length) throw new Error('Empty PDF buffer');
+    const db = admin.firestore();
+    const orderRef = db.doc(`venues/${venueId}/orders/${orderId}`);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) return res.status(404).json({ ok:false, error:'order_not_found' });
+    const order = orderSnap.data() || {};
 
-    const parsed = await pdfParse(buf).catch(err => {
-      throw new Error('PDF parse failed: ' + (err?.message || err));
+    const poMatch = !!(String(order.poNumber||'').trim() && String(invoice.poNumber||'').trim() && String(order.poNumber).trim() === String(invoice.poNumber).trim());
+
+    // read order lines
+    const linesSnap = await db.collection(`venues/${venueId}/orders/${orderId}/lines`).get();
+    const ordered = [];
+    linesSnap.forEach(doc => {
+      const d = doc.data()||{};
+      ordered.push({
+        id: doc.id,
+        code: d.code || d.sku || undefined,
+        name: d.name || '',
+        qty: Number(d.qty||0),
+        unitCost: Number(d.unitCost||0),
+        productId: d.productId || null,
+      });
     });
-    const text = String(parsed?.text || '');
 
-    const poMatch = text.match(/\b(P(?:urchase)?\.?\s*O(?:rder)?)\s*(?:No\.?|#|:)?\s*([A-Za-z0-9\-\/]+)\b/i);
-    const poNumber = poMatch ? poMatch[2] : null;
+    // index order by code/name keys
+    const byCode = new Map();
+    const byName = new Map();
+    for (const ol of ordered) {
+      if (ol.code) byCode.set(toKey(ol.code), ol);
+      if (ol.name) byName.set(toKey(ol.name), ol);
+    }
 
-    const { lines, warnings } = extractPdfLines(text);
+    const matched = [];
+    const unknown_items = [];
+    const price_changes = [];
+    const qty_diffs = [];
 
-    const confidence =
-      lines.length >= 3 && lines.some(x => x.unitPrice && x.unitPrice > 0)
-        ? 0.8
-        : (lines.length >= 1 ? 0.6 : 0.4);
+    for (const il of (lines||[])) {
+      const keyC = toKey(il.code);
+      const keyN = toKey(il.name);
+      const found = (keyC && byCode.get(keyC)) || (keyN && byName.get(keyN)) || null;
+      if (!found) {
+        unknown_items.push({ code: il.code||null, name: il.name||null, qty: Number(il.qty||0), unitPrice: Number(il.unitPrice||0) });
+        continue;
+      }
+      // compare price & qty
+      const priceChanged = Number.isFinite(il.unitPrice) && !priceEq(Number(il.unitPrice), Number(found.unitCost));
+      const qtyDiff = Number(il.qty||0) - Number(found.qty||0);
 
-    return {
-      invoice: { source: 'pdf', storagePath, poNumber },
-      lines,
-      matchReport: { warnings: warnings.length ? warnings : undefined },
-      confidence,
-      warnings
+      matched.push({ productId: found.productId||null, orderName: found.name, invoiceName: il.name, orderQty: found.qty, invoiceQty: Number(il.qty||0), orderUnit: found.unitCost, invoiceUnit: Number(il.unitPrice||0) });
+
+      if (priceChanged) {
+        price_changes.push({
+          productId: found.productId||null,
+          from: Number(found.unitCost||0),
+          to: Number(il.unitPrice||0),
+          delta: Number(il.unitPrice||0) - Number(found.unitCost||0),
+          name: found.name
+        });
+      }
+      if (Math.abs(qtyDiff) > 0.0001) {
+        qty_diffs.push({
+          productId: found.productId||null,
+          name: found.name,
+          ordered: Number(found.qty||0),
+          invoiced: Number(il.qty||0),
+          delta: qtyDiff
+        });
+      }
+    }
+
+    // items on order but not on invoice
+    const missing_on_invoice = [];
+    const invKeySet = new Set((lines||[]).map(x => toKey(x.code)||toKey(x.name)));
+    for (const ol of ordered) {
+      const k = toKey(ol.code)||toKey(ol.name);
+      if (!invKeySet.has(k)) {
+        missing_on_invoice.push({
+          productId: ol.productId||null, name: ol.name, ordered: Number(ol.qty||0), unitCost: Number(ol.unitCost||0)
+        });
+      }
+    }
+
+    const totalOrdered = ordered.reduce((s,o)=>s + Number(o.qty||0)*Number(o.unitCost||0), 0);
+    const totalInvoiced = (lines||[]).reduce((s,i)=>s + Number(i.qty||0)*Number(i.unitPrice||0), 0);
+    const valueDelta = totalInvoiced - totalOrdered;
+
+    const summary = {
+      poMatch,
+      counts: {
+        matched: matched.length,
+        unknown: unknown_items.length,
+        priceChanges: price_changes.length,
+        qtyDiffs: qty_diffs.length,
+        missingOnInvoice: missing_on_invoice.length,
+      },
+      totals: {
+        ordered: Number(totalOrdered.toFixed(2)),
+        invoiced: Number(totalInvoiced.toFixed(2)),
+        delta: Number(valueDelta.toFixed(2)),
+      }
     };
+
+    const recRef = db.collection(`venues/${venueId}/orders/${orderId}/reconciliations`).doc();
+    await recRef.set({
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: invoice?.source || null,
+      storagePath: invoice?.storagePath || null,
+      poNumber: invoice?.poNumber ?? null,
+      poMatch,
+      confidence: Number.isFinite(Number(invoice?.confidence)) ? Number(invoice.confidence) : null,
+      warnings: Array.isArray(invoice?.warnings) ? invoice.warnings.slice(0, 20) : [],
+      diffs: {
+        matched,
+        unknown_items,
+        price_changes,
+        qty_diffs,
+        missing_on_invoice,
+      },
+      summary
+    }, { merge: true });
+
+    return res.json({ ok:true, reconciliationId: recRef.id, summary });
   } catch (e) {
-    console.error('[processInvoicesPdf] error', e);
-    throw new functions.https.HttpsError('unknown', String(e?.message || e));
+    console.error('[api/reconcile-invoice] error', e);
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
 });
 
-// ----------------------------------------------------------------------------
-exports.api = functions.region('us-central1').https.onRequest(app);
+// Export one Express function (all routes)
 
-// --------------------- Process Invoices PDF (REST) ---------------------
-app.post(['/process-invoices-pdf','/api/process-invoices-pdf'], async (req, res) => {
+/* -------------------- Reconcile Invoice (CSV/PDF neutral) -------------------- */
+app.post(["/reconcile-invoice","/api/reconcile-invoice"], async (req, res) => {
   try {
-    const { venueId, orderId, storagePath } = req.body || {};
-    if (!venueId || !orderId || !storagePath) {
-      return res.status(400).json({ ok:false, error:'missing venueId/orderId/storagePath' });
+    const body = req.body || {};
+    const { venueId, orderId, invoice, lines } = body;
+    if (!venueId || !orderId || !invoice || !Array.isArray(lines)) {
+      return res.status(400).json({ ok:false, error:"missing venueId/orderId/invoice/lines" });
     }
 
-    // Require in-scope to avoid top-level duplication/const conflicts
-    const pdfParseModule = require('pdf-parse');
-    const pdfParse =
-      typeof pdfParseModule === 'function'
-        ? pdfParseModule
-        : (pdfParseModule && (pdfParseModule.default || pdfParseModule.pdfParse || null));
-
-    if (!pdfParse) {
-      return res.status(500).json({ ok:false, error:'pdf-parse module did not resolve to a function' });
-    }
-
-    const bucket = admin.storage().bucket();
-    const file = bucket.file(storagePath);
-    const [buf] = await file.download({ validation: false });
-    if (!buf || !buf.length) {
-      return res.status(400).json({ ok:false, error:'Empty PDF buffer' });
-    }
-
-    const parsed = await pdfParse(buf).catch(err => {
-      throw new Error('PDF parse failed: ' + (err?.message || err));
-    });
-    const text = String(parsed?.text || '');
-
-    // Helpers duplicated locally to avoid cross-scope issues
-    const _normNum = (v) => {
-      if (v == null) return undefined;
-      const s = String(v).replace(/[,$\s]/g, '');
-      const n = Number(s);
-      return Number.isFinite(n) ? n : undefined;
-    };
-    const _likelyCode = (tok) => /^[A-Za-z0-9][A-Za-z0-9\-./]{2,16}$/.test(String(tok || '').trim());
-    const _isQty = (tok) => {
-      const n = _normNum(tok);
-      return n != null && n >= 0 && n <= 9999;
-    };
-    const _isPrice = (tok) => /\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,4})?$/.test(String(tok || '').trim());
-    const _splitColumns = (line) => {
-      const by2 = line.split(/\s{2,}/).map(t => t.trim()).filter(Boolean);
-      if (by2.length >= 2) return by2;
-      return line.split(/\s+/).map(t => t.trim()).filter(Boolean);
+    const inv = {
+      source: String(invoice.source||"").toLowerCase() === "pdf" ? "pdf" : "csv",
+      storagePath: String(invoice.storagePath||""),
+      poNumber: (invoice.poNumber==null ? null : String(invoice.poNumber))
     };
 
-    const extractPdfLines = (txt) => {
-      const lines = [];
-      const warnings = [];
-      const raw = String(txt || '')
-        .replace(/\r/g, '')
-        .split('\n')
-        .map(l => l.replace(/\u00A0/g, ' ').trim())
-        .filter(Boolean);
+    // Basic PO rule: if order has a PO (client can pass desired/order PO via query later),
+    // treat mismatch as confidence=0. We do not hard-stop here — client UI already soft-rejects.
+    // You can enhance this to read the order doc and enforce policies server-side.
+    const orderPo = (req.query && req.query.orderPo) ? String(req.query.orderPo).trim() : null;
+    const parsedPo = inv.poNumber ? String(inv.poNumber).trim() : null;
+    const poMismatch = !!(orderPo && parsedPo && orderPo !== parsedPo);
 
-      let headerIdx = -1;
-      const headerNeedles = ['qty','quantity','description','item','product','unit price','price','unit cost','total'];
-      for (let i = 0; i < Math.min(raw.length, 80); i++) {
-        const l = raw[i].toLowerCase();
-        if (headerNeedles.some(h => l.includes(h))) { headerIdx = i; break; }
-      }
-      const start = headerIdx >= 0 ? Math.max(0, headerIdx + 1) : 0;
+    // Minimal confidence heuristic (parity with client until we wire deep diff):
+    let confidence = 0.6;
+    if (!lines.length) confidence = 0.2;
+    if (lines.length >= 3) confidence = Math.max(confidence, 0.75);
+    if (poMismatch) confidence = 0.0;  // your rule
 
-      for (let i = start; i < raw.length; i++) {
-        const l = raw[i];
-        if (/^subtotal\b|^total\b|^gst\b|^vat\b|^invoice\b|^page\b/i.test(l)) continue;
-
-        const cols = _splitColumns(l);
-
-        if (cols.length >= 3 && cols.length <= 7) {
-          const qtyIdx = cols.findIndex(_isQty);
-          let unitIdx = -1;
-          for (let c = cols.length - 1; c >= 0; c--) {
-            if (_isPrice(cols[c])) { unitIdx = c; break; }
-          }
-          if (qtyIdx !== -1 && unitIdx !== -1 && unitIdx !== qtyIdx) {
-            const nameRegion = cols.slice(0, Math.min(qtyIdx, unitIdx) + 1);
-            let code;
-            if (nameRegion.length >= 1 && _likelyCode(nameRegion[0])) {
-              code = nameRegion.shift();
-            }
-            const name = nameRegion.join(' ').trim();
-            const qty = _normNum(cols[qtyIdx]);
-            const unitPrice = _normNum(cols[unitIdx]);
-            if (name && qty != null) {
-              lines.push({ code: code || undefined, name, qty, unitPrice: unitPrice ?? 0 });
-              continue;
-            }
-          }
-        }
-
-        const m2 = l.match(/^(?:\s*(?<code>[A-Za-z0-9][A-Za-z0-9\-./]{2,16})\s+)?(?<name>.+?)\s+(?<qty>\d+(?:\.\d+)?)\s*@\s*(?<unit>\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,4})?)\s*$/);
-        if (m2 && m2.groups) {
-          const { code, name, qty, unit } = m2.groups;
-          const nQty = _normNum(qty);
-          const nUnit = _normNum(unit);
-          if (name && nQty != null) {
-            lines.push({ code: code || undefined, name: name.trim(), qty: nQty, unitPrice: nUnit ?? 0 });
-            continue;
-          }
-        }
-      }
-
-      if (!lines.length) warnings.push('No item lines detected from PDF text (layout may be image-based or atypical).');
-      return { lines, warnings };
+    // Stub diffs for now; client will compute detailed diffs and persist.
+    const summary = {
+      lineCount: lines.length,
+      hasPrices: lines.some(x => Number(x && x.unitPrice) > 0),
+      hasQuantities: lines.some(x => Number(x && x.qty) > 0)
     };
-
-    const poMatch = text.match(/\b(P(?:urchase)?\.?\s*O(?:rder)?)\s*(?:No\.?|#|:)?\s*([A-Za-z0-9\-\/]+)\b/i);
-    const poNumber = poMatch ? poMatch[2] : null;
-
-    const { lines, warnings } = extractPdfLines(text);
-    const confidence =
-      lines.length >= 3 && lines.some(x => x.unitPrice && x.unitPrice > 0)
-        ? 0.8
-        : (lines.length >= 1 ? 0.6 : 0.4);
 
     return res.json({
       ok: true,
-      invoice: { source: 'pdf', storagePath, poNumber },
+      invoice: inv,
       lines,
-      matchReport: { warnings: warnings.length ? warnings : undefined },
-      confidence,
-      warnings
+      diffs: {},
+      matchReport: {
+        warnings: poMismatch ? ["PO mismatch between order and invoice"] : undefined,
+        summary
+      },
+      confidence
     });
   } catch (e) {
-    console.error('[process-invoices-pdf REST] error', e);
-    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+    console.error("[/api/reconcile-invoice] error", e);
+    return res.status(500).json({ ok:false, error:String(e && e.message || e) });
   }
 });
 
-// --------------------- Process Invoices PDF (REST) ---------------------
-app.post(['/process-invoices-pdf','/api/process-invoices-pdf'], async (req, res) => {
-  try {
-    const { venueId, orderId, storagePath } = req.body || {};
-    if (!venueId || !orderId || !storagePath) {
-      return res.status(400).json({ ok:false, error:"missing venueId/orderId/storagePath" });
-    }
-    if (!pdfParse) return res.status(500).json({ ok:false, error:'pdf-parse not available' });
-
-    const bucket = admin.storage().bucket();
-    const file = bucket.file(storagePath);
-    const [buf] = await file.download({ validation: false });
-    if (!buf || !buf.length) return res.status(400).json({ ok:false, error:'Empty PDF buffer' });
-
-    const parsed = await pdfParse(buf).catch(err => {
-      throw new Error('PDF parse failed: ' + (err?.message || err));
-    });
-    const text = String(parsed?.text || '');
-
-    const poMatch = text.match(/\b(P(?:urchase)?\.?\s*O(?:rder)?)\s*(?:No\.?|#|:)?\s*([A-Za-z0-9\-\/]+)\b/i);
-    const poNumber = poMatch ? poMatch[2] : null;
-
-    const { lines, warnings } = extractPdfLines(text);
-    const confidence =
-      lines.length >= 3 && lines.some(x => x.unitPrice && x.unitPrice > 0)
-        ? 0.8
-        : (lines.length >= 1 ? 0.6 : 0.4);
-
-    return res.json({
-      ok:true,
-      invoice: { source: 'pdf', storagePath, poNumber },
-      lines,
-      matchReport: { warnings: warnings.length ? warnings : undefined },
-      confidence,
-      warnings
-    });
-  } catch (e) {
-    console.error('[process-invoices-pdf REST] error', e);
-    return res.status(500).json({ ok:false, error: String(e?.message || e) });
-  }
-});
+exports.api = functions.region('us-central1').runWith({ memory: '512MB', timeoutSeconds: 120 }).https.onRequest(app);

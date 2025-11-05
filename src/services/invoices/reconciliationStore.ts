@@ -1,118 +1,118 @@
-// @ts-nocheck
 /**
- * Persists reconciliation bundles to Firestore under:
- *   venues/{venueId}/orders/{orderId}/reconciliations/{autoId}
- *
- * - Expo-safe (no firebase-admin)
- * - Stores a compact "diff card" plus the full bundle for drill-down
+ * Safe, non-throwing reconciliation persistence for parsed invoices (CSV/PDF).
+ * - Never assumes fields exist; normalizes to a stable envelope.
+ * - Writes under: venues/{venueId}/orders/{orderId}/reconciliations/{autoId}
+ * - Returns { ok:true, id } or { ok:false, error }
  */
-
+import { getApp } from 'firebase/app';
 import {
-  getFirestore,
-  collection,
-  addDoc,
-  serverTimestamp,
+  getFirestore, collection, addDoc, serverTimestamp
 } from 'firebase/firestore';
-import type {
-  ReconciliationResult,
-  ReconciliationMatch,
-} from './reconciliation';
 
-function firstN<T>(arr: T[], n = 20): T[] {
-  return Array.isArray(arr) ? arr.slice(0, n) : [];
+export type ParsedLine = {
+  code?: string;
+  name: string;
+  qty: number;
+  unitPrice?: number;
+};
+
+export type ParsedInvoicePayload = {
+  invoice?: { source?: 'csv'|'pdf'|string; storagePath?: string; poNumber?: string|null } | null;
+  lines?: ParsedLine[] | null;
+  matchReport?: { warnings?: string[] } | null;
+  confidence?: number | null;
+  warnings?: string[] | null;
+};
+
+/** Compute a conservative confidence when missing/bad */
+function safeConfidence(input?: number | null, fallback = 0.4) {
+  const n = Number(input);
+  if (!Number.isFinite(n) || n < 0 || n > 1) return fallback;
+  return n;
 }
 
-function buildDiffCard(result: ReconciliationResult) {
-  const { summary, totals, anomalies } = result;
+/** Normalize any CSV/PDF server response into a stable envelope */
+export function buildReconEnvelope(args: {
+  venueId: string;
+  orderId: string;
+  source: 'csv'|'pdf';
+  storagePath: string;
+  payload: ParsedInvoicePayload | any;
+  orderPo?: string | null;
+  parsedPo?: string | null;
+}) {
+  const p = (args?.payload ?? {}) as ParsedInvoicePayload;
 
-  // Pull out a few illustrative differences
-  const qtyChanged = result.matches.filter(m => m.flags.qtyChanged && m.order && m.invoice);
-  const priceChanged = result.matches.filter(m => m.flags.priceChanged && m.order && m.invoice);
-  const newItems = result.matches.filter(m => m.flags.newItem);
-  const missingItems = result.matches.filter(m => m.flags.missingItem);
+  const lines = Array.isArray(p.lines)
+    ? p.lines.filter(Boolean).map((l:any) => ({
+        code: (l?.code ?? undefined) as string | undefined,
+        name: String(l?.name ?? l?.code ?? '(item)'),
+        qty: Number.isFinite(Number(l?.qty)) ? Number(l?.qty) : 0,
+        unitPrice: Number.isFinite(Number(l?.unitPrice)) ? Number(l?.unitPrice) : undefined,
+      }))
+    : [];
 
-  // Keep cards tiny; full detail is saved in "bundle"
-  const pickMini = (m: ReconciliationMatch) => ({
-    key: m.key,
-    via: m.via,
-    order: m.order ? {
-      id: m.order.id,
-      name: m.order.name,
-      qty: m.order.qty,
-      unitCost: m.order.unitCost,
-      ext: m.order.ext,
-    } : null,
-    invoice: m.invoice ? {
-      code: m.invoice.code,
-      name: m.invoice.name,
-      qty: m.invoice.qty,
-      unitPrice: m.invoice.unitPrice,
-      ext: m.invoice.ext,
-    } : null,
-    deltas: m.deltas,
-  });
+  const warnings = [
+    ...(Array.isArray(p.warnings) ? p.warnings.filter(Boolean) : []),
+    ...(Array.isArray(p?.matchReport?.warnings) ? p.matchReport!.warnings!.filter(Boolean) : []),
+  ];
 
-  return {
-    headline: {
-      orderValue: totals.orderValue,
-      invoiceValue: totals.invoiceValue,
-      valueDelta: totals.valueDelta,
-    },
-    counts: {
-      matched: totals.linesMatched,
-      invoiceOnly: totals.linesInvoiceOnly,
-      orderOnly: totals.linesOrderOnly,
-      qtyChanged: summary.qtyChanged,
-      priceChanged: summary.priceChanged,
-      newItems: summary.newItems,
-      missingItems: summary.missingItems,
-    },
-    samples: {
-      qtyChanged: firstN(qtyChanged, 10).map(pickMini),
-      priceChanged: firstN(priceChanged, 10).map(pickMini),
-      newItems: firstN(newItems, 10).map(pickMini),
-      missingItems: firstN(missingItems, 10).map(pickMini),
-    },
-    anomalies: firstN(anomalies, 20),
+  const invoice = {
+    source: (p?.invoice?.source ?? args.source) as 'csv'|'pdf'|string,
+    storagePath: String(p?.invoice?.storagePath ?? args.storagePath ?? ''),
+    poNumber: (p?.invoice?.poNumber ?? null) as string | null,
   };
+
+  const orderPo = (args.orderPo ?? '').trim() || null;
+  const parsedPo = (args.parsedPo ?? '').trim() || (invoice.poNumber ?? null);
+  const poMismatch = !!(orderPo && parsedPo && orderPo !== parsedPo);
+
+  const envelope = {
+    ok: true,
+    kind: 'invoice_parse' as const,
+    venueId: String(args.venueId),
+    orderId: String(args.orderId),
+    invoice,
+    lines,
+    matchReport: (p?.matchReport && typeof p.matchReport === 'object') ? p.matchReport : null,
+    confidence: safeConfidence(p?.confidence, 0.4),
+    warnings,
+    diffs: {},              // placeholder (server/client diffing added later)
+    meta: {
+      orderPo,
+      parsedPo,
+      poMismatch,
+    },
+    createdAt: null as any, // will be serverTimestamp on write
+  };
+
+  return envelope;
 }
 
 /**
- * Save reconciliation bundle and a compact "diff card".
- * Returns the created doc ref id.
+ * Persist the normalized envelope; never throws.
+ * Returns { ok:true, id } or { ok:false, error }
  */
-export async function saveReconciliationBundle(
-  venueId: string,
-  orderId: string,
-  result: ReconciliationResult
-): Promise<{ id: string }> {
-  if (!venueId || !orderId) throw new Error('venueId/orderId required');
+export async function persistAfterParse(args: {
+  venueId: string;
+  orderId: string;
+  source: 'csv'|'pdf';
+  storagePath: string;
+  payload: ParsedInvoicePayload | any;
+  orderPo?: string | null;
+  parsedPo?: string | null;
+}) {
+  try {
+    const db = getFirestore(getApp());
+    const col = collection(db, 'venues', args.venueId, 'orders', args.orderId, 'reconciliations');
 
-  const db = getFirestore();
-  const col = collection(db, 'venues', venueId, 'orders', orderId, 'reconciliations');
+    const env = buildReconEnvelope(args);
+    const toWrite = { ...env, createdAt: serverTimestamp() };
 
-  const docBody = {
-    createdAt: serverTimestamp(),
-    // meta from the reconciler
-    meta: {
-      source: result.meta.source,               // 'csv' | 'pdf'
-      storagePath: result.meta.storagePath,     // gs path we parsed
-      poNumber: result.meta.poNumber ?? null,
-      confidence: result.meta.confidence ?? null,
-      warnings: result.meta.warnings ?? [],
-      landed: result.meta.landed ?? null,       // optional
-    },
-    totals: result.totals,
-    summary: result.summary,
-    // compact “card” for quick viewing / reporting
-    diffCard: buildDiffCard(result),
-    // keep the full bundle for drill-down (may be large)
-    bundle: {
-      matches: result.matches,
-      anomalies: result.anomalies,
-    },
-  };
-
-  const ref = await addDoc(col, docBody);
-  return { id: ref.id };
+    const docRef = await addDoc(col, toWrite);
+    return { ok: true, id: docRef.id };
+  } catch (e:any) {
+    if (__DEV__) console.log('[persistAfterParse] error', e?.message || e);
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
