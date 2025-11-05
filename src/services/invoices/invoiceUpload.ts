@@ -1,31 +1,29 @@
-// @ts-nocheck
-import * as DocumentPicker from 'expo-document-picker';
-import { uploadFileAsBase64 } from '../uploads/uploadFileAsBase64';
-import { processInvoicesCsv } from './processInvoicesCsv';
-import { processInvoicePdf } from '../imports/processInvoicePdf';
+import { uploadUriViaApi } from '../imports/uploadViaApi';
 
-type UploadResult = { fullPath: string; downloadURL: string };
+/**
+ * Upload a CSV file (by URI) to Storage at:
+ *   uploads/{venueId}/orders/{orderId}/invoices/{ts}-{safe}.csv
+ * Returns { fullPath, downloadURL }
+ */
+export async function uploadInvoiceCsv(venueId: string, orderId: string, fileUri: string, fileName: string = 'invoice.csv') {
+  if (!venueId || !orderId) throw new Error('uploadInvoiceCsv: missing venueId/orderId');
+  if (!fileUri || !fileUri.startsWith('file')) throw new Error('uploadInvoiceCsv: expected a file URI');
 
-async function pickOne(accept: 'csv'|'pdf') {
-  const types = accept === 'csv'
-    ? ['text/csv', 'application/vnd.ms-excel', 'text/comma-separated-values']
-    : ['application/pdf'];
-  const res = await DocumentPicker.getDocumentAsync({ multiple: false, type: types });
-  if (res.canceled) throw new Error('pick-cancelled');
-  const a = res.assets?.[0];
-  if (!a?.uri) throw new Error('no-file-uri');
-  return { uri: a.uri, name: a.name || (accept === 'csv' ? 'invoice.csv' : 'invoice.pdf') };
+  const safe = fileName.replace(/[^\w.\-]+/g, '_').slice(0, 80);
+  const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safe}`;
+  return uploadUriViaApi({ fileUri, destPath, contentType: 'text/csv' });
 }
 
-export async function uploadInvoiceCsv(venueId: string, orderId: string) {
-  const { uri, name } = await pickOne('csv');
-  // KNOWN-GOOD uploader path (base64 + uploadString('data_url'))
-  const { fullPath } = await uploadFileAsBase64({ venueId, orderId, uri, fileName: name });
-  return processInvoicesCsv({ venueId, orderId, storagePath: fullPath });
-}
+/**
+ * Upload a PDF file (by URI) to Storage at:
+ *   uploads/{venueId}/orders/{orderId}/invoices/{ts}-{safe}.pdf
+ * Returns { fullPath, downloadURL }
+ */
+export async function uploadInvoicePdf(venueId: string, orderId: string, fileUri: string, fileName: string = 'invoice.pdf') {
+  if (!venueId || !orderId) throw new Error('uploadInvoicePdf: missing venueId/orderId');
+  if (!fileUri || !fileUri.startsWith('file')) throw new Error('uploadInvoicePdf: expected a file URI');
 
-export async function uploadInvoicePdf(venueId: string, orderId: string) {
-  const { uri, name } = await pickOne('pdf');
-  const { fullPath } = await uploadFileAsBase64({ venueId, orderId, uri, fileName: name });
-  return processInvoicePdf({ venueId, orderId, storagePath: fullPath });
+  const safe = fileName.replace(/[^\w.\-]+/g, '_').slice(0, 80);
+  const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safe}`;
+  return uploadUriViaApi({ fileUri, destPath, contentType: 'application/pdf' });
 }

@@ -1,0 +1,49 @@
+import * as FileSystem from 'expo-file-system';
+import { uploadCsvFromUri, uploadPdfFromUri } from '../imports/storageTextUpload';
+
+async function coerceToUri(maybeTextOrUri: string, ext: 'csv'|'pdf'): Promise<string> {
+  if (!maybeTextOrUri) throw new Error('coerceToUri: missing input');
+  // Heuristic: if it contains newlines or commas and no scheme, treat as inline CSV text
+  const looksLikeText = /\n/.test(maybeTextOrUri) || (/,/.test(maybeTextOrUri) && !/^[a-z]+:\/\//i.test(maybeTextOrUri));
+  if (!looksLikeText) return maybeTextOrUri; // already a uri: file:// content:// assets:// etc.
+
+  const fileName = `tmp-invoice-${Date.now()}.${ext}`;
+  const dest = (FileSystem.cacheDirectory || '') + fileName;
+  // Write plain text; uploader will base64 + data_url it
+  await FileSystem.writeAsStringAsync(dest, maybeTextOrUri, { encoding: FileSystem.EncodingType.UTF8 });
+  return dest;
+}
+
+export async function uploadInvoiceCsv(
+  venueId: string,
+  orderId: string,
+  fileUriOrText: string,
+  fileName?: string
+): Promise<{ fullPath: string; downloadURL: string }> {
+  if (!venueId || !orderId) throw new Error('uploadInvoiceCsv: missing venueId/orderId');
+  if (!fileUriOrText) throw new Error('uploadInvoiceCsv: missing fileUri/text');
+
+  const uri = await coerceToUri(fileUriOrText, 'csv');
+  const safeName = (fileName || 'invoice.csv').replace(/[^\w.\-]+/g, '_').slice(0, 80);
+  const ts = Date.now();
+  const dest = `uploads/${venueId}/invoices/${orderId}/${ts}-${safeName}`;
+  return uploadCsvFromUri(uri, dest);
+}
+
+export async function uploadInvoicePdf(
+  venueId: string,
+  orderId: string,
+  fileUriOrText: string,
+  fileName?: string
+): Promise<{ fullPath: string; downloadURL: string }> {
+  if (!venueId || !orderId) throw new Error('uploadInvoicePdf: missing venueId/orderId');
+  if (!fileUriOrText) throw new Error('uploadInvoicePdf: missing fileUri/text');
+
+  // Some Android pickers can hand us a content URI; some buggy paths might pass raw text (rare for PDFs),
+  // so we still coerce to a temp file if necessary for consistency.
+  const uri = await coerceToUri(fileUriOrText, 'pdf');
+  const safeName = (fileName || 'invoice.pdf').replace(/[^\w.\-]+/g, '_').slice(0, 80);
+  const ts = Date.now();
+  const dest = `uploads/${venueId}/invoices/${orderId}/${ts}-${safeName}`;
+  return uploadPdfFromUri(uri, dest);
+}

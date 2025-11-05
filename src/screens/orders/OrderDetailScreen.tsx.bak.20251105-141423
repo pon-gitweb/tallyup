@@ -14,7 +14,6 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
-import { finalizeReceiveFromPdf } from '../../services/orders/receivePdf'; // ✅ NEW
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -111,19 +110,54 @@ export default function OrderDetailScreen() {
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
+
+      // If both exist and differ → hard block
       if (orderPo && parsedPo && orderPo !== parsedPo) {
         Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
 Use Manual Receive to proceed.`,
           [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
         return;
       }
-      setCsvReview({ ...review, storagePath: up.fullPath });
+
+      // Build effective confidence with penalties
+      const warnings = [...(review?.warnings || [] )];
+      let effectiveConfidence = Number(review?.confidence ?? 0.4);
+
+      // Order has PO but parsed invoice lacks one → clamp to low confidence
+      if (orderPo && !parsedPo) {
+        warnings.push('Invoice has no PO while order has a PO — confidence reduced.');
+        effectiveConfidence = Math.min(effectiveConfidence, 0.30);
+      }
+
+      // Down-weight when CSV ↔ order lines diverge (count & rough name overlap)
+      try {
+        const orderCount = Array.isArray(lines) ? lines.length : 0;
+        const csvCount = Array.isArray(review?.lines) ? review.lines.length : 0;
+        if (orderCount && csvCount) {
+          const countRatio = Math.min(orderCount, csvCount) / Math.max(orderCount, csvCount);
+          const namesA = new Set((review.lines || []).map(l => String(l?.name || '').toLowerCase()).filter(Boolean));
+          const namesB = new Set((lines || []).map(l => String(l?.name || '').toLowerCase()).filter(Boolean));
+          let intersect = 0; namesA.forEach(n => { if (namesB.has(n)) intersect++; });
+          const nameMatch = Math.min(intersect / Math.max(1, namesA.size, namesB.size), 1);
+          const penalty =
+            (countRatio < 0.5 ? 0.35 : countRatio < 0.75 ? 0.2 : 0.1) +
+            (nameMatch < 0.25 ? 0.35 : nameMatch < 0.5 ? 0.2 : 0.05);
+          effectiveConfidence = Math.max(0.1, Math.min(0.95, effectiveConfidence - penalty));
+        }
+      } catch {}
+
+      setCsvReview({
+        ...review,
+        storagePath: up.fullPath,
+        confidence: effectiveConfidence,
+        warnings,
+      });
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] csv pick/process fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[venueId,orderId,orderMeta]);
+  },[venueId,orderId,orderMeta,lines]);
 
   /** PDF: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickPdfAndUpload = useCallback(async ()=>{
@@ -202,13 +236,38 @@ Use Manual Receive to proceed.`,
 
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
+
         if (orderPo && parsedPo && orderPo !== parsedPo) {
           Alert.alert('PO mismatch', `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).
 Use Manual Receive to proceed.`,
             [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]);
           return;
         }
-        setCsvReview({ ...review, storagePath: up.fullPath });
+
+        // Apply same CSV confidence penalties in the unified path
+        const warnings = [...(review?.warnings || [] )];
+        let effectiveConfidence = Number(review?.confidence ?? 0.4);
+        if (orderPo && !parsedPo) {
+          warnings.push('Invoice has no PO while order has a PO — confidence reduced.');
+          effectiveConfidence = Math.min(effectiveConfidence, 0.30);
+        }
+        try {
+          const orderCount = Array.isArray(lines) ? lines.length : 0;
+          const csvCount = Array.isArray(review?.lines) ? review.lines.length : 0;
+          if (orderCount && csvCount) {
+            const countRatio = Math.min(orderCount, csvCount) / Math.max(orderCount, csvCount);
+            const namesA = new Set((review.lines || []).map(l => String(l?.name || '').toLowerCase()).filter(Boolean));
+            const namesB = new Set((lines || []).map(l => String(l?.name || '').toLowerCase()).filter(Boolean));
+            let intersect = 0; namesA.forEach(n => { if (namesB.has(n)) intersect++; });
+            const nameMatch = Math.min(intersect / Math.max(1, namesA.size, namesB.size), 1);
+            const penalty =
+              (countRatio < 0.5 ? 0.35 : countRatio < 0.75 ? 0.2 : 0.1) +
+              (nameMatch < 0.25 ? 0.35 : nameMatch < 0.5 ? 0.2 : 0.05);
+            effectiveConfidence = Math.max(0.1, Math.min(0.95, effectiveConfidence - penalty));
+          }
+        } catch {}
+
+        setCsvReview({ ...review, storagePath: up.fullPath, confidence: effectiveConfidence, warnings });
         setReceiveOpen(false);
         return;
       }
@@ -218,7 +277,7 @@ Use Manual Receive to proceed.`,
       console.error('[OrderDetail] file pick route fail', e);
       Alert.alert('Upload failed', String(e?.message || e));
     }
-  },[venueId, orderId, orderMeta]);
+  },[venueId, orderId, orderMeta, lines]);
 
   const ConfidenceBanner = ({ kind, score }:{ kind:'csv'|'pdf'; score?:number })=>{
     const t = tierForConfidence(score);
@@ -380,31 +439,10 @@ Use Manual Receive to proceed.`,
               <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#F3F4F6',borderRadius:8}} onPress={()=>setPdfReview(null)}>
                 <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}}
-                onPress={async ()=>{
-                  try{
-                    await finalizeReceiveFromPdf({
-                      venueId,
-                      orderId,
-                      parsed: {
-                        invoice: pdfReview.invoice,
-                        lines: pdfReview.lines,
-                        matchReport: pdfReview.matchReport,
-                        confidence: pdfReview.confidence,
-                        warnings: pdfReview.warnings
-                      }
-                    });
-                    Alert.alert('Received', 'Invoice posted and order marked received.');
-                    setReceiveOpen(false);
-                    setPdfReview(null);
-                    nav.goBack();
-                  }catch(e){
-                    Alert.alert('Receive failed', String(e?.message || e));
-                  }
-                }}
-              >
-                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm & Post</Text>
+              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={()=>{
+                Alert.alert('Pending', 'PDF posting not wired to finalize yet.');
+              }}>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm (stub)</Text>
               </TouchableOpacity>
             </View>
           </View>

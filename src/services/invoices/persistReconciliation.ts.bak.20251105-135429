@@ -1,0 +1,120 @@
+// @ts-nocheck
+/**
+ * persistReconciliation.ts
+ * Bridges parsed invoice → reconcile(order vs invoice) → saveReconciliationBundle
+ * - Expo-safe (client Firestore only)
+ * - Defensive against varying reconciler export names
+ */
+
+import {
+  getFirestore,
+  collection,
+  getDocs,
+} from 'firebase/firestore';
+
+import { saveReconciliationBundle } from './reconciliationStore';
+
+// We don't assume the exact export name; try a few common ones
+import * as recon from './reconciliation';
+
+type ParsedLine = { code?: string; name: string; qty: number; unitPrice?: number };
+type ParsedInvoice = {
+  invoice: { source: 'csv'|'pdf'; storagePath: string; poNumber?: string|null; landed?: { freight?: number; surcharge?: number; discount?: number }|null };
+  lines: ParsedLine[];
+  matchReport?: { warnings?: string[] } | null;
+  confidence?: number;
+  warnings?: string[];
+};
+
+function pickReconciler(anyRecon: any) {
+  return (
+    anyRecon?.reconcileParsedInvoiceWithOrder ||
+    anyRecon?.reconcileInvoiceWithOrder ||
+    anyRecon?.reconcile ||
+    null
+  );
+}
+
+/**
+ * Load order lines for the given order (minimal fields we need).
+ */
+async function loadOrderLines(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string) {
+  const snap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
+  const rows: Array<{ id: string; name?: string; qty?: number; unitCost?: number }> = [];
+  snap.forEach(d => {
+    const v: any = d.data() || {};
+    rows.push({
+      id: d.id,
+      name: v.name || '',
+      qty: Number.isFinite(v.qty) ? Number(v.qty) : (v.qty || 0),
+      unitCost: Number.isFinite(v.unitCost) ? Number(v.unitCost) : (v.unitCost || 0),
+    });
+  });
+  return rows;
+}
+
+/**
+ * Persist a reconciliation bundle after a CSV or PDF parse.
+ * Safe to call even if the reconciler is missing — will no-op with a dev log.
+ */
+export async function persistAfterParse(
+  venueId: string,
+  orderId: string,
+  parsed: ParsedInvoice
+): Promise<{ id?: string }|null> {
+  try {
+    if (!venueId || !orderId || !parsed?.invoice || !Array.isArray(parsed?.lines)) {
+      if (__DEV__) console.log('[persistAfterParse] missing inputs; skip', { hasVenue: !!venueId, hasOrder: !!orderId, hasInvoice: !!parsed?.invoice, lines: parsed?.lines?.length||0 });
+      return null;
+    }
+
+    const reconcileFn = pickReconciler(recon);
+    if (typeof reconcileFn !== 'function') {
+      if (__DEV__) console.log('[persistAfterParse] reconciler not found; skip saving bundle');
+      return null;
+    }
+
+    const db = getFirestore();
+    const orderLines = await loadOrderLines(db, venueId, orderId);
+
+    // Build order + invoice shapes expected by your reconciler
+    const order = orderLines.map(ol => ({
+      id: ol.id,
+      name: ol.name || '',
+      qty: ol.qty || 0,
+      unitCost: ol.unitCost || 0,
+    }));
+
+    const invoice = (parsed.lines || []).map(pl => ({
+      code: pl.code,
+      name: pl.name || '',
+      qty: pl.qty || 0,
+      unitPrice: pl.unitPrice || 0,
+    }));
+
+    // Run reconciliation (function name is abstracted by pickReconciler)
+    const result = await Promise.resolve(
+      reconcileFn({
+        order,
+        invoice,
+        meta: {
+          source: parsed.invoice.source,
+          storagePath: parsed.invoice.storagePath,
+          poNumber: parsed.invoice.poNumber ?? null,
+          confidence: parsed.confidence ?? null,
+          warnings: parsed.warnings ?? parsed.matchReport?.warnings ?? [],
+          landed: parsed.invoice.landed ?? null,
+        }
+      })
+    );
+
+    // Save to Firestore (creates a compact diff card + full bundle)
+    const saved = await saveReconciliationBundle(venueId, orderId, result);
+
+    if (__DEV__) console.log('[persistAfterParse] saved reconciliation', saved);
+    return saved || { id: undefined };
+  } catch (e) {
+    if (__DEV__) console.log('[persistAfterParse] error', e?.message || e);
+    return null;
+  }
+}

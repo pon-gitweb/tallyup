@@ -1,98 +1,138 @@
-import { getFirestore, doc, updateDoc, serverTimestamp, collection, setDoc } from 'firebase/firestore';
-import { getApp } from 'firebase/app';
+// @ts-nocheck
+/**
+ * Order receive finalization.
+ * - Fetch order lines
+ * - Reconcile parsed invoice lines vs order lines
+ * - Save reconciliation bundle
+ * - Mark order received (idempotent)
+ *
+ * NOTE: We intentionally DO NOT mutate the submitted order lines or prices.
+ * Any price updates are handled via review workflows later.
+ */
 
-// Updated to match the calling code in OrderDetailScreen
-export async function finalizeReceiveFromCsv(params: {
+import { getApp } from 'firebase/app';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  getDocs,
+} from 'firebase/firestore';
+
+import {
+  reconcileInvoiceWithOrder,
+  type ParsedInvoiceLine,
+  type ReconciliationResult,
+} from '../invoices/reconciliation';
+
+import { saveReconciliation } from '../invoices/reconciliationStore';
+
+type FinalizeArgs = {
   venueId: string;
   orderId: string;
   parsed: {
-    invoice: any;
-    lines: Array<{ productId?: string; code?: string; name: string; qty: number; unitPrice?: number }>;
-    matchReport?: any;
+    invoice: { source: 'csv' | 'pdf'; storagePath: string; poNumber?: string | null };
+    lines: ParsedInvoiceLine[];
+    matchReport?: { warnings?: string[] } | null;
     confidence?: number;
     warnings?: string[];
   };
-  poNumber?: string | null;
-  poDate?: any;
-}): Promise<void> {
-  const db = getFirestore(getApp());
-  
-  try {
-    const { venueId, orderId, parsed } = params;
-    const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
-    
-    await updateDoc(orderRef, {
-      status: 'received',
-      displayStatus: 'Received',
-      receivedAt: serverTimestamp(),
-      csvReceipt: {
-        storagePath: parsed.invoice?.storagePath,
-        confidence: parsed.confidence,
-        processedAt: serverTimestamp(),
-        matchedLines: parsed.lines?.length || 0
-      },
-      updatedAt: serverTimestamp()
+  options?: {
+    qtyTolerance?: number;      // default 0
+    priceTolerance?: number;    // default 0
+  };
+};
+
+async function fetchOrderLines(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string) {
+  const linesRef = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+  const snap = await getDocs(linesRef);
+  const out: Array<{ id: string; productId?: string; name?: string; qty?: number; unitCost?: number }> = [];
+  snap.forEach((d) => {
+    const v: any = d.data() || {};
+    out.push({
+      id: d.id,
+      productId: v.productId,
+      name: v.name,
+      qty: Number.isFinite(v.qty) ? Number(v.qty) : (v.qty || 0),
+      unitCost: Number.isFinite(v.unitCost) ? Number(v.unitCost) : (v.unitCost || 0),
     });
-
-    // Create received lines subcollection entries
-    if (parsed.lines && parsed.lines.length > 0) {
-      const receivedLinesCol = collection(db, 'venues', venueId, 'orders', orderId, 'receivedLines');
-      
-      for (const line of parsed.lines) {
-        const lineRef = doc(receivedLinesCol);
-        await setDoc(lineRef, {
-          productId: line.productId,
-          code: line.code,
-          name: line.name,
-          qty: line.qty,
-          unitPrice: line.unitPrice,
-          receivedAt: serverTimestamp(),
-          source: 'csv_upload'
-        });
-      }
-    }
-
-    console.log('[receive] CSV receive finalized', { venueId, orderId, lines: parsed.lines?.length });
-  } catch (error) {
-    console.error('[receive] CSV receive failed', error);
-    throw error;
-  }
+  });
+  return out;
 }
 
-export async function finalizeReceiveManual(
-  venueId: string,
-  orderId: string,
-  manualQuantities: Array<{ productId: string; receivedQty: number }>
-): Promise<void> {
+async function markOrderReceived(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string) {
+  const ref = doc(db, 'venues', venueId, 'orders', orderId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Order not found');
+
+  const cur: any = snap.data() || {};
+  // Idempotent: if already received, don't regress fields
+  const patch: any = {
+    status: 'received',
+    displayStatus: 'received',
+    updatedAt: serverTimestamp(),
+  };
+  if (!cur.receivedAt) patch.receivedAt = serverTimestamp();
+
+  await updateDoc(ref, patch);
+}
+
+async function finalizeReceiveCommon(args: FinalizeArgs): Promise<{
+  reconciliationId: string;
+  reconciliation: ReconciliationResult;
+}> {
+  const { venueId, orderId, parsed, options } = args;
+  if (!venueId || !orderId) throw new Error('venueId/orderId required');
+  if (!parsed || !parsed.invoice || !parsed.lines) throw new Error('parsed invoice payload required');
+
   const db = getFirestore(getApp());
-  
-  try {
-    const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
-    
-    await updateDoc(orderRef, {
-      status: 'received',
-      displayStatus: 'Received',
-      receivedAt: serverTimestamp(),
-      manualReceive: true,
-      updatedAt: serverTimestamp()
-    });
 
-    // Create received lines for manual entry
-    const receivedLinesCol = collection(db, 'venues', venueId, 'orders', orderId, 'receivedLines');
-    
-    for (const item of manualQuantities) {
-      const lineRef = doc(receivedLinesCol);
-      await setDoc(lineRef, {
-        productId: item.productId,
-        receivedQty: item.receivedQty,
-        receivedAt: serverTimestamp(),
-        source: 'manual'
-      });
+  // 1) Load canonical order lines
+  const orderLines = await fetchOrderLines(db, venueId, orderId);
+
+  // 2) Run reconciliation
+  const rec = reconcileInvoiceWithOrder(
+    parsed.lines,
+    orderLines,
+    {
+      source: parsed.invoice.source,
+      storagePath: parsed.invoice.storagePath,
+      poNumber: parsed.invoice.poNumber ?? null,
+      confidence: parsed.confidence ?? null,
+      warnings: [
+        ...(parsed.warnings || []),
+        ...((parsed.matchReport && parsed.matchReport.warnings) || []),
+      ],
+    },
+    {
+      qtyTolerance: options?.qtyTolerance ?? 0,
+      priceTolerance: options?.priceTolerance ?? 0,
     }
+  );
 
-    console.log('[receive] Manual receive finalized', { venueId, orderId, items: manualQuantities.length });
-  } catch (error) {
-    console.error('[receive] Manual receive failed', error);
-    throw error;
-  }
+  // 3) Persist the reconciliation bundle
+  const saved = await saveReconciliation(venueId, orderId, rec);
+
+  // 4) Mark the order as received (does not alter original lines)
+  await markOrderReceived(db, venueId, orderId);
+
+  return { reconciliationId: saved.id, reconciliation: rec };
+}
+
+/**
+ * CSV path: used by OrderDetailScreen when user confirms a CSV invoice.
+ * Signature kept to match existing imports.
+ */
+export async function finalizeReceiveFromCsv(args: FinalizeArgs) {
+  return finalizeReceiveCommon(args);
+}
+
+/**
+ * PDF path: same behaviour as CSV once you wire the Confirm action.
+ * (Your UI currently shows a "Confirm (stub)" — call this when you hook it up.)
+ */
+export async function finalizeReceiveFromPdf(args: FinalizeArgs) {
+  return finalizeReceiveCommon(args);
 }

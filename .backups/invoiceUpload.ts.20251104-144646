@@ -1,0 +1,46 @@
+// Expo-safe invoice upload helpers.
+// Accepts a file:// URI OR raw text; coerces text to a temp file.
+// Upload path: uploads/{venueId}/orders/{orderId}/invoices/{ts}-{safeName}
+
+import * as FileSystem from 'expo-file-system';
+import { uploadUriViaApi } from '../imports/uploadViaApi';
+
+function safeName(name: string): string {
+  return (name || 'upload')
+    .replace(/[^\w.\-]+/g, '_')
+    .slice(0, 80);
+}
+
+async function ensureFileUri(input: string, fileName: string): Promise<string> {
+  if (!input) throw new Error('uploadInvoice: empty input');
+  if (input.startsWith('file://')) return input;
+
+  // Treat it as inline text; write a temp file.
+  const tmpPath = `${FileSystem.cacheDirectory}${Date.now()}-${safeName(fileName)}`;
+  await FileSystem.writeAsStringAsync(tmpPath, input, { encoding: FileSystem.EncodingType.UTF8 });
+  return tmpPath;
+}
+
+export async function uploadInvoiceCsv(
+  venueId: string,
+  orderId: string,
+  fileOrText: string,
+  name = 'invoice.csv'
+): Promise<{ fullPath: string; downloadURL: string }> {
+  if (!venueId || !orderId) throw new Error('uploadInvoiceCsv: missing venueId/orderId');
+  const fileUri = await ensureFileUri(fileOrText, name);
+  const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safeName(name)}`;
+  return uploadUriViaApi({ fileUri, destPath, contentType: 'text/csv' });
+}
+
+export async function uploadInvoicePdf(
+  venueId: string,
+  orderId: string,
+  fileOrText: string,
+  name = 'invoice.pdf'
+): Promise<{ fullPath: string; downloadURL: string }> {
+  if (!venueId || !orderId) throw new Error('uploadInvoicePdf: missing venueId/orderId');
+  const fileUri = await ensureFileUri(fileOrText, name);
+  const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safeName(name)}`;
+  return uploadUriViaApi({ fileUri, destPath, contentType: 'application/pdf' });
+}

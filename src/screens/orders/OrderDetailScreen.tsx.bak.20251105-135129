@@ -14,7 +14,9 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
 import { finalizeReceiveFromCsv } from '../../services/orders/receive';
-import { finalizeReceiveFromPdf } from '../../services/orders/receivePdf'; // ✅ NEW
+
+// ✅ New: persist reconciliation bundle (diff card + full bundle)
+import { persistAfterParse } from '../../services/invoices/persistReconciliation';
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -249,6 +251,20 @@ Use Manual Receive to proceed.`,
       autoConfirmedRef.current = true;
       (async ()=>{
         try{
+          // ✅ Persist reconciliation (non-blocking if reconciler missing)
+          await persistAfterParse(venueId, orderId, {
+            invoice: {
+              source: 'csv',
+              storagePath: csvReview.storagePath,
+              poNumber: csvReview?.invoice?.poNumber ?? null,
+              landed: csvReview?.invoice?.landed ?? null,
+            },
+            lines: csvReview.lines || [],
+            matchReport: csvReview.matchReport || null,
+            confidence: csvReview.confidence,
+            warnings: csvReview.warnings || [],
+          }).catch(()=>{});
+
           await finalizeReceiveFromCsv({
             venueId,
             orderId,
@@ -333,6 +349,20 @@ Use Manual Receive to proceed.`,
               <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={async ()=>{
                 autoConfirmedRef.current = true;
                 try{
+                  // ✅ Persist reconciliation (non-blocking if reconciler missing)
+                  await persistAfterParse(venueId, orderId, {
+                    invoice: {
+                      source: 'csv',
+                      storagePath: csvReview.storagePath,
+                      poNumber: csvReview?.invoice?.poNumber ?? null,
+                      landed: csvReview?.invoice?.landed ?? null,
+                    },
+                    lines: csvReview.lines || [],
+                    matchReport: csvReview.matchReport || null,
+                    confidence: csvReview.confidence,
+                    warnings: csvReview.warnings || [],
+                  }).catch(()=>{});
+
                   await finalizeReceiveFromCsv({
                     venueId,
                     orderId,
@@ -380,31 +410,10 @@ Use Manual Receive to proceed.`,
               <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#F3F4F6',borderRadius:8}} onPress={()=>setPdfReview(null)}>
                 <Text style={{textAlign:'center',fontWeight:'700',color:'#374151'}}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}}
-                onPress={async ()=>{
-                  try{
-                    await finalizeReceiveFromPdf({
-                      venueId,
-                      orderId,
-                      parsed: {
-                        invoice: pdfReview.invoice,
-                        lines: pdfReview.lines,
-                        matchReport: pdfReview.matchReport,
-                        confidence: pdfReview.confidence,
-                        warnings: pdfReview.warnings
-                      }
-                    });
-                    Alert.alert('Received', 'Invoice posted and order marked received.');
-                    setReceiveOpen(false);
-                    setPdfReview(null);
-                    nav.goBack();
-                  }catch(e){
-                    Alert.alert('Receive failed', String(e?.message || e));
-                  }
-                }}
-              >
-                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm & Post</Text>
+              <TouchableOpacity style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}} onPress={()=>{
+                Alert.alert('Pending', 'PDF posting not wired to finalize yet.');
+              }}>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm (stub)</Text>
               </TouchableOpacity>
             </View>
           </View>
