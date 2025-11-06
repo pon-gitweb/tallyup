@@ -111,17 +111,7 @@ export default function OrderDetailScreen() {
 
   const totalOrdered = useMemo(()=> lines.reduce((s,l)=> s + (Number(l.qty||0)*Number(l.unitCost||0)), 0), [lines]);
 
-  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
-
-  const ConfidenceBanner = ({ score }:{ score?:number })=>{
-    const t = tierForConfidence(score);
-    const msg = t==='low' ? 'Low confidence — review carefully' : t==='medium' ? 'Medium confidence — check lines' : 'High confidence';
-    const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
-    const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
-    return <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}><Text style={{color:fg, fontWeight:'700'}}>{msg}</Text></View>;
-  };
-
-  // Auto-accept high-confidence CSV
+  // ---- FIX: keep this hook ABOVE any early returns so hook order is stable
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
     if (tierForConfidence(csvReview.confidence) === 'high') {
@@ -136,6 +126,17 @@ export default function OrderDetailScreen() {
       })();
     }
   }, [csvReview, venueId, orderId, nav]);
+  // ---- END FIX
+
+  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
+
+  const ConfidenceBanner = ({ score }:{ score?:number })=>{
+    const t = tierForConfidence(score);
+    const msg = t==='low' ? 'Low confidence — review carefully' : t==='medium' ? 'Medium confidence — check lines' : 'High confidence';
+    const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
+    const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
+    return <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}><Text style={{color:fg, fontWeight:'700'}}>{msg}</Text></View>;
+  };
 
   return (
     <View style={S.wrap}>
