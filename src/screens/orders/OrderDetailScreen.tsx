@@ -1,9 +1,9 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal, TextInput } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
 import { uploadInvoiceCsv, uploadInvoicePdf } from '../../services/invoices/invoiceUpload';
@@ -22,6 +22,24 @@ function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   return 'low';
 }
 
+// Soft guard so missing internals don’t explode the flow
+async function safePersistAfterParse(args: any) {
+  try {
+    await persistAfterParse(args);
+  } catch (e: any) {
+    const msg = String(e?.message || e || '');
+    if (msg.includes('reconcile is not a function')) {
+      console.warn('[receive] persistAfterParse skipped: reconcile missing');
+      Alert.alert(
+        'Reconciliation module unavailable',
+        'We saved the file reference but skipped auto-reconciliation. You can still review/confirm receive.'
+      );
+      return;
+    }
+    throw e;
+  }
+}
+
 export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
@@ -32,7 +50,14 @@ export default function OrderDetailScreen() {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [receiveOpen, setReceiveOpen] = useState(false);
+  // Rich receive flow state (restored)
+  const [receiveOpen, setReceiveOpen] = useState(false); // chooser (CSV/PDF/Manual)
+  const [manualOpen, setManualOpen] = useState(false);   // dedicated manual modal (older rich UX)
+  const [invoiceNo, setInvoiceNo] = useState('');
+  const [note, setNote] = useState('');
+  const [manualSaving, setManualSaving] = useState(false);
+
+  // Review states
   const [csvReview, setCsvReview] = useState<any>(null);
   const [pdfReview, setPdfReview] = useState<any>(null);
   const autoConfirmedRef = useRef(false);
@@ -65,7 +90,7 @@ export default function OrderDetailScreen() {
 
   const reconcileAndPersist = useCallback(async (source:'csv'|'pdf', storagePath:string, payload:any)=>{
     const orderPo = String(orderMeta?.poNumber ?? '').trim() || null;
-    await persistAfterParse({
+    await safePersistAfterParse({
       venueId, orderId, source, storagePath,
       payload,
       orderPo,
@@ -82,8 +107,14 @@ export default function OrderDetailScreen() {
       const review = await processInvoicesCsv({ venueId, orderId, storagePath: up.fullPath });
       await reconcileAndPersist('csv', up.fullPath, { ...review, invoice: { ...(review?.invoice||{}), source:'csv', storagePath: up.fullPath } });
 
-      if (String(orderMeta?.poNumber||'') && String(review?.invoice?.poNumber||'') && String(orderMeta.poNumber) !== String(review.invoice.poNumber)) {
-        Alert.alert('PO mismatch', 'Snapshot saved. Use manual flow or confirm carefully.');
+      const parsedPo = String(review?.invoice?.poNumber || '');
+      const orderPo = String(orderMeta?.poNumber || '');
+      if (orderPo && parsedPo && orderPo !== parsedPo) {
+        Alert.alert(
+          'PO mismatch',
+          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
+        );
         return;
       }
       setCsvReview({ ...review, storagePath: up.fullPath });
@@ -97,11 +128,23 @@ export default function OrderDetailScreen() {
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       const up = await uploadInvoicePdf(venueId, orderId, a.uri, a.name || 'invoice.pdf');
-      const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: up.fullPath });
+      const parsed = await processInvoicesPdf({ venueId, orderId, storagePath: up.fullPath }).catch((err:any)=>{
+        const m = String(err?.message || err || '');
+        if (m.includes('bad Xref') || m.includes('Xref')) {
+          throw new Error('PDF parse failed: the file may be corrupted or encrypted. Try another export or use Manual Receive.');
+        }
+        throw err;
+      });
       await reconcileAndPersist('pdf', up.fullPath, { ...parsed, invoice: { ...(parsed?.invoice||{}), source:'pdf', storagePath: up.fullPath } });
 
-      if (String(orderMeta?.poNumber||'') && String(parsed?.invoice?.poNumber||'') && String(orderMeta.poNumber) !== String(parsed.invoice.poNumber)) {
-        Alert.alert('PO mismatch', 'Snapshot saved. Use manual flow or confirm carefully.');
+      const parsedPo = String(parsed?.invoice?.poNumber || '');
+      const orderPo = String(orderMeta?.poNumber || '');
+      if (orderPo && parsedPo && orderPo !== parsedPo) {
+        Alert.alert(
+          'PO mismatch',
+          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
+        );
         return;
       }
       setPdfReview({ ...parsed, storagePath: up.fullPath });
@@ -111,7 +154,7 @@ export default function OrderDetailScreen() {
 
   const totalOrdered = useMemo(()=> lines.reduce((s,l)=> s + (Number(l.qty||0)*Number(l.unitCost||0)), 0), [lines]);
 
-  // ---- FIX: keep this hook ABOVE any early returns so hook order is stable
+  // keep hooks above early returns
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
     if (tierForConfidence(csvReview.confidence) === 'high') {
@@ -122,21 +165,54 @@ export default function OrderDetailScreen() {
           Alert.alert('Received', 'High-confidence CSV auto-accepted.');
           setCsvReview(null);
           nav.goBack();
-        }catch(e){ autoConfirmedRef.current = false; Alert.alert('Auto-receive failed', String((e as any)?.message||e)); }
+        }catch(e){
+          autoConfirmedRef.current = false;
+          Alert.alert(
+            'AutoReceive failed',
+            `${String((e as any)?.message || e)}\n\nTip: confirm manually via the review screen or use Manual Receive.`
+          );
+        }
       })();
     }
   }, [csvReview, venueId, orderId, nav]);
-  // ---- END FIX
 
   if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
 
   const ConfidenceBanner = ({ score }:{ score?:number })=>{
     const t = tierForConfidence(score);
-    const msg = t==='low' ? 'Low confidence — review carefully' : t==='medium' ? 'Medium confidence — check lines' : 'High confidence';
+    const msg =
+      t==='low'    ? 'Low confidence — review carefully. Consider Manual Receive.' :
+      t==='medium' ? 'Medium confidence — check lines.' :
+                     'High confidence';
     const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
     const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
     return <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}><Text style={{color:fg, fontWeight:'700'}}>{msg}</Text></View>;
   };
+
+  // Manual Receive (rich flow) — mirrors your older versions
+  const submitManualReceive = useCallback(async()=>{
+    try{
+      setManualSaving(true);
+      const ref = doc(db, 'venues', venueId, 'orders', orderId);
+      await updateDoc(ref, {
+        status: 'received',
+        receivedAt: serverTimestamp(),
+        receiveMeta: {
+          method: 'manual',
+          invoiceNo: invoiceNo || null,
+          note: note || null,
+        }
+      });
+      Alert.alert('Received', 'Order marked as received (manual).');
+      setManualOpen(false);
+      setInvoiceNo(''); setNote('');
+      nav.goBack();
+    }catch(e){
+      Alert.alert('Manual receive failed', String((e as any)?.message||e));
+    }finally{
+      setManualSaving(false);
+    }
+  }, [db, venueId, orderId, invoiceNo, note, nav]);
 
   return (
     <View style={S.wrap}>
@@ -160,7 +236,10 @@ export default function OrderDetailScreen() {
             <ConfidenceBanner score={csvReview.confidence} />
             <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
             {(csvReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
-              <View key={idx} style={S.line}><Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text><Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text></View>
+              <View key={idx} style={S.line}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
+              </View>
             ))}
             <View style={{flexDirection:'row',gap:12,marginTop:16}}>
               <TouchableOpacity style={S.btnGhost} onPress={()=>setCsvReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
@@ -172,6 +251,10 @@ export default function OrderDetailScreen() {
                 }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
               }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
             </View>
+
+            <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
+              <Text style={S.rowBtnText}>Open Manual Receive</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       ) : pdfReview ? (
@@ -180,7 +263,10 @@ export default function OrderDetailScreen() {
             <ConfidenceBanner score={pdfReview.confidence} />
             <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (PDF)</Text>
             {(pdfReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
-              <View key={idx} style={S.line}><Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text><Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text></View>
+              <View key={idx} style={S.line}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
+              </View>
             ))}
             <View style={{flexDirection:'row',gap:12,marginTop:16}}>
               <TouchableOpacity style={S.btnGhost} onPress={()=>setPdfReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
@@ -192,6 +278,10 @@ export default function OrderDetailScreen() {
                 }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
               }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
             </View>
+
+            <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
+              <Text style={S.rowBtnText}>Open Manual Receive</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       ) : (
@@ -200,20 +290,64 @@ export default function OrderDetailScreen() {
           keyExtractor={(it)=>it.id}
           contentContainerStyle={{padding:16}}
           ItemSeparatorComponent={()=> <View style={{height:8}}/>}
-          ListHeaderComponent={<View style={{paddingBottom:8}}><Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text><Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text></View>}
+          ListHeaderComponent={
+            <View style={{paddingBottom:8}}>
+              <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
+              <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
+            </View>
+          }
           renderItem={({item})=>(
-            <View style={S.line}><Text style={{fontWeight:'700'}}>{item.name || item.id}</Text><Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text></View>
+            <View style={S.line}>
+              <Text style={{fontWeight:'700'}}>{item.name || item.id}</Text>
+              <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
+            </View>
           )}
         />
       )}
 
-      {/* Simple inline receive chooser (CSV/PDF) */}
+      {/* Modal A — Rich Receive chooser (Manual + CSV + PDF) */}
       <Modal visible={receiveOpen} animationType="slide" onRequestClose={()=>setReceiveOpen(false)}>
         <View style={{flex:1, padding:16, backgroundColor:'#fff'}}>
           <Text style={{fontSize:18, fontWeight:'900', marginBottom:12}}>Receive options</Text>
+
+          <TouchableOpacity style={S.primary} onPress={()=>{ setReceiveOpen(false); setManualOpen(true); }}>
+            <Text style={S.primaryText}>Manual Receive</Text>
+            <Text style={S.sub}>Enter invoice number / note and mark as received</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={S.rowBtn} onPress={pickCsvAndProcess}><Text style={S.rowBtnText}>Upload CSV</Text></TouchableOpacity>
           <TouchableOpacity style={S.rowBtn} onPress={pickPdfAndUpload}><Text style={S.rowBtnText}>Upload PDF</Text></TouchableOpacity>
-          <TouchableOpacity style={[S.rowBtn,{backgroundColor:'#F3F4F6'}]} onPress={()=>setReceiveOpen(false)}><Text style={[S.rowBtnText,{color:'#111'}]}>Close</Text></TouchableOpacity>
+
+          <TouchableOpacity style={S.ghost} onPress={()=>setReceiveOpen(false)}><Text style={S.ghostText}>Close</Text></TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* Modal B — Dedicated Manual Receive (matches older rich UX) */}
+      <Modal visible={manualOpen} animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+        <View style={{flex:1, padding:16, backgroundColor:'#fff'}}>
+          <Text style={{fontSize:18, fontWeight:'900', marginBottom:12}}>Manual Receive</Text>
+          <TextInput
+            style={S.input}
+            placeholder="Invoice number (optional)"
+            value={invoiceNo}
+            onChangeText={setInvoiceNo}
+            autoCapitalize="characters"
+          />
+          <TextInput
+            style={[S.input, { height: 100 }]}
+            placeholder="Note (optional)"
+            value={note}
+            onChangeText={setNote}
+            multiline
+          />
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+            <TouchableOpacity style={S.ghost} onPress={()=>setManualOpen(false)}>
+              <Text style={S.ghostText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.primary} onPress={submitManualReceive} disabled={manualSaving}>
+              <Text style={S.primaryText}>{manualSaving ? 'Saving…' : 'Confirm & Mark Received'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -229,10 +363,16 @@ const S = StyleSheet.create({
   loading: { flex:1, alignItems:'center', justifyContent:'center' },
   receiveBtn: { backgroundColor:'#111', paddingHorizontal:14, paddingVertical:10, borderRadius:10, position:'absolute', right:16, bottom:16 },
   receiveBtnText: { color:'#fff', fontWeight:'800' },
-  rowBtn: { padding:14, borderRadius:10, backgroundColor:'#111', marginBottom:10 },
+  rowBtn: { padding:14, borderRadius:10, backgroundColor:'#111', marginTop:0, marginBottom:10 },
   rowBtnText: { color:'#fff', fontWeight:'800', textAlign:'center' },
+  primary: { padding:14, backgroundColor:'#111', borderRadius:10, justifyContent:'center', marginBottom:12 },
+  primaryText: { color: '#fff', fontWeight:'800', textAlign:'center' },
+  sub: { color:'#9CA3AF', textAlign:'center', marginTop:6 },
+  ghost: { flex: 1, paddingVertical: 12, backgroundColor: '#F3F4F6', borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  ghostText: { fontWeight: '700', color: '#111' },
   btnGhost: { flex:1, paddingVertical:12, backgroundColor:'#F3F4F6', borderRadius:8 },
   btnGhostText: { textAlign:'center', fontWeight:'700', color:'#374151' },
   btnSolid: { flex:1, paddingVertical:12, backgroundColor:'#111827', borderRadius:8 },
   btnSolidText: { textAlign:'center', fontWeight:'700', color:'#fff' },
+  input: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, marginBottom: 12, backgroundColor: '#F9FAFB' },
 });
