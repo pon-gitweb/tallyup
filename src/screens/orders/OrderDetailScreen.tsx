@@ -15,11 +15,23 @@ import { finalizeReceiveFromCsv, finalizeReceiveFromPdf } from '../../services/o
 type Params = { orderId: string };
 type Line = { id: string; name?: string; qty?: number; unitCost?: number };
 
+// -------- Pure helpers (no hooks) --------
 function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   const x = Number.isFinite(c as any) ? Number(c) : -1;
   if (x >= 0.95) return 'high';
   if (x >= 0.80) return 'medium';
   return 'low';
+}
+
+function ConfidenceBanner({ score }:{ score?:number }) {
+  const t = tierForConfidence(score);
+  const msg =
+    t==='low'    ? 'Low confidence — review carefully. Consider Manual Receive.' :
+    t==='medium' ? 'Medium confidence — check lines.' :
+                   'High confidence';
+  const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
+  const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
+  return <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}><Text style={{color:fg, fontWeight:'700'}}>{msg}</Text></View>;
 }
 
 // Soft guard so missing internals don’t explode the flow
@@ -40,7 +52,11 @@ async function safePersistAfterParse(args: any) {
   }
 }
 
+// =========================================
+// Component
+// =========================================
 export default function OrderDetailScreen() {
+  // ---- All hooks at the top, unconditionally ----
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
@@ -50,9 +66,9 @@ export default function OrderDetailScreen() {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Rich receive flow state (restored)
-  const [receiveOpen, setReceiveOpen] = useState(false); // chooser (CSV/PDF/Manual)
-  const [manualOpen, setManualOpen] = useState(false);   // dedicated manual modal (older rich UX)
+  // Rich receive flow state
+  const [receiveOpen, setReceiveOpen] = useState(false); // chooser (Manual / CSV / PDF)
+  const [manualOpen, setManualOpen] = useState(false);   // dedicated manual modal
   const [invoiceNo, setInvoiceNo] = useState('');
   const [note, setNote] = useState('');
   const [manualSaving, setManualSaving] = useState(false);
@@ -113,7 +129,7 @@ export default function OrderDetailScreen() {
         Alert.alert(
           'PO mismatch',
           `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>{ setReceiveOpen(false); setManualOpen(true); } }]
         );
         return;
       }
@@ -143,7 +159,7 @@ export default function OrderDetailScreen() {
         Alert.alert(
           'PO mismatch',
           `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>setManualOpen(true) }]
+          [{ text:'Cancel', style:'cancel' }, { text:'Manual Receive', onPress:()=>{ setReceiveOpen(false); setManualOpen(true); } }]
         );
         return;
       }
@@ -154,7 +170,7 @@ export default function OrderDetailScreen() {
 
   const totalOrdered = useMemo(()=> lines.reduce((s,l)=> s + (Number(l.qty||0)*Number(l.unitCost||0)), 0), [lines]);
 
-  // keep hooks above early returns
+  // Keep hooks above; no early return anywhere
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
     if (tierForConfidence(csvReview.confidence) === 'high') {
@@ -176,20 +192,7 @@ export default function OrderDetailScreen() {
     }
   }, [csvReview, venueId, orderId, nav]);
 
-  if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
-
-  const ConfidenceBanner = ({ score }:{ score?:number })=>{
-    const t = tierForConfidence(score);
-    const msg =
-      t==='low'    ? 'Low confidence — review carefully. Consider Manual Receive.' :
-      t==='medium' ? 'Medium confidence — check lines.' :
-                     'High confidence';
-    const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
-    const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
-    return <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}><Text style={{color:fg, fontWeight:'700'}}>{msg}</Text></View>;
-  };
-
-  // Manual Receive (rich flow) — mirrors your older versions
+  // Manual Receive handler
   const submitManualReceive = useCallback(async()=>{
     try{
       setManualSaving(true);
@@ -214,6 +217,95 @@ export default function OrderDetailScreen() {
     }
   }, [db, venueId, orderId, invoiceNo, note, nav]);
 
+  // -------- Render (no early returns; render different content instead) --------
+  const isLoading = loading;
+  const showChooser = receiveOpen;
+  const showManual = manualOpen;
+
+  let body: React.ReactNode = null;
+  if (isLoading) {
+    body = <View style={S.loading}><ActivityIndicator/></View>;
+  } else if (csvReview) {
+    body = (
+      <ScrollView style={{flex:1}}>
+        <View style={{padding:16}}>
+          <ConfidenceBanner score={csvReview.confidence} />
+          <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
+          {(csvReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
+            <View key={idx} style={S.line}>
+              <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+              <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
+            </View>
+          ))}
+          <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+            <TouchableOpacity style={S.btnGhost} onPress={()=>setCsvReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
+            <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
+              try{
+                await finalizeReceiveFromCsv({ venueId, orderId, parsed: csvReview });
+                Alert.alert('Received', 'Invoice posted and order marked received.');
+                setCsvReview(null); nav.goBack();
+              }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
+            }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
+            <Text style={S.rowBtnText}>Open Manual Receive</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  } else if (pdfReview) {
+    body = (
+      <ScrollView style={{flex:1}}>
+        <View style={{padding:16}}>
+          <ConfidenceBanner score={pdfReview.confidence} />
+          <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (PDF)</Text>
+          {(pdfReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
+            <View key={idx} style={S.line}>
+              <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+              <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
+            </View>
+          ))}
+          <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+            <TouchableOpacity style={S.btnGhost} onPress={()=>setPdfReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
+            <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
+              try{
+                await finalizeReceiveFromPdf({ venueId, orderId, parsed: pdfReview });
+                Alert.alert('Received', 'Invoice posted and order marked received.');
+                setPdfReview(null); nav.goBack();
+              }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
+            }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
+            <Text style={S.rowBtnText}>Open Manual Receive</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  } else {
+    body = (
+      <FlatList
+        data={lines}
+        keyExtractor={(it)=>it.id}
+        contentContainerStyle={{padding:16}}
+        ItemSeparatorComponent={()=> <View style={{height:8}}/>}
+        ListHeaderComponent={
+          <View style={{paddingBottom:8}}>
+            <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
+            <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
+          </View>
+        }
+        renderItem={({item})=>(
+          <View style={S.line}>
+            <Text style={{fontWeight:'700'}}>{item.name || item.id}</Text>
+            <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
+          </View>
+        )}
+      />
+    );
+  }
+
   return (
     <View style={S.wrap}>
       <View style={S.top}>
@@ -230,83 +322,10 @@ export default function OrderDetailScreen() {
         ) : null}
       </View>
 
-      {csvReview ? (
-        <ScrollView style={{flex:1}}>
-          <View style={{padding:16}}>
-            <ConfidenceBanner score={csvReview.confidence} />
-            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
-            {(csvReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
-              <View key={idx} style={S.line}>
-                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
-                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
-              </View>
-            ))}
-            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
-              <TouchableOpacity style={S.btnGhost} onPress={()=>setCsvReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
-                try{
-                  await finalizeReceiveFromCsv({ venueId, orderId, parsed: csvReview });
-                  Alert.alert('Received', 'Invoice posted and order marked received.');
-                  setCsvReview(null); nav.goBack();
-                }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
-              }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
-            </View>
-
-            <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
-              <Text style={S.rowBtnText}>Open Manual Receive</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      ) : pdfReview ? (
-        <ScrollView style={{flex:1}}>
-          <View style={{padding:16}}>
-            <ConfidenceBanner score={pdfReview.confidence} />
-            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (PDF)</Text>
-            {(pdfReview.lines||[]).slice(0,40).map((pl:any,idx:number)=>(
-              <View key={idx} style={S.line}>
-                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
-                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2)||'0.00'}</Text>
-              </View>
-            ))}
-            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
-              <TouchableOpacity style={S.btnGhost} onPress={()=>setPdfReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
-                try{
-                  await finalizeReceiveFromPdf({ venueId, orderId, parsed: pdfReview });
-                  Alert.alert('Received', 'Invoice posted and order marked received.');
-                  setPdfReview(null); nav.goBack();
-                }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
-              }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
-            </View>
-
-            <TouchableOpacity style={[S.rowBtn,{marginTop:12}]} onPress={()=>setManualOpen(true)}>
-              <Text style={S.rowBtnText}>Open Manual Receive</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      ) : (
-        <FlatList
-          data={lines}
-          keyExtractor={(it)=>it.id}
-          contentContainerStyle={{padding:16}}
-          ItemSeparatorComponent={()=> <View style={{height:8}}/>}
-          ListHeaderComponent={
-            <View style={{paddingBottom:8}}>
-              <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
-              <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
-            </View>
-          }
-          renderItem={({item})=>(
-            <View style={S.line}>
-              <Text style={{fontWeight:'700'}}>{item.name || item.id}</Text>
-              <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
-            </View>
-          )}
-        />
-      )}
+      {body}
 
       {/* Modal A — Rich Receive chooser (Manual + CSV + PDF) */}
-      <Modal visible={receiveOpen} animationType="slide" onRequestClose={()=>setReceiveOpen(false)}>
+      <Modal visible={showChooser} animationType="slide" onRequestClose={()=>setReceiveOpen(false)}>
         <View style={{flex:1, padding:16, backgroundColor:'#fff'}}>
           <Text style={{fontSize:18, fontWeight:'900', marginBottom:12}}>Receive options</Text>
 
@@ -322,8 +341,8 @@ export default function OrderDetailScreen() {
         </View>
       </Modal>
 
-      {/* Modal B — Dedicated Manual Receive (matches older rich UX) */}
-      <Modal visible={manualOpen} animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+      {/* Modal B — Dedicated Manual Receive */}
+      <Modal visible={showManual} animationType="slide" onRequestClose={()=>setManualOpen(false)}>
         <View style={{flex:1, padding:16, backgroundColor:'#fff'}}>
           <Text style={{fontSize:18, fontWeight:'900', marginBottom:12}}>Manual Receive</Text>
           <TextInput
