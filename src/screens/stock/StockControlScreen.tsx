@@ -12,6 +12,9 @@ import ProductsScreen from '../setup/ProductsScreen';
 
 // NEW: read-only reconciliations panel
 import ReconciliationsPanel from './ReconciliationsPanel';
+// NEW: Fast Receive + Sales Import modals
+import FastReceivePanel from './FastReceivePanel';
+import SalesImportPanel from './SalesImportPanel';
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -22,6 +25,8 @@ export default function StockControlScreen() {
 
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+  const [showFastReceive, setShowFastReceive] = useState(false);
+  const [showSalesImport, setShowSalesImport] = useState(false);
 
   const friendly = useMemo(() => {
     return friendlyIdentity(
@@ -60,6 +65,8 @@ export default function StockControlScreen() {
         <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
+        <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
+        <Item title="Import Sales Report (CSV / PDF)" onPress={() => setShowSalesImport(true)} />
         <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings' as never)} />
 
         {/* Read-only: reconciliations summary */}
@@ -87,6 +94,30 @@ export default function StockControlScreen() {
             <View style={{ width: 60 }} />
           </View>
           <ProductsScreen />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Fast Receive */}
+      <Modal visible={showFastReceive} animationType="slide" onRequestClose={() => setShowFastReceive(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowFastReceive(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Fast Receive</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <FastReceivePanel onClose={() => setShowFastReceive(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Sales Report Import */}
+      <Modal visible={showSalesImport} animationType="slide" onRequestClose={() => setShowSalesImport(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowSalesImport(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Sales Import</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <SalesImportPanel onClose={() => setShowSalesImport(false)} />
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
