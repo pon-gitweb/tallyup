@@ -1,0 +1,26 @@
+// src/services/firebase.js
+import { initializeApp, getApps } from 'firebase/app';
+import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD61WerEMDlaElTVbaLg6HEDLI_53IAj-s",
+  authDomain: "hostisuitestock.firebaseapp.com",
+  projectId: "hostisuitestock",
+  storageBucket: "hostisuitestock.firebasestorage.app",
+  messagingSenderId: "942715530948",
+  appId: "1:942715530948:web:ecea226e6aebe06063e391",
+  measurementId: "G-92PPD2BSSP"
+};
+
+export const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+
+// RN requires initializeAuth + AsyncStorage persistence
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage),
+});
+
+export const db = getFirestore(app);
+export const storage = getStorage(app);

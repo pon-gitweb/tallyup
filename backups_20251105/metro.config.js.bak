@@ -1,0 +1,15 @@
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const exclusionList = require('metro-config/src/defaults/exclusionList');
+
+const defaultConfig = getDefaultConfig(__dirname);
+
+module.exports = mergeConfig(defaultConfig, {
+  resolver: {
+    blockList: exclusionList([
+      /(^|\/)functions\/.*/,  // Firebase Cloud Functions (server-only)
+      /(^|\/)server\/.*/,     // any custom server dir
+      /(^|\/)api\/.*/,        // local API folder if present
+      /(^|\/)backend\/.*/,    // if you use this name for server code
+    ]),
+  },
+});

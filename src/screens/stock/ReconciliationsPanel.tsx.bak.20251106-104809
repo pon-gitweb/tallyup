@@ -1,0 +1,25 @@
+// @ts-nocheck
+import React from 'react';
+import { View, Text } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useVenueId } from '../../context/VenueProvider';
+import ReconciliationCard from '../reports/components/ReconciliationCard';
+
+export default function ReconciliationsPanel() {
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+
+  return (
+    <View style={{ marginTop: 16 }}>
+      <Text style={{ color:'#94A3B8', marginLeft: 8, marginBottom: 6, fontWeight:'700' }}>
+        Recent Invoice Reconciliations
+      </Text>
+      <ReconciliationCard
+        venueId={venueId}
+        onOpenOrder={(orderId:string)=> nav.navigate('OrderDetail', { orderId })}
+        maxSuppliers={12}
+        maxPerSupplier={12}
+      />
+    </View>
+  );
+}
