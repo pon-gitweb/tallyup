@@ -6,7 +6,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
-import { persistAfterParse } from '../../services/invoices/reconciliationStore';
+import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 
 export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
@@ -25,6 +25,8 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       const a = res.assets[0];
       const isCsv = (a.mimeType||'').includes('csv') || /\.csv$/i.test(a.name||'');
 
+      if (!venueId) throw new Error('Not ready: no venue selected');
+
       // Upload into fast-receive area (no orderId yet)
       const up = await uploadFastInvoice(
         venueId,
@@ -33,25 +35,28 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         isCsv ? 'text/csv' : 'application/pdf'
       );
 
-      // Process using existing parsers (orderId not required for server-side parse)
+      // Process using existing parsers (server-side)
       const parsed = isCsv
         ? await processInvoicesCsv({ venueId, orderId: 'UNSET', storagePath: up.fullPath })
         : await processInvoicesPdf({ venueId, orderId: 'UNSET', storagePath: up.fullPath });
 
       const parsedPo = parsed?.invoice?.poNumber ?? null;
 
-      // Snapshot the parse so history exists even if no order attach happens now
-      await persistAfterParse({
+      // Venue-level snapshot; CHECK RESULT and surface error with PATH if it fails
+      const save = await persistFastReceiveSnapshot({
         venueId,
-        orderId: 'pending-fast-receive',
         source: isCsv ? 'csv' : 'pdf',
         storagePath: up.fullPath,
         payload: parsed,
-        orderPo: null,
         parsedPo
       });
+      if (!save || save.ok !== true) {
+        const path = `venues/${venueId}/fastReceives`;
+        const msg = (save && save.error) ? String(save.error) : 'unknown error';
+        throw new Error(`FastReceive snapshot write denied at ${path}: ${msg}`);
+      }
 
-      // Try to attach to a submitted order by PO; else save as pending
+      // Try to attach to a submitted order by PO; else keep pending
       const result = await tryAttachToOrderOrSavePending({
         venueId,
         parsed,
@@ -67,6 +72,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         onClose();
       }
     }catch(e:any){
+      // This now shows exact path + Firestore error text if the snapshot write is denied
       Alert.alert('Fast Receive failed', String(e?.message||e));
     } finally {
       setBusy(false);

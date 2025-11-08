@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, collection, query, where, limit, getDocs, addDoc, serverTimestamp, doc, updateDoc
+  getFirestore, collection, query, where, limit, getDocs, addDoc, serverTimestamp
 } from 'firebase/firestore';
 import { finalizeReceiveFromCsv, finalizeReceiveFromPdf } from '../orders/receive';
 
@@ -50,15 +50,21 @@ export async function tryAttachToOrderOrSavePending(args: {
     return { attached: !!done?.ok, orderId, savedPending: false };
   }
 
-  // 3) Else: store as pending fast receive for manager review/attach later
+  // 3) Else: store as pending fast receive (match the rules' snapshot envelope)
   const pendingCol = collection(db, 'venues', venueId, 'fastReceives');
   const ref = await addDoc(pendingCol, {
-    invoice: { source: parsed?.invoice?.source ?? 'unknown', storagePath, poNumber: po || null },
-    lines: parsed?.lines || [],
-    confidence: parsed?.confidence ?? null,
-    warnings: parsed?.warnings ?? [],
-    createdAt: serverTimestamp(),
+    kind: 'fast_receive_snapshot',
+    source: (parsed?.invoice?.source ?? 'unknown'),
+    storagePath,
+    payload: {
+      invoice: { source: parsed?.invoice?.source ?? 'unknown', storagePath, poNumber: po || null },
+      lines: parsed?.lines || [],
+      confidence: parsed?.confidence ?? null,
+      warnings: parsed?.warnings ?? [],
+    },
+    parsedPo: po || null,
     status: 'pending',
+    createdAt: serverTimestamp(),
   });
 
   return { attached: false, orderId: null, savedPending: true, id: ref.id };

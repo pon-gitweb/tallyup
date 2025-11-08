@@ -6,15 +6,15 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 
-// Use your real list screens from setup (exact paths you provided)
+// Setup screens
 import SuppliersScreen from '../setup/SuppliersScreen';
 import ProductsScreen from '../setup/ProductsScreen';
 
-// NEW: read-only reconciliations panel
-import ReconciliationsPanel from './ReconciliationsPanel';
-// NEW: Fast Receive + Sales Import modals
-import FastReceivePanel from './FastReceivePanel';
-import SalesImportPanel from './SalesImportPanel';
+// Panels (leaf-only, no nav edits)
+import FastReceivePanel from './FastReceivePanel';                  // Scan/Upload flow
+import FastReceivesReviewPanel from './FastReceivesReviewPanel';    // Pending review/attach
+import SalesReportUploadPanel from './SalesReportUploadPanel';      // Sales CSV/PDF import
+import ReconciliationsPanel from './ReconciliationsPanel';          // Invoice reconciliations list
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -25,8 +25,12 @@ export default function StockControlScreen() {
 
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+
+  // NEW modals
   const [showFastReceive, setShowFastReceive] = useState(false);
+  const [showFastReview, setShowFastReview]   = useState(false);
   const [showSalesImport, setShowSalesImport] = useState(false);
+  const [showRecon, setShowRecon]             = useState(false);
 
   const friendly = useMemo(() => {
     return friendlyIdentity(
@@ -61,19 +65,21 @@ export default function StockControlScreen() {
           <IdentityBadge />
         </View>
 
+        {/* Existing items */}
         <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
         <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
-        <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
-        <Item title="Import Sales Report (CSV / PDF)" onPress={() => setShowSalesImport(true)} />
         <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings' as never)} />
 
-        {/* Read-only: reconciliations summary */}
-        <ReconciliationsPanel />
+        {/* NEW: quick actions */}
+        <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
+        <Item title="Fast Receives (Pending)"      onPress={() => setShowFastReview(true)} />
+        <Item title="Sales Reports (Import)"       onPress={() => setShowSalesImport(true)} />
+        <Item title="Invoice Reconciliations"      onPress={() => setShowRecon(true)} />
       </View>
 
-      {/* Suppliers: full-screen modal with your rich screen */}
+      {/* Suppliers */}
       <Modal visible={showSuppliers} animationType="slide" onRequestClose={() => setShowSuppliers(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
@@ -85,7 +91,7 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Products: full-screen modal with your rich screen */}
+      {/* Products */}
       <Modal visible={showProducts} animationType="slide" onRequestClose={() => setShowProducts(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
@@ -97,7 +103,7 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Fast Receive */}
+      {/* Fast Receive (Scan/Upload) */}
       <Modal visible={showFastReceive} animationType="slide" onRequestClose={() => setShowFastReceive(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
@@ -109,15 +115,41 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Sales Report Import */}
+      {/* Fast Receives (Pending Review/Attach) */}
+      <Modal visible={showFastReview} animationType="slide" onRequestClose={() => setShowFastReview(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowFastReview(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Fast Receives (Pending)</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <FastReceivesReviewPanel onClose={() => setShowFastReview(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Sales Report Import (CSV/PDF) */}
       <Modal visible={showSalesImport} animationType="slide" onRequestClose={() => setShowSalesImport(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowSalesImport(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Sales Import</Text>
+            <Text style={styles.modalTitle}>Sales Reports (Import)</Text>
             <View style={{ width: 60 }} />
           </View>
-          <SalesImportPanel onClose={() => setShowSalesImport(false)} />
+          <SalesReportUploadPanel onClose={() => setShowSalesImport(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Invoice Reconciliations (modalized) */}
+      <Modal visible={showRecon} animationType="slide" onRequestClose={() => setShowRecon(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowRecon(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Invoice Reconciliations</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <ReconciliationsPanel />
+          </View>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
