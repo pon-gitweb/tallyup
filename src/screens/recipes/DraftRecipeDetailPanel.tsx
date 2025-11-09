@@ -1,217 +1,137 @@
 // @ts-nocheck
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch, Modal, SafeAreaView } from 'react-native';
-import { doc, getDoc } from 'firebase/firestore';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { db } from '../../services/firebase';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
-import { UNIT_PRESETS, SHOT_ALIASES, normalizePortion, toBaseFromContainer } from '../../services/recipes/units';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
-import { getApp } from 'firebase/app';
+import IngredientEditor from './components/IngredientEditor';
+import type { RecipeItem } from '../../types/recipes';
 
-type Props = { recipeId: string; onClose: () => void };
+// Simple money helpers
+const to2 = (n:number|null|undefined) => n==null ? '—' : Number(n).toFixed(2);
 
-type Ingredient = {
-  key: string;
-  name: string;
-  qty: string;           // user input; can be numeric or alias (e.g., "single")
-  unit: string;          // e.g., ml, g, each
-  includeInCost: boolean;
-
-  // Linking to product
-  productId?: string | null;
-  productName?: string | null;
-
-  // Container specs for costing (prefilled from product, editable)
-  containerSize: string; // numeric text
-  containerUnit: string; // ml/g/each/L/kg
-  containerCost: string; // numeric text
-};
+type Props = { recipeId: string; onClose: () => void; mode?: 'single'|'batch'|'dish'|null; nameFromWizard?: string|null };
 
 export default function DraftRecipeDetailPanel({ recipeId, onClose }: Props) {
   const venueId = useVenueId();
 
-  const [loaded, setLoaded] = useState(false);
-  const [name, setName] = useState('');
-  const [yieldQty, setYieldQty] = useState<string>(''); // number as text
-  const [unit, setUnit] = useState<string>('serve');
-  const [items, setItems] = useState<Ingredient[]>([]);
-
-  const [cogs, setCogs] = useState<number>(0);
-  const [gpTarget, setGpTarget] = useState<string>('65');
-  const [rrp, setRrp] = useState<string>('');
-  const [method, setMethod] = useState<string>('');
+  // UI state (we keep local then PATCH)
+  const [name, setName] = useState('');                 // will be prefilled by Craft-It next iteration
+  const [mode, setMode] = useState<'single'|'batch'|'dish'|null>(null);
+  const [items, setItems] = useState<RecipeItem[]>([]);
+  const [portionSize, setPortionSize] = useState<string>('');    // batch only
+  const [portionUnit, setPortionUnit] = useState<string>('ml');  // batch only
+  const [targetGp, setTargetGp] = useState<string>('65');        // %
+  const [method, setMethod] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Product picker modal state
-  const [pickerOpen, setPickerOpen] = useState<{open:boolean, key?:string}>({open:false});
-  const [search, setSearch] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  // Derived totals
+  const batchTotals = useMemo(() => {
+    // Sum known volume/weight/each to estimate batch total in chosen portion unit
+    let totalMl = 0;
+    let totalG  = 0;
+    let totalEach = 0;
 
-  // ---- Load draft to prefill ----
-  useEffect(() => {
-    (async () => {
-      try {
-        const ref = doc(db, 'venues', venueId!, 'recipes', recipeId);
-        const snap = await getDoc(ref);
-        if (!snap.exists()) throw new Error('Draft not found');
-        const r = snap.data() as any;
-        setName(r?.name ?? '');
-        setYieldQty(r?.yield != null ? String(r.yield) : '');
-        setUnit(r?.unit ?? 'serve');
-        const incoming = Array.isArray(r?.items) ? r.items : [];
-        setItems(incoming.map((x:any, idx:number) => ({
-          key: x.key ?? String(Date.now()+idx),
-          name: x.name ?? '',
-          qty: String(x.qty ?? ''),
-          unit: x.unit ?? 'ml',
-          includeInCost: x.includeInCost !== false,
-          productId: x.productId ?? null,
-          productName: x.productName ?? null,
-          containerSize: String(x.containerSize ?? ''),
-          containerUnit: x.containerUnit ?? 'ml',
-          containerCost: String(x.containerCost ?? ''),
-        })));
-        setMethod(r?.method ?? '');
-        setCogs(Number(r?.cogs ?? 0));
-        setGpTarget(r?.gpTarget != null ? String(r.gpTarget) : '65');
-        setRrp(r?.rrp != null ? String(r.rrp) : '');
-      } catch (e:any) {
-        Alert.alert('Load failed', String(e?.message || e));
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, [venueId, recipeId]);
+    items.forEach(it => {
+      const qty = Number(it.qty || 0);
 
-  // ---- Derived COGS from portions of container ----
-  useEffect(() => {
-    const total = (items || []).reduce((sum:number, it:Ingredient) => {
-      if (it.includeInCost === false) return sum;
+      if (it.unit === 'l') totalMl += qty * 1000;
+      else if (it.unit === 'ml') totalMl += qty;
+      else if (it.unit === 'kg') totalG += qty * 1000;
+      else if (it.unit === 'g') totalG += qty;
+      else if (it.unit === 'each') totalEach += qty;
+      // custom: ignore in batch size
+    });
 
-      const { qtyBase, base: portionBase } = normalizePortion(it.qty, it.unit);
-      const { sizeBase, base: containerBase } = toBaseFromContainer(it.containerSize, it.containerUnit);
-      const cost = Number(String(it.containerCost).replace(',', '.'));
-
-      if (!Number.isFinite(qtyBase) || !Number.isFinite(sizeBase) || sizeBase <= 0 || !Number.isFinite(cost)) return sum;
-
-      // Only cost if bases match (ml vs g vs each). If not, try a simple fallback:
-      if (portionBase !== containerBase) {
-        // if user picked incompatible unit, skip costing for this line
-        return sum;
-      }
-      const line = (qtyBase / sizeBase) * cost;
-      return sum + (Number.isFinite(line) ? line : 0);
-    }, 0);
-    setCogs(Number(total.toFixed(4)));
+    return { totalMl, totalG, totalEach };
   }, [items]);
 
-  // GP ↔ RRP coupling
-  const recomputeRrpFromGp = useCallback(() => {
-    const gp = Number(gpTarget);
-    const c = Number(cogs);
-    if (!Number.isFinite(gp) || !Number.isFinite(c) || gp >= 100) return;
-    const price = c / (1 - gp/100);
-    if (Number.isFinite(price)) setRrp(price.toFixed(2));
-  }, [gpTarget, cogs]);
-  useEffect(() => { recomputeRrpFromGp(); }, [cogs]);
-  const onChangeGp = (s:string) => { setGpTarget(s); recomputeRrpFromGp(); };
-  const onChangeRrp = (s:string) => {
-    setRrp(s);
-    const price = Number(s);
-    const c = Number(cogs);
-    if (Number.isFinite(price) && price > 0 && Number.isFinite(c) && c >= 0) {
-      const gp = (1 - (c / price)) * 100;
-      setGpTarget(gp.toFixed(1));
-    }
-  };
+  const derivedCogsPerServe = useMemo(() => {
+    // cost per ingredient:
+    // liquid: cost = (qty_ml / packSizeMl) * packPrice
+    // solid:  cost = (qty_g  / packSizeG ) * packPrice
+    // each:   cost = (qty_each / packEach) * packPrice
+    const sum = items.reduce((acc, it) => {
+      const price = it.packPrice ?? 0;
+      const qty = Number(it.qty || 0);
+      if (!price || !qty) return acc;
 
-  // ---- UI helpers ----
-  const addItem = () => {
-    setItems(prev => [
-      ...prev,
-      {
-        key: String(Date.now()),
-        name: '',
-        qty: '',
-        unit: 'ml',
-        includeInCost: true,
-        productId: null,
-        productName: null,
-        containerSize: '',
-        containerUnit: 'ml',
-        containerCost: '',
+      if ((it.unit === 'ml' || it.unit === 'l') && it.packSizeMl) {
+        const needMl = it.unit === 'l' ? qty * 1000 : qty;
+        return acc + (needMl / it.packSizeMl) * price;
       }
-    ]);
-  };
-  const updateItem = (key:string, patch:any) => {
-    setItems(prev => prev.map(it => it.key === key ? { ...it, ...patch } : it));
-  };
-  const removeItem = (key:string) => setItems(prev => prev.filter(it => it.key !== key));
+      if ((it.unit === 'g' || it.unit === 'kg') && it.packSizeG) {
+        const needG = it.unit === 'kg' ? qty * 1000 : qty;
+        return acc + (needG / it.packSizeG) * price;
+      }
+      if (it.unit === 'each' && it.packEach) {
+        return acc + (qty / it.packEach) * price;
+      }
+      // Unknown pack info -> zero cost; user can fill later
+      return acc;
+    }, 0);
 
-  // ---- Product picker (client filter to avoid new indexes today) ----
-  const openPicker = async (key:string) => {
-    try {
-      setPickerOpen({open:true, key});
-      setSearch('');
-      const dbi = getFirestore(getApp());
-      const snap = await getDocs(collection(dbi, 'venues', venueId!, 'products'));
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setSearchResults(all.slice(0, 100)); // initial
-    } catch (e) {
-      Alert.alert('Product list failed', String(e?.message || e));
+    // For single/dish: COGS per serve = sum
+    // For batch: COGS per serve = sum / serves
+    if (mode === 'batch') {
+      const pSize = Number(portionSize || 0);
+      const pUnit = portionUnit;
+      let serves = 0;
+      if (pSize > 0) {
+        if (pUnit === 'ml') serves = batchTotals.totalMl > 0 ? batchTotals.totalMl / pSize : 0;
+        else if (pUnit === 'g') serves = batchTotals.totalG > 0 ? batchTotals.totalG / pSize : 0;
+        else if (pUnit === 'each') serves = batchTotals.totalEach > 0 ? batchTotals.totalEach / pSize : 0;
+      }
+      if (serves > 0) return sum / serves;
+      return null;
     }
-  };
-  const filterResults = useMemo(() => {
-    const q = (search || '').toLowerCase();
-    if (!q) return searchResults;
-    return searchResults.filter(p =>
-      String(p.name || '').toLowerCase().includes(q) ||
-      String(p.supplierName || '').toLowerCase().includes(q)
-    ).slice(0, 50);
-  }, [search, searchResults]);
+    return sum || null;
+  }, [items, mode, batchTotals, portionSize, portionUnit]);
 
-  const pickProduct = (prod:any) => {
-    const key = pickerOpen.key!;
-    // Try to infer container size & unit from product fields (very tolerant)
-    const volMl = Number(prod?.volumeMl ?? prod?.sizeMl ?? prod?.bottleMl ?? prod?.packMl ?? 0);
-    const wtG   = Number(prod?.weightG ?? prod?.packG ?? 0);
-    const each  = 1;
+  const derivedRrp = useMemo(() => {
+    const gp = Number(targetGp || 0) / 100;
+    const c = Number(derivedCogsPerServe || 0);
+    if (!c || !gp || gp >= 1) return null;
+    // RRP from COGS and GP%: price = cost / (1 - GP)
+    return c / (1 - gp);
+  }, [derivedCogsPerServe, targetGp]);
 
-    // prefer volume if present, else weight, else each
-    let containerUnit = 'ml';
-    let containerSize = volMl > 0 ? volMl : wtG > 0 ? wtG : each;
-    if (volMl > 0) containerUnit = 'ml';
-    else if (wtG > 0) containerUnit = 'g';
-    else containerUnit = 'each';
+  const servesForBatch = useMemo(() => {
+    if (mode !== 'batch') return null;
+    const pSize = Number(portionSize || 0);
+    if (!pSize) return null;
+    if (portionUnit === 'ml') return batchTotals.totalMl ? batchTotals.totalMl / pSize : null;
+    if (portionUnit === 'g')  return batchTotals.totalG  ? batchTotals.totalG  / pSize : null;
+    if (portionUnit === 'each') return batchTotals.totalEach ? batchTotals.totalEach / pSize : null;
+    return null;
+  }, [mode, portionSize, portionUnit, batchTotals]);
 
-    // cost: prefer costPrice, then latestPrice, then 0
-    const cost = Number(prod?.costPrice ?? prod?.lastCost ?? prod?.price ?? 0);
-
-    updateItem(key, {
-      productId: prod.id,
-      productName: prod.name || null,
-      name: prod.name || '',
-      containerSize: String(containerSize || ''),
-      containerUnit,
-      containerCost: String(Number.isFinite(cost) ? cost : ''),
-    });
-    setPickerOpen({open:false});
-  };
-
-  const saveAll = useCallback(async () => {
+  const save = useCallback(async () => {
     try {
       setBusy(true);
-      await updateRecipeDraft(venueId!, recipeId, {
-        name: name?.trim() || null,
-        yield: yieldQty ? Number(yieldQty) : null,
-        unit: unit || null,
+
+      const patch:any = {
+        name: name || null,
         items,
-        cogs,
-        rrp: rrp ? Number(rrp) : null,
-        gpTarget: gpTarget ? Number(gpTarget) : null,
         method: method || null,
-      });
+        targetGpPct: targetGp ? Number(targetGp) : null,
+      };
+
+      if (mode === 'batch') {
+        patch.portionSize = portionSize ? Number(portionSize) : null;
+        patch.portionUnit = portionUnit || null;
+        patch.yield = servesForBatch ? Number(servesForBatch) : null;
+        patch.unit = servesForBatch ? 'serve' : null;
+        patch.cogs = derivedCogsPerServe ?? null;
+        patch.rrp = derivedRrp ?? null;
+      } else {
+        // single/dish
+        patch.yield = 1;
+        patch.unit = 'serve';
+        patch.cogs = derivedCogsPerServe ?? null;
+        patch.rrp = derivedRrp ?? null;
+      }
+
+      await updateRecipeDraft(venueId!, recipeId, patch);
       Alert.alert('Saved', 'Draft updated.');
       onClose();
     } catch (e:any) {
@@ -219,216 +139,90 @@ export default function DraftRecipeDetailPanel({ recipeId, onClose }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, recipeId, name, yieldQty, unit, items, cogs, rrp, gpTarget, method, onClose]);
-
-  if (!loaded) {
-    return (
-      <View style={{ flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'#fff' }}>
-        <Text>Loading…</Text>
-      </View>
-    );
-  }
+  }, [venueId, recipeId, name, items, method, targetGp, mode, portionSize, portionUnit, servesForBatch, derivedCogsPerServe, derivedRrp, onClose]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
         <TouchableOpacity onPress={onClose}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
-        <Text style={{ fontSize:18, fontWeight:'900' }}>Craft-It · Draft</Text>
+        <Text style={{ fontSize:18, fontWeight:'900' }}>Craft-It Draft</Text>
         <View style={{ width:60 }} />
       </View>
 
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }}>
         <Field label="Name">
-          <TextInput value={name} onChangeText={setName} placeholder="e.g., House Margarita"
-            style={I} autoCapitalize="words" />
-          <Hint>Pre-filled from the previous step. You can tweak it here.</Hint>
+          <TextInput value={name} onChangeText={setName} placeholder="House Margarita or Beef Ragu" style={I} autoCapitalize="words" />
         </Field>
 
-        <Field label="Yield / Unit" row>
-          <TextInput value={yieldQty} onChangeText={setYieldQty} placeholder="e.g., 4"
-            keyboardType="numeric" style={[I, { flex:1, marginRight:8 }]} />
-          <TextInput value={unit} onChangeText={setUnit} placeholder="e.g., serves"
-            style={[I, { flex:1 }]} />
+        {/* MODE selector minimal (so user can flip if needed) */}
+        <Field label="Type">
+          <View style={{ flexDirection:'row', gap:8 }}>
+            {['single','batch','dish'].map(m=>(
+              <Pill key={m} label={m} active={mode===m} onPress={()=>setMode(m)} />
+            ))}
+          </View>
         </Field>
-        <Hint>“Yield” = how much this recipe makes (4). “Unit” = what that number means (serves, ml, g).</Hint>
 
-        {/* Ingredients */}
-        <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' }}>
-          <Text style={{ fontWeight:'800', marginBottom:8 }}>Ingredients</Text>
-          {items.length === 0 && (
-            <Text style={{ color:'#6B7280', marginBottom:8 }}>
-              Link to a stock product (auto-fills bottle/pack size and cost) or use “Misc/manual”.
-              Turn off “Include in COGS” for water/ice.
-            </Text>
-          )}
-          {items.map((it) => {
-            const portion = normalizePortion(it.qty, it.unit);
-            const cont = toBaseFromContainer(it.containerSize, it.containerUnit);
-            const cost = Number(String(it.containerCost).replace(',', '.'));
-            const lineCost = (it.includeInCost !== false && portion.base === cont.base && cont.sizeBase > 0 && Number.isFinite(cost))
-              ? (portion.qtyBase / cont.sizeBase) * cost
-              : 0;
+        <Field label="Ingredients">
+          <IngredientEditor venueId={venueId!} items={items} onChange={setItems} />
+        </Field>
 
-            return (
-              <View key={it.key} style={{ marginBottom:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, backgroundColor:'#fff' }}>
-                <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                  <Text style={{ fontWeight:'700' }}>{it.productName || 'Misc/manual'}</Text>
-                  <TouchableOpacity onPress={()=>removeItem(it.key)}><Text style={{ color:'#DC2626', fontWeight:'800' }}>Remove</Text></TouchableOpacity>
-                </View>
-
-                {/* Name & link */}
-                <View style={{ flexDirection:'row', gap:8 }}>
-                  <TextInput
-                    value={it.name}
-                    onChangeText={(v)=>updateItem(it.key, { name: v })}
-                    placeholder="Ingredient (e.g., Blanco Tequila)"
-                    style={[I, { flex:1 }]}
-                  />
-                  <TouchableOpacity onPress={()=>openPicker(it.key)} style={{ paddingHorizontal:12, justifyContent:'center', borderRadius:8, borderWidth:1, borderColor:'#111' }}>
-                    <Text style={{ fontWeight:'800' }}>{it.productId ? 'Change' : 'Link'}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Portion */}
-                <View style={{ height:8 }} />
-                <View style={{ flexDirection:'row', gap:8 }}>
-                  <TextInput
-                    value={it.qty}
-                    onChangeText={(v)=>updateItem(it.key, { qty: v })}
-                    placeholder="Qty (e.g., 45 or 'single', 'double', 'dash')"
-                    style={[I, { flex:1 }]}
-                  />
-                  <TextInput
-                    value={it.unit}
-                    onChangeText={(v)=>updateItem(it.key, { unit: v })}
-                    placeholder="Unit (ml/g/each)"
-                    style={[I, { flex:1 }]}
-                  />
-                </View>
-                <Text style={{ color:'#6B7280', marginTop:4 }}>
-                  Aliases: {Object.keys(SHOT_ALIASES).join(', ')}
-                </Text>
-
-                {/* Container */}
-                <View style={{ height:8 }} />
-                <Text style={{ fontWeight:'700', marginBottom:4 }}>Container (for costing)</Text>
-                <View style={{ flexDirection:'row', gap:8 }}>
-                  <TextInput
-                    value={it.containerSize}
-                    onChangeText={(v)=>updateItem(it.key, { containerSize: v })}
-                    placeholder="Size (e.g., 750)"
-                    keyboardType="decimal-pad"
-                    style={[I, { flex:1 }]}
-                  />
-                  <TextInput
-                    value={it.containerUnit}
-                    onChangeText={(v)=>updateItem(it.key, { containerUnit: v })}
-                    placeholder="Unit (ml/g/each)"
-                    style={[I, { flex:1 }]}
-                  />
-                  <TextInput
-                    value={it.containerCost}
-                    onChangeText={(v)=>updateItem(it.key, { containerCost: v })}
-                    placeholder="Container cost (e.g., 32.50)"
-                    keyboardType="decimal-pad"
-                    style={[I, { flex:1 }]}
-                  />
-                </View>
-
-                {/* Include toggle + line cost */}
-                <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:8 }}>
-                  <View style={{ flexDirection:'row', alignItems:'center' }}>
-                    <Switch
-                      value={it.includeInCost !== false}
-                      onValueChange={(v)=>updateItem(it.key, { includeInCost: v })}
-                    />
-                    <Text style={{ marginLeft:6 }}>Include in COGS</Text>
-                  </View>
-                  <Text style={{ fontWeight:'700' }}>Line: ${Number(lineCost).toFixed(2)}</Text>
-                </View>
-              </View>
-            );
-          })}
-
-          <TouchableOpacity onPress={addItem}
-            style={{ padding:12, borderRadius:10, backgroundColor:'#111' }}>
-            <Text style={{ color:'#fff', textAlign:'center', fontWeight:'800' }}>+ Add ingredient</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Pricing */}
-        <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' }}>
-          <Text style={{ fontWeight:'800', marginBottom:8 }}>Pricing</Text>
-          <Field label="COGS (derived)">
-            <TextInput value={(Number.isFinite(cogs) ? cogs : 0).toFixed(2)} editable={false} style={[I, { backgroundColor:'#F3F4F6' }]} />
-            <Hint>Calculated from (portion / container_size) × container_cost across included ingredients.</Hint>
-          </Field>
-
-          <Field label="Target GP %  ↔  RRP ($)">
+        {mode === 'batch' && (
+          <Field label="Batch portions">
             <View style={{ flexDirection:'row', gap:8 }}>
-              <TextInput value={gpTarget} onChangeText={onChangeGp} keyboardType="decimal-pad" style={[I, { flex:1 }]} />
-              <TextInput value={rrp} onChangeText={onChangeRrp} keyboardType="decimal-pad" style={[I, { flex:1 }]} />
+              <TextInput value={portionSize} onChangeText={setPortionSize} placeholder="Portion size" keyboardType="decimal-pad" style={[I,{flex:1}]} />
+              <TextInput value={portionUnit} onChangeText={setPortionUnit} placeholder="ml/g/each" style={[I,{flex:1}]} />
             </View>
-            <Hint>Edit either field — the other updates. Default GP is 65%.</Hint>
+            <Text style={{ color:'#6B7280', marginTop:6 }}>
+              Estimated batch size: {batchTotals.totalMl ? `${batchTotals.totalMl} ml` : batchTotals.totalG ? `${batchTotals.totalG} g` : batchTotals.totalEach ? `${batchTotals.totalEach} each` : '—'}
+              {servesForBatch ? ` · ≈ ${Math.floor(servesForBatch)} serves` : ''}
+            </Text>
           </Field>
-        </View>
+        )}
+
+        <Field label="Target GP %">
+          <TextInput value={targetGp} onChangeText={setTargetGp} placeholder="e.g., 65" keyboardType="decimal-pad" style={I} />
+        </Field>
+
+        <Field label="Derived Costs (per serve)">
+          <View style={{ padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, backgroundColor:'#F9FAFB' }}>
+            <Text>COGS: ${to2(derivedCogsPerServe)}</Text>
+            <Text>RRP: ${to2(derivedRrp)}</Text>
+          </View>
+        </Field>
 
         <Field label="Method / Notes">
-          <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…"
-            style={[I, { height:120, textAlignVertical:'top' }]} multiline />
+          <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I,{height:120, textAlignVertical:'top'}]} multiline />
         </Field>
 
-        <TouchableOpacity disabled={busy} onPress={saveAll}
-          style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}>
+        <TouchableOpacity disabled={busy} onPress={save} style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}>
           <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Saving…' : 'Save Draft'}</Text>
         </TouchableOpacity>
       </ScrollView>
-
-      {/* Product picker */}
-      <Modal visible={pickerOpen.open} animationType="slide" onRequestClose={()=>setPickerOpen({open:false})}>
-        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
-          <View style={{ padding:12, borderBottomWidth:1, borderColor:'#E5E7EB' }}>
-            <Text style={{ fontSize:18, fontWeight:'900' }}>Link product</Text>
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search products…"
-              style={[I, { marginTop:8 }]}
-            />
-          </View>
-          <ScrollView contentContainerStyle={{ padding:12 }}>
-            {filterResults.map((p:any) => (
-              <TouchableOpacity key={p.id} onPress={()=>pickProduct(p)}
-                style={{ padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, marginBottom:8 }}>
-                <Text style={{ fontWeight:'700' }}>{p.name || '(no name)'}</Text>
-                <Text style={{ color:'#6B7280' }}>{p.supplierName || ''}</Text>
-              </TouchableOpacity>
-            ))}
-            {filterResults.length === 0 && (
-              <Text style={{ color:'#6B7280' }}>No matches. You can cancel and use “Misc/manual”.</Text>
-            )}
-          </ScrollView>
-          <View style={{ padding:12 }}>
-            <TouchableOpacity onPress={()=>setPickerOpen({open:false})}
-              style={{ padding:14, borderRadius:12, backgroundColor:'#F3F4F6' }}>
-              <Text style={{ textAlign:'center', fontWeight:'800' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
     </View>
   );
 }
 
 function Field({ label, children, row }:{ label:string; children:any; row?:boolean }) {
   return (
-    <View style={{ marginBottom:10 }}>
+    <View>
       <Text style={{ fontWeight:'700', marginBottom:6 }}>{label}</Text>
       <View style={{ flexDirection: row ? 'row' : 'column' }}>{children}</View>
     </View>
   );
 }
-function Hint({ children }:{ children:any }) {
-  return <Text style={{ color:'#6B7280', marginTop:4 }}>{children}</Text>;
+
+function Pill({ label, active, onPress }:{label:string; active:boolean; onPress:()=>void}) {
+  return (
+    <TouchableOpacity onPress={onPress}
+      style={{
+        paddingVertical:8, paddingHorizontal:12, borderRadius:999,
+        borderWidth:1, borderColor: active ? '#111' : '#E5E7EB',
+        backgroundColor: active ? '#111' : '#F9FAFB', marginRight:8, marginBottom:8
+      }}>
+      <Text style={{ color: active ? '#fff' : '#111', fontWeight:'700', textTransform:'capitalize' }}>{label}</Text>
+    </TouchableOpacity>
+  );
 }
+
 const I = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' };

@@ -1,18 +1,22 @@
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import type { RecipeItem } from '../../types/recipes';
 
 export type RecipeDraftPatch = {
-  name?: string | null;
-  yield?: number | null;
-  unit?: string | null;
-  items?: any[];               // inline ingredients
-  cogs?: number | null;        // derived, persisted
-  rrp?: number | null;         // sell price
-  gpTarget?: number | null;    // %
-  method?: string | null;
-  status?: 'draft' | 'confirmed';
-  category?: 'food' | 'beverage' | null;
-  mode?: 'batch' | 'single' | 'dish' | null;
+  name?: string|null;
+  items?: RecipeItem[];
+  // single/dish
+  yield?: number|null;
+  unit?: string|null;
+  // batch
+  portionSize?: number|null;
+  portionUnit?: string|null;
+  // derived money
+  cogs?: number|null;
+  rrp?: number|null;
+  targetGpPct?: number|null;
+  // notes
+  method?: string|null;
 };
 
 export async function updateRecipeDraft(venueId: string, recipeId: string, patch: RecipeDraftPatch) {
