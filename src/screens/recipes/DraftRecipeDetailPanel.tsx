@@ -38,7 +38,7 @@ export default function DraftRecipeDetailPanel({
   const [derivedBatchCount, setDerivedBatchCount] = useState<number>(0);
 
   // Pricing: GP ↔︎ RRP (with GST toggle)
-  const [gpPct, setGpPct] = useState<string>('70'); // default to 70% per your example
+  const [gpPct, setGpPct] = useState<string>('70'); // default 70%
   const [rrp, setRrp] = useState<string>('');       // user override
   const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
 
@@ -134,8 +134,10 @@ export default function DraftRecipeDetailPanel({
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <Header title="Craft-It: Draft" onBack={onClose} />
-      <ScrollView contentContainerStyle={{ padding:16, gap:12 }}>
-        {/* Name kept here so user doesn't retype earlier step if already set */}
+
+      {/* IMPORTANT: allow taps to pass to nested lists */}
+      <ScrollView contentContainerStyle={{ padding:16, gap:12 }} keyboardShouldPersistTaps="handled">
+        {/* Name first */}
         <Field label="Name">
           <TextInput value={name} onChangeText={setName} placeholder="e.g., House Margarita" style={I} autoCapitalize="words" />
           {mode ? <Text style={Subtle}>Mode: {mode}</Text> : null}
