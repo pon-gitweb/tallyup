@@ -1,204 +1,220 @@
 // @ts-nocheck
-import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
 import IngredientEditor from './components/IngredientEditor';
-import type { RecipeItem } from '../../types/recipes';
 
-// Simple money helpers
-const to2 = (n:number|null|undefined) => n==null ? '—' : Number(n).toFixed(2);
+type Props = {
+  recipeId: string;
+  onClose: () => void;
+  initialName?: string | null;
+  initialCategory?: 'food' | 'beverage' | null;
+  initialMode?: 'batch' | 'single' | 'dish' | null;
+};
 
-type Props = { recipeId: string; onClose: () => void; mode?: 'single'|'batch'|'dish'|null; nameFromWizard?: string|null };
+const GST_RATE = 0.15; // NZ
 
-export default function DraftRecipeDetailPanel({ recipeId, onClose }: Props) {
+export default function DraftRecipeDetailPanel({
+  recipeId, onClose, initialName = null, initialCategory = null, initialMode = null
+}: Props) {
   const venueId = useVenueId();
 
-  // UI state (we keep local then PATCH)
-  const [name, setName] = useState('');                 // will be prefilled by Craft-It next iteration
-  const [mode, setMode] = useState<'single'|'batch'|'dish'|null>(null);
-  const [items, setItems] = useState<RecipeItem[]>([]);
-  const [portionSize, setPortionSize] = useState<string>('');    // batch only
-  const [portionUnit, setPortionUnit] = useState<string>('ml');  // batch only
-  const [targetGp, setTargetGp] = useState<string>('65');        // %
-  const [method, setMethod] = useState('');
+  // Prefill & state
+  const [name, setName] = useState<string>(initialName || '');
+  const [mode, setMode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
+  const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
+
+  // Yield/portion (moved near bottom; still drives COGS/serve math)
+  const [yieldQty, setYieldQty] = useState<string>('');
+  const [unit, setUnit] = useState<string>('serve');
+  const [portionSize, setPortionSize] = useState<string>(''); // number string
+  const [portionUnit, setPortionUnit] = useState<'ml' | 'g' | 'each' | 'serve'>('serve');
+
+  // Derived from ingredients
+  const [derivedBatchCost, setDerivedBatchCost] = useState<number>(0);
+  const [derivedBatchVolumeMl, setDerivedBatchVolumeMl] = useState<number>(0);
+  const [derivedBatchWeightG, setDerivedBatchWeightG] = useState<number>(0);
+  const [derivedBatchCount, setDerivedBatchCount] = useState<number>(0);
+
+  // Pricing: GP ↔︎ RRP (with GST toggle)
+  const [gpPct, setGpPct] = useState<string>('70'); // default to 70% per your example
+  const [rrp, setRrp] = useState<string>('');       // user override
+  const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
+
+  // Notes
+  const [method, setMethod] = useState<string>('');
+
   const [busy, setBusy] = useState(false);
 
-  // Derived totals
-  const batchTotals = useMemo(() => {
-    // Sum known volume/weight/each to estimate batch total in chosen portion unit
-    let totalMl = 0;
-    let totalG  = 0;
-    let totalEach = 0;
-
-    items.forEach(it => {
-      const qty = Number(it.qty || 0);
-
-      if (it.unit === 'l') totalMl += qty * 1000;
-      else if (it.unit === 'ml') totalMl += qty;
-      else if (it.unit === 'kg') totalG += qty * 1000;
-      else if (it.unit === 'g') totalG += qty;
-      else if (it.unit === 'each') totalEach += qty;
-      // custom: ignore in batch size
-    });
-
-    return { totalMl, totalG, totalEach };
-  }, [items]);
-
-  const derivedCogsPerServe = useMemo(() => {
-    // cost per ingredient:
-    // liquid: cost = (qty_ml / packSizeMl) * packPrice
-    // solid:  cost = (qty_g  / packSizeG ) * packPrice
-    // each:   cost = (qty_each / packEach) * packPrice
-    const sum = items.reduce((acc, it) => {
-      const price = it.packPrice ?? 0;
-      const qty = Number(it.qty || 0);
-      if (!price || !qty) return acc;
-
-      if ((it.unit === 'ml' || it.unit === 'l') && it.packSizeMl) {
-        const needMl = it.unit === 'l' ? qty * 1000 : qty;
-        return acc + (needMl / it.packSizeMl) * price;
-      }
-      if ((it.unit === 'g' || it.unit === 'kg') && it.packSizeG) {
-        const needG = it.unit === 'kg' ? qty * 1000 : qty;
-        return acc + (needG / it.packSizeG) * price;
-      }
-      if (it.unit === 'each' && it.packEach) {
-        return acc + (qty / it.packEach) * price;
-      }
-      // Unknown pack info -> zero cost; user can fill later
-      return acc;
-    }, 0);
-
-    // For single/dish: COGS per serve = sum
-    // For batch: COGS per serve = sum / serves
-    if (mode === 'batch') {
-      const pSize = Number(portionSize || 0);
-      const pUnit = portionUnit;
-      let serves = 0;
-      if (pSize > 0) {
-        if (pUnit === 'ml') serves = batchTotals.totalMl > 0 ? batchTotals.totalMl / pSize : 0;
-        else if (pUnit === 'g') serves = batchTotals.totalG > 0 ? batchTotals.totalG / pSize : 0;
-        else if (pUnit === 'each') serves = batchTotals.totalEach > 0 ? batchTotals.totalEach / pSize : 0;
-      }
-      if (serves > 0) return sum / serves;
-      return null;
+  useEffect(() => {
+    if (mode === 'single') {
+      setYieldQty('1');
+      setUnit('serve');
+      if (!portionUnit) setPortionUnit('serve');
     }
-    return sum || null;
-  }, [items, mode, batchTotals, portionSize, portionUnit]);
+  }, [mode, portionUnit]);
 
-  const derivedRrp = useMemo(() => {
-    const gp = Number(targetGp || 0) / 100;
-    const c = Number(derivedCogsPerServe || 0);
-    if (!c || !gp || gp >= 1) return null;
-    // RRP from COGS and GP%: price = cost / (1 - GP)
-    return c / (1 - gp);
-  }, [derivedCogsPerServe, targetGp]);
-
-  const servesForBatch = useMemo(() => {
+  // Suggest serves for batch from totals + portion size
+  const servesFromBatch = useMemo(() => {
     if (mode !== 'batch') return null;
-    const pSize = Number(portionSize || 0);
-    if (!pSize) return null;
-    if (portionUnit === 'ml') return batchTotals.totalMl ? batchTotals.totalMl / pSize : null;
-    if (portionUnit === 'g')  return batchTotals.totalG  ? batchTotals.totalG  / pSize : null;
-    if (portionUnit === 'each') return batchTotals.totalEach ? batchTotals.totalEach / pSize : null;
+    const ps = Number(portionSize || '0') || 0;
+    if (ps <= 0) return null;
+
+    if (portionUnit === 'ml' && derivedBatchVolumeMl > 0) return Math.max(1, Math.floor(derivedBatchVolumeMl / ps));
+    if (portionUnit === 'g'  && derivedBatchWeightG  > 0) return Math.max(1, Math.floor(derivedBatchWeightG  / ps));
+    if (portionUnit === 'each' && derivedBatchCount  > 0) return Math.max(1, Math.floor(derivedBatchCount   / ps));
+    if (portionUnit === 'serve') {
+      const y = Number(yieldQty || '0') || 0;
+      return y > 0 ? y : null;
+    }
     return null;
-  }, [mode, portionSize, portionUnit, batchTotals]);
+  }, [mode, portionSize, portionUnit, derivedBatchVolumeMl, derivedBatchWeightG, derivedBatchCount, yieldQty]);
+
+  // Derived COGS per serve
+  const cogsPerServe = useMemo(() => {
+    const serves = mode === 'single' ? 1 : (servesFromBatch ?? (Number(yieldQty || '0') || 0));
+    return serves > 0 ? (derivedBatchCost / serves) : 0;
+  }, [mode, servesFromBatch, yieldQty, derivedBatchCost]);
+
+  // Two-way GP/RRP
+  const toNumber = (s:string) => Number(s || '0') || 0;
+  const rrpDisplay = useMemo(() => {
+    const gp = Math.min(99.9, Math.max(0, toNumber(gpPct)));
+    const c  = Math.max(0, cogsPerServe);
+    if (gp >= 99.9) return '';
+    const net = c / (1 - gp / 100);
+    const gross = rrpIncludesGst ? net * (1 + GST_RATE) : net;
+    return Number.isFinite(gross) ? gross.toFixed(2) : '';
+  }, [gpPct, cogsPerServe, rrpIncludesGst]);
+
+  const onChangeRrp = useCallback((value:string) => {
+    setRrp(value);
+    const price = toNumber(value);
+    const net = rrpIncludesGst ? price / (1 + GST_RATE) : price;
+    const c = Math.max(0, cogsPerServe);
+    if (net > 0 && net >= c) {
+      const gp = ((net - c) / net) * 100;
+      setGpPct(gp.toFixed(1));
+    }
+  }, [rrpIncludesGst, cogsPerServe]);
+
+  const onIngredientsSummary = useCallback((s) => {
+    setDerivedBatchCost(s?.totalCost || 0);
+    setDerivedBatchVolumeMl(s?.totalMl || 0);
+    setDerivedBatchWeightG(s?.totalG || 0);
+    setDerivedBatchCount(s?.totalEach || 0);
+  }, []);
 
   const save = useCallback(async () => {
     try {
-      setBusy(true);
+      if (!venueId) throw new Error('No venueId');
+      if (!recipeId) throw new Error('No recipeId');
+      if (!name || !name.trim()) throw new Error('Please enter a name');
 
-      const patch:any = {
-        name: name || null,
-        items,
-        method: method || null,
-        targetGpPct: targetGp ? Number(targetGp) : null,
-      };
+      const y   = Number(yieldQty || '0') || (servesFromBatch ?? 0);
+      const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
+      const rrpVal = (rrp?.trim()?.length ? toNumber(rrp) : toNumber(rrpDisplay)) || 0;
 
-      if (mode === 'batch') {
-        patch.portionSize = portionSize ? Number(portionSize) : null;
-        patch.portionUnit = portionUnit || null;
-        patch.yield = servesForBatch ? Number(servesForBatch) : null;
-        patch.unit = servesForBatch ? 'serve' : null;
-        patch.cogs = derivedCogsPerServe ?? null;
-        patch.rrp = derivedRrp ?? null;
-      } else {
-        // single/dish
-        patch.yield = 1;
-        patch.unit = 'serve';
-        patch.cogs = derivedCogsPerServe ?? null;
-        patch.rrp = derivedRrp ?? null;
-      }
-
-      await updateRecipeDraft(venueId!, recipeId, patch);
+      await updateRecipeDraft(venueId, recipeId, {
+        name: name.trim(),
+        yield: y || null,
+        unit: unit || (mode === 'single' ? 'serve' : 'serves'),
+        cogs: cgs,
+        rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
+        method: method || null
+      });
       Alert.alert('Saved', 'Draft updated.');
       onClose();
     } catch (e:any) {
       Alert.alert('Save failed', String(e?.message || e));
-    } finally {
-      setBusy(false);
     }
-  }, [venueId, recipeId, name, items, method, targetGp, mode, portionSize, portionUnit, servesForBatch, derivedCogsPerServe, derivedRrp, onClose]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
-      <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-        <TouchableOpacity onPress={onClose}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
-        <Text style={{ fontSize:18, fontWeight:'900' }}>Craft-It Draft</Text>
-        <View style={{ width:60 }} />
-      </View>
-
+      <Header title="Craft-It: Draft" onBack={onClose} />
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }}>
+        {/* Name kept here so user doesn't retype earlier step if already set */}
         <Field label="Name">
-          <TextInput value={name} onChangeText={setName} placeholder="House Margarita or Beef Ragu" style={I} autoCapitalize="words" />
+          <TextInput value={name} onChangeText={setName} placeholder="e.g., House Margarita" style={I} autoCapitalize="words" />
+          {mode ? <Text style={Subtle}>Mode: {mode}</Text> : null}
+          {category ? <Text style={Subtle}>Category: {category}</Text> : null}
         </Field>
 
-        {/* MODE selector minimal (so user can flip if needed) */}
-        <Field label="Type">
-          <View style={{ flexDirection:'row', gap:8 }}>
-            {['single','batch','dish'].map(m=>(
-              <Pill key={m} label={m} active={mode===m} onPress={()=>setMode(m)} />
-            ))}
+        {/* Ingredients FIRST – fastest flow */}
+        <IngredientEditor onSummary={onIngredientsSummary} category={category} mode={mode} />
+
+        {/* Pricing card (derived COGS + GP↔︎RRP) */}
+        <Card>
+          <Row label="Derived COGS (per serve)" value={formatMoney(cogsPerServe)} />
+          <View style={{ height:8 }} />
+          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+            <Text style={{ fontWeight:'700' }}>RRP includes GST (15%)</Text>
+            <Switch value={rrpIncludesGst} onValueChange={setRrpIncludesGst} />
           </View>
+          <FieldSmall label="Target GP %">
+            <TextInput value={gpPct} onChangeText={setGpPct} placeholder="e.g., 70" keyboardType="decimal-pad" style={I} />
+          </FieldSmall>
+          <FieldSmall label="RRP">
+            <TextInput value={rrp.length ? rrp : rrpDisplay} onChangeText={onChangeRrp} placeholder="e.g., 15.00" keyboardType="decimal-pad" style={I} />
+          </FieldSmall>
+          <Row label="Live GP %" value={`${(Number(gpPct || '0') || 0).toFixed(1)}%`} />
+        </Card>
+
+        {/* Yield / Portion moved DOWN here */}
+        <Field label="Yield / Unit" row>
+          <TextInput
+            value={yieldQty || (mode==='batch' && servesFromBatch!=null ? String(servesFromBatch) : '')}
+            onChangeText={setYieldQty}
+            placeholder={mode === 'single' ? '1' : (servesFromBatch != null ? String(servesFromBatch) : 'e.g., 10')}
+            keyboardType="numeric"
+            style={[I, { flex:1, marginRight:8 }]}
+          />
+          <TextInput
+            value={unit}
+            onChangeText={setUnit}
+            placeholder={mode === 'single' ? 'serve' : 'serves'}
+            style={[I, { flex:1 }]}
+          />
         </Field>
 
-        <Field label="Ingredients">
-          <IngredientEditor venueId={venueId!} items={items} onChange={setItems} />
-        </Field>
-
-        {mode === 'batch' && (
-          <Field label="Batch portions">
-            <View style={{ flexDirection:'row', gap:8 }}>
-              <TextInput value={portionSize} onChangeText={setPortionSize} placeholder="Portion size" keyboardType="decimal-pad" style={[I,{flex:1}]} />
-              <TextInput value={portionUnit} onChangeText={setPortionUnit} placeholder="ml/g/each" style={[I,{flex:1}]} />
+        {mode !== 'single' && (
+          <Field label="Portion size (to calculate per-serve COGS)">
+            <View style={{ flexDirection:'row' }}>
+              <TextInput
+                value={portionSize}
+                onChangeText={setPortionSize}
+                placeholder="e.g., 150"
+                keyboardType="numeric"
+                style={[I, { flex:1, marginRight:8 }]}
+              />
+              <Dropdown value={portionUnit} options={['ml','g','each','serve']} onChange={setPortionUnit} />
             </View>
-            <Text style={{ color:'#6B7280', marginTop:6 }}>
-              Estimated batch size: {batchTotals.totalMl ? `${batchTotals.totalMl} ml` : batchTotals.totalG ? `${batchTotals.totalG} g` : batchTotals.totalEach ? `${batchTotals.totalEach} each` : '—'}
-              {servesForBatch ? ` · ≈ ${Math.floor(servesForBatch)} serves` : ''}
+            <Text style={Hint}>
+              Batch totals from ingredients: {derivedBatchVolumeMl} ml · {derivedBatchWeightG} g · {derivedBatchCount} each
             </Text>
           </Field>
         )}
 
-        <Field label="Target GP %">
-          <TextInput value={targetGp} onChangeText={setTargetGp} placeholder="e.g., 65" keyboardType="decimal-pad" style={I} />
-        </Field>
-
-        <Field label="Derived Costs (per serve)">
-          <View style={{ padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, backgroundColor:'#F9FAFB' }}>
-            <Text>COGS: ${to2(derivedCogsPerServe)}</Text>
-            <Text>RRP: ${to2(derivedRrp)}</Text>
-          </View>
-        </Field>
-
         <Field label="Method / Notes">
-          <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I,{height:120, textAlignVertical:'top'}]} multiline />
+          <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I, { height:120, textAlignVertical:'top' }]} multiline />
         </Field>
 
         <TouchableOpacity disabled={busy} onPress={save} style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}>
           <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Saving…' : 'Save Draft'}</Text>
         </TouchableOpacity>
       </ScrollView>
+    </View>
+  );
+}
+
+function Header({ title, onBack }:{ title:string; onBack:()=>void }) {
+  return (
+    <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+      <TouchableOpacity onPress={onBack}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
+      <Text style={{ fontSize:18, fontWeight:'900' }}>{title}</Text>
+      <View style={{ width:60 }} />
     </View>
   );
 }
@@ -211,18 +227,40 @@ function Field({ label, children, row }:{ label:string; children:any; row?:boole
     </View>
   );
 }
-
-function Pill({ label, active, onPress }:{label:string; active:boolean; onPress:()=>void}) {
+function FieldSmall({ label, children }:{ label:string; children:any }) {
   return (
-    <TouchableOpacity onPress={onPress}
-      style={{
-        paddingVertical:8, paddingHorizontal:12, borderRadius:999,
-        borderWidth:1, borderColor: active ? '#111' : '#E5E7EB',
-        backgroundColor: active ? '#111' : '#F9FAFB', marginRight:8, marginBottom:8
-      }}>
-      <Text style={{ color: active ? '#fff' : '#111', fontWeight:'700', textTransform:'capitalize' }}>{label}</Text>
+    <View style={{ marginTop:6 }}>
+      <Text style={{ fontWeight:'700', marginBottom:6 }}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+function Card({ children }:{ children:any }) {
+  return <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' }}>{children}</View>;
+}
+function Row({ label, value }:{ label:string; value:string }) {
+  return (
+    <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+      <Text style={{ fontWeight:'700' }}>{label}</Text>
+      <Text>{value}</Text>
+    </View>
+  );
+}
+function Dropdown({ value, options, onChange }:{ value:string; options:string[]; onChange:(v:any)=>void }) {
+  return (
+    <TouchableOpacity
+      onPress={() => {
+        const idx = Math.max(0, options.indexOf(value));
+        onChange(options[(idx + 1) % options.length]);
+      }}
+      style={[I, { paddingVertical:12, alignItems:'center', justifyContent:'center', minWidth:96 }]}
+    >
+      <Text style={{ fontWeight:'700' }}>{value}</Text>
     </TouchableOpacity>
   );
 }
 
+const Subtle = { color:'#6B7280', marginTop:4 };
+const Hint   = { color:'#6B7280', marginTop:6 };
 const I = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' };
+const formatMoney = (n:number) => (!Number.isFinite(n) ? '—' : `$${n.toFixed(2)}`);

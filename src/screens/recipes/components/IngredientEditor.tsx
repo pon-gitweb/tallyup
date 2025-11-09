@@ -1,179 +1,349 @@
 // @ts-nocheck
-import React, { useCallback, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, FlatList } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Alert } from 'react-native';
 import { searchProductsLite } from '../../../services/products/searchProductsLite';
 
-export type RecipeItem = {
+// Beverage quick measures
+const QUICK_MEASURES = [
+  { label: '15ml', ml: 15 },
+  { label: '30ml', ml: 30 },
+  { label: '45ml', ml: 45 },
+  { label: '60ml', ml: 60 },
+  { label: 'Custom…', ml: -1 },
+];
+
+// The row "unit" is what the user measures by for the portion.
+type RowUnit = 'ml' | 'g' | 'each';
+
+type Ingredient = {
+  key: string;
   productId?: string | null;
-  productName: string;
+  name: string;               // free text if not matched
   qty: number;
-  unit: string;
-  packSizeMl?: number | null;
-  packSizeG?: number | null;
-  packEach?: number | null;
-  packPrice?: number | null;
+  unit: RowUnit;
+  packSize?: number | null;   // from inventory
+  packUnit?: 'ml' | 'l' | 'g' | 'kg' | 'each' | null; // from inventory
+  packPrice?: number | null;  // from inventory
+  thumbUrl?: string | null;
 };
 
-const UNIT_CHOICES = ['ml','l','g','kg','each','custom'];
-
 export default function IngredientEditor({
-  venueId,
-  items,
-  onChange
+  onSummary,
+  category,
+  mode,
 }:{
-  venueId: string;
-  items: RecipeItem[];
-  onChange: (next: RecipeItem[]) => void;
+  onSummary: (s:{ totalCost:number; totalMl:number; totalG:number; totalEach:number }) => void;
+  category?: 'food' | 'beverage' | null;
+  mode?: 'batch' | 'single' | 'dish' | null;
 }) {
-  const addRow = () => onChange([...items, { productId: null, productName: '', qty: 0, unit: 'ml' }]);
-  const removeRow = (idx:number) => onChange(items.filter((_,i)=>i!==idx));
-  const update = (idx:number, patch:Partial<RecipeItem>) => {
-    const next = items.slice();
-    next[idx] = { ...next[idx], ...patch };
-    onChange(next);
-  };
-
-  return (
-    <View style={{ gap:12 }}>
-      {items.map((row, idx) => (
-        <Row
-          key={idx}
-          row={row}
-          onRemove={()=>removeRow(idx)}
-          onChange={(patch)=>update(idx, patch)}
-          venueId={venueId}
-        />
-      ))}
-      <TouchableOpacity onPress={addRow} style={{ padding:12, borderRadius:12, backgroundColor:'#F3F4F6' }}>
-        <Text style={{ fontWeight:'800', textAlign:'center' }}>+ Add Ingredient</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-function Row({ row, onChange, onRemove, venueId }:{
-  row: RecipeItem; onChange:(p:Partial<RecipeItem>)=>void; onRemove:()=>void; venueId:string;
-}) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [term, setTerm] = useState('');
+  const [rows, setRows] = useState<Ingredient[]>([]);
+  const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
 
-  const runSearch = useCallback(async () => {
-    const res = await searchProductsLite(venueId, term, 25);
-    setResults(res);
-  }, [term, venueId]);
+  // which row is showing the inline unit selector (long-press)
+  const [unitChooserKey, setUnitChooserKey] = useState<string | null>(null);
 
-  const choose = (p:any) => {
-    onChange({
-      productId: p.id,
-      productName: p.name,
-      packSizeMl: p.packSizeMl ?? null,
-      packSizeG: p.packSizeG ?? null,
-      packEach: p.packEach ?? null,
-      packPrice: p.price ?? null
-    });
-    setPickerOpen(false);
+  // ——— Search with house-first & sensible ordering ———
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const q = (query || '').trim();
+      if (!q) { setResults([]); return; }
+      const raw = await searchProductsLite(q);
+      if (!alive) return;
+      const sorted = (raw || []).slice().sort((a,b) => {
+        const ah = (a.isHouse || /house/i.test(a.supplierName || '')) ? 0 : 1;
+        const bh = (b.isHouse || /house/i.test(b.supplierName || '')) ? 0 : 1;
+        if (ah !== bh) return ah - bh; // house first
+        const ap = Number(a.price ?? a.cost ?? 0);
+        const bp = Number(b.price ?? b.cost ?? 0);
+        return ap - bp; // then cheapest
+      });
+      setResults(sorted);
+    })();
+    return () => { alive = false; };
+  }, [query]);
+
+  // ——— Helpers ———
+  const unitToBase = (unit:string) => {
+    if (unit === 'ml') return { base:'ml', f: 1 };
+    if (unit === 'l')  return { base:'ml', f: 1000 };
+    if (unit === 'g')  return { base:'g',  f: 1 };
+    if (unit === 'kg') return { base:'g',  f: 1000 };
+    if (unit === 'each') return { base:'each', f: 1 };
+    return { base:unit, f:1 };
   };
 
+  const portionCost = (row:Ingredient): number => {
+    const qty = Number(row.qty || 0);
+    if (!qty) return 0;
+    const packSize = Number(row.packSize || 0);
+    const packPrice = Number(row.packPrice || 0);
+    const packUnit = (row.packUnit || '').toLowerCase();
+    if (!packSize || !packPrice || !packUnit) return 0;
+
+    const req = unitToBase(row.unit);
+    const pack = unitToBase(packUnit);
+    if (req.base !== pack.base) return 0;
+
+    const qtyBase = qty * req.f;
+    const packBase = packSize * pack.f;
+    if (!packBase) return 0;
+    return packPrice * (qtyBase / packBase);
+  };
+
+  const maxUnitPriceForBase = (base:'ml'|'g'|'each'): number => {
+    let best = 0;
+    for (const r of rows) {
+      const unit = (r.packUnit || '').toLowerCase();
+      const pack = unitToBase(unit);
+      if (pack.base !== base) continue;
+      const p = Number(r.packPrice || 0);
+      const s = Number(r.packSize || 0) * pack.f;
+      if (p > 0 && s > 0) {
+        const per = p / s; // $ per base unit
+        if (per > best) best = per;
+      }
+    }
+    return best;
+  };
+
+  const defaultUnitForCategory = (category === 'beverage') ? 'ml' : 'g';
+
+  const addRow = (patch?:Partial<Ingredient>) => {
+    setRows(r => [
+      ...r,
+      {
+        key: String(Date.now() + Math.random()),
+        name: '',
+        qty: 0,
+        unit: (patch?.unit as RowUnit) || (defaultUnitForCategory as RowUnit),
+        ...patch,
+      },
+    ]);
+  };
+  const updateRow = (key:string, patch:Partial<Ingredient>) => setRows(r => r.map(x => x.key === key ? { ...x, ...patch } : x));
+  const removeRow = (key:string) => setRows(r => r.filter(x => x.key !== key));
+
+  // ——— Summary ———
+  const summary = useMemo(() => {
+    let totalCost = 0, totalMl = 0, totalG = 0, totalEach = 0;
+    for (const r of rows) {
+      totalCost += portionCost(r);
+      if (r.unit === 'ml') totalMl += Number(r.qty || 0);
+      if (r.unit === 'g')  totalG  += Number(r.qty || 0);
+      if (r.unit === 'each') totalEach += Number(r.qty || 0);
+    }
+    return {
+      totalCost: Number(totalCost.toFixed(6)),
+      totalMl: Math.round(totalMl),
+      totalG: Math.round(totalG),
+      totalEach: Math.round(totalEach),
+    };
+  }, [rows]);
+  useEffect(() => { onSummary?.(summary); }, [summary, onSummary]);
+
+  // ——— Fast pick handler ———
+  const pickProduct = useCallback((item:any) => {
+    const patch: Partial<Ingredient> = {
+      productId: item.id || null,
+      name: item.name || '',
+      packSize: item.packSize ?? item.size ?? null,
+      packUnit: (item.packUnit || item.unit || '').toLowerCase() || null,
+      packPrice: item.price ?? item.cost ?? null,
+      thumbUrl: item.thumbnail || item.image || null,
+      qty: 0,
+      unit: defaultUnitForCategory as RowUnit,
+    };
+    addRow(patch);
+    setQuery('');
+    setResults([]);
+  }, [defaultUnitForCategory]);
+
+  // ——— Add misc when no match ———
+  const addMiscFromQuery = useCallback(() => {
+    const q = (query || '').trim();
+    if (!q) { Alert.alert('Nothing to add'); return; }
+    const base: 'ml'|'g'|'each' = (defaultUnitForCategory as any);
+    const perUnit = maxUnitPriceForBase(base) || (base === 'each' ? 2.0 : 0.02);
+    const patch: Partial<Ingredient> = {
+      productId: null,
+      name: q,
+      packSize: 1,
+      packUnit: base,
+      packPrice: perUnit, // $ per base unit
+      qty: 0,
+      unit: base as RowUnit,
+    };
+    addRow(patch);
+    setQuery('');
+    setResults([]);
+  }, [query, defaultUnitForCategory, rows]);
+
+  // ——— Unit picker behaviour ———
+  const allowedCycle = useMemo<RowUnit[]>(() => {
+    // Tap-cycle list is short; long-press shows full.
+    return (category === 'beverage') ? ['ml', 'each'] : ['g', 'each'];
+  }, [category]);
+
+  const cycleUnit = (current:RowUnit): RowUnit => {
+    const list = allowedCycle;
+    const i = Math.max(0, list.indexOf(current));
+    return list[(i + 1) % list.length];
+  };
+
+  const fullUnitList: RowUnit[] = ['ml', 'g', 'each']; // long-press menu
+
+  // ——— UI ———
   return (
-    <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, padding:12, gap:8 }}>
-      <Text style={{ fontWeight:'700' }}>Ingredient</Text>
+    <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' }}>
+      <Text style={{ fontWeight:'800', marginBottom:8 }}>Ingredients</Text>
 
-      <TouchableOpacity onPress={()=>setPickerOpen(true)} style={{ padding:10, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, backgroundColor:'#fff' }}>
-        <Text style={{ fontWeight:'700' }}>{row.productName ? row.productName : 'Search products…'}</Text>
-        {row.packPrice != null && (
-          <Text style={{ color:'#6B7280', marginTop:4 }}>
-            Pack price: ${Number(row.packPrice).toFixed(2)}
-            {row.packSizeMl ? ` · ${row.packSizeMl}ml` : row.packSizeG ? ` · ${row.packSizeG}g` : row.packEach ? ` · ${row.packEach} each` : ''}
-          </Text>
-        )}
-      </TouchableOpacity>
+      {/* Search */}
+      <View style={{ flexDirection:'row', gap:8 }}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search inventory (house first)…"
+          style={[I, { flex:1 }]}
+        />
+        <TouchableOpacity onPress={addMiscFromQuery} style={[Btn, { backgroundColor:'#FFF7ED', borderColor:'#FDBA74' }]}>
+          <Text style={{ fontWeight:'800', color:'#9A3412' }}>+ Misc</Text>
+        </TouchableOpacity>
+      </View>
 
-      <Modal visible={pickerOpen} animationType="slide" onRequestClose={()=>setPickerOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'#fff' }}>
-          <View style={{ padding:12, borderBottomWidth:1, borderColor:'#E5E7EB' }}>
-            <Text style={{ fontWeight:'900', fontSize:18 }}>Choose Product</Text>
-          </View>
-          <View style={{ padding:12, gap:8 }}>
-            <TextInput
-              value={term}
-              onChangeText={setTerm}
-              placeholder="Type to search…"
-              style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
-            />
-            <TouchableOpacity onPress={runSearch} style={{ padding:12, borderRadius:8, backgroundColor:'#111' }}>
-              <Text style={{ color:'#fff', textAlign:'center', fontWeight:'800' }}>Search</Text>
-            </TouchableOpacity>
-          </View>
+      {/* Results */}
+      {!!results?.length && (
+        <View style={{ marginTop:8, maxHeight:240, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, overflow:'hidden' }}>
           <FlatList
-            data={results}
-            keyExtractor={(it)=>it.id}
-            renderItem={({item})=>(
-              <TouchableOpacity onPress={()=>choose(item)} style={{ padding:12, borderBottomWidth:1, borderColor:'#F3F4F6' }}>
-                <Text style={{ fontWeight:'700' }}>{item.name}</Text>
-                <Text style={{ color:'#6B7280', marginTop:4 }}>
-                  {item.packSizeMl ? `${item.packSizeMl}ml` : item.packSizeG ? `${item.packSizeG}g` : item.packEach ? `${item.packEach} each` : '—'}
-                  {item.price!=null ? ` · $${Number(item.price).toFixed(2)}/pack` : ''}
-                </Text>
+            keyboardShouldPersistTaps="handled"
+            data={results.slice(0, 30)}
+            keyExtractor={(item, idx) => String(item.id || idx)}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => pickProduct(item)}
+                style={{ padding:10, backgroundColor:'#fff', borderBottomWidth:1, borderColor:'#F3F4F6', flexDirection:'row', alignItems:'center', gap:10 }}
+              >
+                <View style={{ width:36, height:36, borderRadius:6, backgroundColor:'#F3F4F6', alignItems:'center', justifyContent:'center' }}>
+                  <Text style={{ fontSize:10, color:'#6B7280' }}>img</Text>
+                </View>
+                <View style={{ flex:1 }}>
+                  <Text style={{ fontWeight:'700' }}>
+                    {(item.isHouse || /house/i.test(item.supplierName || '')) ? '🏠 ' : ''}{item.name || 'Unnamed'}
+                  </Text>
+                  <Text style={{ color:'#6B7280' }}>
+                    {item.packSize || item.size || '—'} {String(item.packUnit || item.unit || '').toUpperCase()}
+                    {' · $'}{Number(item.price ?? item.cost ?? 0).toFixed(2)}
+                    {item.supplierName ? ` · ${item.supplierName}` : ''}
+                  </Text>
+                </View>
               </TouchableOpacity>
             )}
           />
-          <View style={{ padding:12, gap:8 }}>
-            <Text style={{ color:'#6B7280' }}>Not in products? Enter a free-text ingredient:</Text>
+        </View>
+      )}
+
+      {/* Rows */}
+      {rows.map(r => (
+        <View key={r.key} style={{ marginTop:12, padding:10, backgroundColor:'#fff', borderWidth:1, borderColor:'#E5E7EB', borderRadius:10 }}>
+          <Text style={{ fontWeight:'700', marginBottom:6 }}>{r.name || 'Misc ingredient'}</Text>
+
+          {/* Beverage quick chips when unit is ml */}
+          { (category === 'beverage' && r.unit === 'ml') && (
+            <View style={{ flexDirection:'row', flexWrap:'wrap', gap:6, marginBottom:6 }}>
+              {QUICK_MEASURES.map(q => (
+                <TouchableOpacity
+                  key={q.label}
+                  onPress={() => {
+                    if (q.ml < 0) {
+                      const v = promptNumber('Enter ml quantity');
+                      if (v != null) updateRow(r.key, { qty: v, unit: 'ml' });
+                    } else {
+                      updateRow(r.key, { qty: q.ml, unit: 'ml' });
+                    }
+                  }}
+                  style={Pill}
+                >
+                  <Text style={{ fontWeight:'700' }}>{q.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Qty + Unit */}
+          <View style={{ flexDirection:'row', gap:8, width:'100%', alignItems:'center' }}>
             <TextInput
-              value={row.productName}
-              onChangeText={(t)=>onChange({ productName:t, productId:null })}
-              placeholder="e.g., Fresh Lime Juice"
-              style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
+              value={String(r.qty || '')}
+              onChangeText={v => updateRow(r.key, { qty: Number(v || '0') || 0 })}
+              placeholder="Qty"
+              keyboardType="decimal-pad"
+              style={[I, { flex:1 }]}
             />
-            <TouchableOpacity onPress={()=>setPickerOpen(false)} style={{ padding:12, borderRadius:8, backgroundColor:'#F3F4F6' }}>
-              <Text style={{ textAlign:'center', fontWeight:'800' }}>Use Free-Text</Text>
+
+            {/* Unit chip: tap = cycle, long-press = inline chooser */}
+            <TouchableOpacity
+              onPress={() => updateRow(r.key, { unit: cycleUnit(r.unit) as RowUnit })}
+              onLongPress={() => setUnitChooserKey(k => (k === r.key ? null : r.key))}
+              delayLongPress={250}
+              style={[I, { minWidth:84, alignItems:'center', justifyContent:'center' }]}
+            >
+              <Text style={{ fontWeight:'800' }}>{String(r.unit).toUpperCase()}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => removeRow(r.key)} style={[Btn, { backgroundColor:'#FEE2E2', borderColor:'#FCA5A5' }]}>
+              <Text style={{ fontWeight:'800', color:'#991B1B' }}>Remove</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Inline unit chooser (appears on long press) */}
+          {unitChooserKey === r.key && (
+            <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
+              {fullUnitList.map(u => (
+                <TouchableOpacity
+                  key={u}
+                  onPress={() => { updateRow(r.key, { unit: u }); setUnitChooserKey(null); }}
+                  style={[Pill, r.unit === u ? { borderColor:'#111', backgroundColor:'#111' } : null]}
+                >
+                  <Text style={{ fontWeight:'800', color: r.unit === u ? '#fff' : '#111' }}>{u.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={() => setUnitChooserKey(null)} style={[Btn]}>
+                <Text style={{ fontWeight:'800' }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Cost line */}
+          <Text style={{ marginTop:8, color:'#6B7280' }}>
+            {r.packPrice && r.packSize && r.packUnit
+              ? `Cost: $${portionCost(r).toFixed(4)} · Pack: ${r.packSize}${String(r.packUnit).toUpperCase()} @ $${Number(r.packPrice).toFixed(2)}`
+              : 'Estimated (misc). Link later for exact costing.'}
+          </Text>
         </View>
-      </Modal>
+      ))}
 
-      <View style={{ flexDirection:'row', gap:8 }}>
-        <TextInput
-          value={String(row.qty ?? '')}
-          onChangeText={(t)=>onChange({ qty: t ? Number(t) : 0 })}
-          placeholder="Qty"
-          keyboardType="decimal-pad"
-          style={{ flex:1, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
-        />
-        <UnitPicker value={row.unit || 'ml'} onChange={(u)=>onChange({ unit:u })} />
-      </View>
-
-      <TouchableOpacity onPress={onRemove} style={{ padding:10, borderRadius:8, backgroundColor:'#FEF2F2', borderWidth:1, borderColor:'#FCA5A5' }}>
-        <Text style={{ textAlign:'center', color:'#991B1B', fontWeight:'800' }}>Remove</Text>
+      <TouchableOpacity onPress={() => addRow()} style={[Btn, { marginTop:12 }]}>
+        <Text style={{ fontWeight:'800', color:'#111' }}>+ Add Ingredient</Text>
       </TouchableOpacity>
+
+      {/* Summary */}
+      <View style={{ marginTop:12, paddingTop:10, borderTopWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between' }}>
+        <Text style={{ fontWeight:'700' }}>Batch Cost</Text>
+        <Text style={{ fontWeight:'700' }}>${summary.totalCost.toFixed(4)}</Text>
+      </View>
     </View>
   );
 }
 
-function UnitPicker({ value, onChange }:{ value:string; onChange:(u:string)=>void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <TouchableOpacity onPress={()=>setOpen(true)} style={{ flex:1, padding:10, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, backgroundColor:'#fff' }}>
-        <Text style={{ fontWeight:'700', textAlign:'center' }}>{value}</Text>
-      </TouchableOpacity>
-      <Modal visible={open} transparent animationType="fade" onRequestClose={()=>setOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.2)', justifyContent:'center', padding:24 }}>
-          <View style={{ backgroundColor:'#fff', borderRadius:12, padding:12 }}>
-            <Text style={{ fontWeight:'900', fontSize:16, marginBottom:8 }}>Pick a unit</Text>
-            {UNIT_CHOICES.map(u=>(
-              <TouchableOpacity key={u} onPress={()=>{onChange(u); setOpen(false);}} style={{ padding:10 }}>
-                <Text style={{ fontWeight:'700' }}>{u}</Text>
-              </TouchableOpacity>
-            ))}
-            <Text style={{ color:'#6B7280', marginTop:4 }}>Tip: Use "custom" if you need dash/splash etc.</Text>
-            <TouchableOpacity onPress={()=>setOpen(false)} style={{ marginTop:8, padding:10, borderRadius:8, backgroundColor:'#F3F4F6' }}>
-              <Text style={{ textAlign:'center', fontWeight:'800' }}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    </>
-  );
+// Minimal prompt for numeric input (RN-friendly stand-in)
+function promptNumber(title:string): number | null {
+  // Expo Go won’t show a native prompt; this is a graceful no-op for most builds.
+  // eslint-disable-next-line no-alert
+  const s = prompt?.(title) ?? null;
+  const n = Number(s || 'NaN');
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
+
+const I   = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' };
+const Btn = { paddingVertical:10, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F3F4F6', alignItems:'center' };
+const Pill= { paddingVertical:6, paddingHorizontal:10, borderRadius:999, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' };
