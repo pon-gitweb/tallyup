@@ -1,17 +1,16 @@
-// @ts-nocheck
 export type NormalizedSalesLine = {
-  sku?: string | null;       // POS SKU / PLU / code if available
-  barcode?: string | null;   // EAN/UPC if present
-  name: string;              // item name from report
-  qtySold: number;           // units sold in the period
-  gross: number | null;      // gross sales (optional)
-  net: number | null;        // net sales after discounts (optional)
-  tax: number | null;        // tax portion (optional)
+  sku: string|null;
+  barcode: string|null;
+  name: string;
+  qtySold: number;
+  gross: number|null;
+  net: number|null;
+  tax: number|null;
 };
 
 export type NormalizedSalesReport = {
   source: 'csv'|'pdf';
-  period: { start?: string|null; end?: string|null }; // ISO strings if the server extracts them
+  period: { start?: string|null; end?: string|null };
   lines: NormalizedSalesLine[];
   warnings?: string[];
 };

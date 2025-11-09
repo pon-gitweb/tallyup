@@ -1,0 +1,420 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ========= Helpers =========
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isVenueMember(venueId) {
+      return isSignedIn() && (
+        (request.auth.token.venues[venueId] == true) ||
+        exists(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid))
+      );
+    }
+    // No let/if: claim OR member doc role
+    function hasVenueRole(venueId, allowed) {
+      return isVenueMember(venueId) && (
+        allowed.hasAny([request.auth.token.venue_roles[venueId]]) ||
+        allowed.hasAny([
+          get(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid)).data.role
+        ])
+      );
+    }
+    function hasOnlyFields(data, allowedKeys) {
+      return data.keys().hasOnly(allowedKeys);
+    }
+
+    // ========= Root collections (global) =========
+    match /global_suppliers/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['venueId','createdAt','email','touchedAt']);
+      allow delete: if false;
+    }
+
+    // ========= Venue-scoped =========
+    match /venues/{venueId} {
+
+      // Venue root narrow update (cycle resets)
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
+        && (request.resource.data.cycleResetAt is timestamp)
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
+
+      // ------- Members -------
+      match /members/{uid} {
+        allow read: if isVenueMember(venueId);
+        allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
+      }
+
+      // ------- Departments -------
+      match /departments/{departmentId} {
+        allow read: if isVenueMember(venueId);
+        allow create, update: if hasVenueRole(venueId, ['manager','owner']);
+        allow delete: if hasVenueRole(venueId, ['owner']);
+      }
+
+      // ------- Areas + Items -------
+      match /areas/{areaId} {
+        allow read: if isVenueMember(venueId);
+
+        function areaOpen() { return !(resource.data.completedAt is timestamp); }
+        function areaIsFresh() { return !(resource.data.startedAt is timestamp); }
+        function isCycleReset() { return request.resource.data.keys().hasAny(['cycleResetAt']); }
+
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.keys().hasAny(['name', 'createdAt', 'updatedAt']);
+
+        allow update: if hasVenueRole(venueId, ['manager','owner']) && (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt']) ||
+          (
+            isCycleReset() && (
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+            )
+          ) ||
+          (
+            (areaOpen() || areaIsFresh()) &&
+            request.resource.data.diff(resource.data).changedKeys().hasOnly(['name','cycleResetAt','updatedAt']) &&
+            request.resource.data.updatedAt is timestamp
+          )
+        );
+
+        // Allow pure cycleResetAt writes
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt'])
+          && (request.resource.data.cycleResetAt is timestamp);
+
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt','updatedAt'])
+          && (request.resource.data.cycleResetAt is timestamp)
+          && (request.resource.data.updatedAt is timestamp);
+
+        allow delete: if hasVenueRole(venueId, ['manager','owner']) && areaOpen();
+
+        // Area Items
+        match /items/{itemId} {
+          allow read: if isVenueMember(venueId);
+
+          function isCountUpdate() {
+            return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+              || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+          }
+          function isLinkUpdate() {
+            let keys = request.resource.data.diff(resource.data).changedKeys();
+            return keys.hasOnly([
+              'productLinkId','productId','productRef','productName',
+              'supplierId','supplierName','packSize','price','cost','updatedAt'
+            ]);
+          }
+          function isNameOnlyCreate() {
+            return (
+              (request.resource.data.keys().hasOnly(['name']) && request.resource.data.name is string) ||
+              (request.resource.data.keys().hasOnly(['name','createdAt','updatedAt']) &&
+                request.resource.data.name is string &&
+                request.resource.data.createdAt is timestamp &&
+                request.resource.data.updatedAt is timestamp)
+            );
+          }
+          function isMetaCreateFull() {
+            return (
+              (
+                request.resource.data.keys().hasOnly([
+                  'name','unit','supplierId','costPrice','salePrice','parLevel',
+                  'lastCount','lastCountAt','createdAt','updatedAt'
+                ]) &&
+                request.resource.data.name is string &&
+                request.resource.data.createdAt is timestamp &&
+                request.resource.data.updatedAt is timestamp
+              ) ||
+              (
+                request.resource.data.keys().hasOnly([
+                  'name','unit','supplierId','costPrice','salePrice','parLevel',
+                  'lastCount','lastCountAt'
+                ]) &&
+                request.resource.data.name is string
+              )
+            );
+          }
+          function isMetaUpdate() {
+            return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+            ]) && request.resource.data.updatedAt is timestamp;
+          }
+
+          allow create: if isVenueMember(venueId) && (areaOpen() || areaIsFresh()) && (isNameOnlyCreate() || isMetaCreateFull());
+          allow update: if isVenueMember(venueId) && areaOpen() && (isCountUpdate() || isLinkUpdate() || isMetaUpdate());
+          allow delete: if isVenueMember(venueId) && areaOpen();
+        }
+      }
+
+      // ------- Suppliers -------
+      match /suppliers/{supplierId} {
+        allow read: if isVenueMember(venueId);
+        allow create, update, delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+      }
+
+      // ------- Products -------
+      match /products/{productId} {
+        allow read: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner']);
+        allow update: if hasVenueRole(venueId, ['manager','owner']) && (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['par','parLevel','supplierId','supplierName','updatedAt'])
+          || request.resource.data.keys().hasAny(['par','parLevel','supplierId','supplierName','updatedAt'])
+        );
+
+        match /prices/{supplierId} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+      }
+
+      // ------- Recipes (NEW) -------
+      match /recipes/{recipeId} {
+        allow read: if isVenueMember(venueId);
+
+        // Create a recipe draft: allow serverTimestamp() by requiring presence of fields
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, [
+            'name','status','category','mode','yield','unit','items','cogs','rrp','method',
+            'createdAt','updatedAt'
+          ])
+          && request.resource.data.status == 'draft'
+          && ('createdAt' in request.resource.data)
+          && ('updatedAt' in request.resource.data)
+          && (request.resource.data.items is list);
+
+        // Update selected fields; optional status change to 'draft' or 'confirmed'
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'name','yield','unit','cogs','rrp','method','category','mode','items','status','updatedAt'
+          ])
+          && (!('status' in request.resource.data.diff(resource.data).changedKeys())
+              || (request.resource.data.status in ['draft','confirmed']))
+          && (!('items' in request.resource.data) || (request.resource.data.items is list));
+
+        allow delete: if hasVenueRole(venueId, ['owner']);
+      }
+
+      // ------- Orders & Lines -------
+      match /orders/{orderId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+
+        match /lines/{lineId} {
+          allow get, list: if isVenueMember(venueId);
+          allow create, update: if isVenueMember(venueId);
+          allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        }
+
+        // Any sub-docs used by editor flows (attachments, notes, etc.)
+        match /{sub=**} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      // ------- Order Draft Locks -------
+      match /orderLocks/{supplierKey} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      // ------- Invoices (venue-level list) -------
+      match /invoices/{invoiceId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /lines/{lineId} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      // ------- Budgets -------
+      match /budgets/{budgetId} {
+        allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+      }
+
+      // ------- Items (venue-level list views) -------
+      match /items/{itemId} {
+        allow read: if isVenueMember(venueId);
+      }
+
+      // ------- Areas under Venue (shortcut reads for list screens) -------
+      match /areas/{areaId}/items/{itemId} {
+        allow read: if isVenueMember(venueId);
+      }
+
+      // ------- Stock Takes -------
+      match /stockTakes/{stockTakeId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read: if isVenueMember(venueId);
+        }
+      }
+
+      // ------- Reports (includes CSV inventory import results, etc.) -------
+      match /reports/{docId} {
+        allow read, write: if isVenueMember(venueId);
+        match /{sub=**} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      // ===== Deliveries (Inwards Goods) =====
+      match /deliveries/{deliveryId} {
+        allow get, list: if isVenueMember(venueId);
+
+        // Create draft delivery (manual/csv/pdf/ocr)
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, [
+            'status','orderId','supplierId','invoiceNumber','deliveryDate',
+            'taxTotals','subTotal','grandTotal',
+            'source','attachments',
+            'counts','priceVariance',
+            'createdAt','updatedAt','receivedAt','receivedBy'
+          ])
+          && request.resource.data.status == 'draft'
+          && request.resource.data.createdAt is timestamp
+          && !('receivedAt' in request.resource.data);
+
+        // Update while not finalized
+        allow update: if isVenueMember(venueId)
+          && resource.data.status != 'received'
+          && request.resource.data.status in ['draft','receiving','exceptions']
+          && request.resource.data.orderId == resource.data.orderId
+          && request.resource.data.supplierId == resource.data.supplierId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && hasOnlyFields(request.resource.data, [
+            'status','orderId','supplierId','invoiceNumber','deliveryDate',
+            'taxTotals','subTotal','grandTotal',
+            'source','attachments',
+            'counts','priceVariance',
+            'createdAt','updatedAt','receivedAt','receivedBy'
+          ])
+          && request.resource.data.updatedAt is timestamp
+          && (!('counts' in request.resource.data) || (request.resource.data.counts is list));
+
+        // Finalize to 'received' exactly once; freeze thereafter
+        allow update: if isVenueMember(venueId)
+          && resource.data.status != 'received'
+          && request.resource.data.status == 'received'
+          && request.resource.data.orderId == resource.data.orderId
+          && request.resource.data.supplierId == resource.data.supplierId
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.receivedAt is timestamp;
+
+        allow delete: if false;
+      }
+
+      // ===== Daily Order Counters (legacy) =====
+      match /orderCounters/{dateKey} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int)
+          && request.resource.data.seq == 1;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int && resource.data.seq is int)
+          && request.resource.data.seq == resource.data.seq + 1;
+        allow delete: if false;
+      }
+
+      match /counters_orders/{dateKey} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int)
+          && request.resource.data.seq == 1;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int && resource.data.seq is int)
+          && request.resource.data.seq == resource.data.seq + 1;
+        allow delete: if false;
+      }
+
+      // ===== Additive: Reconciliations (venue-level summaries) =====
+      match /reconciliations/{id} {
+        allow get, list: if isVenueMember(venueId);
+        // Created by client after server reconciliation summary returns
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.kind == 'invoice_reconcile'
+          && request.resource.data.createdAt is timestamp;
+        allow update, delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      // ===== Additive: Fast Receives (venue-level pending snapshots) =====
+      match /fastReceives/{fastId} {
+        allow get, list: if isVenueMember(venueId);
+
+        // Relaxed create: accept any additive fields as long as it's a snapshot doc
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.kind == 'fast_receive_snapshot'
+          && request.resource.data.createdAt is timestamp;
+
+        // Only allow status changes thereafter
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['pending','attached','reconciled'];
+
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      // ===== Sales Import: raw + derived =====
+      match /salesReports/{reportId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['source','report','createdAt'])
+          && request.resource.data.source in ['csv','pdf']
+          && request.resource.data.createdAt is timestamp;
+        allow update: if false;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /salesReportMatches/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['reportId','counts','matches','period','createdAt'])
+          && request.resource.data.createdAt is timestamp;
+        allow update: if false;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /salesReportUnknowns/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['reportId','line','createdAt','status'])
+          && request.resource.data.status == 'unmapped'
+          && request.resource.data.createdAt is timestamp;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['unmapped','mapped'];
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+    }
+  }
+}

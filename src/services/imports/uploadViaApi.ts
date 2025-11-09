@@ -1,13 +1,27 @@
 import * as FileSystem from 'expo-file-system';
+import { getAuth } from 'firebase/auth';
 
 const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
   ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
   : '';
 
 async function postJson(url: string, body: any) {
+  // Attach Firebase ID token so API can verify the caller & venue membership
+  const auth = getAuth();
+  const idToken = await auth.currentUser?.getIdToken().catch(()=>null);
+
+  const headers: Record<string,string> = { 'content-type': 'application/json' };
+  if (idToken) headers['authorization'] = `Bearer ${idToken}`;
+
+  if (__DEV__) {
+    try {
+      console.log('[uploadViaApi] POST', url.replace(BASE, ''), { hasToken: !!idToken });
+    } catch {}
+  }
+
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   return res;

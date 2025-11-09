@@ -1,0 +1,230 @@
+// @ts-nocheck
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal } from 'react-native';
+import { useVenueId } from '../../context/VenueProvider';
+import {
+  getFirestore, collection, query, where, orderBy, limit, getDocs
+} from 'firebase/firestore';
+import { attachPendingFastReceive } from '../../services/fastReceive/attachPending';
+
+type FastRow = {
+  id: string;
+  source: 'csv'|'pdf'|'manual'|string;
+  storagePath?: string;
+  parsedPo?: string|null;
+  status: string;
+  createdAt?: any;
+  payload?: any;
+};
+
+type OrderRow = { id: string; poNumber?: string|null; supplierName?: string|null; status?: string|null };
+
+export default function FastReceivesReviewPanel({ onClose }:{ onClose: ()=>void }) {
+  const venueId = useVenueId();
+  const db = getFirestore();
+
+  const [rows, setRows] = useState<FastRow[]>([]);
+  const [search, setSearch] = useState('');
+  const [attachOpen, setAttachOpen] = useState<null | { fastId: string; parsedPo: string|null }>(null);
+  const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Load pending fast-receives
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!venueId) return;
+        const qRef = query(
+          collection(db, 'venues', venueId, 'fastReceives'),
+          where('status', '==', 'pending'),
+          orderBy('createdAt', 'desc'),
+          limit(100)
+        );
+        const snap = await getDocs(qRef);
+        if (!alive) return;
+        const out: FastRow[] = [];
+        snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+        setRows(out);
+      } catch (e) {
+        if (__DEV__) console.log('[FastReceivesReviewPanel] load failed', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [venueId, db]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r => {
+      const po = (r.parsedPo || '').toLowerCase();
+      const src = (r.source || '').toLowerCase();
+      return po.includes(q) || src.includes(q) || (r.id||'').toLowerCase().includes(q);
+    });
+  }, [rows, search]);
+
+  const openAttach = useCallback(async (row: FastRow) => {
+    try {
+      setAttachOpen({ fastId: row.id, parsedPo: row.parsedPo ?? null });
+      setSelectedOrderId(null);
+
+      // Prefetch submitted orders (PO-matched first if we have one)
+      const ordersOut: OrderRow[] = [];
+      {
+        const byPo: OrderRow[] = [];
+        const general: OrderRow[] = [];
+        // Search submitted orders; if we have a PO, do a targeted query (note: two queries because of Firestore constraints)
+        if (row.parsedPo) {
+          const q1 = query(
+            collection(db, 'venues', venueId, 'orders'),
+            where('poNumber', '==', row.parsedPo),
+            where('status', '==', 'submitted'),
+            limit(10)
+          );
+          const s1 = await getDocs(q1);
+          s1.forEach(d => byPo.push({ id: d.id, ...(d.data() as any) }));
+        }
+        const q2 = query(
+          collection(db, 'venues', venueId, 'orders'),
+          where('status', '==', 'submitted'),
+          orderBy('createdAt','desc'),
+          limit(20)
+        );
+        const s2 = await getDocs(q2);
+        s2.forEach(d => {
+          const o:any = { id: d.id, ...(d.data() as any) };
+          if (!byPo.find(b => b.id === o.id)) general.push(o);
+        });
+        ordersOut.push(...byPo, ...general);
+      }
+      setOrders(ordersOut);
+    } catch (e) {
+      Alert.alert('Load orders failed', String((e as any)?.message||e));
+    }
+  }, [db, venueId]);
+
+  const doAttach = useCallback(async ()=>{
+    if (!attachOpen || !selectedOrderId) return;
+    try {
+      setBusy(true);
+      const res = await attachPendingFastReceive({
+        venueId,
+        fastId: attachOpen.fastId,
+        orderId: selectedOrderId
+      });
+      if (!res?.ok) throw new Error(res?.error || 'Attach failed');
+      Alert.alert('Attached & Reconciled', `Order ${res.orderId} updated.`);
+      setAttachOpen(null);
+      // Refresh list
+      setRows(prev => prev.filter(r => r.id !== attachOpen.fastId));
+    } catch (e) {
+      Alert.alert('Attach failed', String((e as any)?.message||e));
+    } finally {
+      setBusy(false);
+    }
+  }, [attachOpen, selectedOrderId, venueId]);
+
+  return (
+    <View style={S.card}>
+      <Text style={S.title}>Fast Receives — Pending Review</Text>
+      <Text style={S.sub}>Snapshots saved by staff without opening Submitted Orders. Attach to a submitted PO to reconcile.</Text>
+
+      <TextInput
+        placeholder="Search by PO, id, or source"
+        placeholderTextColor="#64748B"
+        value={search}
+        onChangeText={setSearch}
+        style={S.search}
+      />
+
+      <View style={{ marginTop:12 }}>
+        {filtered.length === 0 ? (
+          <Text style={{ color:'#94A3B8' }}>No pending fast receives.</Text>
+        ) : (
+          <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+            {filtered.map(r => (
+              <View key={r.id} style={S.row}>
+                <View style={{ flex:1 }}>
+                  <Text style={S.rowTitle}>Fast #{r.id.slice(-6)}</Text>
+                  <Text style={S.rowSub}>
+                    Source: {r.source ?? '—'} · PO: {r.parsedPo ?? '—'} · Status: {r.status}
+                  </Text>
+                </View>
+                <TouchableOpacity style={S.attachBtn} onPress={()=>openAttach(r)}>
+                  <Text style={{ color:'#fff', fontWeight:'800' }}>Attach</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
+      <TouchableOpacity onPress={onClose} style={S.closeBtn}>
+        <Text style={{ color:'#111', fontWeight:'800', textAlign:'center' }}>Close</Text>
+      </TouchableOpacity>
+
+      {/* Attach modal */}
+      <Modal visible={!!attachOpen} animationType="slide" onRequestClose={()=>setAttachOpen(null)}>
+        <View style={{ flex:1, backgroundColor:'#fff', padding:16 }}>
+          <Text style={{ fontSize:18, fontWeight:'900' }}>Attach to Submitted Order</Text>
+          <Text style={{ color:'#6B7280', marginTop:6 }}>
+            {attachOpen?.parsedPo ? `Suggested PO: ${attachOpen.parsedPo}` : 'No PO detected; choose from recent submitted orders.'}
+          </Text>
+
+          <ScrollView style={{ marginTop:12 }}>
+            {orders.length === 0 ? (
+              <Text style={{ color:'#94A3B8' }}>No submitted orders found.</Text>
+            ) : orders.map(o => {
+              const selected = o.id === selectedOrderId;
+              return (
+                <TouchableOpacity key={o.id} onPress={()=>setSelectedOrderId(o.id)} style={[S.orderRow, selected ? S.orderRowSel : null]}>
+                  <Text style={S.orderTitle}>{o.supplierName || 'Supplier'} · #{o.id.slice(-6)}</Text>
+                  <Text style={S.orderSub}>PO: {o.poNumber ?? '—'} · Status: {o.status ?? '—'}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <View style={{ flexDirection:'row', gap:10, marginTop:12 }}>
+            <TouchableOpacity onPress={()=>setAttachOpen(null)} style={S.btnGhost}>
+              <Text style={S.btnGhostTxt}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={doAttach} disabled={!selectedOrderId || busy} style={[S.btnSolid, (!selectedOrderId || busy) && { opacity:0.6 }]}>
+              <Text style={S.btnSolidTxt}>{busy ? 'Working…' : 'Attach & Reconcile'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const S = StyleSheet.create({
+  card: { backgroundColor:'#0F172A', padding:14, borderRadius:12, marginTop:10 },
+  title: { color:'white', fontWeight:'900', fontSize:16 },
+  sub: { color:'#93A3B8', marginTop:4 },
+  search: {
+    marginTop:10, borderWidth:1, borderColor:'#1F2937', backgroundColor:'#0B1220',
+    borderRadius:10, paddingVertical:10, paddingHorizontal:12, color:'white'
+  },
+  row: {
+    backgroundColor:'#0B1220', borderRadius:10, padding:12,
+    borderWidth:1, borderColor:'#1E293B', flexDirection:'row', alignItems:'center', gap:12, marginBottom:8
+  },
+  rowTitle: { color:'white', fontWeight:'800' },
+  rowSub: { color:'#93A3AF', marginTop:2 },
+  attachBtn: { backgroundColor:'#111827', paddingVertical:10, paddingHorizontal:12, borderRadius:8 },
+
+  closeBtn: { alignSelf:'center', marginTop:10, paddingVertical:8, paddingHorizontal:12, backgroundColor:'#F3F4F6', borderRadius:8, width:160 },
+
+  orderRow: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:12, marginTop:8, backgroundColor:'#fff' },
+  orderRowSel: { borderColor:'#111827' },
+  orderTitle: { fontWeight:'800', color:'#111827' },
+  orderSub: { color:'#6B7280', marginTop:4 },
+
+  btnGhost: { flex:1, paddingVertical:12, backgroundColor:'#F3F4F6', borderRadius:8 },
+  btnGhostTxt: { textAlign:'center', fontWeight:'700', color:'#374151' },
+  btnSolid: { flex:1, paddingVertical:12, backgroundColor:'#111827', borderRadius:8 },
+  btnSolidTxt: { textAlign:'center', fontWeight:'700', color:'#fff' },
+});

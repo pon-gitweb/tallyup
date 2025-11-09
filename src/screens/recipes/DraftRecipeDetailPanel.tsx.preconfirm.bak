@@ -3,8 +3,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
-import { confirmRecipe } from '../../services/recipes/confirmRecipe';
-import IngredientEditor from './components/IngredientEditor';
 
 type Props = {
   recipeId: string;
@@ -23,10 +21,10 @@ export default function DraftRecipeDetailPanel({
 
   // Prefill & state
   const [name, setName] = useState<string>(initialName || '');
-  const [mode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
+  const [mode, setMode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
   const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
 
-  // Yield/portion (drives per-serve math)
+  // Yield/portion (moved near bottom; still drives COGS/serve math)
   const [yieldQty, setYieldQty] = useState<string>('');
   const [unit, setUnit] = useState<string>('serve');
   const [portionSize, setPortionSize] = useState<string>(''); // number string
@@ -118,7 +116,6 @@ export default function DraftRecipeDetailPanel({
       const rrpVal = (rrp?.trim()?.length ? toNumber(rrp) : toNumber(rrpDisplay)) || 0;
 
       await updateRecipeDraft(venueId, recipeId, {
-        name: name.trim(),
         yield: y || null,
         unit: unit || (mode === 'single' ? 'serve' : 'serves'),
         cogs: cgs,
@@ -131,37 +128,6 @@ export default function DraftRecipeDetailPanel({
       Alert.alert('Save failed', String(e?.message || e));
     }
   }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode]);
-
-  const confirmNow = useCallback(async () => {
-    try {
-      if (!venueId) throw new Error('No venueId');
-      if (!recipeId) throw new Error('No recipeId');
-      if (!name || !name.trim()) throw new Error('Please enter a name');
-      if ((derivedBatchCost || 0) <= 0) throw new Error('Add at least one ingredient');
-      setBusy(true);
-      const y = Number(yieldQty || '0') || (servesFromBatch ?? 0);
-      const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
-      const rrpVal = (rrp?.trim()?.length ? Number(rrp) : Number(rrpDisplay)) || 0;
-
-      await confirmRecipe(venueId, recipeId, {
-        name: name.trim(),
-        yield: y || null,
-        unit: unit || (mode === 'single' ? 'serve' : 'serves'),
-        cogs: cgs,
-        rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
-        method: method || null,
-        gpPct: Number(gpPct || '0') || null,
-        rrpIncludesGst
-      });
-
-      Alert.alert('Confirmed', 'Recipe locked and saved.');
-      onClose();
-    } catch (e) {
-      Alert.alert('Confirm failed', String((e as any)?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, derivedBatchCost]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
@@ -196,7 +162,7 @@ export default function DraftRecipeDetailPanel({
           <Row label="Live GP %" value={`${(Number(gpPct || '0') || 0).toFixed(1)}%`} />
         </Card>
 
-        {/* Yield / Portion */}
+        {/* Yield / Portion moved DOWN here */}
         <Field label="Yield / Unit" row>
           <TextInput
             value={yieldQty || (mode==='batch' && servesFromBatch!=null ? String(servesFromBatch) : '')}
@@ -234,8 +200,6 @@ export default function DraftRecipeDetailPanel({
         <Field label="Method / Notes">
           <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I, { height:120, textAlignVertical:'top' }]} multiline />
         </Field>
-
-        {/* Actions */}
         <TouchableOpacity disabled={busy} onPress={confirmNow} style={{ padding:14, borderRadius:12, backgroundColor:'#16a34a' }}>
           <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Confirming…' : 'Confirm Recipe'}</Text>
         </TouchableOpacity>
@@ -248,8 +212,6 @@ export default function DraftRecipeDetailPanel({
   );
 }
 
-/* ====== Local UI helpers to keep this file self-contained ====== */
-
 function Header({ title, onBack }:{ title:string; onBack:()=>void }) {
   return (
     <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
@@ -259,6 +221,7 @@ function Header({ title, onBack }:{ title:string; onBack:()=>void }) {
     </View>
   );
 }
+
 function Field({ label, children, row }:{ label:string; children:any; row?:boolean }) {
   return (
     <View>
@@ -276,31 +239,31 @@ function FieldSmall({ label, children }:{ label:string; children:any }) {
   );
 }
 function Card({ children }:{ children:any }) {
-  return <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB' }}>{children}</View>;
+  return <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB' }}>{children}</View>;
 }
 function Row({ label, value }:{ label:string; value:string }) {
   return (
-    <View style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical:4 }}>
-      <Text style={{ opacity:0.7 }}>{label}</Text>
-      <Text style={{ fontWeight:'700' }}>{value}</Text>
+    <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+      <Text style={{ fontWeight:'700' }}>{label}</Text>
+      <Text>{value}</Text>
     </View>
   );
 }
-function Dropdown({ value, options, onChange }:{ value:any; options:any[]; onChange:(v:any)=>void }) {
-  // Simple pill that cycles options on tap – avoids extra deps
-  const advance = () => {
-    const idx = Math.max(0, options.findIndex(o => o === value));
-    const next = options[(idx + 1) % options.length];
-    onChange(next);
-  };
+function Dropdown({ value, options, onChange }:{ value:string; options:string[]; onChange:(v:any)=>void }) {
   return (
-    <TouchableOpacity onPress={advance} style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, paddingHorizontal:12, justifyContent:'center' }}>
-      <Text style={{ paddingVertical:12, fontWeight:'700' }}>{String(value)}</Text>
+    <TouchableOpacity
+      onPress={() => {
+        const idx = Math.max(0, options.indexOf(value));
+        onChange(options[(idx + 1) % options.length]);
+      }}
+      style={[I, { paddingVertical:12, alignItems:'center', justifyContent:'center', minWidth:96 }]}
+    >
+      <Text style={{ fontWeight:'700' }}>{value}</Text>
     </TouchableOpacity>
   );
 }
-function formatMoney(n:any) { return Number.isFinite(Number(n)) ? `$${Number(n).toFixed(2)}` : '—'; }
 
-const I = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, padding:12 } as const;
-const Subtle = { opacity:0.7, marginTop:4 } as const;
-const Hint = { opacity:0.6, marginTop:6, fontSize:12 } as const;
+const Subtle = { color:'#6B7280', marginTop:4 };
+const Hint   = { color:'#6B7280', marginTop:6 };
+const I = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' };
+const formatMoney = (n:number) => (!Number.isFinite(n) ? '—' : `$${n.toFixed(2)}`);

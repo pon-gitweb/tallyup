@@ -12,5 +12,13 @@ export async function uploadFastInvoice(venueId: string, fileUri: string, fileNa
 
   const safe = (fileName || 'invoice').replace(/[^\w.\-]+/g, '_').slice(0, 80);
   const destPath = `uploads/${venueId}/fast-receive/${Date.now()}-${safe}`;
-  return uploadUriViaApi({ fileUri, destPath, contentType });
+
+  try {
+    const out = await uploadUriViaApi({ fileUri, destPath, contentType });
+    if (__DEV__) console.log('[FastReceive][Storage] OK', { destPath, contentType, outFullPath: out?.fullPath });
+    return out;
+  } catch (e:any) {
+    console.log('[FastReceive][Storage] FAIL', { destPath, contentType, message: e?.message || String(e) });
+    throw e;
+  }
 }

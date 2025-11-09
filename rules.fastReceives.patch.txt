@@ -1,0 +1,16 @@
+// ------- Fast Receives (venue-level pending snapshots) -------
+match /fastReceives/{fastId} {
+  allow get, list: if isVenueMember(venueId);
+
+  // Relaxed create: accept any additive fields as long as it's a snapshot doc
+  allow create: if isVenueMember(venueId)
+    && request.resource.data.kind == 'fast_receive_snapshot'
+    && request.resource.data.createdAt is timestamp;
+
+  // Keep update simple: only status can change, to one of the allowed values
+  allow update: if isVenueMember(venueId)
+    && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+    && request.resource.data.status in ['pending','attached','reconciled'];
+
+  allow delete: if hasVenueRole(venueId, ['manager','owner']);
+}

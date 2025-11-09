@@ -1,0 +1,136 @@
+// Firestore Rules — TallyUp (full, with Invoices + Budgets + future-proof subs)
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(uid()));
+    }
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(uid()));
+    }
+    function userVenueId() {
+      return userDocExists() && userDoc().data.keys().hasAny(['venueId'])
+        ? userDoc().data.venueId
+        : null;
+    }
+    function hasVenueAccess(venueId) {
+      return isSignedIn() && (
+        (userDocExists() && userVenueId() == venueId)
+        || exists(/databases/$(database)/documents/venues/$(venueId)/members/$(uid()))
+      );
+    }
+    function canCreateFirstVenue() {
+      return isSignedIn() && (!userDocExists() || userVenueId() == null);
+    }
+    function isOwnerOfVenue(venueId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/venues/$(venueId))
+        && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == uid();
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == uid();
+      allow create: if isSignedIn() && userId == uid();
+      allow update: if isSignedIn() && userId == uid() && (
+        !(request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId'])) ||
+        (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId']) &&
+          (!resource.data.keys().hasAny(['venueId']) || resource.data.venueId == null)
+        )
+      );
+    }
+
+    match /venues/{venueId} {
+      allow create: if canCreateFirstVenue()
+        && request.resource.data.keys().hasAll(['name','ownerUid'])
+        && request.resource.data.ownerUid == uid();
+
+      allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+      allow update: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+
+      match /sessions/{sessionId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+      }
+
+      match /members/{memberId} {
+        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow write: if (memberId == uid()) && (hasVenueAccess(venueId) || isOwnerOfVenue(venueId));
+      }
+
+      match /departments/{departmentId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+
+        match /session/{docId} {
+          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        }
+
+        match /areas/{areaId} {
+          allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+
+          function isCycleReset() {
+            return request.resource.data.keys().hasAll(['cycleResetAt'])
+              && request.resource.data.startedAt == null
+              && request.resource.data.completedAt == null;
+          }
+
+          allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId)) && (
+            !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) ||
+            (
+              exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) &&
+              get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+            ) ||
+            isCycleReset()
+          );
+
+          match /items/{itemId} {
+            allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+            function isCountUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+                || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+            }
+            allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId))
+              && isCountUpdate()
+              && (
+                !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId))
+                || get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+              );
+          }
+        }
+      }
+
+      match /suppliers/{supplierId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      match /products/{productId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /prices/{supplierId} {
+          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        }
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      match /orders/{orderId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        match /{sub=**}   { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      // NEW: invoices + lines
+      match /invoices/{invoiceId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+
+      match /budgets/{budgetId} {
+        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+      }
+    }
+  }
+}

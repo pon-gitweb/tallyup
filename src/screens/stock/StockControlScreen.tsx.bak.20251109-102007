@@ -6,16 +6,16 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 
-// Setup screens
+// Existing screens
 import SuppliersScreen from '../setup/SuppliersScreen';
 import ProductsScreen from '../setup/ProductsScreen';
 
-// Panels (leaf-only, no nav edits)
-import FastReceivePanel from './FastReceivePanel';                  // Scan/Upload flow
-import FastReceivesReviewPanel from './FastReceivesReviewPanel';    // Pending review/attach
-import SalesReportUploadPanel from './SalesReportUploadPanel';      // Sales CSV/PDF import
-import ReconciliationsPanel from './ReconciliationsPanel';          // Invoice reconciliations list
-import CraftUpListScreen from '../recipes/CraftUpListScreen';       // Recipes hub (List + Creator embedded)
+// Panels
+import ReconciliationsPanel from './ReconciliationsPanel';
+import CraftUpPanel from '../recipes/CraftUpPanel';
+
+// CraftUp list (modal content)
+import CraftUpListScreen from '../recipes/CraftUpListScreen';
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -26,13 +26,7 @@ export default function StockControlScreen() {
 
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
-
-  // NEW modals
-  const [showFastReceive, setShowFastReceive] = useState(false);
-  const [showFastReview, setShowFastReview]   = useState(false);
-  const [showSalesImport, setShowSalesImport] = useState(false);
-  const [showRecon, setShowRecon]             = useState(false);
-  const [showCraftUp, setShowCraftUp]         = useState(false); // Recipes hub
+  const [showCraftUp, setShowCraftUp] = useState(false);
 
   const friendly = useMemo(() => {
     return friendlyIdentity(
@@ -67,22 +61,20 @@ export default function StockControlScreen() {
           <IdentityBadge />
         </View>
 
-        {/* Existing items */}
         <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
         <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
-        {/* Reset Stock Take was removed previously as requested */}
-        <Item title="Craft-It (Recipe List & Creator)" onPress={() => setShowCraftUp(true)} />
+        <Item title="Reset Stock Take" onPress={() => nav.navigate('Settings' as never)} />
 
-        {/* NEW: quick actions */}
-        <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
-        <Item title="Fast Receives (Pending)"      onPress={() => setShowFastReview(true)} />
-        <Item title="Sales Reports (Import)"       onPress={() => setShowSalesImport(true)} />
-        <Item title="Invoice Reconciliations"      onPress={() => setShowRecon(true)} />
+        {/* Read-only: reconciliations summary */}
+        <ReconciliationsPanel />
+
+        {/* CraftUp summary panel + button */}
+        <CraftUpPanel onOpen={() => setShowCraftUp(true)} />
       </View>
 
-      {/* Suppliers */}
+      {/* Suppliers modal */}
       <Modal visible={showSuppliers} animationType="slide" onRequestClose={() => setShowSuppliers(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
@@ -94,7 +86,7 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Products */}
+      {/* Products modal */}
       <Modal visible={showProducts} animationType="slide" onRequestClose={() => setShowProducts(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
@@ -106,62 +98,12 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Fast Receive (Scan/Upload) */}
-      <Modal visible={showFastReceive} animationType="slide" onRequestClose={() => setShowFastReceive(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFastReceive(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Fast Receive</Text>
-            <View style={{ width: 60 }} />
-          </View>
-          <FastReceivePanel onClose={() => setShowFastReceive(false)} />
-        </SafeAreaView>
-      </Modal>
-
-      {/* Fast Receives (Pending Review/Attach) */}
-      <Modal visible={showFastReview} animationType="slide" onRequestClose={() => setShowFastReview(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFastReview(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Fast Receives (Pending)</Text>
-            <View style={{ width: 60 }} />
-          </View>
-          <FastReceivesReviewPanel onClose={() => setShowFastReview(false)} />
-        </SafeAreaView>
-      </Modal>
-
-      {/* Sales Report Import (CSV/PDF) */}
-      <Modal visible={showSalesImport} animationType="slide" onRequestClose={() => setShowSalesImport(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowSalesImport(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Sales Reports (Import)</Text>
-            <View style={{ width: 60 }} />
-          </View>
-          <SalesReportUploadPanel onClose={() => setShowSalesImport(false)} />
-        </SafeAreaView>
-      </Modal>
-
-      {/* Invoice Reconciliations (modalized) */}
-      <Modal visible={showRecon} animationType="slide" onRequestClose={() => setShowRecon(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowRecon(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Invoice Reconciliations</Text>
-            <View style={{ width: 60 }} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <ReconciliationsPanel />
-          </View>
-        </SafeAreaView>
-      </Modal>
-
-      {/* Recipes (CraftUp hub) */}
+      {/* CraftUp list modal */}
       <Modal visible={showCraftUp} animationType="slide" onRequestClose={() => setShowCraftUp(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowCraftUp(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Recipes</Text>
+            <Text style={styles.modalTitle}>CraftUp — Recipes</Text>
             <View style={{ width: 60 }} />
           </View>
           <CraftUpListScreen />
