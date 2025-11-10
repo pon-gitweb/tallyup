@@ -16,8 +16,10 @@ export async function tryAttachToOrderOrSavePending(args: {
   venueId: string;
   parsed: Parsed;
   storagePath: string;
+  /** If true, do not create a new pending snapshot when no PO/order match is found. */
+  noPendingFallback?: boolean;
 }) {
-  const { venueId, parsed, storagePath } = args;
+  const { venueId, parsed, storagePath, noPendingFallback } = args;
   const db = getFirestore(getApp());
 
   // 1) Try find a submitted order with matching PO
@@ -50,7 +52,12 @@ export async function tryAttachToOrderOrSavePending(args: {
     return { attached: !!done?.ok, orderId, savedPending: false };
   }
 
-  // 3) Else: store as pending fast receive (match the rules' snapshot envelope)
+  // 3) If not found and caller forbids fallback, exit without duplicating pending
+  if (noPendingFallback) {
+    return { attached: false, orderId: null, savedPending: false };
+  }
+
+  // 4) Else: store as pending fast receive (match rules' snapshot envelope)
   const pendingCol = collection(db, 'venues', venueId, 'fastReceives');
   const ref = await addDoc(pendingCol, {
     kind: 'fast_receive_snapshot',

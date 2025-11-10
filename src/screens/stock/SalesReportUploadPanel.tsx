@@ -1,10 +1,9 @@
-// @ts-nocheck
+/* @ts-nocheck */
 import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 
-// Reuse your existing sales services (these files already exist in your repo)
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { processSalesPdf } from '../../services/sales/processSalesPdf';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
@@ -26,20 +25,23 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       const a = res.assets[0];
       const isCsv = (a.mimeType||'').includes('csv') || /\.csv$/i.test(a.name||'');
 
-      // Server-side parsing (uses your existing endpoints)
-      const parsed = isCsv
-        ? await processSalesCsv({ venueId })
-        : await processSalesPdf({ venueId });
+      if (!venueId) throw new Error('Not ready: no venue selected');
+      if (!a.uri?.startsWith('file')) throw new Error('Expected a local file URI');
 
-      // Persist report + trigger matching (non-throwing inside)
+      // Parse → normalize
+      const parsed = isCsv
+        ? await processSalesCsv({ venueId, fileUri: a.uri, filename: a.name || 'sales.csv' })
+        : await processSalesPdf({ venueId, fileUri: a.uri, filename: a.name || 'sales.pdf' });
+
+      // Persist normalized report + attempt matching (non-throwing inside)
       const saved = await storeSalesReport({
         venueId,
-        report: parsed?.report || parsed, // tolerate different shapes from server
+        report: parsed?.report || parsed, // tolerate server/local shapes
         source: isCsv ? 'csv' : 'pdf'
       });
 
       if (!saved?.ok) throw new Error(saved?.error || 'storeSalesReport failed');
-      Alert.alert('Sales Report', 'Saved. Analytics will use this as a fallback when POS API is unavailable.');
+      Alert.alert('Sales Report', 'Saved. Analytics will use this when POS API is unavailable.');
       onClose();
     } catch (e:any) {
       Alert.alert('Sales import failed', String(e?.message||e));
