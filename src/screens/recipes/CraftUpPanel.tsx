@@ -10,6 +10,8 @@ import { db } from '../../services/firebase';
 
 import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
+import { duplicateToDraft } from '../../services/recipes/duplicateToDraft';
+import { deleteDraft } from '../../services/recipes/deleteDraft';
 import DraftRecipeDetailPanel from './DraftRecipeDetailPanel';
 
 type TabKey = 'create' | 'recipes' | 'drafts';
@@ -52,7 +54,7 @@ function Tabs({ tab, onChange }:{ tab: TabKey; onChange:(k:TabKey)=>void }) {
   );
 }
 
-/* ---------- Tab 1: Create (baseline) ---------- */
+/* ---------------- Tab 1: Create (baseline) ---------------- */
 function CreateStart({ onClose }:{ onClose:()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
@@ -156,41 +158,36 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
   );
 }
 
-/* ---------- Tab 2: View Recipes (confirmed only; long-press shows card) ---------- */
+/* ---------------- Tab 2: View Recipes (CONFIRMED only) ----------------
+   Tap = view card; Long-press = Duplicate → Draft → open editor
+----------------------------------------------------------------------- */
 function RecipesListTab() {
   const venueId = useVenueId();
   const [rows, setRows] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [viewDoc, setViewDoc] = useState<any|null>(null);
   const [viewId, setViewId] = useState<string|null>(null);
+  const [viewDoc, setViewDoc] = useState<any|null>(null);
+  const [editId, setEditId] = useState<string|null>(null);
 
-  useEffect(()=>{
-    let alive = true;
-    (async ()=>{
-      try{
-        if (!venueId) return;
-        const snap = await getDocs(query(collection(db, 'venues', venueId, 'recipes'), orderBy('name')));
-        const all:any[] = [];
-        snap.forEach(d => all.push({ id: d.id, ...(d.data() as any) }));
-        const confirmed = all.filter(r => String(r?.status || '').toLowerCase() === 'confirmed');
-        if (!alive) return;
-        if (__DEV__) console.log('[RecipesListTab] all=', all.length, 'confirmed=', confirmed.length);
-        setRows(confirmed);
-      }catch(e){
-        if (__DEV__) console.log('[RecipesListTab] load failed', e?.message || e);
-        setRows([]);
-      }
-    })();
-    return ()=>{ alive=false; };
+  const load = useCallback(async ()=>{
+    if (!venueId) return;
+    const qy = query(collection(db, 'venues', venueId, 'recipes'), orderBy('name'));
+    const snap = await getDocs(qy);
+    const out:any[] = [];
+    snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+    setRows(out);
   },[venueId]);
+
+  useEffect(()=>{ (async()=>{ try{ await load(); }catch(e){ if(__DEV__) console.log('[RecipesListTab] load failed', e?.message||e); setRows([]);} })(); },[load]);
 
   const filtered = useMemo(()=>{
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r =>
+    const bySearch = !q ? rows : rows.filter(r =>
       (r.name||'').toLowerCase().includes(q) ||
       (r.category||'').toLowerCase().includes(q)
     );
+    // confirmed only
+    return bySearch.filter(r => String(r?.status||'draft') === 'confirmed');
   },[rows,search]);
 
   const openView = useCallback((r:any)=>{
@@ -198,13 +195,36 @@ function RecipesListTab() {
     setViewId(r?.id ?? null);
   },[]);
 
+  const onDuplicate = useCallback(async (r:any)=>{
+    try{
+      if (!venueId) throw new Error('No venue');
+      const { id:newId } = await duplicateToDraft(venueId, r.id);
+      Alert.alert('Duplicated', 'A new draft was created from this recipe.');
+      setViewId(null); setViewDoc(null);
+      await load();
+      setEditId(newId);
+    }catch(e:any){
+      Alert.alert('Duplicate failed', String(e?.message || e));
+    }
+  },[venueId, load]);
+
   const Row = ({ r }:{ r:any })=>{
-    const subtitle = `${r.category||'—'} · confirmed`;
     return (
-      <TouchableOpacity onLongPress={() => openView(r)} activeOpacity={0.7} style={styles.row}>
+      <TouchableOpacity
+        onPress={() => openView(r)}             // tap = view
+        onLongPress={() => onDuplicate(r)}      // long-press = duplicate to draft
+        delayLongPress={300}
+        activeOpacity={0.7}
+        style={styles.row}
+      >
         <View style={{flex:1}}>
-          <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
-          <Text style={styles.rowSub}>{subtitle}</Text>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+            <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
+            <View style={[styles.chip, styles.chipConfirmed]}>
+              <Text style={styles.chipText}>Confirmed</Text>
+            </View>
+          </View>
+          <Text style={styles.rowSub}>{(r.category||'—')} · confirmed</Text>
         </View>
         <Text style={styles.chev}>›</Text>
       </TouchableOpacity>
@@ -229,16 +249,24 @@ function RecipesListTab() {
         ) : filtered.map(r => <Row key={r.id} r={r} />)}
       </ScrollView>
 
+      {/* read-only card */}
       <Modal visible={!!viewId} animationType="slide" onRequestClose={() => {setViewId(null); setViewDoc(null);}}>
         <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
           {viewDoc ? <RecipeCardView recipe={viewDoc} onClose={() => {setViewId(null); setViewDoc(null);}} /> : null}
+        </SafeAreaView>
+      </Modal>
+
+      {/* open editor for duplicated draft */}
+      <Modal visible={!!editId} animationType="slide" onRequestClose={() => setEditId(null)}>
+        <SafeAreaView style={{ flex:1, backgroundColor: '#fff' }}>
+          {editId ? <DraftRecipeDetailPanel recipeId={editId} onClose={() => setEditId(null)} /> : null}
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
-/* ---------- Read-only Recipe Card ---------- */
+/* ---------------- Read-only Recipe Card ---------------- */
 function RecipeCardView({ recipe, onClose }:{ recipe:any; onClose:()=>void }) {
   const cost = Number(recipe?.cogs ?? 0);
   const rrp  = Number(recipe?.rrp ?? 0);
@@ -252,8 +280,13 @@ function RecipeCardView({ recipe, onClose }:{ recipe:any; onClose:()=>void }) {
         <View style={{ width:60 }} />
       </View>
 
-      <Text style={{ fontSize:20, fontWeight:'900' }}>{recipe?.name || 'Untitled'}</Text>
-      <Text style={{ color:'#6B7280', marginTop:2 }}>{(recipe?.category||'—')} · {(recipe?.status||'—')}</Text>
+      <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+        <Text style={{ fontSize:20, fontWeight:'900' }}>{recipe?.name || 'Untitled'}</Text>
+        <View style={[styles.chip, styles.chipConfirmed]}>
+          <Text style={styles.chipText}>Confirmed</Text>
+        </View>
+      </View>
+      <Text style={{ color:'#6B7280', marginTop:2 }}>{(recipe?.category||'—')} · confirmed</Text>
 
       <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, backgroundColor:'#F9FAFB' }}>
         <Text style={{ fontWeight:'700' }}>Pricing</Text>
@@ -275,17 +308,19 @@ function RecipeCardView({ recipe, onClose }:{ recipe:any; onClose:()=>void }) {
         ) : <Text style={{ color:'#6B7280', marginTop:8 }}>No items.</Text>}
       </View>
 
-      {recipe?.method ? (
-        <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12 }}>
-          <Text style={{ fontWeight:'700' }}>Method / Notes</Text>
-          <Text style={{ color:'#111', marginTop:8 }}>{recipe.method}</Text>
-        </View>
-      ) : null}
+      <TouchableOpacity
+        onPress={onClose}
+        style={{ marginTop:16, padding:14, borderRadius:12, backgroundColor:'#F3F4F6' }}
+      >
+        <Text style={{ color:'#111', fontWeight:'800', textAlign:'center' }}>Close</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
-/* ---------- Tab 3: Drafts (treat missing status as draft) ---------- */
+/* ---------------- Tab 3: Drafts (DRAFTS only) ----------------
+   Tap = edit; Long-press = Confirm/Delete (dev-relaxed confirm)
+-------------------------------------------------------------- */
 function DraftsTab() {
   const venueId = useVenueId();
   const [rows, setRows] = useState<any[]>([]);
@@ -294,41 +329,28 @@ function DraftsTab() {
 
   const load = useCallback(async ()=>{
     if (!venueId) return;
-    const ref = collection(db, 'venues', venueId, 'recipes');
-    const snap = await getDocs(query(ref, orderBy('name')));
-    const all:any[] = [];
-    snap.forEach(d => all.push({ id: d.id, ...(d.data() as any) }));
-    // Treat missing status as draft (legacy docs)
-    const drafts = all.filter(r => {
-      const s = String(r?.status ?? '').toLowerCase();
-      return s === '' || s === 'draft';
-    });
-    if (__DEV__) console.log('[DraftsTab] all=', all.length, 'drafts=', drafts.length);
-    setRows(drafts);
+    const qy = query(collection(db, 'venues', venueId, 'recipes'), orderBy('name'));
+    const snap = await getDocs(qy);
+    const out:any[] = [];
+    snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+    setRows(out);
   },[venueId]);
 
-  useEffect(() => {
-    (async () => {
-      try { await load(); } catch (e) {
-        if (__DEV__) console.log('[DraftsTab] load failed', e?.message || e);
-        setRows([]);
-      }
-    })();
-  }, [load]);
+  useEffect(() => { (async()=>{ try{ await load(); }catch(e){ if(__DEV__) console.log('[DraftsTab] load failed', e?.message||e); setRows([]);} })(); }, [load]);
 
   const filtered = useMemo(()=>{
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r =>
+    const bySearch = !q ? rows : rows.filter(r =>
       (r.name||'').toLowerCase().includes(q) ||
       (r.category||'').toLowerCase().includes(q)
     );
+    // drafts only
+    return bySearch.filter(r => String(r?.status||'draft') === 'draft');
   },[rows, search]);
 
   const onConfirm = useCallback(async (r:any) => {
     try {
       if (!venueId) throw new Error('No venue');
-      // Dev-relaxed confirm (allows 0 cost/0 rrp/empty items)
       await confirmRecipe(venueId, r.id, {
         name: r?.name ?? null,
         yield: r?.yield ?? null,
@@ -346,25 +368,41 @@ function DraftsTab() {
     }
   }, [venueId, load]);
 
+  const onDelete = useCallback(async (r:any) => {
+    try {
+      if (!venueId) throw new Error('No venue');
+      await deleteDraft(venueId, r.id);
+      Alert.alert('Deleted', 'Draft removed.');
+      await load();
+    } catch (e:any) {
+      Alert.alert('Delete failed', String(e?.message || e));
+    }
+  }, [venueId, load]);
+
   const Row = ({ r }:{ r:any }) => (
     <TouchableOpacity
-      onPress={() => setOpenId(r.id)}
+      onPress={() => setOpenId(r.id)} // tap = edit
       onLongPress={() =>
         Alert.alert(
-          'Confirm this draft?',
-          r?.name || 'Untitled',
+          r?.name || 'Draft',
+          'Choose an action',
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Confirm', style: 'destructive', onPress: () => onConfirm(r) }
+            { text: 'Delete', style: 'destructive', onPress: () => onDelete(r) },
+            { text: 'Confirm', onPress: () => onConfirm(r) },
           ]
         )
       }
+      delayLongPress={300}
       activeOpacity={0.7}
       style={styles.row}
     >
       <View style={{ flex: 1 }}>
-        <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
-        <Text style={styles.rowSub}>{(r.category||'—')} · {(r.mode||'—')} · draft</Text>
+        <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+          <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
+          <View style={[styles.chip, styles.chipDraft]}><Text style={styles.chipText}>Draft</Text></View>
+        </View>
+        <Text style={styles.rowSub}>{(r.category||'—')} · {(r.mode||'—')}</Text>
       </View>
       <Text style={styles.chev}>›</Text>
     </TouchableOpacity>
@@ -381,6 +419,7 @@ function DraftsTab() {
           onChangeText={setSearch}
           style={styles.search}
         />
+        <Text style={{ color:'#6B7280', marginTop:8 }}>Tip: Long-press a draft to Confirm or Delete. Tap to edit.</Text>
       </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16 }}>
         {filtered.length === 0 ? (
@@ -408,4 +447,8 @@ const styles = StyleSheet.create({
   rowTitle: { fontWeight: '800' },
   rowSub: { color: '#6B7280', marginTop: 2 },
   chev: { fontSize: 22, color: '#94A3B8', marginLeft: 8 },
+  chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
+  chipText: { fontSize:12, fontWeight:'700', color:'#111' },
+  chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
+  chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor:'#16A34A' },
 });
