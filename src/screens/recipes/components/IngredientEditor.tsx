@@ -4,15 +4,18 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, M
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, orderBy, startAt, endAt, limit, query } from 'firebase/firestore';
 import { useVenueId } from '../../../context/VenueProvider';
+import { toBaseUnit, normalizePack } from '../../../services/units';
 
 type Props = {
-  onSummary: (s: {
-    totalCost: number;
-    totalMl: number;
-    totalG: number;
-    totalEach: number;
-    rows: any[];
-  }) => void;
+  items: Array<{
+    key?: string;
+    name: string;
+    qty: number;
+    unit: 'ml'|'g'|'each';
+    link?: { productId: string; packSize?: number|null; packUnit?: string|null; packPrice?: number|null };
+  }>;
+  onItemsChange: (rows: Props['items']) => void;
+  onSummary?: (s: { totalCost: number; totalMl: number; totalG: number; totalEach: number; rows: any[] }) => void;
   category?: 'food'|'beverage'|null;
   mode?: 'batch'|'single'|'dish'|null;
 };
@@ -24,27 +27,6 @@ type ProductHit = {
   packUnit?: string|null;   // 'ml'|'L'|'g'|'kg'|'each'
   packPrice?: number|null;  // price per pack
   supplierName?: string|null;
-};
-
-type Row = {
-  key: string;
-  name: string;
-  qty: number;
-  unit: 'ml'|'g'|'each';
-  link?: { productId: string; packSize?: number|null; packUnit?: string|null; packPrice?: number|null };
-};
-
-const unitFamily = (c:'food'|'beverage'|null|undefined) => (c==='beverage' ? 'ml' : 'g');
-const toBase = (u:string|undefined|null):'ml'|'g'|'each' => {
-  if (u==='ml'||u==='L') return 'ml';
-  if (u==='g'||u==='kg') return 'g';
-  return 'each';
-};
-const normPackSize = (size?:number|null, unit?:string|null):{qty:number, base:'ml'|'g'|'each'} => {
-  if (!size || size <= 0) return { qty: 1, base: toBase(unit) };
-  if (unit === 'L') return { qty: size * 1000, base:'ml' };
-  if (unit === 'kg') return { qty: size * 1000, base:'g' };
-  return { qty: size, base: toBase(unit) };
 };
 
 const LEXICON = [
@@ -60,24 +42,21 @@ const LEXICON = [
 const BEV_CHIPS = [15,30,45,60];
 const FOOD_CHIPS = [1,5,10,50];
 
-export default function IngredientEditor({ onSummary, category=null }: Props) {
+export default function IngredientEditor({ items, onItemsChange, onSummary, category=null }: Props) {
   const venueId = useVenueId();
 
-  // search state
+  // Search UI state only
   const [term, setTerm] = useState('');
-  const [hits, setHits] = useState<ProductHit[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  // entry state
-  const defaultUnit:'ml'|'g'|'each' = unitFamily(category ?? 'beverage') as any;
+  const defaultUnit:'ml'|'g'|'each' = (category === 'beverage' ? 'ml' : 'g') as any;
   const [qty, setQty]   = useState<string>('');
   const [unit, setUnit] = useState<'ml'|'g'|'each'>(defaultUnit);
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
 
-  // current rows
-  const [rows, setRows] = useState<Row[]>([]);
+  // Results
+  const [hits, setHits] = useState<ProductHit[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // fetch product hits by name prefix
+  // Fetch product hits by name prefix
   useEffect(() => {
     let stop=false;
     (async () => {
@@ -102,7 +81,7 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
           });
         });
         setHits(list);
-      } catch(e) {
+      } catch {
         setHits([]);
       } finally {
         if (!stop) setLoading(false);
@@ -111,66 +90,57 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
     return () => { stop = true; };
   }, [venueId, term]);
 
+  // Helpers
   const estimateMaxUnitPrice = (u:'ml'|'g'|'each'):number => {
     let maxPU = 0;
-
-    // from current results
     for (const p of hits) {
       if (p.packPrice && p.packPrice > 0) {
-        const { qty:packQty, base } = normPackSize(p.packSize, p.packUnit);
-        if (base === u && packQty > 0) {
-          maxPU = Math.max(maxPU, p.packPrice / packQty);
-        }
+        const { qty:packQty, base } = normalizePack(p.packSize, p.packUnit);
+        if (base === u && packQty > 0) maxPU = Math.max(maxPU, p.packPrice / packQty);
       }
     }
-    // from existing linked rows
-    for (const r of rows) {
-      if (r.link && r.link.packPrice && r.link.packPrice > 0) {
-        const { qty:packQty, base } = normPackSize(r.link.packSize, r.link.packUnit);
-        if (base === u && packQty > 0) {
-          maxPU = Math.max(maxPU, r.link.packPrice / packQty);
-        }
+    for (const r of items) {
+      if (r.link?.packPrice && r.link.packPrice > 0) {
+        const { qty:packQty, base } = normalizePack(r.link.packSize, r.link.packUnit);
+        if (base === u && packQty > 0) maxPU = Math.max(maxPU, r.link.packPrice / packQty);
       }
     }
-    return maxPU; // may be 0 if nothing to infer
+    return maxPU; // may be 0
   };
 
-  // add linked product row
   const addLinked = (p:ProductHit) => {
     const chosenQty = qty ? Number(qty) : (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
-    const r:Row = {
+    const r = {
       key: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
       name: p.name,
       qty: chosenQty,
       unit,
       link: { productId: p.id, packSize: p.packSize ?? null, packUnit: p.packUnit ?? null, packPrice: p.packPrice ?? null }
     };
-    setRows(prev => [r, ...prev]);
+    onItemsChange([r, ...items]);
     setTerm(''); setQty('');
   };
 
-  // add misc row (with temporary high per-unit price if we can infer)
   const addMisc = (label?:string) => {
     const chosenQty = qty ? Number(qty) : (defaultUnit==='ml' ? 30 : defaultUnit==='g' ? 5 : 1);
     const name = (label ?? term).trim() || 'Misc';
-    const pu = estimateMaxUnitPrice(unit); // per-unit
-    const r:Row = {
+    const pu = estimateMaxUnitPrice(unit);
+    const r = {
       key: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
       name: `${name} (misc)`,
       qty: chosenQty,
       unit,
       link: pu > 0 ? { productId: 'misc', packSize: 1, packUnit: unit, packPrice: pu } : undefined
     };
-    setRows(prev => [r, ...prev]);
+    onItemsChange([r, ...items]);
     setTerm(''); setQty('');
   };
 
-  // Enter: choose top result or add misc if none
   const commit = () => {
-    // lexicon shortcut if exact word
     const lex = LEXICON.find(l => l.label.toLowerCase() === term.trim().toLowerCase());
     if (lex) {
-      setUnit(toBase(lex.unit));
+      const b = toBaseUnit(lex.unit) || defaultUnit;
+      setUnit(b as any);
       setQty(String(lex.qty));
       addMisc(lex.label);
       return;
@@ -179,12 +149,11 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
     addMisc();
   };
 
-  const removeRow = (key:string) => setRows(prev => prev.filter(r => r.key !== key));
+  const removeRow = (key:string) => onItemsChange(items.filter(r => r.key !== key));
 
-  // cost math (proportional by pack size)
-  const rowCost = (r:Row):number => {
+  const rowCost = (r:any):number => {
     if (!r.link || !r.link.packPrice || r.link.packPrice <= 0) return 0;
-    const { qty:packQty, base:packBase } = normPackSize(r.link.packSize, r.link.packUnit);
+    const { qty:packQty, base:packBase } = normalizePack(r.link.packSize, r.link.packUnit);
     const u = r.unit;
     if ((u==='ml' && packBase!=='ml') || (u==='g' && packBase!=='g') || (u==='each' && packBase!=='each')) {
       if (packBase==='each') {
@@ -197,21 +166,18 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
     return (r.qty / denom) * r.link.packPrice;
   };
 
-  // totals
   const totals = useMemo(() => {
     let totalCost = 0, totalMl = 0, totalG = 0, totalEach = 0;
-    rows.forEach(r => {
+    items.forEach(r => {
       totalCost += rowCost(r);
       if (r.unit==='ml') totalMl += r.qty;
       else if (r.unit==='g') totalG += r.qty;
       else totalEach += r.qty;
     });
     return { totalCost, totalMl, totalG, totalEach };
-  }, [rows]);
+  }, [items]);
 
-  useEffect(() => {
-    onSummary?.({ ...totals, rows });
-  }, [totals, rows, onSummary]);
+  useEffect(() => { onSummary?.({ ...totals, rows: items }); }, [totals, items, onSummary]);
 
   const chips = (category==='beverage' ? BEV_CHIPS : FOOD_CHIPS);
 
@@ -266,7 +232,7 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
           </TouchableOpacity>
         ))}
         {LEXICON.filter(l => (category==='beverage' ? l.unit==='ml' : l.unit==='g')).map(l => (
-          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(String(l.qty)); setUnit(toBase(l.unit)); }}
+          <TouchableOpacity key={l.label} onPress={() => { setTerm(l.label); setQty(String(l.qty)); const b = toBaseUnit(l.unit)||defaultUnit; setUnit(b as any); }}
             style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:999, backgroundColor:'#FEF3C7' }}>
             <Text style={{ fontWeight:'700' }}>{l.label}</Text>
           </TouchableOpacity>
@@ -309,7 +275,7 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
         </View>
       </Modal>
 
-      {/* Table of added ingredients */}
+      {/* Table of added ingredients (from controlled items) */}
       <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, overflow:'hidden' }}>
         <View style={{ padding:10, backgroundColor:'#F9FAFB', borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row' }}>
           <Text style={{ flex:5, fontWeight:'800' }}>Ingredient</Text>
@@ -318,10 +284,10 @@ export default function IngredientEditor({ onSummary, category=null }: Props) {
           <Text style={{ flex:2, fontWeight:'800', textAlign:'right' }}>Cost</Text>
           <Text style={{ width:48 }} />
         </View>
-        {rows.length === 0 ? (
+        {items.length === 0 ? (
           <Text style={{ padding:12, color:'#9CA3AF' }}>No ingredients yet.</Text>
-        ) : rows.map(r => (
-          <View key={r.key} style={{ padding:10, borderBottomWidth:1, borderColor:'#F3F4F6', flexDirection:'row', alignItems:'center' }}>
+        ) : items.map(r => (
+          <View key={r.key||r.name} style={{ padding:10, borderBottomWidth:1, borderColor:'#F3F4F6', flexDirection:'row', alignItems:'center' }}>
             <Text style={{ flex:5 }}>{r.name}</Text>
             <Text style={{ flex:2 }}>{r.qty}</Text>
             <Text style={{ flex:2 }}>{r.unit}</Text>

@@ -2,9 +2,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import IngredientEditor from './components/IngredientEditor';
+import { makeFirestoreItemSnapshot } from '../../services/recipes/itemSnapshot';
 
 type Props = {
   recipeId: string;
@@ -26,10 +29,13 @@ export default function DraftRecipeDetailPanel({
   const [mode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
   const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
 
+  // Items are now controlled here
+  const [items, setItems] = useState<any[]>([]);
+
   // Yield/portion (drives per-serve math)
   const [yieldQty, setYieldQty] = useState<string>('');
   const [unit, setUnit] = useState<string>('serve');
-  const [portionSize, setPortionSize] = useState<string>(''); // number string
+  const [portionSize, setPortionSize] = useState<string>('');
   const [portionUnit, setPortionUnit] = useState<'ml' | 'g' | 'each' | 'serve'>('serve');
 
   // Derived from ingredients
@@ -39,8 +45,8 @@ export default function DraftRecipeDetailPanel({
   const [derivedBatchCount, setDerivedBatchCount] = useState<number>(0);
 
   // Pricing: GP ↔︎ RRP (with GST toggle)
-  const [gpPct, setGpPct] = useState<string>('70'); // default 70%
-  const [rrp, setRrp] = useState<string>('');       // user override
+  const [gpPct, setGpPct] = useState<string>('70');
+  const [rrp, setRrp] = useState<string>('');
   const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
 
   // Notes
@@ -56,7 +62,28 @@ export default function DraftRecipeDetailPanel({
     }
   }, [mode, portionUnit]);
 
-  // Suggest serves for batch from totals + portion size
+  // HYDRATE once per recipeId (explicit boundary)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!venueId || !recipeId) return;
+        const ref = doc(db, 'venues', venueId, 'recipes', recipeId);
+        const snap = await getDoc(ref);
+        if (!alive || !snap.exists()) return;
+
+        const data:any = snap.data() || {};
+        if (data.name && !initialName) setName(String(data.name));
+        if (data.yield != null) setYieldQty(String(data.yield));
+        if (data.unit) setUnit(String(data.unit));
+        if (Array.isArray(data.items)) setItems(data.items.map((r:any, i:number) => ({ key:`i${i}_${Date.now()}`, ...r })));
+      } catch (e) {
+        if (__DEV__) console.log('[DraftRecipeDetailPanel] hydrate failed', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [venueId, recipeId]);
+
   const servesFromBatch = useMemo(() => {
     if (mode !== 'batch') return null;
     const ps = Number(portionSize || '0') || 0;
@@ -72,13 +99,11 @@ export default function DraftRecipeDetailPanel({
     return null;
   }, [mode, portionSize, portionUnit, derivedBatchVolumeMl, derivedBatchWeightG, derivedBatchCount, yieldQty]);
 
-  // Derived COGS per serve
   const cogsPerServe = useMemo(() => {
     const serves = mode === 'single' ? 1 : (servesFromBatch ?? (Number(yieldQty || '0') || 0));
     return serves > 0 ? (derivedBatchCost / serves) : 0;
   }, [mode, servesFromBatch, yieldQty, derivedBatchCost]);
 
-  // Two-way GP/RRP
   const toNumber = (s:string) => Number(s || '0') || 0;
   const rrpDisplay = useMemo(() => {
     const gp = Math.min(99.9, Math.max(0, toNumber(gpPct)));
@@ -117,10 +142,14 @@ export default function DraftRecipeDetailPanel({
       const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
       const rrpVal = (rrp?.trim()?.length ? toNumber(rrp) : toNumber(rrpDisplay)) || 0;
 
+      // CLEAN snapshot for Firestore
+      const itemsClean = makeFirestoreItemSnapshot(items);
+
       await updateRecipeDraft(venueId, recipeId, {
         name: name.trim(),
         yield: y || null,
         unit: unit || (mode === 'single' ? 'serve' : 'serves'),
+        items: itemsClean,
         cogs: cgs,
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
         method: method || null
@@ -130,18 +159,21 @@ export default function DraftRecipeDetailPanel({
     } catch (e:any) {
       Alert.alert('Save failed', String(e?.message || e));
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, items, onClose, mode]);
 
   const confirmNow = useCallback(async () => {
     try {
       if (!venueId) throw new Error('No venueId');
       if (!recipeId) throw new Error('No recipeId');
       if (!name || !name.trim()) throw new Error('Please enter a name');
-      if ((derivedBatchCost || 0) <= 0) throw new Error('Add at least one ingredient');
+      if (items.length === 0) throw new Error('Add at least one ingredient');
+
       setBusy(true);
       const y = Number(yieldQty || '0') || (servesFromBatch ?? 0);
       const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
       const rrpVal = (rrp?.trim()?.length ? Number(rrp) : Number(rrpDisplay)) || 0;
+
+      const itemsClean = makeFirestoreItemSnapshot(items);
 
       await confirmRecipe(venueId, recipeId, {
         name: name.trim(),
@@ -151,7 +183,8 @@ export default function DraftRecipeDetailPanel({
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
         method: method || null,
         gpPct: Number(gpPct || '0') || null,
-        rrpIncludesGst
+        rrpIncludesGst,
+        itemsSnapshot: itemsClean,
       });
 
       Alert.alert('Confirmed', 'Recipe locked and saved.');
@@ -161,25 +194,27 @@ export default function DraftRecipeDetailPanel({
     } finally {
       setBusy(false);
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, derivedBatchCost]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, items]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <Header title="Craft-It: Draft" onBack={onClose} />
 
-      {/* IMPORTANT: allow taps to pass to nested lists */}
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }} keyboardShouldPersistTaps="handled">
-        {/* Name first */}
         <Field label="Name">
           <TextInput value={name} onChangeText={setName} placeholder="e.g., House Margarita" style={I} autoCapitalize="words" />
           {mode ? <Text style={Subtle}>Mode: {mode}</Text> : null}
           {category ? <Text style={Subtle}>Category: {category}</Text> : null}
         </Field>
 
-        {/* Ingredients FIRST – fastest flow */}
-        <IngredientEditor onSummary={onIngredientsSummary} category={category} mode={mode} />
+        <IngredientEditor
+          items={items}
+          onItemsChange={setItems}
+          onSummary={onIngredientsSummary}
+          category={category}
+          mode={mode}
+        />
 
-        {/* Pricing card (derived COGS + GP↔︎RRP) */}
         <Card>
           <Row label="Derived COGS (per serve)" value={formatMoney(cogsPerServe)} />
           <View style={{ height:8 }} />
@@ -196,7 +231,6 @@ export default function DraftRecipeDetailPanel({
           <Row label="Live GP %" value={`${(Number(gpPct || '0') || 0).toFixed(1)}%`} />
         </Card>
 
-        {/* Yield / Portion */}
         <Field label="Yield / Unit" row>
           <TextInput
             value={yieldQty || (mode==='batch' && servesFromBatch!=null ? String(servesFromBatch) : '')}
@@ -235,7 +269,6 @@ export default function DraftRecipeDetailPanel({
           <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I, { height:120, textAlignVertical:'top' }]} multiline />
         </Field>
 
-        {/* Actions */}
         <TouchableOpacity disabled={busy} onPress={confirmNow} style={{ padding:14, borderRadius:12, backgroundColor:'#16a34a' }}>
           <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Confirming…' : 'Confirm Recipe'}</Text>
         </TouchableOpacity>
@@ -248,8 +281,7 @@ export default function DraftRecipeDetailPanel({
   );
 }
 
-/* ====== Local UI helpers to keep this file self-contained ====== */
-
+/* ====== Local UI helpers ====== */
 function Header({ title, onBack }:{ title:string; onBack:()=>void }) {
   return (
     <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
@@ -287,7 +319,6 @@ function Row({ label, value }:{ label:string; value:string }) {
   );
 }
 function Dropdown({ value, options, onChange }:{ value:any; options:any[]; onChange:(v:any)=>void }) {
-  // Simple pill that cycles options on tap – avoids extra deps
   const advance = () => {
     const idx = Math.max(0, options.findIndex(o => o === value));
     const next = options[(idx + 1) % options.length];

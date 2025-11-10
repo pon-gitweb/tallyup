@@ -1,63 +1,65 @@
-import { doc, getDoc, serverTimestamp, updateDoc, getFirestore } from 'firebase/firestore';
+// @ts-nocheck
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { computeConsumption } from './consumption';
+import { makeFirestoreItemSnapshot } from './itemSnapshot';
 
-type ConfirmPayload = {
-  name: string;
-  yield: number | null;
-  unit: string | null;
-  cogs: number | null;
-  rrp: number | null;
-  method: string | null;
-  gpPct?: number | null;
-  rrpIncludesGst?: boolean;
-};
-
+/**
+ * Confirm a recipe (stable, controlled):
+ * - Freezes the explicit items snapshot if provided; else uses doc.items (array or []).
+ * - Cleans snapshot to be Firestore-safe.
+ * - Computes per-serve normalized consumption from the snapshot and yield.
+ */
 export async function confirmRecipe(
   venueId: string,
   recipeId: string,
-  payload: ConfirmPayload
+  payload: {
+    name?: string|null;
+    yield?: number|null;
+    unit?: string|null;
+    cogs?: number|null;
+    rrp?: number|null;
+    method?: string|null;
+    gpPct?: number|null;
+    rrpIncludesGst?: boolean;
+    itemsSnapshot?: any[];   // explicit items from UI parent (unclean)
+  }
 ) {
-  const db = getFirestore();
+  if (!venueId) throw new Error('venueId required');
+  if (!recipeId) throw new Error('recipeId required');
+
   const ref = doc(db, 'venues', venueId, 'recipes', recipeId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('Draft not found');
+  if (!snap.exists()) throw new Error('Recipe not found');
 
   const data = snap.data() || {};
-  const items: any[] = Array.isArray(data.items) ? data.items : [];
-  if (!payload.name?.trim()) throw new Error('Recipe name required');
-  if (!items.length) throw new Error('Add at least one ingredient before confirming');
+  const rawItems = Array.isArray(payload?.itemsSnapshot)
+    ? payload.itemsSnapshot
+    : (Array.isArray(data.items) ? data.items : []);
+  const items = makeFirestoreItemSnapshot(rawItems);
 
-  const frozenItems = items.map((it) => {
-    const toNum = (v: any) => (typeof v === 'number' && Number.isFinite(v)) ? v : (typeof v === 'string' ? Number(v) : null);
-    return {
-      lineId: it?.lineId || String(Math.random()).slice(2),
-      type: it?.type === 'misc' ? 'misc' : 'product',
-      name: String(it?.name || ''),
-      productId: it?.productId || null,
-      packSize: toNum(it?.packSize) ?? null,
-      packUnit: it?.packUnit || null,
-      packPrice: toNum(it?.packPrice) ?? null,
-      unitCost: toNum(it?.unitCost) ?? null,
-      qty: toNum(it?.qty) ?? null,
-      unit: it?.unit || null,
-      cost: toNum(it?.cost) ?? null,
-    };
-  });
+  const localRecipe = {
+    status: data.status || 'draft',
+    mode: data.mode || null,
+    items,
+    yield: (payload?.yield ?? data?.yield) ?? null,
+    portionsPerBatch: (data?.portionsPerBatch ?? null)
+  };
 
-  const safe = (n: any) => (typeof n === 'number' && Number.isFinite(n)) ? n : null;
+  const consumptionPerServe = computeConsumption(localRecipe, 1);
 
-  await updateDoc(ref, {
-    name: payload.name.trim(),
-    yield: payload.yield ?? null,
-    unit: payload.unit ?? null,
-    cogs: safe(payload.cogs),
-    rrp: safe(payload.rrp),
-    gpPct: safe(payload.gpPct),
-    rrpIncludesGst: !!payload.rrpIncludesGst,
-    items: frozenItems,
+  const patch: any = {
+    ...Object.fromEntries(Object.entries(payload || {}).filter(([k, v]) => v !== undefined && k !== 'itemsSnapshot')),
     status: 'confirmed',
-    confirmedAt: serverTimestamp(),
+    items,
+    consumptionPerServe,
     updatedAt: serverTimestamp(),
-  });
+  };
 
+  if (__DEV__) {
+    try { console.log('[confirmRecipe] items:', items.length, 'cons keys:', Object.keys(consumptionPerServe||{}).length); } catch {}
+  }
+
+  await updateDoc(ref, patch);
   return { id: recipeId };
 }
