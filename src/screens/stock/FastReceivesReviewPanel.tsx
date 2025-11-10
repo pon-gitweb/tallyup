@@ -1,11 +1,12 @@
 /* @ts-nocheck */
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput } from 'react-native';
+import { collection, getDocs, orderBy, query, limit, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import FastReceiveDetailModal from './FastReceiveDetailModal';
 
 type FastRec = {
   id: string;
@@ -22,6 +23,16 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
   const db = getFirestore(getApp());
   const [rows, setRows] = useState<FastRec[]>([]);
   const [busyId, setBusyId] = useState<string|null>(null);
+
+  // Detail modal
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<FastRec|null>(null);
+
+  // Edit-PO modal
+  const [editOpen, setEditOpen] = useState(false);
+  const [editItem, setEditItem] = useState<FastRec|null>(null);
+  const [editPo, setEditPo] = useState<string>('');
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = useCallback(async ()=>{
     try{
@@ -63,14 +74,14 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
           warnings: it?.payload?.warnings ?? [],
         },
         storagePath: it?.storagePath || '',
-        noPendingFallback: true, // do NOT create duplicates
+        noPendingFallback: true,
       });
 
       if (result.attached && result.orderId) {
         Alert.alert('Attached', `Linked to order ${result.orderId} and sent for reconciliation.`);
         await load();
       } else {
-        Alert.alert('Not Found', 'No submitted order matched this PO yet. Keep pending or update PO.');
+        Alert.alert('Not Found', 'No submitted order matched this PO yet. You can edit the PO and retry.');
       }
     } catch (e:any) {
       Alert.alert('Attach failed', String(e?.message||e));
@@ -79,12 +90,61 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
     }
   }, [venueId, load]);
 
+  const openDetails = useCallback((it: FastRec)=>{
+    setDetailItem(it);
+    setDetailOpen(true);
+  }, []);
+  const closeDetails = useCallback(()=>{
+    setDetailOpen(false);
+    setDetailItem(null);
+  }, []);
+  const onAttachedFromDetail = useCallback(async (_orderId:string)=>{
+    setDetailOpen(false);
+    setDetailItem(null);
+    await load();
+  }, [load]);
+
+  const openEditPo = useCallback((it: FastRec)=>{
+    const currentPo = (it?.parsedPo ?? it?.payload?.invoice?.poNumber ?? '') as string;
+    setEditItem(it);
+    setEditPo(String(currentPo || ''));
+    setEditOpen(true);
+  }, []);
+  const closeEditPo = useCallback(()=>{
+    setEditOpen(false);
+    setEditItem(null);
+    setEditPo('');
+  }, []);
+
+  const saveEditPo = useCallback(async ()=>{
+    try{
+      if (!venueId) throw new Error('No venue selected');
+      if (!editItem) throw new Error('No snapshot selected');
+      const raw = (editPo ?? '').trim();
+
+      // Basic sanitize: allow letters, numbers, dashes, slashes, spaces; clamp length
+      const cleaned = raw.replace(/[^A-Za-z0-9\-\s\/]/g, '').slice(0, 64);
+
+      setEditBusy(true);
+      const ref = doc(db, 'venues', venueId, 'fastReceives', editItem.id);
+      await updateDoc(ref, { parsedPo: cleaned || null, updatedAt: serverTimestamp() });
+
+      Alert.alert('Saved', `PO updated to "${cleaned || '—'}". You can now Try Attach.`);
+      closeEditPo();
+      await load();
+    } catch (e:any) {
+      Alert.alert('Save failed', String(e?.message||e));
+    } finally {
+      setEditBusy(false);
+    }
+  }, [venueId, db, editItem, editPo, load, closeEditPo]);
+
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <View style={{ padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#e5e7eb' }}>
         <Text style={{ fontSize:18, fontWeight:'900' }}>Fast Receives (Pending)</Text>
         <Text style={{ color:'#6B7280', marginTop:4 }}>
-          These are invoice snapshots saved without an order. Managers can try to attach by PO.
+          Review snapshots, edit PO if needed, and attach to submitted orders. No duplicates created when re-trying attach.
         </Text>
       </View>
 
@@ -104,7 +164,19 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
                 </Text>
                 <Text style={S.sub}>Path: {it.storagePath || '—'}</Text>
 
-                <View style={{ flexDirection:'row', gap:8, marginTop:10 }}>
+                <View style={{ flexDirection:'row', gap:8, marginTop:10, flexWrap:'wrap' }}>
+                  <TouchableOpacity
+                    onPress={() => openDetails(it)}
+                    style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#0ea5e9' }}>
+                    <Text style={{ color:'#fff', fontWeight:'800' }}>View Details</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => openEditPo(it)}
+                    style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#10b981' }}>
+                    <Text style={{ color:'#fff', fontWeight:'800' }}>Edit PO</Text>
+                  </TouchableOpacity>
+
                   <TouchableOpacity
                     disabled={isBusy}
                     onPress={() => tryAttach(it)}
@@ -125,6 +197,47 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
           <Text style={{ color:'#111', fontWeight:'800', textAlign:'center' }}>Close</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Detail modal */}
+      <FastReceiveDetailModal
+        visible={detailOpen}
+        item={detailItem}
+        onClose={closeDetails}
+        onAttached={onAttachedFromDetail}
+      />
+
+      {/* Edit-PO modal */}
+      <Modal visible={editOpen} transparent animationType="fade" onRequestClose={closeEditPo}>
+        <View style={S.modalWrap}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Edit PO Number</Text>
+            <Text style={{ color:'#6B7280', marginTop:4 }}>
+              Only the PO is editable here. This helps match a Submitted order.
+            </Text>
+            <TextInput
+              value={editPo}
+              onChangeText={setEditPo}
+              placeholder="PO Number"
+              autoCapitalize="characters"
+              style={S.input}
+            />
+            <View style={{ flexDirection:'row', gap:8, marginTop:10 }}>
+              <TouchableOpacity
+                disabled={editBusy}
+                onPress={saveEditPo}
+                style={[S.btn, { backgroundColor:'#111' }]}>
+                <Text style={S.btnText}>{editBusy ? 'Saving…' : 'Save'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={editBusy}
+                onPress={closeEditPo}
+                style={[S.btn, { backgroundColor:'#F3F4F6' }]}>
+                <Text style={[S.btnText, { color:'#111' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -136,4 +249,10 @@ const S = StyleSheet.create({
   },
   title: { fontWeight:'800' },
   sub: { color:'#6B7280', marginTop:4 },
+  modalWrap: { flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center' },
+  modalCard: { width:'90%', maxWidth:420, backgroundColor:'#fff', borderRadius:12, padding:16, borderWidth:1, borderColor:'#E5E7EB' },
+  modalTitle: { fontSize:18, fontWeight:'900' },
+  input: { marginTop:10, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:12, backgroundColor:'#fff' },
+  btn: { flex:1, padding:12, borderRadius:10, alignItems:'center', justifyContent:'center' },
+  btnText: { color:'#fff', fontWeight:'800' },
 });
