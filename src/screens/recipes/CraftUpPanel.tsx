@@ -1,30 +1,26 @@
 // @ts-nocheck
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, Alert, Modal, SafeAreaView,
   ScrollView, StyleSheet, TextInput
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
-import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 
 import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
+import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import DraftRecipeDetailPanel from './DraftRecipeDetailPanel';
-import CraftUpListScreen from './CraftUpListScreen';
 
-// ---------- Tabs wrapper ----------
 type TabKey = 'create' | 'recipes' | 'drafts';
 
 export default function CraftUpPanel({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<TabKey>('create');
-
-  // Keep header and close consistent with StockControl modal
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
         <Tabs tab={tab} onChange={setTab} />
       </View>
-
       <View style={{ flex: 1 }}>
         {tab === 'create'  && <CreateStart onClose={onClose} />}
         {tab === 'recipes' && <RecipesListTab />}
@@ -56,7 +52,7 @@ function Tabs({ tab, onChange }:{ tab: TabKey; onChange:(k:TabKey)=>void }) {
   );
 }
 
-// ---------- Tab 1: Create (verbatim from your previous working .bak) ----------
+/* ---------- Tab 1: Create (baseline) ---------- */
 function CreateStart({ onClose }:{ onClose:()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
@@ -75,7 +71,6 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
       if (!category) throw new Error('Choose Food or Beverage');
       if (!mode) throw new Error('Choose Batch/Single/Dish');
       setBusy(true);
-      // No name here — it will be entered/edited in the Draft screen
       const res = await createRecipeDraft({ venueId, name: 'Untitled', category, mode });
       if (!res?.id) throw new Error('Draft not created');
       setDetailId(res.id);
@@ -161,58 +156,212 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
   );
 }
 
-// ---------- Tab 2: View Recipes (confirmed + drafts, searchable) ----------
+/* ---------- Tab 2: View Recipes (confirmed only; long-press shows card) ---------- */
 function RecipesListTab() {
-  return <CraftUpListScreen />;
-}
-
-// ---------- Tab 3: Drafts (list only, tap => open Draft editor) ----------
-type DraftRow = {
-  id: string;
-  name?: string|null;
-  category?: 'food'|'beverage'|null;
-  mode?: 'batch'|'single'|'dish'|null;
-  status?: 'draft'|'confirmed';
-  updatedAt?: any;
-};
-
-function DraftsTab() {
   const venueId = useVenueId();
-  const [rows, setRows] = useState<DraftRow[]>([]);
+  const [rows, setRows] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [openId, setOpenId] = useState<string|null>(null);
+  const [viewDoc, setViewDoc] = useState<any|null>(null);
+  const [viewId, setViewId] = useState<string|null>(null);
 
-  useEffect(() => {
+  useEffect(()=>{
     let alive = true;
-    (async () => {
-      try {
+    (async ()=>{
+      try{
         if (!venueId) return;
-        const qy = query(
-          collection(db, 'venues', venueId, 'recipes'),
-          where('status','==','draft'),
-          orderBy('name')
-        );
-        const snap = await getDocs(qy);
+        const snap = await getDocs(query(collection(db, 'venues', venueId, 'recipes'), orderBy('name')));
+        const all:any[] = [];
+        snap.forEach(d => all.push({ id: d.id, ...(d.data() as any) }));
+        const confirmed = all.filter(r => String(r?.status || '').toLowerCase() === 'confirmed');
         if (!alive) return;
-        const out: DraftRow[] = [];
-        snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
-        setRows(out);
-      } catch (e) {
-        if (__DEV__) console.log('[CraftUp DraftsTab] load failed', e?.message || e);
+        if (__DEV__) console.log('[RecipesListTab] all=', all.length, 'confirmed=', confirmed.length);
+        setRows(confirmed);
+      }catch(e){
+        if (__DEV__) console.log('[RecipesListTab] load failed', e?.message || e);
         setRows([]);
       }
     })();
-    return () => { alive = false; };
-  }, [venueId]);
+    return ()=>{ alive=false; };
+  },[venueId]);
 
   const filtered = useMemo(()=>{
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.category||'').toLowerCase().includes(q));
+    return rows.filter(r =>
+      (r.name||'').toLowerCase().includes(q) ||
+      (r.category||'').toLowerCase().includes(q)
+    );
+  },[rows,search]);
+
+  const openView = useCallback((r:any)=>{
+    setViewDoc(r);
+    setViewId(r?.id ?? null);
+  },[]);
+
+  const Row = ({ r }:{ r:any })=>{
+    const subtitle = `${r.category||'—'} · confirmed`;
+    return (
+      <TouchableOpacity onLongPress={() => openView(r)} activeOpacity={0.7} style={styles.row}>
+        <View style={{flex:1}}>
+          <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
+          <Text style={styles.rowSub}>{subtitle}</Text>
+        </View>
+        <Text style={styles.chev}>›</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <SafeAreaView style={{flex:1, backgroundColor:'#fff'}}>
+      <View style={{ padding:16 }}>
+        <Text style={styles.title}>Recipes</Text>
+        <TextInput
+          placeholder="Search confirmed recipes…"
+          value={search}
+          onChangeText={setSearch}
+          placeholderTextColor="#64748B"
+          style={styles.search}
+        />
+      </View>
+      <ScrollView contentContainerStyle={{paddingHorizontal:16}}>
+        {filtered.length === 0 ? (
+          <Text style={{ color:'#94A3B8', marginTop:12 }}>No confirmed recipes yet.</Text>
+        ) : filtered.map(r => <Row key={r.id} r={r} />)}
+      </ScrollView>
+
+      <Modal visible={!!viewId} animationType="slide" onRequestClose={() => {setViewId(null); setViewDoc(null);}}>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
+          {viewDoc ? <RecipeCardView recipe={viewDoc} onClose={() => {setViewId(null); setViewDoc(null);}} /> : null}
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+/* ---------- Read-only Recipe Card ---------- */
+function RecipeCardView({ recipe, onClose }:{ recipe:any; onClose:()=>void }) {
+  const cost = Number(recipe?.cogs ?? 0);
+  const rrp  = Number(recipe?.rrp ?? 0);
+  const gp   = (rrp > 0 ? ((rrp - cost) / rrp) * 100 : 0);
+
+  return (
+    <ScrollView contentContainerStyle={{ padding:16 }}>
+      <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+        <TouchableOpacity onPress={onClose}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
+        <Text style={{ fontSize:18, fontWeight:'900' }}>Recipe</Text>
+        <View style={{ width:60 }} />
+      </View>
+
+      <Text style={{ fontSize:20, fontWeight:'900' }}>{recipe?.name || 'Untitled'}</Text>
+      <Text style={{ color:'#6B7280', marginTop:2 }}>{(recipe?.category||'—')} · {(recipe?.status||'—')}</Text>
+
+      <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, backgroundColor:'#F9FAFB' }}>
+        <Text style={{ fontWeight:'700' }}>Pricing</Text>
+        <Text style={{ color:'#111', marginTop:4 }}>COGS/serve: {Number.isFinite(cost) ? `$${cost.toFixed(2)}` : '—'}</Text>
+        <Text style={{ color:'#111', marginTop:4 }}>RRP: {Number.isFinite(rrp) ? `$${rrp.toFixed(2)}` : '—'}</Text>
+        <Text style={{ color:'#111', marginTop:4 }}>GP: {Number.isFinite(gp) ? `${gp.toFixed(1)}%` : '—'}</Text>
+      </View>
+
+      <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12 }}>
+        <Text style={{ fontWeight:'700' }}>Ingredients (snapshot)</Text>
+        {Array.isArray(recipe?.items) && recipe.items.length > 0 ? (
+          <View style={{ marginTop:8 }}>
+            {recipe.items.map((it:any, idx:number)=>(
+              <Text key={idx} style={{ color:'#111', marginTop:4 }}>
+                • {it?.name ?? it?.productName ?? '—'} {it?.qty ? `· ${it.qty}` : ''} {it?.unit ?? ''}
+              </Text>
+            ))}
+          </View>
+        ) : <Text style={{ color:'#6B7280', marginTop:8 }}>No items.</Text>}
+      </View>
+
+      {recipe?.method ? (
+        <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12 }}>
+          <Text style={{ fontWeight:'700' }}>Method / Notes</Text>
+          <Text style={{ color:'#111', marginTop:8 }}>{recipe.method}</Text>
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+}
+
+/* ---------- Tab 3: Drafts (treat missing status as draft) ---------- */
+function DraftsTab() {
+  const venueId = useVenueId();
+  const [rows, setRows] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const [openId, setOpenId] = useState<string|null>(null);
+
+  const load = useCallback(async ()=>{
+    if (!venueId) return;
+    const ref = collection(db, 'venues', venueId, 'recipes');
+    const snap = await getDocs(query(ref, orderBy('name')));
+    const all:any[] = [];
+    snap.forEach(d => all.push({ id: d.id, ...(d.data() as any) }));
+    // Treat missing status as draft (legacy docs)
+    const drafts = all.filter(r => {
+      const s = String(r?.status ?? '').toLowerCase();
+      return s === '' || s === 'draft';
+    });
+    if (__DEV__) console.log('[DraftsTab] all=', all.length, 'drafts=', drafts.length);
+    setRows(drafts);
+  },[venueId]);
+
+  useEffect(() => {
+    (async () => {
+      try { await load(); } catch (e) {
+        if (__DEV__) console.log('[DraftsTab] load failed', e?.message || e);
+        setRows([]);
+      }
+    })();
+  }, [load]);
+
+  const filtered = useMemo(()=>{
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r =>
+      (r.name||'').toLowerCase().includes(q) ||
+      (r.category||'').toLowerCase().includes(q)
+    );
   },[rows, search]);
 
-  const Row = ({ r }:{ r: DraftRow }) => (
-    <TouchableOpacity onPress={() => setOpenId(r.id)} style={styles.row}>
+  const onConfirm = useCallback(async (r:any) => {
+    try {
+      if (!venueId) throw new Error('No venue');
+      // Dev-relaxed confirm (allows 0 cost/0 rrp/empty items)
+      await confirmRecipe(venueId, r.id, {
+        name: r?.name ?? null,
+        yield: r?.yield ?? null,
+        unit:  r?.unit ?? null,
+        cogs:  typeof r?.cogs === 'number' ? r.cogs : 0,
+        rrp:   typeof r?.rrp  === 'number' ? r.rrp  : 0,
+        method: r?.method ?? null,
+        gpPct:  typeof r?.gpPct === 'number' ? r.gpPct : null,
+        rrpIncludesGst: !!r?.rrpIncludesGst,
+      });
+      Alert.alert('Confirmed', `${r?.name || 'Recipe'} confirmed.`);
+      await load();
+    } catch (e:any) {
+      Alert.alert('Confirm failed', String(e?.message || e));
+    }
+  }, [venueId, load]);
+
+  const Row = ({ r }:{ r:any }) => (
+    <TouchableOpacity
+      onPress={() => setOpenId(r.id)}
+      onLongPress={() =>
+        Alert.alert(
+          'Confirm this draft?',
+          r?.name || 'Untitled',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Confirm', style: 'destructive', onPress: () => onConfirm(r) }
+          ]
+        )
+      }
+      activeOpacity={0.7}
+      style={styles.row}
+    >
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle}>{r.name || 'Untitled'}</Text>
         <Text style={styles.rowSub}>{(r.category||'—')} · {(r.mode||'—')} · draft</Text>
