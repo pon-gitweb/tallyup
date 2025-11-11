@@ -2,6 +2,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import IngredientEditor from './components/IngredientEditor';
@@ -26,10 +28,13 @@ export default function DraftRecipeDetailPanel({
   const [mode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
   const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
 
+  // Items are now controlled here
+  const [items, setItems] = useState<any[]>([]);
+
   // Yield/portion (drives per-serve math)
   const [yieldQty, setYieldQty] = useState<string>('');
   const [unit, setUnit] = useState<string>('serve');
-  const [portionSize, setPortionSize] = useState<string>(''); // number string
+  const [portionSize, setPortionSize] = useState<string>('');
   const [portionUnit, setPortionUnit] = useState<'ml' | 'g' | 'each' | 'serve'>('serve');
 
   // Derived from ingredients
@@ -39,8 +44,8 @@ export default function DraftRecipeDetailPanel({
   const [derivedBatchCount, setDerivedBatchCount] = useState<number>(0);
 
   // Pricing: GP ↔︎ RRP (with GST toggle)
-  const [gpPct, setGpPct] = useState<string>('70'); // default 70%
-  const [rrp, setRrp] = useState<string>('');       // user override
+  const [gpPct, setGpPct] = useState<string>('70');
+  const [rrp, setRrp] = useState<string>('');
   const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
 
   // Notes
@@ -55,6 +60,29 @@ export default function DraftRecipeDetailPanel({
       if (!portionUnit) setPortionUnit('serve');
     }
   }, [mode, portionUnit]);
+
+  // HYDRATE once per recipeId (explicit boundary)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!venueId || !recipeId) return;
+        const ref = doc(db, 'venues', venueId, 'recipes', recipeId);
+        const snap = await getDoc(ref);
+        if (!alive || !snap.exists()) return;
+
+        const data:any = snap.data() || {};
+        // name / yield / unit if present
+        if (data.name && !initialName) setName(String(data.name));
+        if (data.yield != null) setYieldQty(String(data.yield));
+        if (data.unit) setUnit(String(data.unit));
+        if (Array.isArray(data.items)) setItems(data.items.map((r:any, i:number) => ({ key:`i${i}_${Date.now()}`, ...r })));
+      } catch (e) {
+        if (__DEV__) console.log('[DraftRecipeDetailPanel] hydrate failed', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [venueId, recipeId]);
 
   // Suggest serves for batch from totals + portion size
   const servesFromBatch = useMemo(() => {
@@ -121,6 +149,7 @@ export default function DraftRecipeDetailPanel({
         name: name.trim(),
         yield: y || null,
         unit: unit || (mode === 'single' ? 'serve' : 'serves'),
+        items, // controlled snapshot of draft items
         cogs: cgs,
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
         method: method || null
@@ -130,14 +159,15 @@ export default function DraftRecipeDetailPanel({
     } catch (e:any) {
       Alert.alert('Save failed', String(e?.message || e));
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, items, onClose, mode]);
 
   const confirmNow = useCallback(async () => {
     try {
       if (!venueId) throw new Error('No venueId');
       if (!recipeId) throw new Error('No recipeId');
       if (!name || !name.trim()) throw new Error('Please enter a name');
-      if ((derivedBatchCost || 0) <= 0) throw new Error('Add at least one ingredient');
+      if (items.length === 0) throw new Error('Add at least one ingredient');
+
       setBusy(true);
       const y = Number(yieldQty || '0') || (servesFromBatch ?? 0);
       const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
@@ -151,7 +181,9 @@ export default function DraftRecipeDetailPanel({
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
         method: method || null,
         gpPct: Number(gpPct || '0') || null,
-        rrpIncludesGst
+        rrpIncludesGst,
+        // Pass items explicitly so confirm can snapshot exactly what user sees
+        itemsSnapshot: items,
       });
 
       Alert.alert('Confirmed', 'Recipe locked and saved.');
@@ -161,13 +193,13 @@ export default function DraftRecipeDetailPanel({
     } finally {
       setBusy(false);
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, derivedBatchCost]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, items]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <Header title="Craft-It: Draft" onBack={onClose} />
 
-      {/* IMPORTANT: allow taps to pass to nested lists */}
+      {/* IMPORTANT: parent holds items; editor is pure-controlled */}
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }} keyboardShouldPersistTaps="handled">
         {/* Name first */}
         <Field label="Name">
@@ -177,7 +209,13 @@ export default function DraftRecipeDetailPanel({
         </Field>
 
         {/* Ingredients FIRST – fastest flow */}
-        <IngredientEditor onSummary={onIngredientsSummary} category={category} mode={mode} />
+        <IngredientEditor
+          items={items}
+          onItemsChange={setItems}
+          onSummary={onIngredientsSummary}
+          category={category}
+          mode={mode}
+        />
 
         {/* Pricing card (derived COGS + GP↔︎RRP) */}
         <Card>
@@ -287,7 +325,6 @@ function Row({ label, value }:{ label:string; value:string }) {
   );
 }
 function Dropdown({ value, options, onChange }:{ value:any; options:any[]; onChange:(v:any)=>void }) {
-  // Simple pill that cycles options on tap – avoids extra deps
   const advance = () => {
     const idx = Math.max(0, options.findIndex(o => o === value));
     const next = options[(idx + 1) % options.length];

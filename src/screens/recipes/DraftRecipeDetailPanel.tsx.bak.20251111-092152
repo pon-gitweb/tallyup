@@ -6,18 +6,32 @@ import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import IngredientEditor from './components/IngredientEditor';
 
+type RecipeItem = {
+  productId?: string|null;
+  productName: string;
+  qty: number;
+  unit: 'ml'|'g'|'each'|string;
+  packSizeMl?: number|null;
+  packSizeG?: number|null;
+  packEach?: number|null;
+  packPrice?: number|null;
+};
+
 type Props = {
   recipeId: string;
   onClose: () => void;
   initialName?: string | null;
   initialCategory?: 'food' | 'beverage' | null;
   initialMode?: 'batch' | 'single' | 'dish' | null;
+
+  /** Optional future: hydrate editor with items already on doc */
+  initialItems?: RecipeItem[] | null;
 };
 
 const GST_RATE = 0.15; // NZ
 
 export default function DraftRecipeDetailPanel({
-  recipeId, onClose, initialName = null, initialCategory = null, initialMode = null
+  recipeId, onClose, initialName = null, initialCategory = null, initialMode = null, initialItems = null
 }: Props) {
   const venueId = useVenueId();
 
@@ -25,6 +39,9 @@ export default function DraftRecipeDetailPanel({
   const [name, setName] = useState<string>(initialName || '');
   const [mode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
   const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
+
+  // NEW: items (persisted to Firestore)
+  const [items, setItems] = useState<RecipeItem[]>(Array.isArray(initialItems) ? initialItems : []);
 
   // Yield/portion (drives per-serve math)
   const [yieldQty, setYieldQty] = useState<string>('');
@@ -123,25 +140,44 @@ export default function DraftRecipeDetailPanel({
         unit: unit || (mode === 'single' ? 'serve' : 'serves'),
         cogs: cgs,
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
-        method: method || null
+        method: method || null,
+        // NEW: persist the ingredients
+        items: items || []
       });
       Alert.alert('Saved', 'Draft updated.');
       onClose();
     } catch (e:any) {
       Alert.alert('Save failed', String(e?.message || e));
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, onClose, mode, items]);
 
   const confirmNow = useCallback(async () => {
     try {
       if (!venueId) throw new Error('No venueId');
       if (!recipeId) throw new Error('No recipeId');
       if (!name || !name.trim()) throw new Error('Please enter a name');
-      if ((derivedBatchCost || 0) <= 0) throw new Error('Add at least one ingredient');
+      if (
+        ((derivedBatchCost||0)<=0) &&
+        ((derivedBatchVolumeMl||0)<=0) &&
+        ((derivedBatchWeightG||0)<=0) &&
+        ((derivedBatchCount||0)<=0)
+      ) throw new Error('Add at least one ingredient with a quantity');
       setBusy(true);
+
       const y = Number(yieldQty || '0') || (servesFromBatch ?? 0);
       const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
       const rrpVal = (rrp?.trim()?.length ? Number(rrp) : Number(rrpDisplay)) || 0;
+
+      // NEW: ensure items are on the doc before freezing
+      await updateRecipeDraft(venueId, recipeId, {
+        name: name.trim(),
+        yield: y || null,
+        unit: unit || (mode === 'single' ? 'serve' : 'serves'),
+        cogs: cgs,
+        rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
+        method: method || null,
+        items: items || []
+      });
 
       await confirmRecipe(venueId, recipeId, {
         name: name.trim(),
@@ -161,7 +197,7 @@ export default function DraftRecipeDetailPanel({
     } finally {
       setBusy(false);
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, derivedBatchCost]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, derivedBatchCost, items]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
@@ -177,7 +213,13 @@ export default function DraftRecipeDetailPanel({
         </Field>
 
         {/* Ingredients FIRST – fastest flow */}
-        <IngredientEditor onSummary={onIngredientsSummary} category={category} mode={mode} />
+        <IngredientEditor
+          onSummary={onIngredientsSummary}
+          category={category}
+          mode={mode}
+          initialItems={initialItems || items}
+          onItemsChange={setItems}
+        />
 
         {/* Pricing card (derived COGS + GP↔︎RRP) */}
         <Card>
@@ -287,7 +329,6 @@ function Row({ label, value }:{ label:string; value:string }) {
   );
 }
 function Dropdown({ value, options, onChange }:{ value:any; options:any[]; onChange:(v:any)=>void }) {
-  // Simple pill that cycles options on tap – avoids extra deps
   const advance = () => {
     const idx = Math.max(0, options.findIndex(o => o === value));
     const next = options[(idx + 1) % options.length];

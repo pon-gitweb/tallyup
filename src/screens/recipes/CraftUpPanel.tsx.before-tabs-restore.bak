@@ -1,0 +1,117 @@
+// @ts-nocheck
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { useVenueId } from '../../context/VenueProvider';
+import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
+import DraftRecipeDetailPanel from './DraftRecipeDetailPanel';
+import CraftUpListScreen from './CraftUpListScreen';
+
+type Props = { onClose?: () => void };
+
+type Tab = 'create' | 'recipes' | 'drafts';
+
+export default function CraftUpPanel({ onClose }: Props) {
+  const venueId = useVenueId();
+  const [tab, setTab] = useState<Tab>('create');
+
+  // when creating, we hold the new draft id to render the editor
+  const [creating, setCreating] = useState(false);
+  const [draftId, setDraftId] = useState<string | null>(null);
+
+  const onCreate = useCallback(async () => {
+    try {
+      if (!venueId) throw new Error('No venue selected');
+      setCreating(true);
+      const { id } = await createRecipeDraft(venueId);
+      setDraftId(id);
+      setTab('create');
+    } catch (e:any) {
+      Alert.alert('Create failed', String(e?.message || e));
+    } finally {
+      setCreating(false);
+    }
+  }, [venueId]);
+
+  const Tabs = (
+    <View style={S.tabs}>
+      <Seg title="Create" active={tab==='create'} onPress={() => setTab('create')} />
+      <Seg title="View Recipes" active={tab==='recipes'} onPress={() => setTab('recipes')} />
+      <Seg title="Drafts" active={tab==='drafts'} onPress={() => setTab('drafts')} />
+    </View>
+  );
+
+  return (
+    <View style={{ flex:1, backgroundColor:'#fff' }}>
+      <View style={S.header}>
+        <Text style={S.title}>Craft-It</Text>
+        <Text style={S.sub}>Create, view, and confirm recipes</Text>
+      </View>
+
+      {Tabs}
+
+      <View style={{ flex:1 }}>
+        {tab === 'create' && (
+          <View style={{ flex:1 }}>
+            {!draftId ? (
+              <View style={{ padding:16 }}>
+                <TouchableOpacity onPress={onCreate} disabled={creating}
+                  style={[S.btn, { backgroundColor:'#111' }]}>
+                  <Text style={S.btnText}>{creating ? 'Creating…' : 'New Draft'}</Text>
+                </TouchableOpacity>
+                <Text style={{ color:'#6B7280', marginTop:10 }}>
+                  Tip: After creating, add ingredients; you can confirm from the editor or from the Drafts list.
+                </Text>
+              </View>
+            ) : (
+              <DraftRecipeDetailPanel
+                recipeId={draftId}
+                onClose={() => { setDraftId(null); }}
+              />
+            )}
+          </View>
+        )}
+
+        {tab === 'recipes' && (
+          <CraftUpListScreen filter="confirmed" />
+        )}
+
+        {tab === 'drafts' && (
+          <CraftUpListScreen filter="drafts" />
+        )}
+      </View>
+    </View>
+  );
+}
+
+function Seg({ title, active, onPress }:{ title:string; active:boolean; onPress:()=>void }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={[S.seg, active && S.segActive]}>
+      <Text style={[S.segText, active && S.segTextActive]}>{title}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const S = StyleSheet.create({
+  header: { paddingHorizontal:16, paddingTop:12, paddingBottom:6 },
+  title: { fontSize:18, fontWeight:'900' },
+  sub: { color:'#6B7280', marginTop:2 },
+  tabs: {
+    flexDirection:'row',
+    gap:8,
+    paddingHorizontal:16,
+    paddingBottom:10
+  },
+  seg: {
+    paddingVertical:8, paddingHorizontal:12,
+    borderRadius:999,
+    borderWidth:1, borderColor:'#E5E7EB',
+    backgroundColor:'#F9FAFB'
+  },
+  segActive: {
+    backgroundColor:'#111', borderColor:'#111'
+  },
+  segText: { fontWeight:'700', color:'#111' },
+  segTextActive: { color:'#fff' },
+  btn: { paddingVertical:12, borderRadius:12, alignItems:'center' },
+  btnText: { color:'#fff', fontWeight:'800' },
+});

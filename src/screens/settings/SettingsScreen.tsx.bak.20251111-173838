@@ -12,8 +12,6 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 import { resetAllDepartmentsStockTake } from '../../services/reset';
-import { ensureMembership } from '../../services/ensureMembership';
-import { checkVenueAccess } from '../../services/devAccess';
 
 type MemberDoc = { role?: string };
 
@@ -34,9 +32,6 @@ export default function SettingsScreen() {
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
-  const routeNames: string[] = (nav as any)?.getState?.()?.routeNames ?? [];
-  const hasAdjustments = routeNames.includes('Adjustments');
-
   useEffect(() => {
     let unsubMember: any;
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -52,7 +47,7 @@ export default function SettingsScreen() {
         unsubMember = onSnapshot(doc(db, 'venues', venueId, 'members', u.uid), (snap) => {
           const md = snap.data() as MemberDoc | undefined;
           if (__DEV__) console.log('[Settings] member role snapshot', { role: md?.role, uid: u.uid, venueId });
-          setIsManager(md?.role === 'manager' || md?.role === 'owner');
+          setIsManager(md?.role === 'manager');
         });
       } catch (e:any) {
         if (__DEV__) console.log('[Settings] role check error', e?.message);
@@ -78,40 +73,16 @@ export default function SettingsScreen() {
     ]);
   }
 
-  // NEW: one-tap fix for permission-denied (creates/repairs member doc)
-  async function doFixAccess() {
-    try {
-      const u = getAuth().currentUser;
-      if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const { role } = await ensureMembership(venueId, u.uid);
-      Alert.alert('Access Fixed', `Membership ensured (${role}). Try again.`);
-    } catch (e:any) {
-      if (__DEV__) console.log('[Settings] ensureMembership error', e?.message || e);
-      Alert.alert('Membership Failed', e?.message || 'Could not ensure member record.');
-    }
-  }
-
-  // NEW: probe and show where access fails
-  async function doAccessCheck() {
-    try {
-      const u = getAuth().currentUser;
-      if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const res = await checkVenueAccess(venueId, u.uid);
-      if (__DEV__) console.log('[Settings] access check', res);
-      Alert.alert('Access Check', JSON.stringify(res, null, 2));
-    } catch (e:any) {
-      Alert.alert('Access Check Failed', e?.message || 'Unknown error');
-    }
-  }
-
   return (
     <LocalThemeGate>
       <ScrollView contentContainerStyle={styles.wrap}>
+        {/* Header with badge */}
         <View style={styles.headerRow}>
           <MaybeTText style={styles.title}>Settings</MaybeTText>
           <IdentityBadge />
         </View>
 
+        {/* Account */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
           <Text>Signed in as: <Text style={styles.bold}>{friendly}</Text></Text>
@@ -119,6 +90,7 @@ export default function SettingsScreen() {
           <Text>Venue: {venueName || '—'}</Text>
         </View>
 
+        {/* Primary actions */}
         <View style={styles.row}>
           <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
             <Text style={styles.btnText}>Open Setup Wizard</Text>
@@ -146,29 +118,19 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {hasAdjustments ? (
-          <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
-              {isManager && pendingCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {/* NEW Fixers */}
+        {/* Adjustments */}
         <View style={styles.row}>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#10B981' }]} onPress={doFixAccess}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Fix Access (Dev)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#374151' }]} onPress={doAccessCheck}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Access Check</Text>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            {isManager && pendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         </View>
 
+        {/* Sign out */}
         <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>

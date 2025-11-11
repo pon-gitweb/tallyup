@@ -48,6 +48,7 @@
     "@types/react": "~19.0.10",
     "babel-plugin-module-resolver": "^5.0.2",
     "fast-csv": "^5.0.5",
+    "firebase-admin": "^12.7.0",
     "jest": "^29.7.0",
     "jest-expo": "^53.0.10",
     "knip": "^5.67.0",

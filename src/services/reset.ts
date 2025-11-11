@@ -1,48 +1,67 @@
+// src/services/reset.ts
 import {
-  collection, doc, getDocs, query, serverTimestamp, updateDoc, where
+  collection,
+  doc,
+  getDocs,
+  query,
+  updateDoc,
+  writeBatch,
+  serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db } from './firebase'; // <- existing project export
 
 /**
- * Reset ONE department:
- * - Reopens ALL areas that belong to departmentId in venue-level collection:
- *   venues/{venueId}/areas (filter departmentId == departmentId)
- * - Sets: startedAt:null, completedAt:null, cycleResetAt:now
- *   This matches the "isCycleReset" branch allowed in your rules.
- */
-export async function resetDepartmentStockTake(venueId: string, departmentId: string) {
-  if (!venueId || !departmentId) throw new Error('Missing venue/department');
-  const now = serverTimestamp();
-
-  // Query venue-level areas for this department
-  const areasCol = collection(db, 'venues', venueId, 'areas');
-  const snap = await getDocs(query(areasCol, where('departmentId', '==', departmentId)));
-
-  for (const d of snap.docs) {
-    // Lifecycle reset write that your rules allow (cycleResetAt present)
-    await updateDoc(doc(db, 'venues', venueId, 'areas', d.id), {
-      startedAt: null,
-      completedAt: null,
-      cycleResetAt: now,
-    });
-  }
-  return { ok: true, count: snap.size, departmentId };
-}
-
-/**
- * Reset ALL departments for a venue by running the department reset per ID.
+ * Full-cycle reset for a venue:
+ * - venue root: sets cycleResetAt (+ updatedAt)
+ * - every area under every department: startedAt:null, completedAt:null, cycleResetAt:now (+ updatedAt)
+ *   (exactly what your rules permit)
  */
 export async function resetAllDepartmentsStockTake(venueId: string) {
-  if (!venueId) throw new Error('Missing venueId');
+  const now = Timestamp.now();               // concrete timestamp (rules require timestamp, not just server TS)
+  const updatedAt = serverTimestamp();       // okay per rules if present
 
-  // Collect all department IDs
-  const depsCol = collection(db, 'venues', venueId, 'departments');
-  const dsnap = await getDocs(depsCol);
+  // 1) Flip the venue-level flag first (cheap and unblocks clients that only watch the root)
+  await updateDoc(doc(db, 'venues', venueId), {
+    cycleResetAt: now,
+    updatedAt,
+  });
 
-  let totalAreas = 0;
-  for (const dep of dsnap.docs) {
-    const res = await resetDepartmentStockTake(venueId, dep.id);
-    totalAreas += res.count;
+  // 2) Reset all areas under all departments.
+  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+
+  // Batch in chunks (≤ 500 writes)
+  const batches: ReturnType<typeof writeBatch>[] = [];
+  let batch = writeBatch(db);
+  let count = 0;
+
+  for (const dept of deptsSnap.docs) {
+    const areasQ = query(collection(db, 'venues', venueId, 'departments', dept.id, 'areas'));
+    const areasSnap = await getDocs(areasQ);
+
+    for (const area of areasSnap.docs) {
+      // Your rules allow any of these combinations when cycleResetAt is present:
+      // ['cycleResetAt'] OR ['cycleResetAt','updatedAt'] OR
+      // ['startedAt','completedAt','cycleResetAt'] (+ optional 'updatedAt')
+      batch.update(area.ref, {
+        startedAt: null,
+        completedAt: null,
+        cycleResetAt: now,
+        updatedAt,
+      });
+      count++;
+      if (count >= 450) {            // keep headroom
+        batches.push(batch);
+        batch = writeBatch(db);
+        count = 0;
+      }
+    }
   }
-  return { ok: true, departments: dsnap.size, areasReset: totalAreas };
+  // push any remaining ops
+  if (count > 0) batches.push(batch);
+
+  // Commit in order
+  for (const b of batches) {
+    await b.commit();
+  }
 }

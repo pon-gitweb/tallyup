@@ -1,0 +1,63 @@
+// @ts-nocheck
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { computeConsumption } from './consumption';
+
+/**
+ * Confirm a recipe (stable, controlled):
+ * - Freezes the explicit items snapshot if provided; else uses doc.items (array or []).
+ * - Computes per-serve normalized consumption from the snapshot and yield.
+ */
+export async function confirmRecipe(
+  venueId: string,
+  recipeId: string,
+  payload: {
+    name?: string|null;
+    yield?: number|null;
+    unit?: string|null;
+    cogs?: number|null;
+    rrp?: number|null;
+    method?: string|null;
+    gpPct?: number|null;
+    rrpIncludesGst?: boolean;
+    itemsSnapshot?: any[];   // NEW: explicit items from UI parent
+  }
+) {
+  if (!venueId) throw new Error('venueId required');
+  if (!recipeId) throw new Error('recipeId required');
+
+  const ref = doc(db, 'venues', venueId, 'recipes', recipeId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Recipe not found');
+
+  const data = snap.data() || {};
+  const items = Array.isArray(payload?.itemsSnapshot)
+    ? payload.itemsSnapshot
+    : (Array.isArray(data.items) ? data.items : []);
+
+  const localRecipe = {
+    status: data.status || 'draft',
+    mode: data.mode || null,
+    items,
+    yield: (payload?.yield ?? data?.yield) ?? null,
+    portionsPerBatch: (data?.portionsPerBatch ?? null)
+  };
+
+  // Per-serve normalized consumption (linked items only)
+  const consumptionPerServe = computeConsumption(localRecipe, 1);
+
+  const patch: any = {
+    ...Object.fromEntries(Object.entries(payload || {}).filter(([_, v]) => v !== undefined && _ !== 'itemsSnapshot')),
+    status: 'confirmed',
+    items,                    // freeze current items list as the snapshot
+    consumptionPerServe,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (__DEV__) {
+    try { console.log('[confirmRecipe] snapshot', { recipeId, itemsCount: items.length }); } catch {}
+  }
+
+  await updateDoc(ref, patch);
+  return { id: recipeId };
+}

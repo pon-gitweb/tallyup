@@ -1,0 +1,64 @@
+// @ts-nocheck
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { computePerServeMap } from './consumption';
+
+/**
+ * Confirm a recipe (dev-relaxed):
+ * - Allows empty items and 0 cogs/0 rrp for development convenience.
+ * - Freezes a minimal snapshot of items if present (as-is), writes status=confirmed.
+ * - Also snapshots per-serve inventory consumption: { [productId]: { ml?, g?, each? } }
+ * - Writes updatedAt server timestamp; preserves createdAt.
+ */
+export async function confirmRecipe(
+  venueId: string,
+  recipeId: string,
+  payload: {
+    name?: string|null;
+    yield?: number|null;
+    unit?: string|null;
+    cogs?: number|null;
+    rrp?: number|null;
+    method?: string|null;
+    gpPct?: number|null;
+    rrpIncludesGst?: boolean;
+  }
+) {
+  if (!venueId) throw new Error('venueId required');
+  if (!recipeId) throw new Error('recipeId required');
+
+  const ref = doc(db, 'venues', venueId, 'recipes', recipeId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Recipe not found');
+
+  const data = snap.data() || {};
+  const items = Array.isArray(data.items) ? data.items : [];
+
+  // Build a local doc shape to feed the consumption helper.
+  // Prefer payload.yield if provided; fallback to existing.
+  const localRecipe = {
+    status: data.status || 'draft',
+    mode: data.mode || null,
+    items,
+    yield: (payload?.yield ?? data?.yield) ?? null,
+    portionsPerBatch: (data?.portionsPerBatch ?? null)
+  };
+
+  // Per-serve normalized consumption (linked items only)
+  const consumptionPerServe = computePerServeMap(localRecipe);
+
+  const patch: any = {
+    ...Object.fromEntries(Object.entries(payload || {}).filter(([_, v]) => v !== undefined)),
+    status: 'confirmed',
+    items,                    // freeze current items list as the snapshot
+    consumptionPerServe,      // <- key snapshot used by sales→consumption analytics
+    updatedAt: serverTimestamp(),
+  };
+
+  if (__DEV__) {
+    try { console.log('[confirmRecipe] snapshot', { recipeId, consumptionPerServe }); } catch {}
+  }
+
+  await updateDoc(ref, patch);
+  return { id: recipeId };
+}

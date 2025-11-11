@@ -1,19 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import Constants from 'expo-constants';
 import { useVenueId } from '../../context/VenueProvider';
+// CHANGED: use the real reset implementation
+import { resetAllDepartmentsStockTake } from '../../services/reset';
+// NEW: dev-safe helper to ensure membership doc exists
+import ensureMembership from '../../services/ensureMembership';
+
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
 import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
-import { resetAllDepartmentsStockTake } from '../../services/reset';
-import { ensureMembership } from '../../services/ensureMembership';
-import { checkVenueAccess } from '../../services/devAccess';
 
 type MemberDoc = { role?: string };
 
@@ -34,9 +37,6 @@ export default function SettingsScreen() {
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
-  const routeNames: string[] = (nav as any)?.getState?.()?.routeNames ?? [];
-  const hasAdjustments = routeNames.includes('Adjustments');
-
   useEffect(() => {
     let unsubMember: any;
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -52,7 +52,7 @@ export default function SettingsScreen() {
         unsubMember = onSnapshot(doc(db, 'venues', venueId, 'members', u.uid), (snap) => {
           const md = snap.data() as MemberDoc | undefined;
           if (__DEV__) console.log('[Settings] member role snapshot', { role: md?.role, uid: u.uid, venueId });
-          setIsManager(md?.role === 'manager' || md?.role === 'owner');
+          setIsManager(md?.role === 'manager');
         });
       } catch (e:any) {
         if (__DEV__) console.log('[Settings] role check error', e?.message);
@@ -62,11 +62,18 @@ export default function SettingsScreen() {
     return () => { unsubAuth(); unsubMember && unsubMember(); };
   }, [venueId]);
 
+  const devVenueId =
+    (Constants.expoConfig?.extra as any)?.EXPO_PUBLIC_DEV_VENUE_ID ||
+    (Constants.expoConfig?.extra as any)?.DEV_VENUE_ID ||
+    process.env.EXPO_PUBLIC_DEV_VENUE_ID ||
+    undefined;
+
   async function doSignOut() {
     try { await auth.signOut(); if (__DEV__) console.log('[TallyUp Settings] signOut success'); }
     catch (e: any) { if (__DEV__) console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message })); Alert.alert('Sign Out Failed', e?.message || 'Unknown error'); }
   }
 
+  // CHANGED: point to the working reset function
   async function doResetCycle() {
     if (!venueId) { Alert.alert('No Venue', 'You are not attached to a venue.'); return; }
     Alert.alert('Reset Stock Take','This will reset in-progress area flags for the current cycle. Continue?',[
@@ -78,40 +85,61 @@ export default function SettingsScreen() {
     ]);
   }
 
-  // NEW: one-tap fix for permission-denied (creates/repairs member doc)
-  async function doFixAccess() {
+  // NEW: dev-safe “Fix Membership” helper to create venues/{venueId}/members/{uid}
+  async function doFixMembership() {
     try {
       const u = getAuth().currentUser;
       if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const { role } = await ensureMembership(venueId, u.uid);
-      Alert.alert('Access Fixed', `Membership ensured (${role}). Try again.`);
+      await ensureMembership(venueId, u.uid);
+      Alert.alert('Membership', 'Member record ensured for this venue.');
     } catch (e:any) {
       if (__DEV__) console.log('[Settings] ensureMembership error', e?.message || e);
       Alert.alert('Membership Failed', e?.message || 'Could not ensure member record.');
     }
   }
 
-  // NEW: probe and show where access fails
-  async function doAccessCheck() {
+  async function doAttachDevVenue() {
+    if (!user) { Alert.alert('Not Signed In', 'Sign in first.'); return; }
+    if (!devVenueId) { Alert.alert('Dev Venue Not Configured', 'Set EXPO_PUBLIC_DEV_VENUE_ID in app.json > extra.'); return; }
+    if (venueId) { Alert.alert('Already Attached', `You are already attached to a venue.`); return; }
+
     try {
-      const u = getAuth().currentUser;
-      if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const res = await checkVenueAccess(venueId, u.uid);
-      if (__DEV__) console.log('[Settings] access check', res);
-      Alert.alert('Access Check', JSON.stringify(res, null, 2));
-    } catch (e:any) {
-      Alert.alert('Access Check Failed', e?.message || 'Unknown error');
+      const uref = doc(db, 'users', user.uid);
+      const usnap = await getDoc(uref);
+      const hasVenueField = usnap.exists() && (usnap.data() as any)?.venueId != null;
+      if (hasVenueField) { Alert.alert('Cannot Attach', 'Your user already has a venue assigned.'); return; }
+      await setDoc(uref, { venueId: devVenueId }, { merge: true });
+      Alert.alert('Attached', `Pinned to dev venue.`);
+      if (__DEV__) console.log('[TallyUp Settings] attached dev venue', { uid: user.uid, venueId: devVenueId });
+    } catch (e: any) {
+      if (__DEV__) console.log('[TallyUp Settings] attach error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Attach Failed', e?.message || 'Unknown error.');
+    }
+  }
+
+  async function doSeedDemo() {
+    try {
+      if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+      // keep your existing helper if present; otherwise guard gracefully
+      // @ts-ignore
+      const res = await (await import('../../services/devSeedDemo')).seedDemoSuppliersAndProducts(venueId);
+      Alert.alert('Seeded', `Supplier + ${res.count} products added. Try Suggested Orders.`);
+    } catch (e: any) {
+      if (__DEV__) console.log('[TallyUp Settings] seed error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Seed Failed', e?.message || 'Unknown error');
     }
   }
 
   return (
     <LocalThemeGate>
-      <ScrollView contentContainerStyle={styles.wrap}>
+      <View style={styles.wrap}>
+        {/* Header with badge */}
         <View style={styles.headerRow}>
           <MaybeTText style={styles.title}>Settings</MaybeTText>
           <IdentityBadge />
         </View>
 
+        {/* Friendly identity (no raw IDs shown) */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
           <Text>Signed in as: <Text style={styles.bold}>{friendly}</Text></Text>
@@ -146,26 +174,48 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {hasAdjustments ? (
-          <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
-              {isManager && pendingCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {/* NEW Fixers */}
+        {/* Always show Adjustments entry; screen itself will enforce manager rights */}
         <View style={styles.row}>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#10B981' }]} onPress={doFixAccess}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Fix Access (Dev)</Text>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
+            <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            {isManager && pendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#374151' }]} onPress={doAccessCheck}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Access Check</Text>
+        </View>
+
+        {/* Stubs */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.stub}
+            onPress={() => Alert.alert('Coming soon', 'CSV uploads & integrations will land here.')}
+          >
+            <Text style={styles.stubText}>Data & Integrations (CSV)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.stub}
+            onPress={() => Alert.alert('Coming soon', 'Sales report imports will land here.')}
+          >
+            <Text style={styles.stubText}>Sales Reports (CSV)</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="card" style={styles.card}>
+          <MaybeTText style={styles.heading}>Developer Utilities</MaybeTText>
+          <Text style={{ opacity: 0.7, marginBottom: 8 }}>
+            Dev venue ID configured: {devVenueId ? 'yes' : 'no'}
+          </Text>
+          <TouchableOpacity style={styles.devBtn} onPress={doAttachDevVenue}>
+            <Text style={styles.devBtnText}>Attach Dev Venue (once)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.devBtn} onPress={doSeedDemo}>
+            <Text style={styles.devBtnText}>Seed Demo Suppliers & Products</Text>
+          </TouchableOpacity>
+          {/* NEW: Fix membership (creates venues/{venueId}/members/{uid}) */}
+          <TouchableOpacity style={styles.devBtn} onPress={doFixMembership}>
+            <Text style={styles.devBtnText}>Fix Membership (this user)</Text>
           </TouchableOpacity>
         </View>
 
@@ -176,13 +226,13 @@ export default function SettingsScreen() {
         <View style={{ marginTop: 12 }}>
           <LegalFooter />
         </View>
-      </ScrollView>
+      </View>
     </LocalThemeGate>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 12, backgroundColor: '#0F1115', flexGrow: 1 },
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#0F1115' },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 },
   card: { backgroundColor: '#111827', padding: 12, borderRadius: 12, gap: 6 },
@@ -191,7 +241,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', position: 'relative' },
   btnText: { color: 'white', fontWeight: '700' },
-  signOut: { marginTop: 8, backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  stub: { flex: 1, backgroundColor: '#D6E9FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#A9D2FF' },
+  stubText: { color: '#0A84FF', fontWeight: '700' },
+  devBtn: { backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  devBtnText: { fontWeight: '700' },
+  signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   signOutText: { color: 'white', fontWeight: '800' },
   badge: { position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'white' },
   badgeText: { color: 'white', fontSize: 12, fontWeight: '800' },

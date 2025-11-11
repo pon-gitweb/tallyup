@@ -1,89 +1,179 @@
 // @ts-nocheck
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, Modal } from 'react-native';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
-import CraftUpPanel from './CraftUpPanel';
-import RecipeListScreen from './RecipeListScreen';
-import RecipeDetailScreen from './RecipeDetailScreen';
+import { confirmRecipe } from '../../services/recipes/confirmRecipe';
+import ConfirmedRecipeDetailPanel from './ConfirmedRecipeDetailPanel';
 
-/**
- * Embedded hub with a local toggle:
- *  - Craft: existing CraftUp tools (no changes)
- *  - Recipes: list + detail, no navigation edits required
- */
-export default function CraftUpListScreen() {
+type Filter = 'all' | 'confirmed' | 'drafts';
+
+type Recipe = {
+  id: string;
+  name: string;
+  status?: 'draft'|'confirmed';
+  category?: string|null;
+  mode?: 'single'|'batch'|'dish'|string|null;
+  yield?: number|null;
+  portionsPerBatch?: number|null;
+  cogs?: number|null;
+  rrp?: number|null;
+  updatedAt?: any;
+};
+
+export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter }) {
   const venueId = useVenueId();
-  const [tab, setTab] = useState<'craft' | 'recipes'>('recipes'); // default can be 'craft' if you prefer
-  const [openRecipeId, setOpenRecipeId] = useState<string | null>(null);
+  const [rows, setRows] = useState<Recipe[]>([]);
+  const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState<string|null>(null);
+  const [viewId, setViewId] = useState<string|null>(null);
+
+  const load = useCallback(async ()=>{
+    try{
+      if (!venueId) return;
+      const qy = query(collection(db, 'venues', venueId, 'recipes'), orderBy('name'));
+      const snap = await getDocs(qy);
+      const out: Recipe[] = [];
+      snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+      setRows(out);
+    }catch(e){
+      if (__DEV__) console.log('[CraftUpList] load failed', e?.message || e);
+      setRows([]);
+    }
+  },[venueId]);
+
+  useEffect(()=>{ (async ()=>{ await load(); })(); },[load]);
+
+  const searched = useMemo(()=>{
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r =>
+      (r.name||'').toLowerCase().includes(q) ||
+      (r.category||'').toLowerCase().includes(q)
+    );
+  },[rows,search]);
+
+  const filtered = useMemo(()=>{
+    if (filter === 'confirmed') return searched.filter(r => (r.status||'draft') === 'confirmed');
+    if (filter === 'drafts')    return searched.filter(r => (r.status||'draft') === 'draft');
+    return searched;
+  },[searched, filter]);
+
+  const title = useMemo(()=>{
+    if (filter === 'confirmed') return 'Craft-It — Recipes';
+    if (filter === 'drafts')    return 'Craft-It — Drafts';
+    return 'Craft-It — All';
+  },[filter]);
+
+  const confirmFromList = useCallback((r: Recipe) => {
+    if ((r.status||'draft') !== 'draft') return; // ignore confirmed
+    if (filter !== 'drafts') return; // safety: only allow in Drafts view
+    Alert.alert(
+      'Confirm recipe?',
+      `Lock “${r.name}” and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm', style: 'destructive', onPress: async () => {
+          try{
+            if (!venueId) throw new Error('No venue');
+            setBusyId(r.id);
+            await confirmRecipe(venueId, r.id, { name: r.name?.trim() || null });
+            await load();
+          }catch(e){
+            Alert.alert('Confirm failed', String(e?.message || e));
+          }finally{
+            setBusyId(null);
+          }
+        }}
+      ]
+    );
+  },[venueId, load, filter]);
+
+  const Row = ({ r }: { r: Recipe })=>{
+    const status = (r.status||'draft');
+    const chipStyle = status === 'confirmed' ? S.chipConfirmed : S.chipDraft;
+    const enableLongPressConfirm = filter === 'drafts' && status === 'draft';
+
+    return (
+      <TouchableOpacity
+        style={S.row}
+        activeOpacity={0.9}
+        onPress={status === 'confirmed' ? () => setViewId(r.id) : undefined}
+        onLongPress={enableLongPressConfirm ? () => confirmFromList(r) : undefined}
+        delayLongPress={300}
+      >
+        <View style={{flex:1}}>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+            <Text style={S.rowTitle}>{r.name}</Text>
+            <View style={[S.chip, chipStyle]}>
+              <Text style={S.chipText}>{status === 'confirmed' ? 'Confirmed' : 'Draft'}</Text>
+            </View>
+          </View>
+          <Text style={S.rowSub}>
+            {(r.category||'—')} · {(r.mode||'—')}
+            {(r.mode==='batch' && (r.yield || r.portionsPerBatch)) ? ` · yields ${(r.yield ?? r.portionsPerBatch)} serves` : ''}
+          </Text>
+        </View>
+        <View style={{alignItems:'flex-end'}}>
+          <Text style={S.rowKpi}>{formatMoney(r.cogs)}</Text>
+          <Text style={S.rowKpiSub}>{r.rrp ? `RRP ${formatMoney(r.rrp)}` : '—'}</Text>
+          {busyId === r.id ? <Text style={{ marginTop:6, color:'#111' }}>Confirming…</Text> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-      <Header tab={tab} setTab={setTab} canBack={tab === 'recipes' && !!openRecipeId} onBack={() => setOpenRecipeId(null)} />
-      <View style={{ flex: 1 }}>
-        {tab === 'craft' ? (
-          <CraftUpPanel />
-        ) : (
-          openRecipeId ? (
-            <RecipeDetailScreen
-              recipeId={openRecipeId}
-              onBack={() => setOpenRecipeId(null)}
-              onOpenDraft={(draftId) => setOpenRecipeId(draftId)}
-            />
-          ) : (
-            <RecipeListScreen onOpen={(id) => setOpenRecipeId(id)} />
-          )
-        )}
+    <SafeAreaView style={{flex:1, backgroundColor:'#fff'}}>
+      <View style={S.header}>
+        <Text style={S.title}>{title}</Text>
+        <TextInput
+          placeholder="Search recipes or category"
+          value={search}
+          onChangeText={setSearch}
+          placeholderTextColor="#64748B"
+          style={S.search}
+        />
+        {filter === 'drafts' ? (
+          <Text style={{ color:'#6B7280', marginTop:8 }}>
+            Tip: Long-press a draft to confirm it.
+          </Text>
+        ) : null}
       </View>
+      <ScrollView style={{flex:1}} contentContainerStyle={{padding:16, paddingTop:0}}>
+        {filtered.length === 0 ? (
+          <Text style={{ color:'#94A3B8', marginTop:12 }}>No recipes yet.</Text>
+        ) : filtered.map(r => <Row key={r.id} r={r} />)}
+      </ScrollView>
+
+      {/* Read-only detail for confirmed recipes */}
+      <Modal visible={!!viewId} animationType="slide" onRequestClose={() => setViewId(null)}>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
+          {viewId ? <ConfirmedRecipeDetailPanel recipeId={viewId} onClose={() => setViewId(null)} /> : null}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-function Header({
-  tab, setTab, canBack, onBack,
-}: {
-  tab: 'craft' | 'recipes';
-  setTab: (t: 'craft' | 'recipes') => void;
-  canBack: boolean;
-  onBack: () => void;
-}) {
-  return (
-    <View style={S.header}>
-      <View style={S.topRow}>
-        {canBack ? (
-          <TouchableOpacity onPress={onBack}><Text style={S.back}>‹ Back</Text></TouchableOpacity>
-        ) : <View style={{ width: 50 }} />}
-        <Text style={S.title}>{tab === 'craft' ? 'CraftUp — Tools' : 'CraftUp — Recipes'}</Text>
-        <View style={{ width: 50 }} />
-      </View>
-      <View style={S.tabs}>
-        <TabButton label="Craft" active={tab === 'craft'} onPress={() => setTab('craft')} />
-        <TabButton label="Recipes" active={tab === 'recipes'} onPress={() => setTab('recipes')} />
-      </View>
-    </View>
-  );
-}
-
-function TabButton({ label, active, onPress }:{
-  label: string; active: boolean; onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[
-        S.tab,
-        { backgroundColor: active ? '#111' : '#fff', borderColor: '#E5E7EB', borderWidth: 1 },
-      ]}
-    >
-      <Text style={{ color: active ? '#fff' : '#111', fontWeight: '800' }}>{label}</Text>
-    </TouchableOpacity>
-  );
+function formatMoney(n?: number|null) {
+  if (!Number.isFinite(Number(n))) return '—';
+  const v = Number(n);
+  return `$${v.toFixed(2)}`;
 }
 
 const S = StyleSheet.create({
-  header: { padding: 16, gap: 12, borderBottomWidth: 1, borderColor: '#E5E7EB' },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  back: { color: '#2563EB', fontSize: 16 },
-  title: { fontSize: 18, fontWeight: '900' },
-  tabs: { flexDirection: 'row', gap: 8 },
-  tab: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
+  header: { padding:16 },
+  title: { fontSize:18, fontWeight:'900', marginBottom:10 },
+  search: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:42, color:'#111827' },
+  row: { padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, marginTop:10, flexDirection:'row', gap:12 },
+  rowTitle: { fontWeight:'800' },
+  rowSub: { color:'#6B7280', marginTop:2 },
+  rowKpi: { fontWeight:'900' },
+  rowKpiSub: { color:'#6B7280', marginTop:2, fontSize:12 },
+  chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
+  chipText: { fontSize:12, fontWeight:'700', color:'#111' },
+  chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
+  chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor:'#16A34A' },
 });

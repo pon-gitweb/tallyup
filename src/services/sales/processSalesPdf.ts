@@ -1,17 +1,20 @@
 // @ts-nocheck
-const API_BASE =
-  (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
-  || 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
+import { apiBase, joinUrl, postJson } from '../apiBase';
 
 export async function processSalesPdf(args: { venueId:string; fileUri:string; filename:string }) {
-  const res = await fetch(`${API_BASE}/api/process-sales-pdf`, {
-    method: 'POST',
-    headers: { 'content-type':'application/json' },
-    body: JSON.stringify(args),
-  });
-  const json = await res.json().catch(()=>null);
-  if (!res.ok || !json) {
-    throw new Error(json?.error || `HTTP ${res.status}`);
+  const base = apiBase();
+  const primary  = joinUrl(base, 'process-sales-pdf');
+  const fallback = joinUrl(base, 'api/process-sales-pdf');
+
+  // Try primary then fallback (keeps older deployments working)
+  let res = await postJson(primary, args);
+  if (!res.ok && res.status === 404) res = await postJson(fallback, args);
+
+  if (!res.ok || !res.json) {
+    const msg = (res.json && (res.json.error || res.json.message))
+      || res.text
+      || `HTTP ${res.status}`;
+    throw new Error(msg);
   }
-  return json;
+  return res.json;
 }

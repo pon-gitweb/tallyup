@@ -15,7 +15,7 @@ import FastReceivePanel from './FastReceivePanel';                  // Scan/Uplo
 import FastReceivesReviewPanel from './FastReceivesReviewPanel';    // Pending review/attach
 import SalesReportUploadPanel from './SalesReportUploadPanel';      // Sales CSV/PDF import
 import ReconciliationsPanel from './ReconciliationsPanel';          // Invoice reconciliations list
-import CraftUpPanel from '../recipes/CraftUpPanel';                 // Recipes (CraftUp)
+import CraftUpListScreen from '../recipes/CraftUpListScreen';       // Recipes hub (List + Creator embedded)
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -32,7 +32,7 @@ export default function StockControlScreen() {
   const [showFastReview, setShowFastReview]   = useState(false);
   const [showSalesImport, setShowSalesImport] = useState(false);
   const [showRecon, setShowRecon]             = useState(false);
-  const [showCraftUp, setShowCraftUp]         = useState(false); // Recipes (CraftUp)
+  const [showCraftUp, setShowCraftUp]         = useState(false); // Recipes hub
 
   const friendly = useMemo(() => {
     return friendlyIdentity(
@@ -73,7 +73,7 @@ export default function StockControlScreen() {
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
         {/* Reset Stock Take was removed previously as requested */}
-        <Item title="Recipes (CraftUp — Recipe Creator)" onPress={() => setShowCraftUp(true)} />
+        <Item title="Craft-It (Recipe List & Creator)" onPress={() => setShowCraftUp(true)} />
 
         {/* NEW: quick actions */}
         <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
@@ -156,15 +156,15 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Recipes (CraftUp) */}
+      {/* Recipes (CraftUp hub) */}
       <Modal visible={showCraftUp} animationType="slide" onRequestClose={() => setShowCraftUp(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowCraftUp(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Craft-It (Recipe Creator)</Text>
+            <Text style={styles.modalTitle}>Recipes</Text>
             <View style={{ width: 60 }} />
           </View>
-          <CraftUpPanel onClose={() => setShowCraftUp(false)} />
+          <CraftUpListScreen />
         </SafeAreaView>
       </Modal>
     </SafeAreaView>

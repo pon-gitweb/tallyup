@@ -1,10 +1,14 @@
-import React, { useMemo, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Modal } from 'react-native';
+import React, { useMemo, useEffect, useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Modal, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
+
+// Firestore (for DEV fix)
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 
 // Setup screens
 import SuppliersScreen from '../setup/SuppliersScreen';
@@ -15,7 +19,7 @@ import FastReceivePanel from './FastReceivePanel';                  // Scan/Uplo
 import FastReceivesReviewPanel from './FastReceivesReviewPanel';    // Pending review/attach
 import SalesReportUploadPanel from './SalesReportUploadPanel';      // Sales CSV/PDF import
 import ReconciliationsPanel from './ReconciliationsPanel';          // Invoice reconciliations list
-import CraftUpListScreen from '../recipes/CraftUpListScreen';       // Recipes hub (List + Creator embedded)
+import CraftUpPanel from '../recipes/CraftUpPanel';                 // Recipes (CraftUp)
 
 export default function StockControlScreen() {
   const nav = useNavigation<any>();
@@ -32,7 +36,7 @@ export default function StockControlScreen() {
   const [showFastReview, setShowFastReview]   = useState(false);
   const [showSalesImport, setShowSalesImport] = useState(false);
   const [showRecon, setShowRecon]             = useState(false);
-  const [showCraftUp, setShowCraftUp]         = useState(false); // Recipes hub
+  const [showCraftUp, setShowCraftUp]         = useState(false); // Recipes (CraftUp)
 
   const friendly = useMemo(() => {
     return friendlyIdentity(
@@ -56,6 +60,27 @@ export default function StockControlScreen() {
     </TouchableOpacity>
   );
 
+  // DEV-only: ensure venues/{venueId}/members/{uid} exists (role: owner)
+  const ensureDevMembership = useCallback(async () => {
+    try {
+      if (!__DEV__) return;
+      if (!venueId) throw new Error('No venue selected yet');
+      if (!user?.uid) throw new Error('No signed-in user');
+      const mref = doc(db, 'venues', venueId, 'members', user.uid);
+      const snap = await getDoc(mref);
+      if (!snap.exists()) {
+        await setDoc(mref, {
+          role: 'owner',
+          addedAt: serverTimestamp(),
+          email: user.email ?? null,
+        });
+      }
+      Alert.alert('Membership OK', `You are a member of venue ${venueId}.`);
+    } catch (e:any) {
+      Alert.alert('Failed to set membership', String(e?.message || e));
+    }
+  }, [venueId, user?.uid, user?.email]);
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.wrap}>
@@ -73,13 +98,18 @@ export default function StockControlScreen() {
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
         {/* Reset Stock Take was removed previously as requested */}
-        <Item title="Craft-It (Recipe List & Creator)" onPress={() => setShowCraftUp(true)} />
+        <Item title="Craft-It (Recipe Creator)" onPress={() => setShowCraftUp(true)} />
 
         {/* NEW: quick actions */}
         <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
         <Item title="Fast Receives (Pending)"      onPress={() => setShowFastReview(true)} />
         <Item title="Sales Reports (Import)"       onPress={() => setShowSalesImport(true)} />
         <Item title="Invoice Reconciliations"      onPress={() => setShowRecon(true)} />
+
+        {/* DEV-only helper to repair membership (safe; leaf UI only) */}
+        {__DEV__ ? (
+          <Item title="(DEV) Fix my venue membership" onPress={ensureDevMembership} />
+        ) : null}
       </View>
 
       {/* Suppliers */}
@@ -156,15 +186,15 @@ export default function StockControlScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Recipes (CraftUp hub) */}
+      {/* Recipes (CraftUp) */}
       <Modal visible={showCraftUp} animationType="slide" onRequestClose={() => setShowCraftUp(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowCraftUp(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
-            <Text style={styles.modalTitle}>Recipes</Text>
+            <Text style={styles.modalTitle}>Craft-It (Recipe Creator)</Text>
             <View style={{ width: 60 }} />
           </View>
-          <CraftUpListScreen />
+          <CraftUpPanel onClose={() => setShowCraftUp(false)} />
         </SafeAreaView>
       </Modal>
     </SafeAreaView>

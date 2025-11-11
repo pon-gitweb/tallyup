@@ -1,43 +1,49 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 
 type Recipe = {
   id: string;
   name: string;
+  status?: 'draft'|'confirmed';
   category?: string|null;
+  mode?: 'single'|'batch'|'dish'|string|null;
+  yield?: number|null;
   portionsPerBatch?: number|null;
-  totalCost?: number|null;
-  sellPrice?: number|null;
-  marginPct?: number|null;
+  cogs?: number|null;
+  rrp?: number|null;
+  updatedAt?: any;
 };
 
 export default function CraftUpListScreen() {
   const venueId = useVenueId();
   const [rows, setRows] = useState<Recipe[]>([]);
   const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState<string|null>(null);
+
+  const load = useCallback(async ()=>{
+    try{
+      if (!venueId) return;
+      const qy = query(collection(db, 'venues', venueId, 'recipes'), orderBy('name'));
+      const snap = await getDocs(qy);
+      const out: Recipe[] = [];
+      snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
+      setRows(out);
+    }catch(e){
+      if (__DEV__) console.log('[CraftUpList] load failed', e?.message || e);
+      setRows([]);
+    }
+  },[venueId]);
 
   useEffect(()=>{
     let alive = true;
-    (async ()=>{
-      try{
-        if (!venueId) return;
-        const q = query(collection(db, 'venues', venueId, 'recipes'), orderBy('name'));
-        const snap = await getDocs(q);
-        if (!alive) return;
-        const out: Recipe[] = [];
-        snap.forEach(d => out.push({ id: d.id, ...(d.data() as any) }));
-        setRows(out);
-      }catch(e){
-        if (__DEV__) console.log('[CraftUpList] load failed', e?.message || e);
-        setRows([]);
-      }
-    })();
+    (async ()=>{ await load(); })();
     return ()=>{ alive=false; };
-  },[venueId]);
+  },[load]);
 
   const filtered = useMemo(()=>{
     const q = search.trim().toLowerCase();
@@ -45,29 +51,62 @@ export default function CraftUpListScreen() {
     return rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.category||'').toLowerCase().includes(q));
   },[rows,search]);
 
+  const confirmFromList = useCallback((r: Recipe) => {
+    if ((r.status||'draft') !== 'draft') return; // ignore confirmed
+    Alert.alert(
+      'Confirm recipe?',
+      `Lock “${r.name}” as confirmed and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm', style: 'destructive', onPress: async () => {
+          try{
+            if (!venueId) throw new Error('No venue');
+            setBusyId(r.id);
+            await confirmRecipe(venueId, r.id, {
+              // minimal fields — confirmRecipe should snapshot items & derived fields server-side or in-service
+              // we do not recompute here; we freeze what's already stored with the draft
+              name: r.name?.trim() || null,
+            });
+            await load();
+          }catch(e){
+            Alert.alert('Confirm failed', String(e?.message || e));
+          }finally{
+            setBusyId(null);
+          }
+        }}
+      ]
+    );
+  },[venueId, load]);
+
   const Row = ({ r }: { r: Recipe })=>{
-    const cost = Number(r.totalCost ?? NaN);
-    const sell = Number(r.sellPrice ?? NaN);
-    const margin = typeof r.marginPct === 'number'
-      ? r.marginPct
-      : (Number.isFinite(cost) && Number.isFinite(sell) && sell>0 ? (1 - cost/sell) : null);
+    const status = (r.status||'draft');
+    const chipStyle = status === 'confirmed' ? S.chipConfirmed : S.chipDraft;
+
     return (
-      <View style={S.row}>
+      <TouchableOpacity
+        style={S.row}
+        activeOpacity={0.9}
+        onLongPress={() => confirmFromList(r)}
+        delayLongPress={300}
+      >
         <View style={{flex:1}}>
-          <Text style={S.rowTitle}>{r.name}</Text>
+          <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+            <Text style={S.rowTitle}>{r.name}</Text>
+            <View style={[S.chip, chipStyle]}>
+              <Text style={S.chipText}>{status === 'confirmed' ? 'Confirmed' : 'Draft'}</Text>
+            </View>
+          </View>
           <Text style={S.rowSub}>
-            {(r.category||'—')} · {(r.portionsPerBatch==null?'—':`${r.portionsPerBatch} portions`)}
+            {(r.category||'—')} · {(r.mode||'—')}
+            {(r.mode==='batch' && (r.yield || r.portionsPerBatch)) ? ` · yields ${(r.yield ?? r.portionsPerBatch)} serves` : ''}
           </Text>
         </View>
         <View style={{alignItems:'flex-end'}}>
-          <Text style={S.rowKpi}>
-            {Number.isFinite(cost) ? `$${cost.toFixed(2)}` : '—'}
-          </Text>
-          <Text style={S.rowKpiSub}>
-            {margin==null ? '—' : `${Math.round(Math.max(0,Math.min(1,margin))*100)}%`}
-          </Text>
+          <Text style={S.rowKpi}>{formatMoney(r.cogs)}</Text>
+          <Text style={S.rowKpiSub}>{r.rrp ? `RRP ${formatMoney(r.rrp)}` : '—'}</Text>
+          {busyId === r.id ? <Text style={{ marginTop:6, color:'#111' }}>Confirming…</Text> : null}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -82,6 +121,9 @@ export default function CraftUpListScreen() {
           placeholderTextColor="#64748B"
           style={S.search}
         />
+        <Text style={{ color:'#6B7280', marginTop:8 }}>
+          Tip: Long-press a draft to confirm it.
+        </Text>
       </View>
       <ScrollView style={{flex:1}} contentContainerStyle={{padding:16, paddingTop:0}}>
         {filtered.length === 0 ? (
@@ -90,6 +132,12 @@ export default function CraftUpListScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function formatMoney(n?: number|null) {
+  if (!Number.isFinite(Number(n))) return '—';
+  const v = Number(n);
+  return `$${v.toFixed(2)}`;
 }
 
 const S = StyleSheet.create({
@@ -101,4 +149,8 @@ const S = StyleSheet.create({
   rowSub: { color:'#6B7280', marginTop:2 },
   rowKpi: { fontWeight:'900' },
   rowKpiSub: { color:'#6B7280', marginTop:2, fontSize:12 },
+  chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
+  chipText: { fontSize:12, fontWeight:'700', color:'#111' },
+  chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
+  chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor:'#16A34A' },
 });

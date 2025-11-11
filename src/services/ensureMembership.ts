@@ -1,37 +1,33 @@
+import { db } from './firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
 
 /**
- * Dev helper: make sure the venue doc exists and the current user is a member.
- * Uses a rules-backed "openSignup" flag so membership can be created before access.
+ * Ensure venues/{venueId}/members/{uid} exists and is active.
+ * - If user is the venue owner, keep role 'owner'; otherwise default to 'manager' unless a role exists.
  */
-export async function ensureVenueAndMembership(venueId: string, uid: string) {
-  if (!venueId || !uid) return;
+export async function ensureMembership(venueId: string, uid: string) {
+  const vref = doc(db, 'venues', venueId);
+  const vsnap = await getDoc(vref);
+  if (!vsnap.exists()) throw new Error(`Venue ${venueId} not found`);
 
-  // 1) Ensure venue doc exists with openSignup=true (dev only)
-  const venueRef = doc(db, `venues/${venueId}`);
-  const venueSnap = await getDoc(venueRef);
-  if (!venueSnap.exists()) {
-    await setDoc(venueRef, {
-      name: 'TallyUp Dev Venue',
-      createdAt: serverTimestamp(),
-      config: { openSignup: true } // gates self-enrollment in rules
-    }, { merge: true });
-  } else {
-    // If venue exists but no config, set it (safe merge)
-    const data: any = venueSnap.data() || {};
-    if (!data.config || data.config.openSignup !== true) {
-      await setDoc(venueRef, { config: { openSignup: true } }, { merge: true });
-    }
-  }
+  const ownerUid = (vsnap.data() as any)?.ownerUid ?? null;
 
-  // 2) Ensure membership doc
-  const memberRef = doc(db, `venues/${venueId}/members/${uid}`);
-  const memberSnap = await getDoc(memberRef);
-  if (!memberSnap.exists()) {
-    await setDoc(memberRef, {
-      role: 'admin', // dev default; tighten later
-      createdAt: serverTimestamp()
-    }, { merge: true });
-  }
+  const mref = doc(db, 'venues', venueId, 'members', uid);
+  const msnap = await getDoc(mref);
+  const existing = msnap.exists() ? msnap.data() as any : {};
+
+  const role = existing.role || (uid === ownerUid ? 'owner' : 'manager');
+  const payload = {
+    role,
+    status: 'active',
+    dev: existing.dev ?? true,
+    joinedAt: existing.joinedAt ?? serverTimestamp(),
+    attachedAt: existing.attachedAt ?? serverTimestamp(),
+    source: existing.source ?? 'ensureMembership',
+    uid,
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(mref, payload, { merge: true });
+  return { role };
 }

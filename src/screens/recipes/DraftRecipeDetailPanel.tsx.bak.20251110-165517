@@ -137,7 +137,7 @@ export default function DraftRecipeDetailPanel({
       if (!venueId) throw new Error('No venueId');
       if (!recipeId) throw new Error('No recipeId');
       if (!name || !name.trim()) throw new Error('Please enter a name');
-      if ((derivedBatchCost || 0) <= 0) throw new Error('Add at least one ingredient');
+      if (((derivedBatchCost||0)<=0) && ((derivedBatchVolumeMl||0)<=0) && ((derivedBatchWeightG||0)<=0) && ((derivedBatchCount||0)<=0)) throw new Error('Add at least one ingredient with a quantity');
       setBusy(true);
       const y = Number(yieldQty || '0') || (servesFromBatch ?? 0);
       const cgs = Number.isFinite(cogsPerServe) ? Number(cogsPerServe.toFixed(4)) : null;
