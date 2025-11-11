@@ -1,19 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { useVenueId } from '../../context/VenueProvider';
+
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import LegalFooter from '../../components/LegalFooter';
 import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
-import { resetAllDepartmentsStockTake } from '../../services/reset';
-import { ensureMembership } from '../../services/ensureMembership';
-import { checkVenueAccess } from '../../services/devAccess';
+import { useVenueId } from '../../context/VenueProvider';
 
 type MemberDoc = { role?: string };
 
@@ -33,9 +31,6 @@ export default function SettingsScreen() {
       { name: venueName ?? null, venueId: venueId ?? null }
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
-
-  const routeNames: string[] = (nav as any)?.getState?.()?.routeNames ?? [];
-  const hasAdjustments = routeNames.includes('Adjustments');
 
   useEffect(() => {
     let unsubMember: any;
@@ -63,55 +58,33 @@ export default function SettingsScreen() {
   }, [venueId]);
 
   async function doSignOut() {
-    try { await auth.signOut(); if (__DEV__) console.log('[TallyUp Settings] signOut success'); }
-    catch (e: any) { if (__DEV__) console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message })); Alert.alert('Sign Out Failed', e?.message || 'Unknown error'); }
-  }
-
-  async function doResetCycle() {
-    if (!venueId) { Alert.alert('No Venue', 'You are not attached to a venue.'); return; }
-    Alert.alert('Reset Stock Take','This will reset in-progress area flags for the current cycle. Continue?',[
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: async () => {
-        try { await resetAllDepartmentsStockTake(venueId); Alert.alert('Reset Complete', 'Cycle reset applied.'); }
-        catch (e: any) { if (__DEV__) console.log('[TallyUp Settings] reset error', JSON.stringify({ code: e?.code, message: e?.message })); Alert.alert('Reset Failed', e?.message || 'Unknown error.'); }
-      }}
-    ]);
-  }
-
-  // NEW: one-tap fix for permission-denied (creates/repairs member doc)
-  async function doFixAccess() {
     try {
-      const u = getAuth().currentUser;
-      if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const { role } = await ensureMembership(venueId, u.uid);
-      Alert.alert('Access Fixed', `Membership ensured (${role}). Try again.`);
+      await auth.signOut();
+      if (__DEV__) console.log('[TallyUp Settings] signOut success');
     } catch (e:any) {
-      if (__DEV__) console.log('[Settings] ensureMembership error', e?.message || e);
-      Alert.alert('Membership Failed', e?.message || 'Could not ensure member record.');
+      if (__DEV__) console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
+      Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
     }
   }
 
-  // NEW: probe and show where access fails
-  async function doAccessCheck() {
-    try {
-      const u = getAuth().currentUser;
-      if (!venueId || !u) { Alert.alert('Unavailable', 'Must be signed in and attached to a venue.'); return; }
-      const res = await checkVenueAccess(venueId, u.uid);
-      if (__DEV__) console.log('[Settings] access check', res);
-      Alert.alert('Access Check', JSON.stringify(res, null, 2));
-    } catch (e:any) {
-      Alert.alert('Access Check Failed', e?.message || 'Unknown error');
-    }
+  // STUB: Nuclear reset is disabled until post-BETA
+  function doFullResetStub() {
+    Alert.alert(
+      'Full Reset (stub)',
+      'The full venue-wide stock-take reset is disabled for BETA. Use per-department long-press reset from the Departments screen.'
+    );
   }
 
   return (
     <LocalThemeGate>
-      <ScrollView contentContainerStyle={styles.wrap}>
+      <View style={styles.wrap}>
+        {/* Header with badge */}
         <View style={styles.headerRow}>
           <MaybeTText style={styles.title}>Settings</MaybeTText>
           <IdentityBadge />
         </View>
 
+        {/* Identity summary */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
           <Text>Signed in as: <Text style={styles.bold}>{friendly}</Text></Text>
@@ -119,12 +92,16 @@ export default function SettingsScreen() {
           <Text>Venue: {venueName || '—'}</Text>
         </View>
 
+        {/* Primary actions */}
         <View style={styles.row}>
           <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
             <Text style={styles.btnText}>Open Setup Wizard</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.btn} onPress={doResetCycle}>
-            <Text style={styles.btnText}>Reset Stock Take</Text>
+          <TouchableOpacity
+            style={[styles.btn, styles.stubBtn]}
+            onPress={doFullResetStub}
+          >
+            <Text style={styles.stubBtnText}>Full Reset of All Stock Takes (stub)</Text>
           </TouchableOpacity>
         </View>
 
@@ -146,26 +123,18 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {hasAdjustments ? (
-          <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, { backgroundColor: '#6A1B9A' }]} onPress={() => nav.navigate('Adjustments')}>
-              <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
-              {isManager && pendingCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {/* NEW Fixers */}
+        {/* Adjustments button (badge if manager/owner and count>0) */}
         <View style={styles.row}>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#10B981' }]} onPress={doFixAccess}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Fix Access (Dev)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.btn, { backgroundColor: '#374151' }]} onPress={doAccessCheck}>
-            <Text style={{ color: 'white', fontWeight: '800' }}>Access Check</Text>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#6A1B9A' }]}
+            onPress={() => nav.navigate('Adjustments')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            {isManager && pendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         </View>
 
@@ -176,13 +145,13 @@ export default function SettingsScreen() {
         <View style={{ marginTop: 12 }}>
           <LegalFooter />
         </View>
-      </ScrollView>
+      </View>
     </LocalThemeGate>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 12, backgroundColor: '#0F1115', flexGrow: 1 },
+  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#0F1115' },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 },
   card: { backgroundColor: '#111827', padding: 12, borderRadius: 12, gap: 6 },
@@ -191,7 +160,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },
   btn: { flex: 1, backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 12, alignItems: 'center', position: 'relative' },
   btnText: { color: 'white', fontWeight: '700' },
-  signOut: { marginTop: 8, backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  stubBtn: { backgroundColor: '#E5E7EB' },
+  stubBtnText: { fontWeight: '800', color: '#111827', textAlign: 'center' },
+  signOut: { marginTop: 'auto', backgroundColor: '#FF3B30', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   signOutText: { color: 'white', fontWeight: '800' },
   badge: { position: 'absolute', top: -6, right: -6, backgroundColor: '#EF4444', minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'white' },
   badgeText: { color: 'white', fontSize: 12, fontWeight: '800' },
