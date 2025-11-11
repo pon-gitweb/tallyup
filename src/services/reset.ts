@@ -1,67 +1,33 @@
-// src/services/reset.ts
-import {
-  collection,
-  doc,
-  getDocs,
-  query,
-  updateDoc,
-  writeBatch,
-  serverTimestamp,
-  Timestamp,
-} from 'firebase/firestore';
-import { db } from './firebase'; // <- existing project export
+import { getFirestore, collection, getDocs, query, where, writeBatch, doc, Timestamp } from 'firebase/firestore';
 
-/**
- * Full-cycle reset for a venue:
- * - venue root: sets cycleResetAt (+ updatedAt)
- * - every area under every department: startedAt:null, completedAt:null, cycleResetAt:now (+ updatedAt)
- *   (exactly what your rules permit)
- */
-export async function resetAllDepartmentsStockTake(venueId: string) {
-  const now = Timestamp.now();               // concrete timestamp (rules require timestamp, not just server TS)
-  const updatedAt = serverTimestamp();       // okay per rules if present
+type Opts = { withUpdatedAt?: boolean };
 
-  // 1) Flip the venue-level flag first (cheap and unblocks clients that only watch the root)
-  await updateDoc(doc(db, 'venues', venueId), {
-    cycleResetAt: now,
-    updatedAt,
+export async function resetAllDepartmentsStockTake(venueId: string, opts: Opts = {}) {
+  const db = getFirestore();
+  const now = Timestamp.now();
+  const payload: any = { cycleResetAt: now };
+  if (opts.withUpdatedAt) payload.updatedAt = now;
+
+  const batch = writeBatch(db);
+
+  // Pass A: venue-level areas -> /venues/{venueId}/areas/*
+  const venueAreasCol = collection(db, 'venues', venueId, 'areas');
+  const venueAreasSnap = await getDocs(venueAreasCol);
+  venueAreasSnap.forEach(a => {
+    batch.set(doc(db, 'venues', venueId, 'areas', a.id), payload, { merge: true });
   });
 
-  // 2) Reset all areas under all departments.
-  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-
-  // Batch in chunks (≤ 500 writes)
-  const batches: ReturnType<typeof writeBatch>[] = [];
-  let batch = writeBatch(db);
-  let count = 0;
-
-  for (const dept of deptsSnap.docs) {
-    const areasQ = query(collection(db, 'venues', venueId, 'departments', dept.id, 'areas'));
-    const areasSnap = await getDocs(areasQ);
-
-    for (const area of areasSnap.docs) {
-      // Your rules allow any of these combinations when cycleResetAt is present:
-      // ['cycleResetAt'] OR ['cycleResetAt','updatedAt'] OR
-      // ['startedAt','completedAt','cycleResetAt'] (+ optional 'updatedAt')
-      batch.update(area.ref, {
-        startedAt: null,
-        completedAt: null,
-        cycleResetAt: now,
-        updatedAt,
-      });
-      count++;
-      if (count >= 450) {            // keep headroom
-        batches.push(batch);
-        batch = writeBatch(db);
-        count = 0;
-      }
-    }
+  // Pass B: nested areas -> /venues/{venueId}/departments/*/areas/*
+  const deptsCol = collection(db, 'venues', venueId, 'departments');
+  const deptsSnap = await getDocs(deptsCol);
+  for (const d of deptsSnap.docs) {
+    const areasCol = collection(db, 'venues', venueId, 'departments', d.id, 'areas');
+    const areasSnap = await getDocs(areasCol);
+    areasSnap.forEach(a => {
+      batch.set(doc(db, 'venues', venueId, 'departments', d.id, 'areas', a.id), payload, { merge: true });
+    });
   }
-  // push any remaining ops
-  if (count > 0) batches.push(batch);
 
-  // Commit in order
-  for (const b of batches) {
-    await b.commit();
-  }
+  await batch.commit();
+  return { resetAt: now.toDate(), venueAreas: venueAreasSnap.size, nestedDepts: deptsSnap.size };
 }
