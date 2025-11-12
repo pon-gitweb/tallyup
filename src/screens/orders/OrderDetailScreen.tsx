@@ -230,22 +230,6 @@ export default function OrderDetailScreen() {
   };
   const manualTotal = manualLines.reduce((s,l)=> s + (Number(l.qty||0) * Number(l.unitPrice||0)), 0);
 
-  // --- NEW: auto-open receive UI when navigated with receiveNow
-  const openedRef = useRef(false);
-  const navParams: any = route?.params || {};
-  useEffect(() => {
-    if (openedRef.current) return;
-    if (navParams?.receiveNow) {
-      openedRef.current = true;
-      if (navParams?.receiveMode === 'manual') {
-        setManualOpen(true);
-      } else {
-        // 'upload' | 'scan' (we surface the combined chooser; scan is stubbed)
-        setReceiveOpen(true);
-      }
-    }
-  }, [navParams?.receiveNow, navParams?.receiveMode]);
-
   return (
     <View style={S.wrap}>
       <View style={S.top}>
@@ -255,108 +239,178 @@ export default function OrderDetailScreen() {
             {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
           </Text>
         </View>
+        {String(orderMeta?.status).toLowerCase()==='submitted' ? (
+          <TouchableOpacity style={S.receiveBtn} onPress={()=>setReceiveOpen(true)}>
+            <Text style={S.receiveBtnText}>Receive</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      <ScrollView style={{flex:1}} contentContainerStyle={{padding:16}}>
-        <Text style={{fontWeight:'800', marginBottom:6}}>Lines</Text>
-        <View style={{borderWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB',borderRadius:8}}>
-          {lines.length===0 ? (
-            <View style={{padding:12}}><Text style={{color:'#6B7280'}}>No lines.</Text></View>
-          ) : lines.map(l=>(
-            <View key={l.id} style={{flexDirection:'row',justifyContent:'space-between',padding:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
-              <Text style={{flex:1,marginRight:8}}>{l.name || l.id}</Text>
-              <Text style={{width:60,textAlign:'right'}}>{Number(l.qty||0)}</Text>
-              <Text style={{width:80,textAlign:'right'}}>${Number(l.unitCost||0).toFixed(2)}</Text>
+      {csvReview ? (
+        <ScrollView style={{flex:1}}>
+          <View style={{padding:16}}>
+            <ConfidenceBanner score={csvReview.confidence} />
+            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (CSV)</Text>
+            {(csvReview.lines||[]).slice(0,80).map((pl:any,idx:number)=>(
+              <View key={idx} style={S.line}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${Number(pl.unitPrice||0).toFixed(2)}</Text>
+              </View>
+            ))}
+            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+              <TouchableOpacity style={S.btnGhost} onPress={()=>setCsvReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
+                try{
+                  const done = await finalizeReceiveFromCsv({ venueId, orderId, parsed: csvReview });
+                  if (!done?.ok) throw new Error(done?.error || 'Receive failed');
+                  Alert.alert('Received', 'Invoice posted and order marked received.');
+                  setCsvReview(null); nav.goBack();
+                }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
+              }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
             </View>
-          ))}
-        </View>
-
-        <View style={{marginTop:12,alignItems:'flex-end'}}>
-          <Text style={{fontWeight:'800'}}>Ordered total: ${totalOrdered.toFixed(2)}</Text>
-        </View>
-      </ScrollView>
-
-      {/* Floating Receive button */}
-      <TouchableOpacity style={S.receiveBtn} onPress={()=>setReceiveOpen(true)}>
-        <Text style={{color:'#fff',fontWeight:'800'}}>Receive</Text>
-      </TouchableOpacity>
-
-      {/* Receive mode chooser (Upload / Scan / Manual route) */}
-      <Modal visible={receiveOpen} transparent animationType="fade" onRequestClose={()=>setReceiveOpen(false)}>
-        <TouchableOpacity activeOpacity={1} style={{flex:1,justifyContent:'flex-end',backgroundColor:'rgba(0,0,0,0.3)'}} onPress={()=>setReceiveOpen(false)}>
-          <View style={{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16}}>
-            <Text style={{fontSize:18,fontWeight:'800',marginBottom:8}}>Receive Options</Text>
-            <Text style={{color:'#6B7280',marginBottom:12}}>Choose how you want to receive this order.</Text>
-
-            <TouchableOpacity style={S.rowBtn} onPress={pickInvoiceAndProcess}>
-              <Text style={S.rowBtnTxt}>Upload invoice (CSV/PDF)</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[S.rowBtn,{opacity:0.6}]} onPress={()=>Alert.alert('Scan', 'Scan/OCR stub for now.')}>
-              <Text style={S.rowBtnTxt}>Scan delivery (stub)</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={S.rowBtn} onPress={()=>{ setReceiveOpen(false); setManualOpen(true); }}>
-              <Text style={S.rowBtnTxt}>Enter manually</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[S.rowBtn,{backgroundColor:'#F3F4F6'}]} onPress={()=>setReceiveOpen(false)}>
-              <Text style={[S.rowBtnTxt,{color:'#111827'}]}>Cancel</Text>
-            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </ScrollView>
+      ) : pdfReview ? (
+        <ScrollView style={{flex:1}}>
+          <View style={{padding:16}}>
+            <ConfidenceBanner score={pdfReview.confidence} />
+            <Text style={{fontSize:16,fontWeight:'800',marginBottom:8}}>Review Invoice (PDF)</Text>
+            {(pdfReview.lines||[]).slice(0,80).map((pl:any,idx:number)=>(
+              <View key={idx} style={S.line}>
+                <Text style={{fontWeight:'700'}}>{pl.name || pl.code || '(line)'}</Text>
+                <Text style={{color:'#6B7280'}}>Qty: {pl.qty} • Unit: ${Number(pl.unitPrice||0).toFixed(2)}</Text>
+              </View>
+            ))}
+            <View style={{flexDirection:'row',gap:12,marginTop:16}}>
+              <TouchableOpacity style={S.btnGhost} onPress={()=>setPdfReview(null)}><Text style={S.btnGhostText}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
+                try{
+                  const done = await finalizeReceiveFromPdf({ venueId, orderId, parsed: pdfReview });
+                  if (!done?.ok) throw new Error(done?.error || 'Receive failed');
+                  Alert.alert('Received', 'Invoice posted and order marked received.');
+                  setPdfReview(null); nav.goBack();
+                }catch(e){ Alert.alert('Receive failed', String((e as any)?.message||e)); }
+              }}><Text style={S.btnSolidText}>Confirm & Post</Text></TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      ) : (
+        <FlatList
+          data={lines}
+          keyExtractor={(it)=>it.id}
+          contentContainerStyle={{padding:16}}
+          ItemSeparatorComponent={()=> <View style={{height:8}}/>}
+          ListHeaderComponent={
+            <View style={{paddingBottom:8}}>
+              <Text style={{fontSize:16,fontWeight:'800'}}>Order Lines</Text>
+              <Text style={{color:'#6B7280'}}>Estimated total: ${totalOrdered.toFixed(2)}</Text>
+            </View>
+          }
+          renderItem={({item})=>(
+            <View style={S.line}>
+              <Text style={{fontWeight:'700'}}>{item.name || item.id}</Text>
+              <Text style={{color:'#6B7280'}}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost||0).toFixed(2)}</Text>
+            </View>
+          )}
+        />
+      )}
+
+      {/* Receive chooser (balanced layout) */}
+      <Modal visible={receiveOpen} animationType="slide" onRequestClose={()=>setReceiveOpen(false)}>
+        <View style={{flex:1, padding:16, backgroundColor:'#fff'}}>
+          <Text style={{fontSize:18, fontWeight:'900', marginBottom:12}}>Receive options</Text>
+
+          <TouchableOpacity style={S.rowBtn} onPress={()=>{ setReceiveOpen(false); setManualOpen(true); }}>
+            <Text style={S.rowBtnTitle}>Manual Receive</Text>
+            <Text style={S.rowBtnSub}>Enter invoice number, adjust qty & prices, add/remove items</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={S.rowBtn} onPress={pickInvoiceAndProcess}>
+            <Text style={S.rowBtnTitle}>Upload Invoice (CSV / PDF)</Text>
+            <Text style={S.rowBtnSub}>Detect and reconcile automatically (soft-fail if needed)</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[S.rowBtn,{backgroundColor:'#F3F4F6'}]} onPress={()=>setReceiveOpen(false)}>
+            <Text style={[S.rowBtnTitle,{color:'#111'}]}>Close</Text>
+          </TouchableOpacity>
+        </View>
       </Modal>
 
-      {/* Manual invoice modal */}
-      <Modal visible={manualOpen} transparent animationType="slide" onRequestClose={()=>setManualOpen(false)}>
-        <View style={{flex:1,backgroundColor:'rgba(0,0,0,0.5)',justifyContent:'flex-end'}}>
-          <View style={{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16,maxHeight:'85%'}}>
-            <Text style={{fontSize:18,fontWeight:'800',marginBottom:8}}>Manual Invoice</Text>
+      {/* Manual Receive editor */}
+      <Modal visible={manualOpen} animationType="slide" onRequestClose={()=>setManualOpen(false)}>
+        <View style={{flex:1, backgroundColor:'#fff'}}>
+          <View style={{padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#e5e7eb'}}>
+            <Text style={{fontSize:18, fontWeight:'900'}}>Manual Invoice</Text>
+            <View style={{marginTop:10, flexDirection:'row', alignItems:'center', gap:10}}>
+              <Text style={{fontWeight:'600'}}>Invoice #</Text>
+              <TextInput
+                value={manualInvoiceNo}
+                onChangeText={setManualInvoiceNo}
+                placeholder="e.g., INV-12345"
+                style={{flex:1, borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingHorizontal:10, height:40}}
+              />
+            </View>
+          </View>
 
-            <Text style={{fontWeight:'700',marginBottom:6}}>Invoice number</Text>
-            <TextInput value={manualInvoiceNo} onChangeText={setManualInvoiceNo} placeholder="e.g., SF-12345" style={{borderWidth:1,borderColor:'#E5E7EB',borderRadius:8,paddingHorizontal:12,paddingVertical:8,marginBottom:12}} />
-
-            <Text style={{fontWeight:'700',marginBottom:6}}>Lines</Text>
-            <ScrollView style={{maxHeight:300,borderWidth:1,borderColor:'#E5E7EB',borderRadius:8}}>
-              {manualLines.map((row,idx)=>(
-                <View key={idx} style={{flexDirection:'row',alignItems:'center',gap:8,padding:8,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'}}>
-                  <TextInput value={row.name} onChangeText={(v)=>updateManualLine(idx,{name:v})} style={{flex:1,borderWidth:1,borderColor:'#E5E7EB',borderRadius:6,paddingHorizontal:8,paddingVertical:6}} />
-                  <TextInput value={String(row.qty)} onChangeText={(v)=>updateManualLine(idx,{qty:Number(v)||0})} keyboardType="numeric" style={{width:70,borderWidth:1,borderColor:'#E5E7EB',borderRadius:6,paddingHorizontal:8,paddingVertical:6,textAlign:'right'}} />
-                  <TextInput value={row.unitPrice!=null?String(row.unitPrice):''} onChangeText={(v)=>updateManualLine(idx,{unitPrice:Number(v)||0})} keyboardType="numeric" style={{width:90,borderWidth:1,borderColor:'#E5E7EB',borderRadius:6,paddingHorizontal:8,paddingVertical:6,textAlign:'right'}} />
-                  <TouchableOpacity onPress={()=>removeManualLine(idx)}><Text style={{fontWeight:'800'}}>✕</Text></TouchableOpacity>
+          <ScrollView style={{flex:1}}>
+            <View style={{padding:16}}>
+              {manualLines.map((l, idx)=>(
+                <View key={idx} style={[S.line,{gap:10}]}>
+                  <TextInput
+                    value={l.name}
+                    onChangeText={(t)=>updateManualLine(idx,{name:t})}
+                    style={{flex:1, borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingHorizontal:10, height:40}}
+                  />
+                  <TextInput
+                    value={String(l.qty)}
+                    keyboardType="numeric"
+                    onChangeText={(t)=>updateManualLine(idx,{qty: Number(t) })}
+                    style={{width:70, textAlign:'center', borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingHorizontal:8, height:40}}
+                  />
+                  <TextInput
+                    value={l.unitPrice==null ? '' : String(l.unitPrice)}
+                    keyboardType="numeric"
+                    onChangeText={(t)=>updateManualLine(idx,{unitPrice: t==='' ? undefined : Number(t) })}
+                    placeholder="$"
+                    style={{width:90, textAlign:'center', borderWidth:1, borderColor:'#e5e7eb', borderRadius:8, paddingHorizontal:8, height:40}}
+                  />
+                  <TouchableOpacity onPress={()=>removeManualLine(idx)} style={{paddingHorizontal:8, paddingVertical:6}}>
+                    <Text style={{color:'#b91c1c', fontWeight:'800'}}>Delete</Text>
+                  </TouchableOpacity>
                 </View>
               ))}
-            </ScrollView>
-
-            <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:8}}>
-              <TouchableOpacity onPress={addManualLine} style={{paddingVertical:8,paddingHorizontal:12,backgroundColor:'#111827',borderRadius:8}}>
-                <Text style={{color:'#fff',fontWeight:'800'}}>Add line</Text>
+              <TouchableOpacity onPress={addManualLine} style={[S.btnGhost,{marginTop:8}]}>
+                <Text style={S.btnGhostText}>+ Add Item</Text>
               </TouchableOpacity>
-              <Text style={{fontWeight:'800'}}>Manual total: ${manualTotal.toFixed(2)}</Text>
+              <Text style={{marginTop:12, color:'#6b7280'}}>Manual total (items only): ${manualTotal.toFixed(2)}</Text>
             </View>
+          </ScrollView>
 
-            <View style={{flexDirection:'row',gap:10,marginTop:12}}>
-              <TouchableOpacity style={[S.btn,{flex:1,backgroundColor:'#111827'}]} onPress={async ()=>{
-                try{
-                  const done = await finalizeReceiveFromManual({
-                    venueId, orderId,
-                    invoiceNo: manualInvoiceNo || null,
-                    lines: manualLines,
-                  });
-                  if (!done?.ok) throw new Error(done?.error || 'Manual receive failed');
-                  Alert.alert('Received','Manual receive saved.');
-                  setManualOpen(false);
-                  nav.goBack();
-                }catch(e:any){
-                  Alert.alert('Manual receive failed', String(e?.message||e));
-                }
-              }}>
-                <Text style={S.btnTxt}>Confirm receive ({manualLines.length})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[S.btn,{flex:1,backgroundColor:'#F3F4F6'}]} onPress={()=>setManualOpen(false)}>
-                <Text style={[S.btnTxt,{color:'#111827'}]}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={{padding:16, borderTopWidth:StyleSheet.hairlineWidth, borderTopColor:'#e5e7eb', flexDirection:'row', gap:12}}>
+            <TouchableOpacity style={S.btnGhost} onPress={()=>setManualOpen(false)}>
+              <Text style={S.btnGhostText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.btnSolid} onPress={async ()=>{
+              try{
+                const parsed = {
+                  invoice: { source:'manual', storagePath:'', poNumber: manualInvoiceNo || null },
+                  lines: manualLines
+                };
+                // snapshot the manual as a "parsed" invoice for history
+                await persistAfterParse({
+                  venueId, orderId, source:'manual', storagePath: '',
+                  payload: parsed,
+                  orderPo: orderMeta?.poNumber ?? null,
+                  parsedPo: manualInvoiceNo || null
+                });
+                const done = await finalizeReceiveFromManual({ venueId, orderId, parsed });
+                if (!done?.ok) throw new Error(done?.error || 'Manual receive failed');
+                Alert.alert('Received', 'Manual invoice posted and order marked received.');
+                setManualOpen(false); nav.goBack();
+              }catch(e){ Alert.alert('Manual receive failed', String((e as any)?.message||e)); }
+            }}>
+              <Text style={S.btnSolidText}>Confirm & Post</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -365,18 +419,21 @@ export default function OrderDetailScreen() {
 }
 
 const S = StyleSheet.create({
-  wrap:{flex:1,backgroundColor:'#fff'},
-  top:{paddingHorizontal:16,paddingTop:12,paddingBottom:8,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
-  title:{fontSize:22,fontWeight:'800'},
-  meta:{color:'#6B7280',marginTop:4},
+  wrap: { flex:1, backgroundColor:'#fff' },
+  top: { padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#E5E7EB' },
+  title: { fontSize:20, fontWeight:'800' },
+  meta: { marginTop:4, color:'#6B7280' },
+  line: { padding:12, backgroundColor:'#F9FAFB', borderRadius:10, borderWidth:1, borderColor:'#EEF2F7', marginBottom:8 },
+  loading: { flex:1, alignItems:'center', justifyContent:'center' },
+  receiveBtn: { backgroundColor:'#111', paddingHorizontal:14, paddingVertical:10, borderRadius:10, position:'absolute', right:16, bottom:16 },
+  receiveBtnText: { color:'#fff', fontWeight:'800' },
 
-  loading:{flex:1,alignItems:'center',justifyContent:'center'},
+  rowBtn: { padding:14, borderRadius:12, backgroundColor:'#111', marginBottom:12 },
+  rowBtnTitle: { color:'#fff', fontWeight:'800', textAlign:'center' },
+  rowBtnSub: { color:'#e5e7eb', textAlign:'center', marginTop:4 },
 
-  receiveBtn:{position:'absolute',right:16,bottom:24,backgroundColor:'#111827',paddingVertical:14,paddingHorizontal:18,borderRadius:999,shadowColor:'#000',shadowOpacity:0.2,shadowRadius:6,elevation:4},
-
-  rowBtn:{paddingVertical:12,backgroundColor:'#111827',borderRadius:8,marginBottom:10,alignItems:'center'},
-  rowBtnTxt:{color:'#fff',fontWeight:'800'},
-
-  btn:{paddingVertical:12,borderRadius:8,alignItems:'center'},
-  btnTxt:{color:'#fff',fontWeight:'800'},
+  btnGhost: { flex:1, paddingVertical:12, backgroundColor:'#F3F4F6', borderRadius:8 },
+  btnGhostText: { textAlign:'center', fontWeight:'700', color:'#374151' },
+  btnSolid: { flex:1, paddingVertical:12, backgroundColor:'#111827', borderRadius:8 },
+  btnSolidText: { textAlign:'center', fontWeight:'700', color:'#fff' },
 });
