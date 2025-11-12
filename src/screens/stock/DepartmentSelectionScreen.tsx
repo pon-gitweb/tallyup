@@ -10,6 +10,7 @@ import { throttleNav } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
+import { resetDepartment } from '../../services/reset';
 
 type Dept = { id: string; name: string };
 type AreaDoc = { startedAt?: any; completedAt?: any };
@@ -111,6 +112,28 @@ function DepartmentSelectionScreen() {
     catch (e: any) { Alert.alert('Delete failed', e?.message ?? 'Unknown error'); }
   }
 
+  async function onResetDepartment(dep: Dept) {
+    if (!venueId) return;
+    let proceed = false;
+    await new Promise<void>((resolve) => {
+      Alert.alert(
+        'Reset department',
+        `Reset all areas in “${dep.name}” to Not started?\n\nThis clears started/completed flags only.`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
+          { text: 'Reset', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
+        ]
+      );
+    });
+    if (!proceed) return;
+    try {
+      await resetDepartment(venueId, dep.id);
+      await reload();
+    } catch (e: any) {
+      Alert.alert('Reset failed', e?.message ?? 'Unknown error');
+    }
+  }
+
   const makeGoToAreas = (departmentId: string) =>
     throttleNav(() => nav.navigate('Areas', { venueId, departmentId }));
 
@@ -122,7 +145,12 @@ function DepartmentSelectionScreen() {
     }[item.status];
 
     return (
-      <TouchableOpacity style={styles.row} onPress={makeGoToAreas(item.id)}>
+      <TouchableOpacity
+        style={styles.row}
+        onPress={makeGoToAreas(item.id)}
+        onLongPress={() => onResetDepartment(item)}
+        delayLongPress={450}
+      >
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name}</Text>
         </View>

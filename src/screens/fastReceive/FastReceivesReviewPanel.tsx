@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { collection, getDocs, orderBy, query, limit, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
@@ -9,13 +9,12 @@ import { useVenueId } from '../../context/VenueProvider';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { listSubmittedOrders } from '../../services/orders/listSubmittedOrders';
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
-import { runPhotoOcr } from '../../services/fastReceive/runPhotoOcr';
 
 import FastReceiveDetailModal from './FastReceiveDetailModal';
 
 type FastRec = {
   id: string;
-  source?: 'csv'|'pdf'|'manual'|'photo'|string;
+  source?: 'csv'|'pdf'|'manual'|string;
   storagePath?: string;
   parsedPo?: string|null;
   status?: 'pending'|'attached'|'reconciled';
@@ -28,7 +27,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
   const db = getFirestore(getApp());
   const [rows, setRows] = useState<FastRec[]>([]);
   const [busyId, setBusyId] = useState<string|null>(null);
-  const [ocrBusyId, setOcrBusyId] = useState<string|null>(null);
 
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -40,7 +38,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
   const [editPo, setEditPo] = useState<string>('');
   const [editBusy, setEditBusy] = useState(false);
 
-  // Attach chooser modal
+  // Choose submitted order modal
   const [chooserOpen, setChooserOpen] = useState(false);
   const [chooserFor, setChooserFor] = useState<FastRec|null>(null);
   const [orders, setOrders] = useState<any[]>([]);
@@ -67,6 +65,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
 
   const items = useMemo(()=> rows, [rows]);
 
+  /** Try auto-attach by PO (no pending fallback here) */
   const tryAttach = useCallback(async (it: FastRec)=>{
     try{
       if (!venueId) throw new Error('No venue');
@@ -102,6 +101,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
     }
   }, [venueId, load]);
 
+  /** Detail modal */
   const openDetails = useCallback((it: FastRec)=>{
     setDetailItem(it);
     setDetailOpen(true);
@@ -116,6 +116,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
     await load();
   }, [load]);
 
+  /** Edit PO modal */
   const openEditPo = useCallback((it: FastRec)=>{
     const currentPo = (it?.parsedPo ?? it?.payload?.invoice?.poNumber ?? '') as string;
     setEditItem(it);
@@ -146,6 +147,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
     }
   }, [venueId, db, editItem, editPo, load, closeEditPo]);
 
+  /** Attach to a specific Submitted Order */
   const openChooser = useCallback(async (it: FastRec)=>{
     try{
       setChooserFor(it);
@@ -183,31 +185,12 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
     }
   }, [venueId, chooserFor, load, closeChooser]);
 
-  // NEW: Run OCR (for photo snapshots without parsed lines)
-  const runOcrNow = useCallback(async (it: FastRec)=>{
-    try{
-      if (!venueId) throw new Error('No venue');
-      setOcrBusyId(it.id);
-      const res = await runPhotoOcr(venueId, it.id);
-      if (res?.ok) {
-        Alert.alert('OCR processed', `Found ${res.linesCount ?? 0} lines${res.parsedPo ? ` · PO ${res.parsedPo}` : ''}.`);
-        await load();
-      } else {
-        Alert.alert('OCR failed', 'No result returned.');
-      }
-    } catch(e:any){
-      Alert.alert('OCR failed', String(e?.message||e));
-    } finally {
-      setOcrBusyId(null);
-    }
-  }, [venueId, load]);
-
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
       <View style={{ padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#e5e7eb' }}>
         <Text style={{ fontSize:18, fontWeight:'900' }}>Fast Receives (Pending)</Text>
         <Text style={{ color:'#6B7280', marginTop:4 }}>
-          Review snapshots, run OCR for photos, edit PO if needed, and attach to submitted orders.
+          Review snapshots, edit PO if needed, and attach to submitted orders. No duplicates created when re-trying attach.
         </Text>
       </View>
 
@@ -216,13 +199,10 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
           {items.length === 0 ? (
             <Text style={{ color:'#94A3B8' }}>No pending fast receives.</Text>
           ) : items.map(it => {
+            const when = it.createdAt?.toDate ? it.createdAt.toDate().toISOString() : '—';
             const po = it.parsedPo || it?.payload?.invoice?.poNumber || '—';
             const isBusy = busyId === it.id;
             const isPending = (it.status || 'pending') === 'pending';
-            const isPhoto = (it.source||'') === 'photo' || (it?.payload?.invoice?.source === 'photo');
-            const hasLines = Array.isArray(it?.payload?.lines) && it.payload.lines.length > 0;
-            const ocrBusy = ocrBusyId === it.id;
-
             return (
               <View key={it.id} style={S.card}>
                 <Text style={S.title}>Snapshot {it.id}</Text>
@@ -233,18 +213,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
 
                 {isPending ? (
                   <View style={{ flexDirection:'row', gap:8, marginTop:10, flexWrap:'wrap' }}>
-                    {/* NEW: Run OCR button */}
-                    {isPhoto && !hasLines && (
-                      <TouchableOpacity
-                        disabled={ocrBusy}
-                        onPress={() => runOcrNow(it)}
-                        style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#7c3aed' }}>
-                        <Text style={{ color:'#fff', fontWeight:'800' }}>
-                          {ocrBusy ? 'Running OCR…' : 'Run OCR (Photo)'}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-
                     <TouchableOpacity
                       onPress={() => openDetails(it)}
                       style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#0ea5e9' }}>
@@ -325,7 +293,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
         </View>
       </Modal>
 
-      {/* Attach chooser */}
+      {/* Attach chooser modal */}
       <Modal visible={chooserOpen} animationType="slide" onRequestClose={closeChooser}>
         <View style={{ flex:1, backgroundColor:'#fff' }}>
           <View style={{ padding:16, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#e5e7eb', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>

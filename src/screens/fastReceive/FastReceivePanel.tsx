@@ -1,8 +1,8 @@
 // @ts-nocheck
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
@@ -14,59 +14,60 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
 
-  // CAMERA: capture, upload JPEG, create pending snapshot (OCR comes later)
+  // Camera capture -> upload -> pending snapshot (no OCR yet)
   const takePhoto = useCallback(async ()=>{
-    try {
+    try{
       if (!venueId) throw new Error('Not ready: no venue selected');
 
-      const cam = await ImagePicker.requestCameraPermissionsAsync();
-      if (cam.status !== 'granted') {
-        Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Camera denied', 'Enable camera permissions to capture a photo.');
         return;
       }
 
-      const photo = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.85,
-        base64: false,
+        exif: false,
+        allowsEditing: false,
       });
-      if (photo.canceled || !photo.assets?.[0]?.uri) return;
+      if (res.canceled || !res.assets?.[0]?.uri) return;
 
       setBusy(true);
-      const asset = photo.assets[0];
-      const filename = `invoice_${Date.now()}.jpg`;
+      const a = res.assets[0];
+      const filename = a.fileName || `fast-receive-${Date.now()}.jpg`;
 
-      const up = await uploadFastInvoice(venueId, asset.uri, filename, 'image/jpeg');
+      const up = await uploadFastInvoice(venueId, a.uri, filename, 'image/jpeg');
 
-      const payload = {
-        invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
-        lines: [],
-        confidence: null,
-        warnings: ['OCR not yet enabled: review photo and attach to order manually.'],
-      };
-
+      // Save a pending snapshot; OCR will later update this doc
       const save = await persistFastReceiveSnapshot({
         venueId,
         source: 'photo',
         storagePath: up.fullPath,
-        payload,
         parsedPo: null,
+        payload: {
+          invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
+          lines: [],
+          confidence: null,
+          warnings: ['ocr_pending: no text extraction performed yet'],
+        },
       });
       if (!save || save.ok !== true) {
+        const path = `venues/${venueId}/fastReceives`;
         const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied: ${msg}`);
+        throw new Error(`FastReceive snapshot write denied at ${path}: ${msg}`);
       }
 
-      Alert.alert('Photo saved', 'Snapshot created under Fast Receives (Pending). You can attach it to a submitted order.');
+      Alert.alert('Photo Saved', 'Captured image saved as a Pending Fast Receive.');
       onClose();
-    } catch (e:any) {
-      Alert.alert('Photo capture failed', String(e?.message || e));
+    } catch(e:any){
+      Alert.alert('Photo capture failed', String(e?.message||e));
     } finally {
       setBusy(false);
     }
   }, [venueId, onClose]);
 
-  // CSV/PDF upload — unchanged
+  // CSV/PDF flow (unchanged)
   const pickAndProcess = useCallback(async ()=>{
     try{
       const res = await DocumentPicker.getDocumentAsync({
@@ -118,7 +119,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         onClose();
       } else {
         const nLines = Array.isArray(parsed?.lines) ? parsed.lines.length : 0;
-        Alert.alert('Saved for Review', `No submitted PO found. Saved as Pending Fast Receive (${nLines} lines). Managers can attach later.`);
+        Alert.alert('Saved for Review', `No submitted PO found. Saved as Pending Fast Receive (${nLines} lines).`);
         onClose();
       }
     }catch(e:any){
@@ -128,19 +129,19 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
     }
   }, [venueId, onClose]);
 
-  const quickTip = useMemo(()=>{
-    return 'Tip: If the scan finds ≥5 lines and ≥50 items, we’ll prompt for item check-off. Fewer lines/items can be quick-confirmed.';
-  }, []);
+  const quickTip = useMemo(()=>(
+    'Tip: CSV/PDF auto-parse now; Photo saves a pending snapshot. OCR will update the same snapshot later.'
+  ), []);
 
   return (
     <View style={{ flex:1, padding:16, backgroundColor:'#fff' }}>
       <Text style={{ fontSize:18, fontWeight:'900', marginBottom:8 }}>Fast Receive (Scan / Upload)</Text>
       <Text style={{ color:'#6B7280', marginBottom:12 }}>
-        Receive deliveries without opening Submitted Orders. We’ll try to match a PO and attach automatically.
+        Receive deliveries without opening Submitted Orders. CSV/PDF tries to auto-attach by PO.
       </Text>
 
       <TouchableOpacity disabled={busy} onPress={takePhoto} style={{ padding:14, borderRadius:12, backgroundColor:'#0ea5e9', marginBottom:10 }}>
-        <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Working…' : 'Take Photo (OCR-ready)'}</Text>
+        <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Working…' : 'Take Photo (Save Pending)'}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity disabled={busy} onPress={pickAndProcess} style={{ padding:14, borderRadius:12, backgroundColor:'#111', marginBottom:10 }}>

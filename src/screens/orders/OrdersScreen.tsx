@@ -228,7 +228,7 @@ export default function OrdersScreen(){
 
   const renderItem=useCallback(({item}:{item:OrderRow})=>{
     const bits:string[]=[];
-    if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':'s'}`);
+    if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':''}`);
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
     const statusText = (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
@@ -268,7 +268,12 @@ export default function OrdersScreen(){
           </View>
         </TouchableOpacity>
 
-        {null}
+        {/* Right-side actions */}
+        {isSubmitted && !isHeld ? (
+          <TouchableOpacity style={S.smallBtn} onPress={()=>startReceive(item)}>
+            <Text style={S.smallBtnText}>Receive</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   },[openRow,startReceive,confirmDelete]);
