@@ -92,9 +92,27 @@ export default function StockControlScreen() {
           <IdentityBadge />
         </View>
 
-        {/* Existing items */}
+        {/* Setup guidance */}
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionLabel}>Setup</Text>
+          <Text style={styles.sectionHelp}>
+            Start by adding your suppliers and products. You can enter items one-by-one or later use Supplier
+            Tools in Products to link price lists and catalogues.
+          </Text>
+        </View>
+
+        {/* Setup items */}
         <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
         <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
+
+        {/* Day-to-day operations */}
+        <View style={[styles.sectionBlock, { marginTop: 18 }]}>
+          <Text style={styles.sectionLabel}>Day-to-day</Text>
+          <Text style={styles.sectionHelp}>
+            Use these tools for ordering, receiving, invoices and recipes once your base setup is in place.
+          </Text>
+        </View>
+
         <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
         <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
         {/* Reset Stock Take was removed previously as requested */}
@@ -116,7 +134,9 @@ export default function StockControlScreen() {
       <Modal visible={showSuppliers} animationType="slide" onRequestClose={() => setShowSuppliers(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowSuppliers(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSuppliers(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Suppliers</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -128,7 +148,9 @@ export default function StockControlScreen() {
       <Modal visible={showProducts} animationType="slide" onRequestClose={() => setShowProducts(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowProducts(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowProducts(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Products</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -140,7 +162,9 @@ export default function StockControlScreen() {
       <Modal visible={showFastReceive} animationType="slide" onRequestClose={() => setShowFastReceive(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFastReceive(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowFastReceive(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Fast Receive</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -152,7 +176,9 @@ export default function StockControlScreen() {
       <Modal visible={showFastReview} animationType="slide" onRequestClose={() => setShowFastReview(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFastReview(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowFastReview(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Fast Receives (Pending)</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -164,7 +190,9 @@ export default function StockControlScreen() {
       <Modal visible={showSalesImport} animationType="slide" onRequestClose={() => setShowSalesImport(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowSalesImport(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSalesImport(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Sales Reports (Import)</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -176,7 +204,9 @@ export default function StockControlScreen() {
       <Modal visible={showRecon} animationType="slide" onRequestClose={() => setShowRecon(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowRecon(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowRecon(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Invoice Reconciliations</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -190,7 +220,9 @@ export default function StockControlScreen() {
       <Modal visible={showCraftUp} animationType="slide" onRequestClose={() => setShowCraftUp(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowCraftUp(false)}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowCraftUp(false)}>
+              <Text style={styles.back}>‹ Back</Text>
+            </TouchableOpacity>
             <Text style={styles.modalTitle}>Craft-It (Recipe Creator)</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -206,13 +238,32 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   title: { fontSize: 22, fontWeight: '800' },
   subtitle: { color: '#6B7280', marginTop: 2 },
+
+  sectionBlock: { marginBottom: 10 },
+  sectionLabel: { fontSize: 13, fontWeight: '800', color: '#4B5563', textTransform: 'uppercase', marginBottom: 2 },
+  sectionHelp: { fontSize: 12, color: '#6B7280' },
+
   row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#F9FAFB'
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 10,
+    backgroundColor: '#F9FAFB',
   },
   rowText: { fontSize: 16, fontWeight: '700' },
   chev: { fontSize: 22, color: '#94A3B8', marginLeft: 8 },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderColor: '#E5E7EB' },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderColor: '#E5E7EB',
+  },
   back: { fontSize: 18, color: '#2563EB', width: 60 },
   modalTitle: { fontSize: 18, fontWeight: '800' },
 });
