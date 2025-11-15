@@ -89,3 +89,4 @@ exports.refreshMyClaims = functions.https.onCall(async (data, context) => {
     await setClaims(uid, venueId, role);
     return { refreshed: true };
 });
+//# sourceMappingURL=membership.js.map

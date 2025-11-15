@@ -53,14 +53,19 @@ function extractPo(text) {
 }
 function extractLines(text) {
     const out = [];
-    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const lines = text
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
     for (const raw of lines) {
         const qtyMatch = raw.match(/\b(\d{1,4})\s*(?:x|@)?\b/i);
         const priceMatch = raw.match(/\$?\s*(\d{1,5}(?:\.\d{1,2})?)\s*$/);
         const qty = qtyMatch ? Number(qtyMatch[1]) : NaN;
         const price = priceMatch ? Number(priceMatch[1]) : NaN;
         if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(price) && price > 0) {
-            const name = raw.replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "").trim();
+            const name = raw
+                .replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "")
+                .trim();
             if (name.length >= 3)
                 out.push({ name, qty, unitPrice: price });
         }
@@ -102,7 +107,8 @@ exports.ocrFastReceivePhoto = functions
         if (!storagePathArg) {
             throw new functions.https.HttpsError("not-found", "Snapshot not found and no storagePath provided.");
         }
-        const q = await db.collection(`venues/${venueId}/fastReceives`)
+        const q = await db
+            .collection(`venues/${venueId}/fastReceives`)
             .where("storagePath", "==", storagePathArg)
             .limit(1)
             .get();
@@ -127,8 +133,10 @@ exports.ocrFastReceivePhoto = functions
         [buf] = await bucket.file(storagePath).download();
     }
     catch (e) {
-        console.error("[ocrFastReceivePhoto] download failed", { storagePath }, e?.message || e);
-        throw new functions.https.HttpsError("internal", "download failed: " + (e?.message || e));
+        const err = e;
+        const msg = err?.message || String(err);
+        console.error("[ocrFastReceivePhoto] download failed", { storagePath }, msg);
+        throw new functions.https.HttpsError("internal", "download failed: " + msg);
     }
     const [result] = await vision.textDetection({ image: { content: buf } });
     const text = result?.fullTextAnnotation?.text ||
@@ -138,8 +146,11 @@ exports.ocrFastReceivePhoto = functions
         await fastRef.set({
             payload: {
                 ...(fast.payload || {}),
-                warnings: [...(fast.payload?.warnings || []), "OCR returned no text."]
-            }
+                warnings: [
+                    ...(fast.payload?.warnings || []),
+                    "OCR returned no text.",
+                ],
+            },
         }, { merge: true });
         return { ok: true, parsedPo: null, linesCount: 0, info: "no-text" };
     }
@@ -157,8 +168,12 @@ exports.ocrFastReceivePhoto = functions
             },
             lines,
             confidence,
-            warnings: [...(fast.payload?.warnings || []), "OCR processed (beta heuristics)."]
-        }
+            warnings: [
+                ...(fast.payload?.warnings || []),
+                "OCR processed (beta heuristics).",
+            ],
+        },
     }, { merge: true });
     return { ok: true, parsedPo, linesCount: lines.length };
 });
+//# sourceMappingURL=ocrFastReceivePhoto.js.map

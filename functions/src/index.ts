@@ -1,11 +1,23 @@
-import * as admin from 'firebase-admin';
+import * as admin from "firebase-admin";
 
-// Initialize Admin exactly once (safe on hot-reload)
-try { admin.app(); } catch { admin.initializeApp(); }
+// Initialize Admin exactly once (safe on hot reload)
+try {
+  admin.app();
+} catch {
+  admin.initializeApp();
+}
 
 // === Membership (claims sync + callable) ===
-export { onMemberWrite, refreshMyClaims } from './membership';
-export { onOcrJobQueued } from './ocr/parseInvoice';
+export { onMemberWrite, refreshMyClaims } from "./membership";
 
-// === OCR callable ===
-export { ocrFastReceivePhoto } from './ocrFastReceivePhoto';
+// === Invoice OCR job queue (PDF/CSV etc) ===
+export { onOcrJobQueued } from "./ocr/parseInvoice";
+
+// === Fast Receive photo OCR (uses fastReceives snapshots) ===
+export { ocrFastReceivePhoto } from "./ocrFastReceivePhoto";
+
+// === Supplier card OCR ===
+export { ocrSupplierCard } from "./ocr/ocrSupplierCard";
+
+// === Invoice photo OCR (direct photo → lines) ===
+export { ocrInvoicePhoto } from "./ocrInvoicePhoto";

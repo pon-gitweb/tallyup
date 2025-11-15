@@ -21,7 +21,10 @@ type ParsedLine = { name: string; qty: number; unitPrice?: number };
 
 function extractLines(text: string): ParsedLine[] {
   const out: ParsedLine[] = [];
-  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const lines = text
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
 
   for (const raw of lines) {
     const qtyMatch = raw.match(/\b(\d{1,4})\s*(?:x|@)?\b/i);
@@ -30,7 +33,9 @@ function extractLines(text: string): ParsedLine[] {
     const price = priceMatch ? Number(priceMatch[1]) : NaN;
 
     if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(price) && price > 0) {
-      const name = raw.replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "").trim();
+      const name = raw
+        .replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "")
+        .trim();
       if (name.length >= 3) out.push({ name, qty, unitPrice: price });
     }
     if (out.length >= 40) break;
@@ -45,16 +50,23 @@ function extractLines(text: string): ParsedLine[] {
   return out;
 }
 
+type FastReceiveData = {
+  venueId?: string;
+  fastId?: string;
+  storagePath?: string;
+};
+
 // IMPORTANT: region pinned to us-central1 to match the app caller
 export const ocrFastReceivePhoto = functions
   .region("us-central1")
-  .https.onCall(async (data, context) => {
+  .https.onCall(async (data: FastReceiveData, context) => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
     }
+
     const uid = String(context.auth.uid || "");
     const venueId = String(data?.venueId || "");
-    const fastId  = data?.fastId ? String(data.fastId) : "";
+    const fastId = data?.fastId ? String(data.fastId) : "";
     const storagePathArg = data?.storagePath ? String(data.storagePath) : "";
 
     if (!venueId) {
@@ -65,7 +77,10 @@ export const ocrFastReceivePhoto = functions
     const memberRef = db.doc(`venues/${venueId}/members/${uid}`);
     const memberSnap = await memberRef.get();
     if (!memberSnap.exists) {
-      throw new functions.https.HttpsError("permission-denied", "Not a member of this venue.");
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Not a member of this venue."
+      );
     }
 
     // Load snapshot by ID, else fallback to storagePath
@@ -74,37 +89,64 @@ export const ocrFastReceivePhoto = functions
 
     if (!fastSnap?.exists) {
       if (!storagePathArg) {
-        throw new functions.https.HttpsError("not-found", "Snapshot not found and no storagePath provided.");
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Snapshot not found and no storagePath provided."
+        );
       }
-      const q = await db.collection(`venues/${venueId}/fastReceives`)
+      const q = await db
+        .collection(`venues/${venueId}/fastReceives`)
         .where("storagePath", "==", storagePathArg)
         .limit(1)
         .get();
       if (q.empty) {
-        throw new functions.https.HttpsError("not-found", "Snapshot not found by storagePath.");
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Snapshot not found by storagePath."
+        );
       }
       fastSnap = q.docs[0];
       fastRef = fastSnap.ref;
     }
 
-    const fast = fastSnap.data() || {};
+    const fast = fastSnap!.data() || {};
     const storagePath = String(
       fast.storagePath ||
-      fast?.payload?.invoice?.storagePath ||
-      storagePathArg ||
-      ""
+        fast?.payload?.invoice?.storagePath ||
+        storagePathArg ||
+        ""
     );
+
     if (!storagePath) {
-      throw new functions.https.HttpsError("failed-precondition", "No storagePath on snapshot.");
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "No storagePath on snapshot."
+      );
     }
 
     const bucket = admin.storage().bucket();
-    console.log("[ocrFastReceivePhoto] bucket=", bucket.name, "storagePath=", storagePath);
-    let buf; try { 
+    console.log(
+      "[ocrFastReceivePhoto] bucket=",
+      bucket.name,
+      "storagePath=",
+      storagePath
+    );
+
+    let buf: Buffer;
+    try {
       [buf] = await bucket.file(storagePath).download();
     } catch (e) {
-      console.error("[ocrFastReceivePhoto] download failed", { storagePath }, e?.message || e);
-      throw new functions.https.HttpsError("internal", "download failed: " + (e?.message || e));
+      const err = e as any;
+      const msg = err?.message || String(err);
+      console.error(
+        "[ocrFastReceivePhoto] download failed",
+        { storagePath },
+        msg
+      );
+      throw new functions.https.HttpsError(
+        "internal",
+        "download failed: " + msg
+      );
     }
 
     const [result] = await vision.textDetection({ image: { content: buf } });
@@ -114,33 +156,45 @@ export const ocrFastReceivePhoto = functions
       "";
 
     if (!text.trim()) {
-      await fastRef!.set({
-        payload: {
-          ...(fast.payload || {}),
-          warnings: [ ...(fast.payload?.warnings || []), "OCR returned no text." ]
-        }
-      }, { merge: true });
-      return { ok: true, parsedPo: null, linesCount: 0, info: "no-text" };
+      await fastRef!.set(
+        {
+          payload: {
+            ...(fast.payload || {}),
+            warnings: [
+              ...(fast.payload?.warnings || []),
+              "OCR returned no text.",
+            ],
+          },
+        },
+        { merge: true }
+      );
+      return { ok: true, parsedPo: null, linesCount: 0, info: "no-text" as const };
     }
 
     const parsedPo = extractPo(text);
     const lines = extractLines(text);
     const confidence = 0.5;
 
-    await fastRef!.set({
-      parsedPo: parsedPo ?? null,
-      payload: {
-        ...(fast.payload || {}),
-        invoice: {
-          ...(fast.payload?.invoice || {}),
-          source: "photo",
-          storagePath,
+    await fastRef!.set(
+      {
+        parsedPo: parsedPo ?? null,
+        payload: {
+          ...(fast.payload || {}),
+          invoice: {
+            ...(fast.payload?.invoice || {}),
+            source: "photo",
+            storagePath,
+          },
+          lines,
+          confidence,
+          warnings: [
+            ...(fast.payload?.warnings || []),
+            "OCR processed (beta heuristics).",
+          ],
         },
-        lines,
-        confidence,
-        warnings: [ ...(fast.payload?.warnings || []), "OCR processed (beta heuristics)." ]
-      }
-    }, { merge: true });
+      },
+      { merge: true }
+    );
 
     return { ok: true, parsedPo, linesCount: lines.length };
   });

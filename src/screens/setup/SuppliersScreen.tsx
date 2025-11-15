@@ -12,6 +12,7 @@ import {
   Modal,
   ScrollView,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import {
   listSuppliers,
@@ -20,6 +21,7 @@ import {
   updateSupplier,
   Supplier,
 } from '../../services/suppliers';
+import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 
 function isValidHHmm(s: string) {
   if (!s) return true; // allow blank (means none)
@@ -52,6 +54,7 @@ export default function SuppliersScreen() {
   const [mergeWindowHours, setMergeWindowHours] = useState('');
 
   const [saving, setSaving] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
 
   async function load() {
     if (!venueId) {
@@ -178,6 +181,96 @@ export default function SuppliersScreen() {
     ]);
   }
 
+  // NEW: scan business card / invoice via Photo OCR
+  async function scanFromPhoto(kind: 'card' | 'invoice') {
+    try {
+      if (!venueId) {
+        Alert.alert('No Venue', 'Attach or create a venue first.');
+        return;
+      }
+
+      const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+      if (camPerm.status !== 'granted') {
+        Alert.alert(
+          'Camera permission',
+          'Camera access is required to scan a business card or invoice.'
+        );
+        return;
+      }
+
+      const res = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.6,
+      });
+      if (res.canceled || !res.assets?.length) return;
+
+      setScanBusy(true);
+      const asset = res.assets[0];
+
+      const parsed: any = await runPhotoOcrJob({
+        venueId,
+        localUri: asset.uri,
+      });
+
+      // We keep this very defensive; we only auto-fill if fields are obvious and form fields are empty.
+      const raw: any = parsed?.raw || parsed?.result || {};
+      const supplierName = parsed?.supplierName || raw?.supplierName || '';
+
+      const maybeEmail =
+        raw?.supplier?.email ||
+        raw?.supplierEmail ||
+        raw?.email ||
+        null;
+      const maybePhone =
+        raw?.supplier?.phone ||
+        raw?.supplierPhone ||
+        raw?.phone ||
+        null;
+      const maybePortal =
+        raw?.supplier?.website ||
+        raw?.supplierWebsite ||
+        raw?.website ||
+        null;
+
+      const filled: string[] = [];
+
+      if (supplierName && !name.trim()) {
+        setName(supplierName);
+        filled.push('name');
+      }
+      if (maybeEmail && !email.trim()) {
+        setEmail(String(maybeEmail));
+        filled.push('email');
+      }
+      if (maybePhone && !phone.trim()) {
+        setPhone(String(maybePhone));
+        filled.push('phone');
+      }
+      if (maybePortal && !portalUrl.trim()) {
+        setPortalUrl(String(maybePortal));
+        filled.push('portal URL');
+      }
+
+      if (filled.length) {
+        Alert.alert(
+          'Details added',
+          `We used the ${kind === 'card' ? 'card' : 'invoice'} to fill: ${filled.join(
+            ', '
+          )}. You can edit anything before saving.`
+        );
+      } else {
+        Alert.alert(
+          'No obvious details',
+          'We ran OCR but could not confidently pick out supplier details. You can still fill the form manually.'
+        );
+      }
+    } catch (e: any) {
+      Alert.alert('Scan failed', e?.message || 'Unknown error');
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return rows;
@@ -273,6 +366,50 @@ export default function SuppliersScreen() {
             contentContainerStyle={styles.formScroll}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Fast add / capture portal */}
+            <View style={styles.captureCard}>
+              <Text style={styles.captureTitle}>Fast add from photo</Text>
+              <Text style={styles.captureHint}>
+                Take a photo of a business card or invoice and we’ll auto-fill what we can for this
+                supplier.
+              </Text>
+
+              <View style={styles.captureRow}>
+                <TouchableOpacity
+                  style={[styles.capturePill, scanBusy && { opacity: 0.6 }]}
+                  disabled={scanBusy}
+                  onPress={() => scanFromPhoto('card')}
+                >
+                  <Text style={styles.capturePillText}>
+                    {scanBusy ? 'Scanning…' : 'Scan business card'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.capturePill, scanBusy && { opacity: 0.6 }]}
+                  disabled={scanBusy}
+                  onPress={() => scanFromPhoto('invoice')}
+                >
+                  <Text style={styles.capturePillText}>
+                    {scanBusy ? 'Scanning…' : 'Scan invoice'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.capturePill, { alignSelf: 'flex-start', marginTop: 6 }]}
+                onPress={() =>
+                  Alert.alert(
+                    'Upload CSV / PDF',
+                    'Coming soon: drop in a CSV or PDF from this supplier and we’ll set them up and prepare their catalogue.'
+                  )
+                }
+              >
+                <Text style={styles.capturePillText}>Upload CSV / PDF</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Main details form */}
             <Text style={styles.lbl}>Name</Text>
             <TextInput
               style={styles.inp}
@@ -460,33 +597,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 
+  // Capture portal
+  captureCard: {
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#F3F4FF',
+    borderWidth: 1,
+    borderColor: '#E0E7FF',
+  },
+  captureTitle: {
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  captureHint: {
+    fontSize: 12,
+    color: '#4B5563',
+    marginBottom: 6,
+  },
+  captureRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  capturePill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#111827',
+  },
+  capturePillText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  section: { fontSize: 13, fontWeight: '800', marginTop: 12 },
   toolsCard: {
     marginTop: 10,
     padding: 10,
     borderRadius: 12,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#F9FAFB',
     borderWidth: 1,
-    borderColor: '#DBEAFE',
-  },
-  toolsTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginBottom: 4,
-    color: '#1E3A8A',
-  },
-  toolsText: { fontSize: 12, color: '#1F2937', marginBottom: 2 },
-  toolsTextSmall: { fontSize: 11, color: '#4B5563' },
-
-  formActions: {
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: '#E5E7EB',
   },
-  cancelBtn: {
-    marginTop: 4,
-    alignSelf: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  toolsTitle: { fontWeight: '800', marginBottom: 4 },
+  toolsText: { fontSize: 12, color: '#4B5563' },
+  toolsTextSmall: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
+
+  formActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingTop: 8,
   },
-  cancelText: { color: '#111827', fontWeight: '700' },
+  cancelBtn: {
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    minWidth: 110,
+    alignItems: 'center',
+  },
+  cancelText: { color: '#111827', fontWeight: '800' },
 });
