@@ -1,43 +1,66 @@
 // @ts-nocheck
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Alert } from 'react-native';
-import { getFirestore, doc, writeBatch } from 'firebase/firestore';
+import React, { useMemo, useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import {
+  getFirestore,
+  doc,
+  writeBatch,
+  getDoc,
+  collection,
+  getDocs,
+} from 'firebase/firestore';
 import { getApp } from 'firebase/app';
+import { useVenueId } from '../../../context/VenueProvider';
 
 type Line = {
-  id?: string;
-  productId?: string;
-  name?: string;
-  qty?: number;
+  id: string;
+  productId?: string | null;
+  name?: string | null;
   orderedQty?: number;
-  unitCost?: number;
+  qty?: number;
+  unitCost?: number | null;
 };
 
 type Props = {
   orderId: string;
-  venueId: string;
+  venueId?: string;
   orderLines?: Line[];
   onDone?: () => void;
   onClose?: () => void;
-  embed?: boolean; // if ever embedded inside another screen, hides header/back
+  embed?: boolean;
 };
 
 export default function ManualReceiveScreen({
   orderId,
-  venueId,
+  venueId: propVenueId,
   orderLines = [],
   onDone,
   onClose,
   embed,
 }: Props) {
-  // Quantities for existing order lines – default to ordered qty (or qty) so user just tweaks
-  const [qty, setQty] = useState(() =>
+  const venueIdFromHook = useVenueId();
+  const venueId = propVenueId || venueIdFromHook;
+
+  // Local copy of lines (either from props or Firestore)
+  const [lines, setLines] = useState<Line[]>(orderLines || []);
+
+  // Quantities for lines (keyed by id/productId)
+  const [qty, setQty] = useState<Record<string, number>>(() =>
     Object.fromEntries(
       (orderLines || []).map((l) => [
         String(l.id || l.productId || ''),
-        Number(l.orderedQty ?? l.qty ?? 0),
-      ]),
-    ),
+        Number(l.orderedQty || l.qty || 0),
+      ])
+    )
   );
 
   // Promo additions (items not in the supplier catalogue)
@@ -48,12 +71,120 @@ export default function ManualReceiveScreen({
     Array<{ id: string; name: string; qty: number; unitPrice?: number | null }>
   >([]);
 
-  const totalLines = (orderLines?.length || 0) + (extras?.length || 0);
+  const [header, setHeader] = useState<{
+    supplierName?: string | null;
+    poNumber?: string | null;
+  }>({});
 
-  const handleClose = () => {
-    if (onClose) onClose();
-    else if (onDone) onDone();
+  const [loading, setLoading] = useState(
+    !orderLines || orderLines.length === 0
+  );
+
+  const close = () => {
+    if (onDone) onDone();
+    else if (onClose) onClose();
   };
+
+  // If parent ever passes in fresh orderLines, sync them in
+  useEffect(() => {
+    if (orderLines && orderLines.length) {
+      setLines(orderLines);
+      const initial = Object.fromEntries(
+        (orderLines || []).map((l) => [
+          String(l.id || l.productId || ''),
+          Number(l.orderedQty || l.qty || 0),
+        ])
+      );
+      setQty(initial);
+      setLoading(false);
+    }
+  }, [orderLines]);
+
+  // If no lines passed, fetch from Firestore using orderId + venueId
+  useEffect(() => {
+    if (orderLines && orderLines.length) return; // prefer prop
+    if (!venueId || !orderId) return;
+
+    let alive = true;
+    (async () => {
+      try {
+        const db = getFirestore(getApp());
+        const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+        const snap = await getDoc(orderRef);
+        if (!alive) return;
+
+        if (snap.exists()) {
+          const d: any = snap.data() || {};
+
+          // Be generous with field names so header rarely ends up blank
+          const supplierName =
+            d.supplierName ||
+            d.supplier ||
+            d.supplierDisplayName ||
+            d.vendorName ||
+            d.vendor ||
+            null;
+
+          const poNumber =
+            d.poNumber ||
+            d.po ||
+            d.poRef ||
+            d.po_code ||
+            d.poNumberClient ||
+            d.poClient ||
+            null;
+
+          setHeader({ supplierName, poNumber });
+        }
+
+        const linesRef = collection(
+          db,
+          'venues',
+          venueId,
+          'orders',
+          orderId,
+          'lines'
+        );
+        const linesSnap = await getDocs(linesRef);
+        const arr: Line[] = [];
+        linesSnap.forEach((docSnap) => {
+          const d: any = docSnap.data() || {};
+          const orderedQty = Number.isFinite(d.qty)
+            ? Number(d.qty)
+            : Number(d.orderedQty || d.qty || 0);
+          arr.push({
+            id: docSnap.id,
+            productId: d.productId || null,
+            name: d.name || null,
+            orderedQty,
+            qty: orderedQty,
+            unitCost: Number.isFinite(d.unitCost)
+              ? Number(d.unitCost)
+              : d.unitCost ?? null,
+          });
+        });
+
+        setLines(arr);
+        const initial = Object.fromEntries(
+          arr.map((l) => [
+            String(l.id || l.productId || ''),
+            Number(l.orderedQty || l.qty || 0),
+          ])
+        );
+        setQty(initial);
+      } catch (e) {
+        console.warn('[ManualReceive] load order failed', e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [venueId, orderId, orderLines]);
+
+  const totalLines = (lines?.length || 0) + (extras?.length || 0);
 
   const updateQty = (id: string, v: string) => {
     const n = Math.max(0, Number(v || 0));
@@ -64,6 +195,7 @@ export default function ManualReceiveScreen({
     const name = String(newName || '').trim();
     const q = Number(newQty || 0);
     const p = newUnitPrice === '' ? null : Number(newUnitPrice);
+
     if (!name) {
       Alert.alert('Missing name', 'Enter a product name.');
       return;
@@ -76,36 +208,41 @@ export default function ManualReceiveScreen({
       Alert.alert('Invalid price', 'Leave blank or enter a valid number.');
       return;
     }
-    const id = `promo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    const id = `promo_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
     setExtras((prev) => [{ id, name, qty: q, unitPrice: p }, ...prev]);
     setNewName('');
     setNewQty('');
     setNewUnitPrice('');
   };
 
-  const removeExtra = (id: string) => setExtras((prev) => prev.filter((x) => x.id !== id));
+  const removeExtra = (id: string) =>
+    setExtras((prev) => prev.filter((x) => x.id !== id));
 
   const submit = async () => {
     try {
-      if (!venueId || !orderId) {
-        throw new Error('Missing venue or order reference.');
+      if (!venueId) {
+        Alert.alert('No venue', 'Attach a venue first.');
+        return;
       }
-
       const db = getFirestore(getApp());
       const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
       const batch = writeBatch(db);
 
       // Build receiveLines snapshot = existing lines + promo extras
-      const baseReceive = (orderLines || []).map((l) => {
+      const baseReceive = (lines || []).map((l) => {
         const id = String(l.id || l.productId || '');
-        const orderedQty = Number(l.orderedQty ?? l.qty ?? 0);
         return {
           id,
           productId: l.productId || null,
           name: l.name || null,
-          orderedQty,
-          receivedQty: Number(qty[id] ?? orderedQty ?? 0),
-          invoiceUnitPrice: Number.isFinite(l.unitCost) ? Number(l.unitCost) : null,
+          orderedQty: Number(l.orderedQty || l.qty || 0),
+          receivedQty: Number(qty[id] || 0),
+          invoiceUnitPrice: Number.isFinite(l.unitCost)
+            ? Number(l.unitCost)
+            : null,
           promo: false,
         };
       });
@@ -117,7 +254,9 @@ export default function ManualReceiveScreen({
         orderedQty: 0,
         receivedQty: Number(x.qty || 0),
         invoiceUnitPrice:
-          x.unitPrice === null || x.unitPrice === undefined ? null : Number(x.unitPrice),
+          x.unitPrice === null || x.unitPrice === undefined
+            ? null
+            : Number(x.unitPrice),
         promo: true,
       }));
 
@@ -125,92 +264,104 @@ export default function ManualReceiveScreen({
         orderRef,
         {
           status: 'received',
-          displayStatus: 'received', // keep OrdersScreen pill consistent
+          displayStatus: 'received', // keep pill consistent
           receivedAt: new Date(),
           receiveMethod: 'manual',
           receiveLines: [...baseReceive, ...extraReceive],
         },
-        { merge: true },
+        { merge: true }
       );
 
       await batch.commit();
-      onDone?.();
-    } catch (e: any) {
+      close();
+    } catch (e) {
       Alert.alert('Receive failed', String(e?.message || e));
     }
   };
 
   const ExistingLine = ({ item }: { item: Line }) => {
     const id = String(item.id || item.productId || '');
-    const ordered = Number(item.orderedQty ?? item.qty ?? 0);
+    const ordered = Number(item.orderedQty || item.qty || 0);
+
     return (
       <View style={S.row}>
         <View style={{ flex: 1, marginRight: 12 }}>
           <Text style={S.name}>{item.name || item.productId || 'Line'}</Text>
-          <Text style={S.ghost}>Ordered {ordered}</Text>
+          <Text style={S.ghostSmall}>Ordered: {ordered}</Text>
         </View>
-        <View>
-          <Text style={S.inputLabel}>Received</Text>
-          <TextInput
-            style={S.input}
-            keyboardType="numeric"
-            placeholder="0"
-            defaultValue={String(qty[id] ?? ordered ?? 0)}
-            onChangeText={(v) => updateQty(id, v)}
-          />
-        </View>
+        <TextInput
+          style={S.input}
+          keyboardType="numeric"
+          placeholder="0"
+          defaultValue={String(qty[id] || 0)}
+          onChangeText={(v) => updateQty(id, v)}
+        />
       </View>
     );
   };
 
-  const ExtraRow = ({ item }: { item: { id: string; name: string; qty: number; unitPrice?: number | null } }) => {
+  const ExtraRow = ({ item }: { item: any }) => {
     return (
       <View style={S.row}>
-        <View style={{ flex: 1, marginRight: 12 }}>
-          <Text style={S.name}>
-            {item.name} <Text style={{ color: '#92400E' }}>(promo)</Text>
-          </Text>
+        <Text style={S.name}>
+          {item.name} <Text style={{ color: '#92400E' }}>(promo)</Text>
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={S.ghost}>Qty {item.qty}</Text>
           {item.unitPrice != null ? (
-            <Text style={S.ghost}>@ ${Number(item.unitPrice).toFixed(2)}</Text>
+            <Text style={S.ghost}>
+              @ ${Number(item.unitPrice).toFixed(2)}
+            </Text>
           ) : null}
+          <TouchableOpacity onPress={() => removeExtra(item.id)}>
+            <Text style={S.remove}>Remove</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={() => removeExtra(item.id)}>
-          <Text style={S.remove}>Remove</Text>
-        </TouchableOpacity>
       </View>
     );
   };
 
-  const hasOrderLines = (orderLines || []).length > 0;
+  if (loading) {
+    return (
+      <View style={[S.wrap, S.loading]}>
+        <ActivityIndicator />
+        <Text style={S.ghost}>Loading order lines…</Text>
+      </View>
+    );
+  }
+
+  const shortId = orderId ? orderId.slice(-6) : '';
 
   return (
     <View style={S.wrap}>
-      {!embed && (
-        <View style={S.header}>
-          <TouchableOpacity onPress={handleClose} style={S.headerBack}>
-            <Text style={S.headerBackTxt}>Close</Text>
+      {/* Header with Back / Close + PO context */}
+      <View style={S.headerRow}>
+        {!embed && (
+          <TouchableOpacity onPress={close} style={S.backBtn}>
+            <Text style={S.backTxt}>Back</Text>
           </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={S.headerTitle}>Manual receive</Text>
-            <Text style={S.headerSub}>
-              Review the PO lines and enter received quantities against the invoice.
-            </Text>
-          </View>
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={S.h}>Manual receive</Text>
+          <Text style={S.sub}>
+            {header.supplierName || 'Order'}
+            {header.poNumber
+              ? ` • PO ${header.poNumber}`
+              : shortId
+              ? ` • #${shortId}`
+              : ''}
+          </Text>
         </View>
-      )}
+      </View>
 
       {/* Existing order lines */}
       <FlatList
-        data={orderLines || []}
+        data={lines || []}
         keyExtractor={(l) => String(l.id || l.productId || Math.random())}
         renderItem={ExistingLine}
         ListEmptyComponent={
-          <Text style={S.ghost}>
-            No lines on this order. You can still add promo/new items below.
-          </Text>
+          <Text style={S.ghost}>No lines on order.</Text>
         }
-        contentContainerStyle={{ paddingBottom: 12 }}
       />
 
       {/* Add promo item */}
@@ -251,115 +402,81 @@ export default function ManualReceiveScreen({
         </View>
       ) : null}
 
-      {/* Footer actions */}
-      <View style={S.footerRow}>
-        <TouchableOpacity onPress={handleClose} style={S.btnSecondary}>
+      {/* Actions */}
+      <TouchableOpacity onPress={submit} style={S.btn}>
+        <Text style={S.btnTxt}>Confirm receive ({totalLines})</Text>
+      </TouchableOpacity>
+
+      {!embed && (
+        <TouchableOpacity onPress={close} style={S.btnSecondary}>
           <Text style={S.btnSecondaryTxt}>Cancel</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={submit} style={S.btnPrimary} disabled={totalLines === 0}>
-          <Text style={S.btnPrimaryTxt}>
-            {totalLines === 0 ? 'Confirm receive' : `Confirm receive (${totalLines})`}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      )}
     </View>
   );
 }
 
 const S = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#FFFFFF',
-  },
-  header: {
+  wrap: { gap: 12, paddingVertical: 8, paddingHorizontal: 12, flex: 1 },
+  loading: { alignItems: 'center', justifyContent: 'center' },
+  headerRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    alignItems: 'center',
     marginBottom: 8,
+    gap: 8,
   },
-  headerBack: {
+  backBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    marginRight: 4,
   },
-  headerBackTxt: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  headerSub: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-
+  backTxt: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  h: { fontSize: 16, fontWeight: '700' },
+  sub: { marginTop: 2, color: '#6B7280', fontSize: 12 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: '#eee',
   },
-  name: {
-    fontWeight: '700',
-  },
-  inputLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
+  name: { flex: 1, marginRight: 12, fontWeight: '600' },
   input: {
-    width: 90,
+    width: 100,
     height: 36,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#ddd',
     borderRadius: 8,
     paddingHorizontal: 8,
-    backgroundColor: '#FFFFFF',
   },
   inputWide: {
     height: 36,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#ddd',
     borderRadius: 8,
     paddingHorizontal: 8,
     marginBottom: 8,
-    backgroundColor: '#FFFFFF',
   },
-
-  btnPrimary: {
-    flex: 1,
+  btn: {
+    marginTop: 12,
     backgroundColor: '#0B5FFF',
     padding: 12,
     borderRadius: 10,
     alignItems: 'center',
   },
-  btnPrimaryTxt: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
+  btnTxt: { color: '#fff', fontWeight: '700' },
   btnSecondary: {
-    flex: 1,
+    marginTop: 8,
     backgroundColor: '#F3F4F6',
-    padding: 12,
+    padding: 10,
     borderRadius: 10,
     alignItems: 'center',
-    marginRight: 8,
   },
-  btnSecondaryTxt: {
-    color: '#111827',
-    fontWeight: '700',
-  },
-
+  btnSecondaryTxt: { color: '#111827', fontWeight: '700' },
   addBox: {
     marginTop: 8,
     padding: 12,
@@ -377,13 +494,7 @@ const S = StyleSheet.create({
     alignItems: 'center',
   },
   btnAddTxt: { color: '#fff', fontWeight: '700' },
-
   remove: { color: '#B91C1C', fontWeight: '700' },
-  ghost: { color: '#6B7280', fontSize: 12 },
-
-  footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-  },
+  ghost: { color: '#6B7280' },
+  ghostSmall: { color: '#9CA3AF', fontSize: 11 },
 });
