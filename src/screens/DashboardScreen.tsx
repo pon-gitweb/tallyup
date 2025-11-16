@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  SafeAreaView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
@@ -62,91 +63,93 @@ export default function DashboardScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header with badge */}
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Dashboard</Text>
-          <Text style={styles.headerSub}>Hi {friendly}</Text>
-          <Text style={styles.headerHint}>
-            This is your BETA home base. Start a stocktake, manage orders, and check reports from here.
+    <SafeAreaView style={styles.safe}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Header with badge */}
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Dashboard</Text>
+            <Text style={styles.headerSub}>Hi {friendly}</Text>
+            <Text style={styles.headerHint}>
+              This is your BETA home base. Start a stocktake, manage orders, and check reports from here.
+            </Text>
+          </View>
+          <IdentityBadge />
+        </View>
+
+        {/* Stocktake focus */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Run your stocktake</Text>
+          <Text style={styles.cardSub}>
+            Stocktake by department and area with expected quantities and full history. You can return to an
+            in-progress stocktake at any time.
           </Text>
-        </View>
-        <IdentityBadge />
-      </View>
-
-      {/* Stocktake focus */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Run your stocktake</Text>
-        <Text style={styles.cardSub}>
-          Stocktake by department and area with expected quantities and full history. You can return to an
-          in-progress stocktake at any time.
-        </Text>
-        <TouchableOpacity
-          style={[styles.button, styles.primary]}
-          onPress={onOpenStockTake}
-          disabled={busy}
-        >
-          {busy ? (
-            <ActivityIndicator />
-          ) : (
-            <Text style={styles.buttonText}>Start / Return Stock Take</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Orders + invoices */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Ordering & invoices</Text>
-        <Text style={styles.cardSub}>
-          Use suggested orders to build supplier orders from your stock and sales, and manage open orders and
-          deliveries. Invoice upload and receiving flows live under Orders.
-        </Text>
-        <View style={styles.rowButtons}>
           <TouchableOpacity
-            style={[styles.buttonSmall, styles.dark]}
-            onPress={onOpenSuggestedOrders}
+            style={[styles.button, styles.primary]}
+            onPress={onOpenStockTake}
+            disabled={busy}
           >
-            <Text style={styles.buttonSmallText}>Suggested Orders</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.buttonSmall, styles.dark]}
-            onPress={onOpenOrders}
-          >
-            <Text style={styles.buttonSmallText}>Orders</Text>
+            {busy ? (
+              <ActivityIndicator />
+            ) : (
+              <Text style={styles.buttonText}>Start / Return Stock Take</Text>
+            )}
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Control & reports */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Control & reports</Text>
-        <Text style={styles.cardSub}>
-          Keep your products and suppliers organised, and review variance and performance reports. Use Settings
-          for venue-level controls and BETA options.
-        </Text>
-        <View style={styles.rowButtons}>
-          <TouchableOpacity
-            style={[styles.buttonSmall, styles.muted]}
-            onPress={onOpenStockControl}
-          >
-            <Text style={styles.buttonSmallTextDark}>Stock Control</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.buttonSmall, styles.muted]}
-            onPress={onOpenReports}
-          >
-            <Text style={styles.buttonSmallTextDark}>Reports</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.buttonSmall, styles.muted]}
-            onPress={onOpenSettings}
-          >
-            <Text style={styles.buttonSmallTextDark}>Settings</Text>
-          </TouchableOpacity>
+        {/* Orders + invoices */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Ordering & invoices</Text>
+          <Text style={styles.cardSub}>
+            Use suggested orders to build supplier orders from your stock and sales, and manage open orders and
+            deliveries. Invoice upload and receiving flows live under Orders.
+          </Text>
+          <View style={styles.rowButtons}>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.dark]}
+              onPress={onOpenSuggestedOrders}
+            >
+              <Text style={styles.buttonSmallText}>Suggested Orders</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.dark]}
+              onPress={onOpenOrders}
+            >
+              <Text style={styles.buttonSmallText}>Orders</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </ScrollView>
+
+        {/* Control & reports */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Control & reports</Text>
+          <Text style={styles.cardSub}>
+            Keep your products and suppliers organised, and review variance and performance reports. Use Settings
+            for venue-level controls and BETA options.
+          </Text>
+          <View style={styles.rowButtons}>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.muted]}
+              onPress={onOpenStockControl}
+            >
+              <Text style={styles.buttonSmallTextDark}>Stock Control</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.muted]}
+              onPress={onOpenReports}
+            >
+              <Text style={styles.buttonSmallTextDark}>Reports</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.muted]}
+              onPress={onOpenSettings}
+            >
+              <Text style={styles.buttonSmallTextDark}>Settings</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -154,11 +157,12 @@ const PRIMARY = '#0B132B';
 const ACCENT = '#3B82F6';
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'white' },
+  safe: { flex: 1, backgroundColor: 'white' },
+  container: { flex: 1 },
   content: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 24,
+    paddingBottom: 32, // extra bottom padding so last card is reachable
   },
 
   headerRow: {

@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Modal, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Modal, Alert, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
@@ -31,7 +31,7 @@ export default function StockControlScreen() {
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
 
-  // NEW modals
+  // Modals
   const [showFastReceive, setShowFastReceive] = useState(false);
   const [showFastReview, setShowFastReview]   = useState(false);
   const [showSalesImport, setShowSalesImport] = useState(false);
@@ -76,59 +76,75 @@ export default function StockControlScreen() {
         });
       }
       Alert.alert('Membership OK', `You are a member of venue ${venueId}.`);
-    } catch (e:any) {
+    } catch (e: any) {
       Alert.alert('Failed to set membership', String(e?.message || e));
     }
   }, [venueId, user?.uid, user?.email]);
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={styles.wrap}>
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Stock Control</Text>
-            <Text style={styles.subtitle}>{friendly}</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.wrap}>
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>Stock Control</Text>
+              <Text style={styles.subtitle}>Hi {friendly}</Text>
+              <Text style={styles.subtitleHint}>
+                Set up suppliers and products, then use these tools for ordering, receiving,
+                sales imports and recipes. Some tools may be owner-only in your venue.
+              </Text>
+            </View>
+            <IdentityBadge />
           </View>
-          <IdentityBadge />
+
+          {/* Setup guidance */}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionLabel}>Setup</Text>
+            <Text style={styles.sectionHelp}>
+              Start by adding your suppliers and products. You can enter items one-by-one or later use Supplier
+              Tools in Products to link price lists and catalogues. For BETA pilots, we recommend loading at least
+              your main suppliers and top-selling items first.
+            </Text>
+          </View>
+
+          {/* Setup items */}
+          <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
+          <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
+
+          {/* Day-to-day operations */}
+          <View style={[styles.sectionBlock, { marginTop: 18 }]}>
+            <Text style={styles.sectionLabel}>Day-to-day</Text>
+            <Text style={styles.sectionHelp}>
+              Once your base setup is in place, use these for suggested orders, open orders and building recipes
+              with real COGS and GP. Orders and recipes still respect your stocktake and venue settings.
+            </Text>
+          </View>
+
+          <Item title="Suggested Orders"           onPress={() => nav.navigate('SuggestedOrders' as never)} />
+          <Item title="Orders"                     onPress={() => nav.navigate('Orders' as never)} />
+          {/* Reset Stock Take was removed previously as requested */}
+          <Item title="Craft-It (Recipe Creator)"  onPress={() => setShowCraftUp(true)} />
+
+          {/* Fast tools */}
+          <View style={[styles.sectionBlock, { marginTop: 18 }]}>
+            <Text style={styles.sectionLabel}>Fast tools</Text>
+            <Text style={styles.sectionHelp}>
+              Use these to quickly receive stock, attach documents, import sales/POS reports and reconcile invoices.
+              Ideal for catching up after deliveries or paperwork.
+            </Text>
+          </View>
+
+          <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
+          <Item title="Fast Receives (Pending)"      onPress={() => setShowFastReview(true)} />
+          <Item title="Sales Reports (Import)"       onPress={() => setShowSalesImport(true)} />
+          <Item title="Invoice Reconciliations"      onPress={() => setShowRecon(true)} />
+
+          {/* DEV-only helper to repair membership (safe; leaf UI only) */}
+          {__DEV__ ? (
+            <Item title="(DEV) Fix my venue membership" onPress={ensureDevMembership} />
+          ) : null}
         </View>
-
-        {/* Setup guidance */}
-        <View style={styles.sectionBlock}>
-          <Text style={styles.sectionLabel}>Setup</Text>
-          <Text style={styles.sectionHelp}>
-            Start by adding your suppliers and products. You can enter items one-by-one or later use Supplier
-            Tools in Products to link price lists and catalogues.
-          </Text>
-        </View>
-
-        {/* Setup items */}
-        <Item title="Manage Suppliers" onPress={() => setShowSuppliers(true)} />
-        <Item title="Manage Products"  onPress={() => setShowProducts(true)} />
-
-        {/* Day-to-day operations */}
-        <View style={[styles.sectionBlock, { marginTop: 18 }]}>
-          <Text style={styles.sectionLabel}>Day-to-day</Text>
-          <Text style={styles.sectionHelp}>
-            Use these tools for ordering, receiving, invoices and recipes once your base setup is in place.
-          </Text>
-        </View>
-
-        <Item title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders' as never)} />
-        <Item title="Orders"           onPress={() => nav.navigate('Orders' as never)} />
-        {/* Reset Stock Take was removed previously as requested */}
-        <Item title="Craft-It (Recipe Creator)" onPress={() => setShowCraftUp(true)} />
-
-        {/* NEW: quick actions */}
-        <Item title="Fast Receive (Scan / Upload)" onPress={() => setShowFastReceive(true)} />
-        <Item title="Fast Receives (Pending)"      onPress={() => setShowFastReview(true)} />
-        <Item title="Sales Reports (Import)"       onPress={() => setShowSalesImport(true)} />
-        <Item title="Invoice Reconciliations"      onPress={() => setShowRecon(true)} />
-
-        {/* DEV-only helper to repair membership (safe; leaf UI only) */}
-        {__DEV__ ? (
-          <Item title="(DEV) Fix my venue membership" onPress={ensureDevMembership} />
-        ) : null}
-      </View>
+      </ScrollView>
 
       {/* Suppliers */}
       <Modal visible={showSuppliers} animationType="slide" onRequestClose={() => setShowSuppliers(false)}>
@@ -234,14 +250,24 @@ export default function StockControlScreen() {
 }
 
 const styles = StyleSheet.create({
+  scrollContent: {
+    paddingBottom: 24, // give space so last item isn't flush with bottom
+  },
   wrap: { flex: 1, padding: 16, backgroundColor: 'white' },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   title: { fontSize: 22, fontWeight: '800' },
-  subtitle: { color: '#6B7280', marginTop: 2 },
+  subtitle: { color: '#6B7280', marginTop: 2, fontSize: 14 },
+  subtitleHint: {
+    color: '#9CA3AF',
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    maxWidth: 280,
+  },
 
   sectionBlock: { marginBottom: 10 },
   sectionLabel: { fontSize: 13, fontWeight: '800', color: '#4B5563', textTransform: 'uppercase', marginBottom: 2 },
-  sectionHelp: { fontSize: 12, color: '#6B7280' },
+  sectionHelp: { fontSize: 12, color: '#6B7280', lineHeight: 16 },
 
   row: {
     flexDirection: 'row',
