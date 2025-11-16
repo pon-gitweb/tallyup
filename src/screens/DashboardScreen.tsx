@@ -148,6 +148,11 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Tiny BETA hint about revisiting the overview */}
+        <Text style={styles.footerHint}>
+          You can revisit the BETA overview from Settings → About (coming soon for pilot venues).
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -237,7 +242,12 @@ const styles = StyleSheet.create({
   },
   buttonSmallTextDark: {
     color: PRIMARY,
-    fontWeight: '600',
+    fontWeight: '600', 
     fontSize: 13,
+  },
+  footerHint: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginBottom: 8,
   },
 });
