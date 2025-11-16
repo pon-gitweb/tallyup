@@ -1,7 +1,12 @@
 // @ts-nocheck
 import React, { useMemo, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
@@ -36,59 +41,199 @@ export default function DashboardScreen() {
     }
   };
 
+  const onOpenSuggestedOrders = () => {
+    nav.navigate('SuggestedOrders');
+  };
+
+  const onOpenOrders = () => {
+    nav.navigate('Orders');
+  };
+
+  const onOpenStockControl = () => {
+    nav.navigate('StockControl');
+  };
+
+  const onOpenReports = () => {
+    nav.navigate('Reports');
+  };
+
+  const onOpenSettings = () => {
+    nav.navigate('Settings');
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header with badge */}
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Dashboard</Text>
           <Text style={styles.headerSub}>Hi {friendly}</Text>
+          <Text style={styles.headerHint}>
+            This is your BETA home base. Start a stocktake, manage orders, and check reports from here.
+          </Text>
         </View>
         <IdentityBadge />
       </View>
 
-      {/* Legacy center panel preserved */}
-      <View style={styles.panel}>
-        <Text style={styles.title}>TallyUp</Text>
-
-        <TouchableOpacity style={[styles.button, styles.primary]} onPress={onOpenStockTake} disabled={busy}>
-          {busy ? <ActivityIndicator /> : <Text style={styles.buttonText}>Start / Return Stock Take</Text>}
+      {/* Stocktake focus */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Run your stocktake</Text>
+        <Text style={styles.cardSub}>
+          Stocktake by department and area with expected quantities and full history. You can return to an
+          in-progress stocktake at any time.
+        </Text>
+        <TouchableOpacity
+          style={[styles.button, styles.primary]}
+          onPress={onOpenStockTake}
+          disabled={busy}
+        >
+          {busy ? (
+            <ActivityIndicator />
+          ) : (
+            <Text style={styles.buttonText}>Start / Return Stock Take</Text>
+          )}
         </TouchableOpacity>
+      </View>
 
-        <TouchableOpacity style={[styles.button, styles.dark]} onPress={() => nav.navigate('StockControl')}>
-          <Text style={styles.buttonText}>Stock Control</Text>
-        </TouchableOpacity>
+      {/* Orders + invoices */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Ordering & invoices</Text>
+        <Text style={styles.cardSub}>
+          Use suggested orders to build supplier orders from your stock and sales, and manage open orders and
+          deliveries. Invoice upload and receiving flows live under Orders.
+        </Text>
+        <View style={styles.rowButtons}>
+          <TouchableOpacity
+            style={[styles.buttonSmall, styles.dark]}
+            onPress={onOpenSuggestedOrders}
+          >
+            <Text style={styles.buttonSmallText}>Suggested Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.buttonSmall, styles.dark]}
+            onPress={onOpenOrders}
+          >
+            <Text style={styles.buttonSmallText}>Orders</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-        <TouchableOpacity style={[styles.button, styles.dark]} onPress={() => nav.navigate('Settings')}>
-          <Text style={styles.buttonText}>Settings</Text>
-        </TouchableOpacity>
-
-        {/* FIX: use existing route name 'Reports' */}
-        <TouchableOpacity style={[styles.button, styles.dark]} onPress={() => nav.navigate('Reports')}>
-          <Text style={styles.buttonText}>Reports</Text>
-        </TouchableOpacity>
+      {/* Control & reports */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Control & reports</Text>
+        <Text style={styles.cardSub}>
+          Keep your products and suppliers organised, and review variance and performance reports. Use Settings
+          for venue-level controls and BETA options.
+        </Text>
+        <View style={styles.rowButtons}>
+          <TouchableOpacity
+            style={[styles.buttonSmall, styles.muted]}
+            onPress={onOpenStockControl}
+          >
+            <Text style={styles.buttonSmallTextDark}>Stock Control</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.buttonSmall, styles.muted]}
+            onPress={onOpenReports}
+          >
+            <Text style={styles.buttonSmallTextDark}>Reports</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.buttonSmall, styles.muted]}
+            onPress={onOpenSettings}
+          >
+            <Text style={styles.buttonSmallTextDark}>Settings</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </ScrollView>
   );
 }
 
+const PRIMARY = '#0B132B';
+const ACCENT = '#3B82F6';
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'white' },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
 
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  headerTitle: { fontSize: 22, fontWeight: '800' },
-  headerSub: { color: '#6B7280', marginTop: 2 },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: PRIMARY },
+  headerSub: { color: '#6B7280', marginTop: 2, fontSize: 14 },
+  headerHint: {
+    color: '#9CA3AF',
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 16,
+    maxWidth: 260,
+  },
 
-  panel: { marginTop: 8, paddingHorizontal: 8 },
-  title: { fontSize: 28, fontWeight: '800', textAlign: 'center', marginVertical: 16 },
+  card: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: PRIMARY,
+    marginBottom: 4,
+  },
+  cardSub: {
+    fontSize: 13,
+    color: '#4B5563',
+    marginBottom: 12,
+    lineHeight: 18,
+  },
 
-  button: { paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginBottom: 12 },
-  primary: { backgroundColor: '#3B82F6' },
-  dark: { backgroundColor: '#111827' },
-  buttonText: { color: 'white', fontWeight: '700' },
+  button: {
+    paddingVertical: 14,
+    borderRadius: 999,
+    alignItems: 'center',
+  },
+  primary: { backgroundColor: ACCENT },
+  buttonText: { color: 'white', fontWeight: '700', fontSize: 15 },
+
+  rowButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  buttonSmall: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dark: {
+    backgroundColor: '#111827',
+  },
+  muted: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  buttonSmallText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  buttonSmallTextDark: {
+    color: PRIMARY,
+    fontWeight: '600',
+    fontSize: 13,
+  },
 });
