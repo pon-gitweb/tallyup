@@ -7,270 +7,317 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
-  StatusBar,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY = 'tallyup_welcome_seen_v1';
+// IMPORTANT: path is from src/screens → up to project root → assets
+const appIcon = require('../../assets/icon.png');
 
-export default function WelcomeBetaScreen() {
-  const navigation = useNavigation();
-  const [saving, setSaving] = React.useState(false);
+const WELCOME_STORAGE_KEY = 'tallyup_welcome_seen_v1';
 
-  const completeWelcome = React.useCallback(async () => {
-    if (saving) return;
-    setSaving(true);
+export default function BetaWelcomeScreen() {
+  const navigation = useNavigation<any>();
+
+  const markSeenAndGoMain = async (mode: 'tour' | 'skip') => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, 'true');
+      await AsyncStorage.setItem(WELCOME_STORAGE_KEY, mode);
     } catch (e) {
-      console.warn('[WelcomeBeta] Failed to persist seen flag', e);
-    } finally {
-      // Ensure we always get to the main app even if storage fails
-      // Reset so Main stack is the root (Dashboard etc).
-      // "Main" is the name of the authed stack in RootNavigator.
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Main' as never }],
-      });
+      if (__DEV__) console.log('[WelcomeBeta] failed to store flag', e);
     }
-  }, [navigation, saving]);
 
-  const handleStartTour = () => {
-    // For now, "Start tour" behaves the same as skip, but in future
-    // you can navigate to a guided tour flow instead.
-    completeWelcome();
+    // Drop the welcome screen from history and land in the Main stack
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Main' }],
+    });
   };
 
-  const handleSkip = () => {
-    completeWelcome();
-  };
+  const onStartTour = () => markSeenAndGoMain('tour');
+  const onSkipForNow = () => markSeenAndGoMain('skip');
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.logoWrap}>
-          {/* Assumes your app icon is at ./assets/icon.png (per app.json). */}
-          <Image
-            source={require('../../assets/icon.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.appName}>TallyUp</Text>
-          <Text style={styles.tagline}>Built for NZ hospitality</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.betaTitle}>Welcome to the BETA</Text>
-          <Text style={styles.betaText}>
-            You’re using a BETA version of TallyUp (also branded as Hosti-STOCK). It’s ready
-            for real stocktakes and real venues, but we’re still polishing edges and adding features.
+    <View style={S.wrap}>
+      <ScrollView contentContainerStyle={S.scroll} bounces={false}>
+        <View style={S.heroCard}>
+          <Image source={appIcon} style={S.icon} />
+          <Text style={S.betaPill}>BETA</Text>
+          <Text style={S.title}>Welcome to TallyUp</Text>
+          <Text style={S.subtitle}>
+            Built for real hospitality venues. Load your products, run a full stock take,
+            and let the AI help you order smarter.
           </Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>What you can do</Text>
+        <View style={S.section}>
+          <Text style={S.sectionTitle}>First time here?</Text>
 
-          <View style={styles.point}>
-            <View style={styles.bullet} />
-            <View style={styles.pointTextWrap}>
-              <Text style={styles.pointTitle}>Run real stocktakes</Text>
-              <Text style={styles.pointText}>
-                Stocktake by department and area with expected quantities, long-hold item options,
-                and full audit history.
-              </Text>
-            </View>
+          <View style={S.card}>
+            <Text style={S.cardTitle}>1. Check your Dashboard</Text>
+            <Text style={S.cardBody}>
+              See where you are at a glance – recent stock takes, suggested orders,
+              and open deliveries for your venue.
+            </Text>
+            <TouchableOpacity style={S.cardBtn} onPress={onStartTour}>
+              <Text style={S.cardBtnText}>Go to Dashboard</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.point}>
-            <View style={styles.bullet} />
-            <View style={styles.pointTextWrap}>
-              <Text style={styles.pointTitle}>Turn invoices into orders</Text>
-              <Text style={styles.pointText}>
-                Upload CSV or PDF invoices to reconcile deliveries, keep stock up-to-date,
-                and streamline your ordering.
-              </Text>
-            </View>
+          <View style={S.card}>
+            <Text style={S.cardTitle}>2. Load products & suppliers</Text>
+            <Text style={S.cardBody}>
+              Use CSV uploads, global catalog tools and fast price updates so your counts
+              and GP are based on real numbers.
+            </Text>
+            <Text style={S.cardHint}>
+              Tip: You can bulk-load price lists on desktop with CSV, then fine-tune on mobile.
+            </Text>
           </View>
 
-          <View style={styles.point}>
-            <View style={styles.bullet} />
-            <View style={styles.pointTextWrap}>
-              <Text style={styles.pointTitle}>Craft-It recipes</Text>
-              <Text style={styles.pointText}>
-                Build recipes from your products, see real COGS and GP, and connect batches
-                back to stock and sales.
-              </Text>
-            </View>
+          <View style={S.card}>
+            <Text style={S.cardTitle}>3. Run your first stock take</Text>
+            <Text style={S.cardBody}>
+              Choose a department, work through areas, and capture counts with expected
+              quantities as a guide. You can restart departments after a completed cycle.
+            </Text>
+            <TouchableOpacity style={S.cardBtnSecondary} onPress={onStartTour}>
+              <Text style={S.cardBtnSecondaryText}>Start a stock take</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.point}>
-            <View style={styles.bullet} />
-            <View style={styles.pointTextWrap}>
-              <Text style={styles.pointTitle}>AI insights (early)</Text>
-              <Text style={styles.pointText}>
-                Get early AI suggestions for orders and variance insights, with paywalls and limits
-                as described in your Truth Document.
-              </Text>
+          <View style={S.card}>
+            <Text style={S.cardTitle}>4. Turn AI into a barback</Text>
+            <Text style={S.cardBody}>
+              Once sales and stock history are flowing, AI suggested orders and variances
+              give you “don’t miss this” insights without spreadsheets.
+            </Text>
+            <View style={S.chipRow}>
+              <View style={S.chip}>
+                <Text style={S.chipText}>Suggested Orders</Text>
+              </View>
+              <View style={S.chip}>
+                <Text style={S.chipText}>Variance insights</Text>
+              </View>
+              <View style={S.chip}>
+                <Text style={S.chipText}>Recipe GP checks</Text>
+              </View>
             </View>
+            <TouchableOpacity style={S.cardBtn} onPress={onStartTour}>
+              <Text style={S.cardBtnText}>Open Suggested Orders</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={S.card}>
+            <Text style={S.cardTitle}>5. Receive like a pro</Text>
+            <Text style={S.cardBody}>
+              Use manual receive, CSV/PDF upload or Fast Receive snapshots so every
+              delivery is matched to a PO and stored for audit.
+            </Text>
+            <Text style={S.cardHint}>
+              You can come back to Pending Fast Receives later and attach them to submitted orders.
+            </Text>
+            <TouchableOpacity style={S.cardBtnSecondary} onPress={onStartTour}>
+              <Text style={S.cardBtnSecondaryText}>View Orders</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Important notes</Text>
-          <Text style={styles.noteText}>
-            • This app is multi-venue and multi-user. Make sure you are in the correct venue before
-            you do a stocktake or raise orders.{'\n\n'}
-            • Some flows (like AI, invoice upload, and Craft-It) are being actively improved. If you
-            hit something strange, let us know – that feedback shapes the production version.
+        <View style={S.footer}>
+          <Text style={S.footerTitle}>We’re in BETA – and serious</Text>
+          <Text style={S.footerText}>
+            This build is for real venues. If it saves you time, cuts wastage, or helps
+            your GP, we want you to feel confident paying for it.
           </Text>
+          <Text style={S.footerTextDim}>
+            Feedback from pilots directly shapes what ships next.
+          </Text>
+        </View>
+
+        {/* Bottom CTAs: Start tour / Skip for now */}
+        <View style={S.bottomCta}>
+          <TouchableOpacity style={S.startTourBtn} onPress={onStartTour}>
+            <Text style={S.startTourText}>Start tour</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.skipBtn} onPress={onSkipForNow}>
+            <Text style={S.skipText}>Skip for now</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
-
-      <View style={styles.buttonRow}>
-        <TouchableOpacity
-          onPress={handleSkip}
-          disabled={saving}
-          style={[styles.button, styles.secondaryButton]}
-        >
-          <Text style={styles.secondaryButtonText}>Skip for now</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleStartTour}
-          disabled={saving}
-          style={[styles.button, styles.primaryButton]}
-        >
-          <Text style={styles.primaryButtonText}>Start tour</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
 
-const PRIMARY = '#0B132B';
-const ACCENT = '#FF8A3D';
-
-const styles = StyleSheet.create({
-  container: {
+const S = StyleSheet.create({
+  wrap: {
     flex: 1,
-    backgroundColor: '#F5F7FB',
+    backgroundColor: '#020617',
   },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 40,
-    paddingBottom: 24,
+  scroll: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 32,
   },
-  logoWrap: {
+  heroCard: {
+    borderRadius: 24,
+    padding: 20,
+    backgroundColor: '#0B1120',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
     alignItems: 'center',
-    marginBottom: 24,
-  },
-  logo: {
-    width: 80,
-    height: 80,
-    marginBottom: 12,
-    borderRadius: 16,
-  },
-  appName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: PRIMARY,
-  },
-  tagline: {
-    fontSize: 14,
-    color: '#5A6478',
-    marginTop: 4,
-  },
-  card: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
     marginBottom: 16,
-    shadowColor: '#000000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
   },
-  betaTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: PRIMARY,
+  icon: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
     marginBottom: 8,
   },
-  betaText: {
-    fontSize: 14,
-    color: '#333840',
-    lineHeight: 20,
+  betaPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    color: '#e0f2fe',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#F9FAFB',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+  section: {
+    marginTop: 12,
+    gap: 10,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: PRIMARY,
-    marginBottom: 12,
+    color: '#E5E7EB',
+    marginBottom: 4,
   },
-  point: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  bullet: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ACCENT,
-    marginTop: 6,
-    marginRight: 8,
-  },
-  pointTextWrap: {
-    flex: 1,
-  },
-  pointTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: PRIMARY,
-  },
-  pointText: {
-    fontSize: 13,
-    color: '#4A4F5C',
-    marginTop: 2,
-    lineHeight: 18,
-  },
-  noteText: {
-    fontSize: 13,
-    color: '#4A4F5C',
-    lineHeight: 18,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    paddingTop: 4,
-    gap: 12,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButton: {
-    backgroundColor: PRIMARY,
-  },
-  primaryButtonText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  secondaryButton: {
-    backgroundColor: 'white',
+  card: {
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: '#020617',
     borderWidth: 1,
-    borderColor: '#CBD2E1',
+    borderColor: 'rgba(55,65,81,0.9)',
+    marginBottom: 8,
   },
-  secondaryButtonText: {
-    color: PRIMARY,
-    fontWeight: '500',
+  cardTitle: {
     fontSize: 15,
+    fontWeight: '700',
+    color: '#F9FAFB',
+    marginBottom: 4,
+  },
+  cardBody: {
+    fontSize: 13,
+    color: '#D1D5DB',
+  },
+  cardHint: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 6,
+  },
+  cardBtn: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+  },
+  cardBtnText: {
+    color: '#022c22',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  cardBtnSecondary: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    alignItems: 'center',
+  },
+  cardBtnSecondaryText: {
+    color: '#E5E7EB',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#111827',
+  },
+  chipText: {
+    fontSize: 11,
+    color: '#e5e7eb',
+    fontWeight: '600',
+  },
+  footer: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1F2937',
+    backgroundColor: '#020617',
+  },
+  footerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#E5E7EB',
+    marginBottom: 4,
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#D1D5DB',
+  },
+  footerTextDim: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 4,
+  },
+  bottomCta: {
+    marginTop: 20,
+    gap: 8,
+  },
+  startTourBtn: {
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+  },
+  startTourText: {
+    color: '#022c22',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  skipBtn: {
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#4B5563',
+    alignItems: 'center',
+  },
+  skipText: {
+    color: '#E5E7EB',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });
