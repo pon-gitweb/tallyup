@@ -77,6 +77,14 @@ export default function SettingsScreen() {
     }
   }
 
+  // STUB: Setup wizard will be rebuilt for BETA
+  function doSetupWizardStub() {
+    Alert.alert(
+      'Setup Wizard (BETA)',
+      'We are refreshing the setup flow for this BETA. For now, use Stock Control to manage suppliers and products.'
+    );
+  }
+
   // STUB: Nuclear reset is disabled until post-BETA
   function doFullResetStub() {
     Alert.alert(
@@ -109,8 +117,8 @@ export default function SettingsScreen() {
 
         {/* Primary actions */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.btn} onPress={() => nav.navigate('SetupWizard')}>
-            <Text style={styles.btnText}>Open Setup Wizard</Text>
+          <TouchableOpacity style={styles.btn} onPress={doSetupWizardStub}>
+            <Text style={styles.btnText}>Open Setup Wizard (BETA)</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.btn, styles.stubBtn]}
