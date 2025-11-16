@@ -106,17 +106,16 @@ const Row = React.memo(function Row({
   const countedNow = countedInThisCycle(item);
   const locked = countedNow && !isManager;
   const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
-// derive visible count: prefer a valid typed value, else fall back to saved lastCount
-const typedRaw = (localQty[item.id] ?? '').trim();
-const typedNum = /^\d+(\.\d+)?$/.test(typedRaw) ? parseFloat(typedRaw) : null;
-const visibleCount: number | null =
-  typedNum != null ? typedNum :
-  (typeof item.lastCount === 'number' ? item.lastCount : null);
+  // derive visible count: prefer a valid typed value, else fall back to saved lastCount
+  const typedRaw = (localQty[item.id] ?? '').trim();
+  const typedNum = /^\d+(\.\d+)?$/.test(typedRaw) ? parseFloat(typedRaw) : null;
+  const visibleCount: number | null =
+    typedNum != null ? typedNum :
+    (typeof item.lastCount === 'number' ? item.lastCount : null);
 
-const lowStock = typeof item.parLevel === 'number'
-  && typeof visibleCount === 'number'
-  && visibleCount < item.parLevel;
-
+  const lowStock = typeof item.parLevel === 'number'
+    && typeof visibleCount === 'number'
+    && visibleCount < item.parLevel;
 
   // auto-repeat steppers
   const repeatTimerRef = useRef<any>(null);
@@ -153,8 +152,8 @@ const lowStock = typeof item.parLevel === 'number'
       style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
     >
       <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-  Low: {visibleCount ?? 0} &lt; {item.parLevel}
-</Text>
+        Low: {visibleCount ?? 0} &lt; {item.parLevel}
+      </Text>
     </TouchableOpacity>
   ) : null;
 
@@ -219,7 +218,6 @@ const lowStock = typeof item.parLevel === 'number'
             onLongPress={() => startRepeat(-1)}
             onPressOut={stopRepeat}
             style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
-
           >
             <Text style={{ fontWeight:'900' }}>−</Text>
           </TouchableOpacity>
@@ -240,14 +238,13 @@ const lowStock = typeof item.parLevel === 'number'
           onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
           onSubmitEditing={()=> throttleAction(()=>saveCount(item))() }
           style={{
-  flexGrow: 1, minWidth: 160,
-  paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
-  borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
-  height: Math.max(44, dens(40)),
-  backgroundColor: locked ? '#f7f7f7' : '#fff',
-  fontSize: isCompact ? 13 : 15
-}}
-
+            flexGrow: 1, minWidth: 160,
+            paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
+            borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
+            height: Math.max(44, dens(40)),
+            backgroundColor: locked ? '#f7f7f7' : '#fff',
+            fontSize: isCompact ? 13 : 15
+          }}
         />
 
         {showSteppers && !locked ? (
@@ -264,20 +261,20 @@ const lowStock = typeof item.parLevel === 'number'
         <TouchableOpacity
           onPress={ throttleAction(()=>saveCount(item)) }
           disabled={locked}
-style={{
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 6,
-  backgroundColor: locked ? '#B0BEC5' : '#0A84FF',
-  paddingVertical: dens(10),
-  paddingHorizontal: dens(12),
-  borderRadius: 10,
-  minHeight: 44
-}}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: locked ? '#B0BEC5' : '#0A84FF',
+            paddingVertical: dens(10),
+            paddingHorizontal: dens(12),
+            borderRadius: 10,
+            minHeight: 44
+          }}
         >
           {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
           <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
-            {pending ? <View style={{ width:6, height:6, borderRadius:3, backgroundColor:'#F59E0B' }} /> : null}
+          {pending ? <View style={{ width:6, height:6, borderRadius:3, backgroundColor:'#F59E0B' }} /> : null}
         </TouchableOpacity>
 
         {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
@@ -285,13 +282,13 @@ style={{
             onPress={ throttleAction(()=>approveNow(item)) }
             disabled={locked}
             style={{
-  backgroundColor: locked ? '#CFD8DC' : '#10B981',
-  paddingVertical: dens(10),
-  paddingHorizontal: dens(12),
-  borderRadius: 10,
-  minHeight: 44
-}}
->
+              backgroundColor: locked ? '#CFD8DC' : '#10B981',
+              paddingVertical: dens(10),
+              paddingHorizontal: dens(12),
+              borderRadius: 10,
+              minHeight: 44
+            }}
+          >
             <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
           </TouchableOpacity>
         ) : null}
@@ -418,51 +415,52 @@ function StockTakeAreaInventoryScreen() {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
   }, []);
- // Track items saved while offline (UI-only perceived sync)
-const [pendingSyncIds, setPendingSyncIds] = useState<Set<string>>(new Set());
-const addPending = (id: string) =>
-  setPendingSyncIds(prev => { const n = new Set(prev); n.add(id); return n; });
-const removePending = (id: string) =>
-  setPendingSyncIds(prev => { const n = new Set(prev); n.delete(id); return n; });
 
-// When we come back online, clear the pending marks after a short grace
-useEffect(() => {
-  if (!offline) {
-    const t = setTimeout(() => setPendingSyncIds(new Set()), 2000);
-    return () => clearTimeout(t);
-  }
-}, [offline]);
- 
-// Online reconnection toast (animated)
-const [onlineToastVisible, setOnlineToastVisible] = useState(false);
-const onlineAnim = useRef(new Animated.Value(0)).current;
-const wasOfflineRef = useRef<boolean>(false);
+  // Track items saved while offline (UI-only perceived sync)
+  const [pendingSyncIds, setPendingSyncIds] = useState<Set<string>>(new Set());
+  const addPending = (id: string) =>
+    setPendingSyncIds(prev => { const n = new Set(prev); n.add(id); return n; });
+  const removePending = (id: string) =>
+    setPendingSyncIds(prev => { const n = new Set(prev); n.delete(id); return n; });
 
-useEffect(() => {
-  // On first run, remember initial offline state
-  wasOfflineRef.current = offline;
-}, []);
+  // When we come back online, clear the pending marks after a short grace
+  useEffect(() => {
+    if (!offline) {
+      const t = setTimeout(() => setPendingSyncIds(new Set()), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [offline]);
 
-// When we transition from offline -> online, show a brief toast
-useEffect(() => {
-  const wasOffline = wasOfflineRef.current;
-  if (wasOffline && !offline) {
-    setOnlineToastVisible(true);
-    onlineAnim.setValue(0);
-    Animated.timing(onlineAnim, {
-      toValue: 1, duration: 200, easing: Easing.out(Easing.ease), useNativeDriver: true
-    }).start();
+  // Online reconnection toast (animated)
+  const [onlineToastVisible, setOnlineToastVisible] = useState(false);
+  const onlineAnim = useRef(new Animated.Value(0)).current;
+  const wasOfflineRef = useRef<boolean>(false);
 
-    const t = setTimeout(() => {
+  useEffect(() => {
+    // On first run, remember initial offline state
+    wasOfflineRef.current = offline;
+  }, []);
+
+  // When we transition from offline -> online, show a brief toast
+  useEffect(() => {
+    const wasOffline = wasOfflineRef.current;
+    if (wasOffline && !offline) {
+      setOnlineToastVisible(true);
+      onlineAnim.setValue(0);
       Animated.timing(onlineAnim, {
-        toValue: 0, duration: 220, easing: Easing.in(Easing.ease), useNativeDriver: true
-      }).start(({ finished }) => { if (finished) setOnlineToastVisible(false); });
-    }, 1600);
+        toValue: 1, duration: 200, easing: Easing.out(Easing.ease), useNativeDriver: true
+      }).start();
 
-    return () => clearTimeout(t);
-  }
-  wasOfflineRef.current = offline;
-}, [offline, onlineAnim]);
+      const t = setTimeout(() => {
+        Animated.timing(onlineAnim, {
+          toValue: 0, duration: 220, easing: Easing.in(Easing.ease), useNativeDriver: true
+        }).start(({ finished }) => { if (finished) setOnlineToastVisible(false); });
+      }, 1600);
+
+      return () => clearTimeout(t);
+    }
+    wasOfflineRef.current = offline;
+  }, [offline, onlineAnim]);
 
   const [legendDismissed, setLegendDismissed] = useState(false);
   const legendKey = `areaLegendDismissed:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}`;
@@ -623,7 +621,7 @@ useEffect(() => {
         if (offline) addPending(item.id);
         await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id),
           { lastCount: qty, lastCountAt: serverTimestamp() });
-          if (!offline) removePending(item.id);
+        if (!offline) removePending(item.id);
         setLocalQty((m) => ({ ...m, [item.id]: '' }));
         hapticSuccess();
         showUndo(item.id, prevQty, prevAt);
@@ -732,59 +730,60 @@ useEffect(() => {
   };
 
   const maybeFinalizeDepartment = async () => {
-  try {
-    // Get all areas in this department
-    const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
-    const areas: AreaDoc[] = [];
-    snap.forEach((d) => areas.push(d.data() as AreaDoc));
+    try {
+      // Get all areas in this department
+      const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
+      const areas: AreaDoc[] = [];
+      snap.forEach((d) => areas.push(d.data() as AreaDoc));
 
-    // Any remaining incomplete areas?
-    const remaining = areas.filter(a => !a?.completedAt).length;
-    if (remaining > 0) return; // not the last area → nothing to do
+      // Any remaining incomplete areas?
+      const remaining = areas.filter(a => !a?.completedAt).length;
+      if (remaining > 0) return; // not the last area → nothing to do
 
-    // Compute elapsed between first start and last completion for the 24h warning
-    let firstStart: any = null;
-    let lastComplete: any = null;
-    for (const a of areas) {
-      if (a?.startedAt && (!firstStart || a.startedAt.toMillis() < firstStart.toMillis())) firstStart = a.startedAt;
-      if (a?.completedAt && (!lastComplete || a.completedAt.toMillis() > lastComplete.toMillis())) lastComplete = a.completedAt;
-    }
-    const moreThan24h = firstStart && lastComplete
-      ? (lastComplete.toMillis() - firstStart.toMillis()) > (24 * 60 * 60 * 1000)
-      : false;
-    const warn = moreThan24h ? '\n\n⚠️ More than 24 hours elapsed between first and last area. Review for accuracy.' : '';
+      // Compute elapsed between first start and last completion for the 24h warning
+      let firstStart: any = null;
+      let lastComplete: any = null;
+      for (const a of areas) {
+        if (a?.startedAt && (!firstStart || a.startedAt.toMillis() < firstStart.toMillis())) firstStart = a.startedAt;
+        if (a?.completedAt && (!lastComplete || a.completedAt.toMillis() > lastComplete.toMillis())) lastComplete = a.completedAt;
+      }
+      const moreThan24h = firstStart && lastComplete
+        ? (lastComplete.toMillis() - firstStart.toMillis()) > (24 * 60 * 60 * 1000)
+        : false;
+      const warn = moreThan24h ? '\n\n⚠️ More than 24 hours elapsed between first and last area. Review for accuracy.' : '';
 
-    // Prompt the user to finalize the full stock take
-    Alert.alert(
-      'All areas completed',
-      'This was the last area. Submit the full stock take now?' + warn,
-      [
-        { text: 'Later', style: 'cancel' },
-        {
-          text: 'Submit',
-          onPress: async () => {
-            try {
-              // Finalization write target requires your confirmed path (stock take meta).
-              // Once provided, we’ll write { finalizedAt, finalizedBy, status:'completed' } there.
-              const ts = new Date().toLocaleString();
-              Alert.alert('Stock take submitted', `Completed at ${ts}`);
-            } catch (e:any) {
-              Alert.alert('Finalize failed', e?.message ?? String(e));
+      // Prompt the user to finalize the full stock take
+      Alert.alert(
+        'All areas completed',
+        'This was the last area. Submit the full stock take now?' + warn,
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Submit',
+            onPress: async () => {
+              try {
+                // Finalization write target requires your confirmed path (stock take meta).
+                // Once provided, we’ll write { finalizedAt, finalizedBy, status:'completed' } there.
+                const ts = new Date().toLocaleString();
+                Alert.alert('Stock take submitted', `Completed at ${ts}`);
+              } catch (e:any) {
+                Alert.alert('Finalize failed', e?.message ?? String(e));
+              }
             }
           }
-        }
-      ]
-    );
-  } catch (e:any) {
-    if (__DEV__) console.log('[Finalize] check failed', e?.message);
-  }
-};
+        ]
+      );
+    } catch (e:any) {
+      if (__DEV__) console.log('[Finalize] check failed', e?.message);
+    }
+  };
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
   const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
   const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
-  const openReview = () => {
+    const [submittingArea, setSubmittingArea] = useState(false);  
+    const openReview = () => {
     const counted = items.filter(countedInThisCycle);
     const missing = items.filter((it) => !countedInThisCycle(it));
     const flagged = items.filter((it) => !!it.flagRecount);
@@ -802,19 +801,35 @@ useEffect(() => {
     }
   };
 
-  const completeArea = async () => {
+    const completeArea = async () => {
+    // prevent double-taps while a submit is already running
+    if (submittingArea) return;
+
     const missing = items.filter((it) => !countedInThisCycle(it));
+
     const perform = async () => {
+      if (submittingArea) return;
+      setSubmittingArea(true);
       try {
         if (missing.length > 0) {
           await Promise.all(missing.map((it) =>
-            updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
-              { lastCount: 0, lastCountAt: serverTimestamp() })
+            updateDoc(
+              doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
+              { lastCount: 0, lastCountAt: serverTimestamp() }
+            )
           ));
         }
-        await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { completedAt: serverTimestamp() });
-        await maybeFinalizeDepartment(); nav.goBack();
-      } catch (e: any) { Alert.alert('Could not complete area', e?.message ?? String(e)); }
+        await updateDoc(
+          doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
+          { completedAt: serverTimestamp() }
+        );
+        await maybeFinalizeDepartment();
+        nav.goBack();
+      } catch (e: any) {
+        Alert.alert('Could not complete area', e?.message ?? String(e));
+      } finally {
+        setSubmittingArea(false);
+      }
     };
 
     if (missing.length > 0) {
@@ -822,9 +837,12 @@ useEffect(() => {
         ? 'No items have been counted yet this cycle. Continue and save all as 0?'
         : `Not all items have a count for this cycle. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
       Alert.alert('Incomplete counts', msg, [
-        { text: 'Go back', style: 'cancel' }, { text: 'Continue', onPress: perform }
+        { text: 'Go back', style: 'cancel' },
+        { text: 'Continue', onPress: perform }
       ]);
-    } else { await perform(); }
+    } else {
+      await perform();
+    }
   };
 
   const initAllZeros = async () => {
@@ -973,168 +991,6 @@ useEffect(() => {
     );
   }
 
-  const ListHeader = () => {
-    const anyPar = items.some((it) => typeof it.parLevel === 'number');
-    const anyLow = items.some((it) => (typeof it.parLevel === 'number' && typeof it.lastCount === 'number' && it.lastCount < it.parLevel));
-    const showLowChip = anyPar && anyLow;
-
-    // started/last-activity caption formatter
-    const startedAt = areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null);
-    const fmt = (d: Date | null) => d ? d.toLocaleString() : '—';
-
-    return (
-      <View style={{ backgroundColor: 'white', paddingBottom: dens(8), borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-        <View style={{ padding: dens(12), gap: 8 }}>
-          <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
-            <View style={{ flexShrink: 1 }}>
-              <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight: '800' }} numberOfLines={1}>{areaName ?? 'Area Inventory'}</Text>
-              {/* [PAIR3] Started/Last activity caption with info button */}
-              <View style={{ flexDirection:'row', alignItems:'center', marginTop: 4 }}>
-                <Text style={{ opacity: 0.7, fontSize: 12 }} numberOfLines={1}>
-                  Started at: {fmt(startedAt)} • Last activity: {fmt(lastActivityDate)}
-                </Text>
-                <TouchableOpacity onPress={() => setInfoOpen(true)} style={{ marginLeft: 8, padding: 4 }}>
-                  <Text style={{ fontSize: 12 }}>ℹ️</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
-              <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
-                <Text style={{ fontWeight:'800', color:'#374151' }}>
-                  {countedCount}/{items.length} • {lowCount} low • {flaggedCount} flag • {progressPct}%
-                </Text>
-              </View>
-              {/* ⋯ More button */}
-              <TouchableOpacity onPress={()=>setMoreOpen(true)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#E5E7EB' }}>
-                <Text style={{ fontWeight:'900' }}>⋯</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {offline ? (
-            <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
-              <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
-              <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
-            </View>
-          ) : null}
-
-          {!legendDismissed ? (
-            <View style={{ backgroundColor:'#EFF6FF', borderColor:'#93C5FD', borderWidth:1, padding:8, borderRadius:10 }}>
-              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Tip</Text>
-              <Text style={{ color:'#1E3A8A' }}>
-                “Expected” is our guidance based on last count and movements. Type your Count and press Save (or Approve now).
-              </Text>
-              <TouchableOpacity onPress={dismissLegend} style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}>
-                <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          <View style={{ flexDirection: 'row', gap: 8, alignItems:'center', flexWrap:'wrap' }}>
-            <View style={{ flex: 1, position: 'relative' }}>
-              <TextInput
-                value={filter}
-                onChangeText={setFilter}
-                placeholder="Search items…"
-                style={{ paddingVertical: dens(8), paddingHorizontal: filter ? 34 : dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
-              />
-              {filter ? (
-                <TouchableOpacity
-                  onPress={() => setFilter('')}
-                  style={{ position: 'absolute', right: 8, top: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#EEEEEE' }}
-                >
-                  <Text style={{ fontWeight:'800' }}>×</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-            <TouchableOpacity onPress={() => setShowExpected((v) => !v)} style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}>
-              <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
-            {items.some((it)=>typeof it.parLevel==='number') && items.some((it)=> typeof it.parLevel==='number' && typeof it.lastCount==='number' && it.lastCount < it.parLevel) ? (
-              <>
-                <TouchableOpacity
-                  onPress={() => setOnlyLow(false)}
-                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#E5E7EB' : '#0A84FF', backgroundColor: onlyLow ? 'white' : '#D6E9FF' }}
-                >
-                  <Text style={{ fontWeight:'800', color:'#0A84FF' }}>All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setOnlyLow(true)}
-                  style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyLow ? '#DC2626' : '#E5E7EB', backgroundColor: onlyLow ? '#FEE2E2' : 'white' }}
-                >
-                  <Text style={{ fontWeight:'800', color:'#B91C1C' }}>Low stock</Text>
-                </TouchableOpacity>
-              </>
-            ) : null}
-
-            <TouchableOpacity
-              onPress={() => setOnlyFlagged(v=>!v)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, borderWidth:1, borderColor: onlyFlagged ? '#D97706' : '#E5E7EB', backgroundColor: onlyFlagged ? '#FEF3C7' : 'white' }}
-            >
-              <Text style={{ fontWeight:'800', color: onlyFlagged ? '#92400E' : '#374151' }}>
-                {onlyFlagged ? '✓ Recount only' : 'Recount only'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Quick add */}
-          <View style={{ gap: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TextInput
-                ref={nameInputRef}
-                value={addingName}
-                onChangeText={setAddingName}
-                placeholder="Quick add item name"
-                style={{ flex: 1, paddingVertical: dens(8), paddingHorizontal: dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
-              />
-              <TouchableOpacity onPress={addQuickItem}
-                style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
-                <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ flexDirection:'row', gap:8 }}>
-              <TextInput
-                value={addingUnit}
-                onChangeText={setAddingUnit}
-                placeholder="Unit (e.g. bottles, kg)"
-                style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-              />
-              <TextInput
-                value={addingSupplier}
-                onChangeText={setAddingSupplier}
-                placeholder="Supplier"
-                style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-              />
-            </View>
-          </View>
-
-          <View style={{ flexDirection:'row', gap:8, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
-            <TouchableOpacity
-              onPress={()=>setCompactCounted((v)=>!v)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor: compactCounted ? '#E0F2FE' : '#F3F4F6', borderWidth:1, borderColor: compactCounted ? '#38BDF8' : '#E5E7EB' }}
-            >
-              <Text style={{ fontWeight:'800', color: compactCounted ? '#0369A1' : '#374151' }}>
-                {compactCounted ? '✓ Compact counted rows' : 'Show inputs on counted rows'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={()=>setSortUncountedFirst(v=>!v)}
-              style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:16, backgroundColor: sortUncountedFirst ? '#DBEAFE' : '#F3F4F6', borderWidth:1, borderColor: sortUncountedFirst ? '#1D4ED8' : '#E5E7EB' }}
-            >
-              <Text style={{ fontWeight:'800', color: sortUncountedFirst ? '#1D4ED8' : '#374151' }}>
-                {sortUncountedFirst ? '✓ Sort uncounted first' : 'Sort A–Z'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  };
-
   const EmptyState = () => (
     <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
       <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items in this area yet</Text>
@@ -1152,17 +1008,36 @@ useEffect(() => {
     </View>
   );
 
-  const ListFooter = () => (
+    const ListFooter = () => (
     <View style={{ padding: dens(12), borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
-      <TouchableOpacity onPress={openReview}
-        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#E8F5E9' }}>
-        <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>✅ Submit Area</Text>
+      <TouchableOpacity
+        onPress={openReview}
+        disabled={submittingArea}
+        style={{
+          paddingVertical: 12,
+          paddingHorizontal: 12,
+          borderRadius: 12,
+          backgroundColor: '#E8F5E9',
+          opacity: submittingArea ? 0.6 : 1,
+        }}
+      >
+        <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>
+          {submittingArea ? 'Submitting…' : '✅ Submit Area'}
+        </Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={throttleAction(initAllZeros)}
-        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}>
-        <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>🟠 Initialise: set all uncounted to 0</Text>
+
+      <TouchableOpacity
+        onPress={throttleAction(initAllZeros)}
+        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}
+      >
+        <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>
+          🟠 Initialise: set all uncounted to 0
+        </Text>
       </TouchableOpacity>
-      <Text style={{ textAlign:'center', color:'#666' }}>{countedCount}/{items.length} items counted</Text>
+
+      <Text style={{ textAlign:'center', color:'#666' }}>
+        {countedCount}/{items.length} items counted
+      </Text>
     </View>
   );
 
@@ -1197,7 +1072,32 @@ useEffect(() => {
             pending={pendingSyncIds.has(item.id)}
           />
         )}
-        ListHeaderComponent={<AreaInvHeader areaName={areaName} isCompact={isCompact} dens={dens} startedAt={(areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null))} lastActivityDate={lastActivityDate} offline={offline} legendDismissed={legendDismissed} dismissLegend={dismissLegend} showExpected={showExpected} setShowExpected={setShowExpected} filter={filter} setFilter={setFilter} addingName={addingName} setAddingName={setAddingName} addingUnit={addingUnit} setAddingUnit={setAddingUnit} addingSupplier={addingSupplier} setAddingSupplier={setAddingSupplier} onAddQuickItem={addQuickItem} stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }} onOpenMore={() => setMoreOpen(true)} nameInputRef={nameInputRef} />}
+        ListHeaderComponent={
+          <AreaInvHeader
+            areaName={areaName}
+            isCompact={isCompact}
+            dens={dens}
+            startedAt={areaMeta?.startedAt?.toDate ? areaMeta.startedAt.toDate() : (areaMeta?.startedAt?._seconds ? new Date(areaMeta.startedAt._seconds * 1000) : null)}
+            lastActivityDate={lastActivityDate}
+            offline={offline}
+            legendDismissed={legendDismissed}
+            dismissLegend={dismissLegend}
+            showExpected={showExpected}
+            setShowExpected={setShowExpected}
+            filter={filter}
+            setFilter={setFilter}
+            addingName={addingName}
+            setAddingName={setAddingName}
+            addingUnit={addingUnit}
+            setAddingUnit={setAddingUnit}
+            addingSupplier={addingSupplier}
+            setAddingSupplier={setAddingSupplier}
+            onAddQuickItem={addQuickItem}
+            stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
+            onOpenMore={() => setMoreOpen(true)}
+            nameInputRef={nameInputRef}
+          />
+        }
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
         stickyHeaderIndices={[0]}
@@ -1422,49 +1322,49 @@ useEffect(() => {
         </View>
       ) : null}
 
-{/* --- Connection banner (absolute overlay) --- */}
-{offline ? (
-  <View
-    pointerEvents="none"
-    style={{
-      position: 'absolute',
-      left: 16, right: 16,
-      bottom: (showSteppers && focusedInputId) ? 120 : 56, // sit above keyboard bar / FAB
-      borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
-      backgroundColor: '#F59E0B',
-      shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-      elevation: 2
-    }}
-  >
-    <Text style={{ color: '#111827', fontWeight: '800' }}>Offline</Text>
-    <Text style={{ color: '#111827', opacity: 0.85 }}>Changes will sync when reconnected</Text>
-  </View>
-) : null}
+      {/* --- Connection banner (absolute overlay) --- */}
+      {offline ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 16, right: 16,
+            bottom: (showSteppers && focusedInputId) ? 120 : 56, // sit above keyboard bar / FAB
+            borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+            backgroundColor: '#F59E0B',
+            shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+            elevation: 2
+          }}
+        >
+          <Text style={{ color: '#111827', fontWeight: '800' }}>Offline</Text>
+          <Text style={{ color: '#111827', opacity: 0.85 }}>Changes will sync when reconnected</Text>
+        </View>
+      ) : null}
 
-{!offline && onlineToastVisible ? (
-  <Animated.View
-    pointerEvents="none"
-    style={{
-      position: 'absolute',
-      left: 16, right: 16,
-      bottom: (showSteppers && focusedInputId) ? 120 : 56,
-      transform: [{ translateY: onlineAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
-      opacity: onlineAnim
-    }}
-  >
-    <View
-      style={{
-        borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
-        backgroundColor: '#10B981',
-        shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-        elevation: 2
-      }}
-    >
-      <Text style={{ color: 'white', fontWeight: '800' }}>Online</Text>
-      <Text style={{ color: 'white', opacity: 0.9 }}>All changes synced</Text>
-    </View>
-  </Animated.View>
-) : null}
+      {!offline && onlineToastVisible ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 16, right: 16,
+            bottom: (showSteppers && focusedInputId) ? 120 : 56,
+            transform: [{ translateY: onlineAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+            opacity: onlineAnim
+          }}
+        >
+          <View
+            style={{
+              borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+              backgroundColor: '#10B981',
+              shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+              elevation: 2
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Online</Text>
+            <Text style={{ color: 'white', opacity: 0.9 }}>All changes synced</Text>
+          </View>
+        </Animated.View>
+      ) : null}
 
       {/* Keyboard Accessory */}
       {showSteppers && focusedInputId ? (
@@ -1572,8 +1472,19 @@ useEffect(() => {
               <TouchableOpacity onPress={()=>setReviewOpen(false)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'700' }}>Back to counting</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }} style={{ padding:12, borderRadius:10, backgroundColor:'#16A34A', flex:1 }}>
-                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Submit now</Text>
+                            <TouchableOpacity
+                onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }}
+                disabled={submittingArea}
+                style={{
+                  padding:12,
+                  borderRadius:10,
+                  backgroundColor: submittingArea ? '#16A34A99' : '#16A34A',
+                  flex:1,
+                }}
+              >
+                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>
+                  {submittingArea ? 'Submitting…' : 'Submit now'}
+                </Text>
               </TouchableOpacity>
             </View>
 
