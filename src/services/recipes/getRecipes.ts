@@ -1,5 +1,13 @@
 import {
-  getFirestore, collection, query, where, orderBy, startAt, endAt, limit, getDocs
+  getFirestore,
+  collection,
+  query,
+  where,
+  orderBy,
+  startAt,
+  endAt,
+  limit,
+  getDocs
 } from 'firebase/firestore';
 
 export type RecipeStatus = 'draft' | 'confirmed';
@@ -20,6 +28,8 @@ export type RecipeListRow = {
   cogs?: number | null;
   rrp?: number | null;
   updatedAt?: any;
+  hasConsumption: boolean;
+  hasPosLink: boolean;
 };
 
 export async function getRecipes(filters: GetRecipesFilters): Promise<RecipeListRow[]> {
@@ -29,6 +39,7 @@ export async function getRecipes(filters: GetRecipesFilters): Promise<RecipeList
   const col = collection(db, 'venues', venueId, 'recipes');
 
   const constraints: any[] = [];
+
   // Status filter
   if (status === 'draft') constraints.push(where('status', '==', 'draft'));
   if (status === 'confirmed') constraints.push(where('status', '==', 'confirmed'));
@@ -50,8 +61,19 @@ export async function getRecipes(filters: GetRecipesFilters): Promise<RecipeList
 
   const q = query(col, ...constraints);
   const snap = await getDocs(q);
+
   return snap.docs.map(d => {
     const data = d.data() as any;
+
+    const hasConsumption =
+      !!data?.consumptionPerServe &&
+      typeof data.consumptionPerServe === 'object' &&
+      Object.keys(data.consumptionPerServe).length > 0;
+
+    const hasPosLink =
+      !!data?.posProductId ||
+      (Array.isArray(data?.posProductIds) && data.posProductIds.length > 0);
+
     return {
       id: d.id,
       name: data?.name ?? '(unnamed)',
@@ -61,6 +83,8 @@ export async function getRecipes(filters: GetRecipesFilters): Promise<RecipeList
       cogs: data?.cogs ?? null,
       rrp: data?.rrp ?? null,
       updatedAt: data?.updatedAt ?? null,
+      hasConsumption,
+      hasPosLink,
     };
   });
 }
