@@ -76,7 +76,14 @@ export default function DraftRecipeDetailPanel({
         if (data.name && !initialName) setName(String(data.name));
         if (data.yield != null) setYieldQty(String(data.yield));
         if (data.unit) setUnit(String(data.unit));
-        if (Array.isArray(data.items)) setItems(data.items.map((r:any, i:number) => ({ key:`i${i}_${Date.now()}`, ...r })));
+        if (Array.isArray(data.items)) {
+          setItems(
+            data.items.map((r:any, i:number) => ({
+              key:`i${i}_${Date.now()}`,
+              ...r
+            }))
+          );
+        }
       } catch (e) {
         if (__DEV__) console.log('[DraftRecipeDetailPanel] hydrate failed', e);
       }
@@ -89,9 +96,15 @@ export default function DraftRecipeDetailPanel({
     const ps = Number(portionSize || '0') || 0;
     if (ps <= 0) return null;
 
-    if (portionUnit === 'ml' && derivedBatchVolumeMl > 0) return Math.max(1, Math.floor(derivedBatchVolumeMl / ps));
-    if (portionUnit === 'g'  && derivedBatchWeightG  > 0) return Math.max(1, Math.floor(derivedBatchWeightG  / ps));
-    if (portionUnit === 'each' && derivedBatchCount  > 0) return Math.max(1, Math.floor(derivedBatchCount   / ps));
+    if (portionUnit === 'ml' && derivedBatchVolumeMl > 0) {
+      return Math.max(1, Math.floor(derivedBatchVolumeMl / ps));
+    }
+    if (portionUnit === 'g'  && derivedBatchWeightG  > 0) {
+      return Math.max(1, Math.floor(derivedBatchWeightG  / ps));
+    }
+    if (portionUnit === 'each' && derivedBatchCount  > 0) {
+      return Math.max(1, Math.floor(derivedBatchCount   / ps));
+    }
     if (portionUnit === 'serve') {
       const y = Number(yieldQty || '0') || 0;
       return y > 0 ? y : null;
@@ -100,11 +113,14 @@ export default function DraftRecipeDetailPanel({
   }, [mode, portionSize, portionUnit, derivedBatchVolumeMl, derivedBatchWeightG, derivedBatchCount, yieldQty]);
 
   const cogsPerServe = useMemo(() => {
-    const serves = mode === 'single' ? 1 : (servesFromBatch ?? (Number(yieldQty || '0') || 0));
+    const serves = mode === 'single'
+      ? 1
+      : (servesFromBatch ?? (Number(yieldQty || '0') || 0));
     return serves > 0 ? (derivedBatchCost / serves) : 0;
   }, [mode, servesFromBatch, yieldQty, derivedBatchCost]);
 
   const toNumber = (s:string) => Number(s || '0') || 0;
+
   const rrpDisplay = useMemo(() => {
     const gp = Math.min(99.9, Math.max(0, toNumber(gpPct)));
     const c  = Math.max(0, cogsPerServe);
@@ -131,6 +147,100 @@ export default function DraftRecipeDetailPanel({
     setDerivedBatchWeightG(s?.totalG || 0);
     setDerivedBatchCount(s?.totalEach || 0);
   }, []);
+
+  // ---------- SMART YIELD SUGGESTIONS ----------
+  type YieldSuggestion = { key: string; label: string; value: number };
+
+  const yieldSuggestions: YieldSuggestion[] = useMemo(() => {
+    const out: YieldSuggestion[] = [];
+    if (mode === 'single') return out; // single serve is fixed at 1
+
+    const addSuggestion = (k:string, label:string, value:number) => {
+      if (!Number.isFinite(value) || value <= 0) return;
+      if (out.some(s => Math.abs(s.value - value) < 0.0001)) return;
+      out.push({ key:k, label, value });
+    };
+
+    // 1) Serves from portion logic (strongest signal)
+    if (servesFromBatch != null && servesFromBatch > 0) {
+      addSuggestion('serves', `${servesFromBatch} serves`, servesFromBatch);
+    }
+
+    // 2) Raw batch totals
+    if (derivedBatchVolumeMl > 0) {
+      addSuggestion('ml', `${derivedBatchVolumeMl.toLocaleString()} ml`, derivedBatchVolumeMl);
+    }
+    if (derivedBatchWeightG > 0) {
+      addSuggestion('g', `${derivedBatchWeightG.toLocaleString()} g`, derivedBatchWeightG);
+    }
+    if (derivedBatchCount > 0) {
+      addSuggestion('each', `${derivedBatchCount.toLocaleString()} each`, derivedBatchCount);
+    }
+
+    // 3) Gentle category-based ordering
+    const orderScore = (s:YieldSuggestion): number => {
+      if (s.key === 'serves') return 0; // always first if present
+      if (category === 'beverage') {
+        if (s.key === 'ml') return 1;
+        if (s.key === 'g') return 3;
+      }
+      if (category === 'food') {
+        if (s.key === 'g') return 1;
+        if (s.key === 'ml') return 3;
+      }
+      if (s.key === 'each') return 2;
+      return 4;
+    };
+
+    out.sort((a,b)=> orderScore(a) - orderScore(b));
+    return out;
+  }, [
+    mode,
+    category,
+    servesFromBatch,
+    derivedBatchVolumeMl,
+    derivedBatchWeightG,
+    derivedBatchCount
+  ]);
+  // --------------------------------------------------------
+
+  // ---------- PRICING CLARITY / GUARDRAILS ----------
+  // True if the user typed an RRP manually (any non-empty string)
+const isRrpManual =
+  typeof rrp === 'string' && rrp.trim().length > 0;
+
+  const effectiveRrp = useMemo(() => {
+    const raw = toNumber(isRrpManual ? rrp : rrpDisplay);
+    return raw > 0 ? raw : 0;
+  }, [isRrpManual, rrp, rrpDisplay]);
+
+  const netPrice = useMemo(() => {
+    if (!effectiveRrp) return 0;
+    return rrpIncludesGst ? effectiveRrp / (1 + GST_RATE) : effectiveRrp;
+  }, [effectiveRrp, rrpIncludesGst]);
+
+  const gpLive = useMemo(() => {
+    const v = Number(gpPct || '0') || 0;
+    return Math.max(0, Math.min(100, v));
+  }, [gpPct]);
+
+  const minGpTarget = useMemo(() => {
+    if (category === 'beverage') return 65; // many NZ venues aim 65–70% on bev
+    if (category === 'food') return 60;     // many NZ venues aim 60–65% on food
+    return 60;
+  }, [category]);
+
+  const gpRangeLabel = useMemo(() => {
+    if (category === 'beverage') return '65–70%';
+    if (category === 'food') return '60–65%';
+    return '60–70%';
+  }, [category]);
+
+  const gpIsLow = useMemo(
+    () => gpLive > 0 && gpLive < minGpTarget,
+    [gpLive, minGpTarget]
+  );
+  // ---------------------------------------------------
 
   const save = useCallback(async () => {
     try {
@@ -202,7 +312,13 @@ export default function DraftRecipeDetailPanel({
 
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }} keyboardShouldPersistTaps="handled">
         <Field label="Name">
-          <TextInput value={name} onChangeText={setName} placeholder="e.g., House Margarita" style={I} autoCapitalize="words" />
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g., House Margarita"
+            style={I}
+            autoCapitalize="words"
+          />
           {mode ? <Text style={Subtle}>Mode: {mode}</Text> : null}
           {category ? <Text style={Subtle}>Category: {category}</Text> : null}
         </Field>
@@ -217,25 +333,84 @@ export default function DraftRecipeDetailPanel({
 
         <Card>
           <Row label="Derived COGS (per serve)" value={formatMoney(cogsPerServe)} />
+          <Text style={{ fontSize:11, opacity:0.7, marginTop:4 }}>
+            Based on your ingredient costs, portion size and batch yield.
+          </Text>
+
           <View style={{ height:8 }} />
+
           <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
             <Text style={{ fontWeight:'700' }}>RRP includes GST (15%)</Text>
             <Switch value={rrpIncludesGst} onValueChange={setRrpIncludesGst} />
           </View>
+
           <FieldSmall label="Target GP %">
-            <TextInput value={gpPct} onChangeText={setGpPct} placeholder="e.g., 70" keyboardType="decimal-pad" style={I} />
+            <TextInput
+              value={gpPct}
+              onChangeText={setGpPct}
+              placeholder="e.g., 70"
+              keyboardType="decimal-pad"
+              style={I}
+            />
+            <Text style={{ fontSize:11, opacity:0.7, marginTop:4 }}>
+              Many venues aim for around {gpRangeLabel} GP — adjust to match your venue.
+            </Text>
           </FieldSmall>
+
           <FieldSmall label="RRP">
-            <TextInput value={rrp.length ? rrp : rrpDisplay} onChangeText={onChangeRrp} placeholder="e.g., 15.00" keyboardType="decimal-pad" style={I} />
+            <TextInput
+              value={rrp.length ? rrp : rrpDisplay}
+              onChangeText={onChangeRrp}
+              placeholder="e.g., 15.00"
+              keyboardType="decimal-pad"
+              style={I}
+            />
+            <Text style={{ fontSize:11, opacity:0.7, marginTop:4 }}>
+              {isRrpManual
+                ? 'Price is set manually; GP updates from your price.'
+                : 'Price is auto-calculated from COGS and target GP.'}
+            </Text>
           </FieldSmall>
-          <Row label="Live GP %" value={`${(Number(gpPct || '0') || 0).toFixed(1)}%`} />
+
+          <Row
+            label="Net price (ex GST)"
+            value={formatMoney(netPrice)}
+          />
+
+          <Row
+            label="Live GP %"
+            value={`${gpLive.toFixed(1)}%`}
+          />
+
+          {gpIsLow && (
+            <View
+              style={{
+                marginTop:8,
+                padding:8,
+                borderRadius:8,
+                backgroundColor:'#FEF2F2',
+                borderWidth:1,
+                borderColor:'#FECACA'
+              }}
+            >
+              <Text style={{ fontSize:12, color:'#B91C1C', fontWeight:'700' }}>
+                GP is below typical target
+              </Text>
+              <Text style={{ fontSize:11, color:'#B91C1C', marginTop:2 }}>
+                Many venues aim for around {gpRangeLabel} GP on {category || 'these'} items.
+                Double-check this recipe still works for your business.
+              </Text>
+            </View>
+          )}
         </Card>
 
         <Field label="Yield / Unit" row>
           <TextInput
             value={yieldQty || (mode==='batch' && servesFromBatch!=null ? String(servesFromBatch) : '')}
             onChangeText={setYieldQty}
-            placeholder={mode === 'single' ? '1' : (servesFromBatch != null ? String(servesFromBatch) : 'e.g., 10')}
+            placeholder={mode === 'single'
+              ? '1'
+              : (servesFromBatch != null ? String(servesFromBatch) : 'e.g., 10')}
             keyboardType="numeric"
             style={[I, { flex:1, marginRight:8 }]}
           />
@@ -247,6 +422,56 @@ export default function DraftRecipeDetailPanel({
           />
         </Field>
 
+        {/* Smart suggestions for yield */}
+        {yieldSuggestions.length > 0 && (
+          <View
+            style={{
+              marginTop:4,
+              padding:10,
+              borderRadius:12,
+              backgroundColor:'#FEF3C7',
+              borderWidth:1,
+              borderColor:'#FDE68A',
+              gap:6
+            }}
+          >
+            <Text style={{ fontWeight:'800', color:'#92400E' }}>
+              Suggested yield
+            </Text>
+            <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+              {yieldSuggestions.map(s => {
+                const isActive = String(s.value) === (yieldQty || '');
+                return (
+                  <TouchableOpacity
+                    key={s.key}
+                    onPress={() => setYieldQty(String(s.value))}
+                    style={{
+                      paddingVertical:6,
+                      paddingHorizontal:10,
+                      borderRadius:999,
+                      backgroundColor: isActive ? '#F97316' : '#FFF7ED',
+                      borderWidth:1,
+                      borderColor: isActive ? '#EA580C' : '#FED7AA'
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight:'700',
+                        color: isActive ? '#FFFFFF' : '#9A3412'
+                      }}
+                    >
+                      {s.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={{ fontSize:11, color:'#92400E' }}>
+              Tap a suggestion to use it as the batch yield. You can still edit it any time.
+            </Text>
+          </View>
+        )}
+
         {mode !== 'single' && (
           <Field label="Portion size (to calculate per-serve COGS)">
             <View style={{ flexDirection:'row' }}>
@@ -257,7 +482,11 @@ export default function DraftRecipeDetailPanel({
                 keyboardType="numeric"
                 style={[I, { flex:1, marginRight:8 }]}
               />
-              <Dropdown value={portionUnit} options={['ml','g','each','serve']} onChange={setPortionUnit} />
+              <Dropdown
+                value={portionUnit}
+                options={['ml','g','each','serve']}
+                onChange={setPortionUnit}
+              />
             </View>
             <Text style={Hint}>
               Batch totals from ingredients: {derivedBatchVolumeMl} ml · {derivedBatchWeightG} g · {derivedBatchCount} each
@@ -266,15 +495,35 @@ export default function DraftRecipeDetailPanel({
         )}
 
         <Field label="Method / Notes">
-          <TextInput value={method} onChangeText={setMethod} placeholder="Steps, prep notes…" style={[I, { height:120, textAlignVertical:'top' }]} multiline />
+          <TextInput
+            value={method}
+            onChangeText={setMethod}
+            placeholder="Steps, prep notes…"
+            style={[I, { height:120, textAlignVertical:'top' }]}
+            multiline
+          />
         </Field>
 
-        <TouchableOpacity disabled={busy} onPress={confirmNow} style={{ padding:14, borderRadius:12, backgroundColor:'#16a34a' }}>
-          <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Confirming…' : 'Confirm Recipe'}</Text>
+        <TouchableOpacity
+          disabled={busy}
+          onPress={confirmNow}
+          style={{ padding:14, borderRadius:12, backgroundColor:'#16a34a' }}
+        >
+          <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>
+            {busy ? 'Confirming…' : 'Confirm Recipe'}
+          </Text>
         </TouchableOpacity>
+
         <View style={{ height:8 }} />
-        <TouchableOpacity disabled={busy} onPress={save} style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}>
-          <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Saving…' : 'Save Draft'}</Text>
+
+        <TouchableOpacity
+          disabled={busy}
+          onPress={save}
+          style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}
+        >
+          <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>
+            {busy ? 'Saving…' : 'Save Draft'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -284,8 +533,19 @@ export default function DraftRecipeDetailPanel({
 /* ====== Local UI helpers ====== */
 function Header({ title, onBack }:{ title:string; onBack:()=>void }) {
   return (
-    <View style={{ padding:16, borderBottomWidth:1, borderColor:'#E5E7EB', flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-      <TouchableOpacity onPress={onBack}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
+    <View
+      style={{
+        padding:16,
+        borderBottomWidth:1,
+        borderColor:'#E5E7EB',
+        flexDirection:'row',
+        justifyContent:'space-between',
+        alignItems:'center'
+      }}
+    >
+      <TouchableOpacity onPress={onBack}>
+        <Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text>
+      </TouchableOpacity>
       <Text style={{ fontSize:18, fontWeight:'900' }}>{title}</Text>
       <View style={{ width:60 }} />
     </View>
@@ -308,7 +568,18 @@ function FieldSmall({ label, children }:{ label:string; children:any }) {
   );
 }
 function Card({ children }:{ children:any }) {
-  return <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB' }}>{children}</View>;
+  return (
+    <View
+      style={{
+        padding:12,
+        borderRadius:12,
+        borderWidth:1,
+        borderColor:'#E5E7EB'
+      }}
+    >
+      {children}
+    </View>
+  );
 }
 function Row({ label, value }:{ label:string; value:string }) {
   return (
@@ -325,13 +596,31 @@ function Dropdown({ value, options, onChange }:{ value:any; options:any[]; onCha
     onChange(next);
   };
   return (
-    <TouchableOpacity onPress={advance} style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, paddingHorizontal:12, justifyContent:'center' }}>
-      <Text style={{ paddingVertical:12, fontWeight:'700' }}>{String(value)}</Text>
+    <TouchableOpacity
+      onPress={advance}
+      style={{
+        borderWidth:1,
+        borderColor:'#E5E7EB',
+        borderRadius:12,
+        paddingHorizontal:12,
+        justifyContent:'center'
+      }}
+    >
+      <Text style={{ paddingVertical:12, fontWeight:'700' }}>
+        {String(value)}
+      </Text>
     </TouchableOpacity>
   );
 }
-function formatMoney(n:any) { return Number.isFinite(Number(n)) ? `$${Number(n).toFixed(2)}` : '—'; }
+function formatMoney(n:any) {
+  return Number.isFinite(Number(n)) ? `$${Number(n).toFixed(2)}` : '—';
+}
 
-const I = { borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, padding:12 } as const;
+const I = {
+  borderWidth:1,
+  borderColor:'#E5E7EB',
+  borderRadius:12,
+  padding:12
+} as const;
 const Subtle = { opacity:0.7, marginTop:4 } as const;
 const Hint = { opacity:0.6, marginTop:6, fontSize:12 } as const;
