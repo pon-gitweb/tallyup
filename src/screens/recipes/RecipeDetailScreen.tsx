@@ -41,6 +41,22 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
   const isConfirmed = docData?.status === 'confirmed';
   const title = docData?.name || 'Recipe';
 
+  // ---------- POS & consumption clarity (read-only) ----------
+  const hasConsumption = useMemo(() => {
+    const c = docData?.consumptionPerServe;
+    return !!c && typeof c === 'object' && Object.keys(c).length > 0;
+  }, [docData]);
+
+  const posLinkInfo = useMemo(() => {
+    const single = docData?.posProductId ? 1 : 0;
+    const multi  = Array.isArray(docData?.posProductIds) ? docData.posProductIds.length : 0;
+    const total  = single + multi;
+    return {
+      count: total,
+      label: total === 0 ? 'None' : `${total} linked`
+    };
+  }, [docData]);
+
   const onDuplicate = async () => {
     try {
       if (!venueId || !docData?.id) return;
@@ -80,11 +96,18 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
         <Row label="Mode" value={docData.mode || '—'} />
         <Row label="Yield" value={docData.yield != null ? String(docData.yield) : '—'} />
         <Row label="Unit" value={docData.unit || '—'} />
+
         <Card>
           <Text style={{ fontWeight:'800', marginBottom:6 }}>Pricing</Text>
           <Row label="COGS (per serve)" value={fmtMoney(docData.cogs)} />
           <Row label="RRP" value={fmtMoney(docData.rrp)} />
           <Row label="Target GP %" value={docData.gpPct != null ? `${Number(docData.gpPct).toFixed(1)}%` : '—'} />
+        </Card>
+
+        <Card>
+          <Text style={{ fontWeight:'800', marginBottom:6 }}>Usage / POS</Text>
+          <Row label="POS links" value={posLinkInfo.label} />
+          <Row label="Consumption baseline" value={hasConsumption ? 'Ready' : 'Not set'} />
         </Card>
 
         <Card>
