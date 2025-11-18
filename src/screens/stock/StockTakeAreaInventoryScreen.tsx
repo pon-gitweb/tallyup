@@ -106,7 +106,7 @@ const Row = React.memo(function Row({
   const countedNow = countedInThisCycle(item);
   const locked = countedNow && !isManager;
   const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
-  // derive visible count: prefer a valid typed value, else fall back to saved lastCount
+
   const typedRaw = (localQty[item.id] ?? '').trim();
   const typedNum = /^\d+(\.\d+)?$/.test(typedRaw) ? parseFloat(typedRaw) : null;
   const visibleCount: number | null =
@@ -116,6 +116,12 @@ const Row = React.memo(function Row({
   const lowStock = typeof item.parLevel === 'number'
     && typeof visibleCount === 'number'
     && visibleCount < item.parLevel;
+
+  const showOutlier =
+    expectedNum != null &&
+    countedNow &&
+    typeof item.lastCount === 'number' &&
+    Math.abs(item.lastCount - expectedNum) >= 5;
 
   // auto-repeat steppers
   const repeatTimerRef = useRef<any>(null);
@@ -189,21 +195,91 @@ const Row = React.memo(function Row({
     <TouchableOpacity
       activeOpacity={0.9}
       onLongPress={() => setMenuFor(item)}
-      style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8 }}
+      style={{
+        paddingVertical: dens(10),
+        paddingHorizontal: dens(12),
+        minHeight: 44,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        gap: 8,
+        backgroundColor: countedNow ? '#FFFFFF' : '#F9FAFB',
+      }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
+
           <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            <Text style={{ fontSize: 12, color: countedInThisCycle(item) ? '#4CAF50' : '#999' }}>
-              {countedInThisCycle(item) ? `Counted: ${item.lastCount}` : 'To count'}
+            {/* Counted status */}
+            <Text
+              style={{
+                fontSize: 12,
+                color: countedNow ? '#4CAF50' : '#DC2626',
+                fontWeight: countedNow ? '600' : '700',
+              }}>
+              {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
             </Text>
-            {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-            {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
+
+            {/* LOW pill */}
+            {lowStock && (
+              <Text style={{
+                fontSize: 12,
+                color: '#DC2626',
+                fontWeight: '800',
+                backgroundColor: '#FEE2E2',
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 6,
+              }}>
+                LOW
+              </Text>
+            )}
+
+            {/* FLAGGED pill */}
+            {item.flagRecount && (
+              <Text style={{
+                fontSize: 12,
+                color: '#6A1B9A',
+                fontWeight: '800',
+                backgroundColor: '#F3E8FF',
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 6,
+              }}>
+                FLAGGED
+              </Text>
+            )}
+
+            {/* Outlier '?' — only when counted and expected exists */}
+            {showOutlier && (
+              <Text style={{
+                fontSize: 12,
+                color: '#B45309',
+                fontWeight: '800',
+                backgroundColor: '#FEF3C7',
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 6,
+              }}>
+                ?
+              </Text>
+            )}
+
+            {/* Unit */}
+            {item.unit ? (
+              <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text>
+            ) : null}
+
+            {/* Supplier */}
+            {item.supplierName ? (
+              <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text>
+            ) : null}
+
+            {/* Existing flag badge (icon) */}
             {FlagBadge}
-            {LowBadge}
           </View>
         </View>
+
         {areaStarted && showExpected && expectedStr ? (
           <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
             <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
@@ -236,7 +312,10 @@ const Row = React.memo(function Row({
           editable={!locked}
           onFocus={()=>setFocusedInputId(item.id)}
           onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
-          onSubmitEditing={()=> throttleAction(()=>saveCount(item))() }
+          onSubmitEditing={() => {
+            throttleAction(() => saveCount(item))();
+            inputRefs.current[item.id]?.blur?.();
+          }}
           style={{
             flexGrow: 1, minWidth: 160,
             paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
@@ -319,9 +398,17 @@ function StockTakeAreaInventoryScreen() {
   const uid = getAuth().currentUser?.uid;
   const [isManager, setIsManager] = useState(false);
 
+  // Remember “last area” per department for resume in AreaSelection
+  useEffect(() => {
+    if (!AS) return;
+    if (!venueId || !departmentId || !areaId) return;
+    const key = `lastArea:${venueId}:${departmentId}`;
+    AS.setItem(key, areaId).catch(() => {});
+  }, [venueId, departmentId, areaId]);
+
   // [PAIR2] global density
   const { density, setDensity, isCompact } = useDensity();
-  const D = isCompact ? 0.72 : 1;                   // tighten ~22% in compact
+  const D = isCompact ? 0.72 : 1;
   const dens = <T extends number>(v: T) => Math.round(v * D);
 
   // Export toast (non-blocking)
@@ -437,11 +524,9 @@ function StockTakeAreaInventoryScreen() {
   const wasOfflineRef = useRef<boolean>(false);
 
   useEffect(() => {
-    // On first run, remember initial offline state
     wasOfflineRef.current = offline;
   }, []);
 
-  // When we transition from offline -> online, show a brief toast
   useEffect(() => {
     const wasOffline = wasOfflineRef.current;
     if (wasOffline && !offline) {
@@ -519,7 +604,7 @@ function StockTakeAreaInventoryScreen() {
     const base = typeof it.lastCount === 'number' ? it.lastCount : null;
     const incoming = typeof it.incomingQty === 'number' ? it.incomingQty : 0;
     const sold = typeof it.soldQty === 'number' ? it.soldQty : 0;
-    const wastage = typeof it.wastageQty === 'number' ? it.wastage : (typeof it.wastageQty === 'number' ? it.wastageQty : 0);
+    const wastage = typeof it.wastageQty === 'number' ? it.wastageQty : 0;
     if (base == null) return null;
     return base + incoming - sold - wastage;
   };
@@ -551,7 +636,6 @@ function StockTakeAreaInventoryScreen() {
   const flaggedCount = items.filter((it)=>!!it.flagRecount).length;
   const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
 
-  // [PAIR3] compute last activity
   const lastActivityDate: Date | null = useMemo(() => {
     let last: Date | null = null;
     for (const it of items) {
@@ -695,7 +779,7 @@ function StockTakeAreaInventoryScreen() {
         updatedAt: serverTimestamp(),
       };
       const unitTrim = (addingUnit || '').trim();
-      if (unitTrim) payload.unit = unitTrim; // allowed on CREATE
+      if (unitTrim) payload.unit = unitTrim;
       await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), payload);
     } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); return; }
     setAddingName(''); await rememberQuickAdd(addingUnit, addingSupplier);
@@ -730,51 +814,92 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const maybeFinalizeDepartment = async () => {
+    if (!venueId || !departmentId) return;
+
     try {
-      // Get all areas in this department
-      const snap = await getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas'));
-      const areas: AreaDoc[] = [];
-      snap.forEach((d) => areas.push(d.data() as AreaDoc));
+      const areasCol = collection(
+        db,
+        'venues',
+        venueId,
+        'departments',
+        departmentId,
+        'areas',
+      );
+      const snap = await getDocs(areasCol);
+      if (snap.empty) {
+        return;
+      }
 
-      // Any remaining incomplete areas?
-      const remaining = areas.filter(a => !a?.completedAt).length;
-      if (remaining > 0) return; // not the last area → nothing to do
+      const areas = snap.docs.map(d => d.data() as { startedAt?: any; completedAt?: any });
 
-      // Compute elapsed between first start and last completion for the 24h warning
+      const allCompleted = areas.every(a => !!a.completedAt);
+      if (!allCompleted) {
+        return;
+      }
+
       let firstStart: any = null;
       let lastComplete: any = null;
-      for (const a of areas) {
-        if (a?.startedAt && (!firstStart || a.startedAt.toMillis() < firstStart.toMillis())) firstStart = a.startedAt;
-        if (a?.completedAt && (!lastComplete || a.completedAt.toMillis() > lastComplete.toMillis())) lastComplete = a.completedAt;
-      }
-      const moreThan24h = firstStart && lastComplete
-        ? (lastComplete.toMillis() - firstStart.toMillis()) > (24 * 60 * 60 * 1000)
-        : false;
-      const warn = moreThan24h ? '\n\n⚠️ More than 24 hours elapsed between first and last area. Review for accuracy.' : '';
 
-      // Prompt the user to finalize the full stock take
-      Alert.alert(
-        'All areas completed',
-        'This was the last area. Submit the full stock take now?' + warn,
-        [
-          { text: 'Later', style: 'cancel' },
-          {
-            text: 'Submit',
-            onPress: async () => {
-              try {
-                // Finalization write target requires your confirmed path (stock take meta).
-                // Once provided, we’ll write { finalizedAt, finalizedBy, status:'completed' } there.
-                const ts = new Date().toLocaleString();
-                Alert.alert('Stock take submitted', `Completed at ${ts}`);
-              } catch (e:any) {
-                Alert.alert('Finalize failed', e?.message ?? String(e));
-              }
-            }
+      for (const a of areas) {
+        if (a.startedAt) {
+          if (!firstStart || a.startedAt.toMillis() < firstStart.toMillis()) {
+            firstStart = a.startedAt;
           }
-        ]
+        }
+        if (a.completedAt) {
+          if (!lastComplete || a.completedAt.toMillis() > lastComplete.toMillis()) {
+            lastComplete = a.completedAt;
+          }
+        }
+      }
+
+      const startDate: Date | null = firstStart ? firstStart.toDate() : null;
+      const endDate: Date = lastComplete ? lastComplete.toDate() : new Date();
+
+      const windowMs = startDate ? endDate.getTime() - startDate.getTime() : 0;
+      const windowHours = windowMs > 0 ? windowMs / (1000 * 60 * 60) : 0;
+      const roundedHours = Math.round(windowHours);
+      const moreThan24h = windowHours > 24;
+
+      const proceed = await new Promise<boolean>((resolve) => {
+        if (!moreThan24h) {
+          Alert.alert(
+            'Submit full stock take',
+            'All areas in this department are now marked as completed.\n\nSubmit this as a full stock take?',
+            [
+              { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Submit', style: 'default', onPress: () => resolve(true) },
+            ],
+          );
+        } else {
+          Alert.alert(
+            'Long stocktake window',
+            `It has been about ${roundedHours} hours between the first area start and the last area completion.\n\nThis may reduce accuracy. Do you still want to submit?`,
+            [
+              { text: 'Review areas', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Submit anyway', style: 'destructive', onPress: () => resolve(true) },
+            ],
+          );
+        }
+      });
+
+      if (!proceed) return;
+
+      const deptRef = doc(db, 'venues', venueId, 'departments', departmentId);
+      await updateDoc(deptRef, {
+        lastStockTakeAt: serverTimestamp(),
+        lastStockTakeWindowHours: roundedHours,
+      });
+
+      const submittedAt = new Date();
+      Alert.alert(
+        'Full stock take submitted',
+        `Saved at ${submittedAt.toLocaleString()}.`,
       );
-    } catch (e:any) {
-      if (__DEV__) console.log('[Finalize] check failed', e?.message);
+    } catch (e: any) {
+      if (__DEV__) {
+        console.log('[StockTake] maybeFinalizeDepartment error', e?.message || e);
+      }
     }
   };
 
@@ -782,8 +907,9 @@ function StockTakeAreaInventoryScreen() {
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
   const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
   const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
-    const [submittingArea, setSubmittingArea] = useState(false);  
-    const openReview = () => {
+  const [submittingArea, setSubmittingArea] = useState(false);
+
+  const openReview = () => {
     const counted = items.filter(countedInThisCycle);
     const missing = items.filter((it) => !countedInThisCycle(it));
     const flagged = items.filter((it) => !!it.flagRecount);
@@ -792,6 +918,7 @@ function StockTakeAreaInventoryScreen() {
     setReviewFlagged(flagged);
     setReviewOpen(true);
   };
+
   const jumpToItem = (id: string) => {
     setReviewOpen(false);
     const idx = filtered.findIndex((x) => x.id === id);
@@ -801,8 +928,7 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
-    const completeArea = async () => {
-    // prevent double-taps while a submit is already running
+  const completeArea = async () => {
     if (submittingArea) return;
 
     const missing = items.filter((it) => !countedInThisCycle(it));
@@ -923,7 +1049,7 @@ function StockTakeAreaInventoryScreen() {
 
   const exportCsvAll = throttleAction(async () => {
     try {
-      showExportToast('Export ready'); // non-blocking info
+      showExportToast('Export ready');
       const rows = filtered.map((it) => {
         const expected = deriveExpected(it);
         return {
@@ -950,7 +1076,7 @@ function StockTakeAreaInventoryScreen() {
 
   const exportCsvChangesOnly = throttleAction(async () => {
     try {
-      showExportToast('Export ready'); // non-blocking info
+      showExportToast('Export ready');
       if (!areaStarted) { Alert.alert('Nothing to export', 'This area has not been started yet.'); return; }
       const changed = filtered.filter(countedInThisCycle);
       if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
@@ -966,7 +1092,7 @@ function StockTakeAreaInventoryScreen() {
       const path = FS.cacheDirectory + fname;
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Changes only' });
+        await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Changes only' } as any);
       } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
     } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
   });
@@ -1008,8 +1134,16 @@ function StockTakeAreaInventoryScreen() {
     </View>
   );
 
-    const ListFooter = () => (
-    <View style={{ padding: dens(12), borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
+  const ListFooter = () => (
+    <View
+      style={{
+        padding: dens(12),
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+        backgroundColor: '#fff',
+        gap: 10,
+      }}
+    >
       <TouchableOpacity
         onPress={openReview}
         disabled={submittingArea}
@@ -1021,21 +1155,49 @@ function StockTakeAreaInventoryScreen() {
           opacity: submittingArea ? 0.6 : 1,
         }}
       >
-        <Text style={{ textAlign: 'center', color: '#2E7D32', fontWeight: '800' }}>
-          {submittingArea ? 'Submitting…' : '✅ Submit Area'}
+        <Text
+          style={{
+            textAlign: 'center',
+            color: '#2E7D32',
+            fontWeight: '800',
+          }}
+        >
+          {submittingArea ? 'Submitting…' : '✅ Review & submit area'}
+        </Text>
+        <Text
+          style={{
+            marginTop: 4,
+            textAlign: 'center',
+            color: '#166534',
+            fontSize: 12,
+          }}
+        >
+          We’ll show you any missing items that will be saved as 0 before you
+          finalise.
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         onPress={throttleAction(initAllZeros)}
-        style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF7ED' }}
+        style={{
+          paddingVertical: 12,
+          paddingHorizontal: 12,
+          borderRadius: 12,
+          backgroundColor: '#FFF7ED',
+        }}
       >
-        <Text style={{ textAlign: 'center', color: '#C2410C', fontWeight: '800' }}>
+        <Text
+          style={{
+            textAlign: 'center',
+            color: '#C2410C',
+            fontWeight: '800',
+          }}
+        >
           🟠 Initialise: set all uncounted to 0
         </Text>
       </TouchableOpacity>
 
-      <Text style={{ textAlign:'center', color:'#666' }}>
+      <Text style={{ textAlign: 'center', color: '#666' }}>
         {countedCount}/{items.length} items counted
       </Text>
     </View>
@@ -1046,7 +1208,7 @@ function StockTakeAreaInventoryScreen() {
       <FlatList
         ref={listRef}
         data={filtered}
-        keyExtractor={(it) => it.id}
+        keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <Row
             item={item}
@@ -1100,9 +1262,15 @@ function StockTakeAreaInventoryScreen() {
         }
         ListFooterComponent={<ListFooter />}
         ListEmptyComponent={<EmptyState />}
-        stickyHeaderIndices={[0]}
-        keyboardShouldPersistTaps="always"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         removeClippedSubviews={false}
+        onScrollBeginDrag={() => {
+          const cur = focusedInputId;
+          if (cur && inputRefs.current[cur]) {
+            inputRefs.current[cur].blur?.();
+          }
+        }}
       />
 
       {/* Request Adjustment Modal */}
@@ -1329,7 +1497,7 @@ function StockTakeAreaInventoryScreen() {
           style={{
             position: 'absolute',
             left: 16, right: 16,
-            bottom: (showSteppers && focusedInputId) ? 120 : 56, // sit above keyboard bar / FAB
+            bottom: (showSteppers && focusedInputId) ? 120 : 56,
             borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
             backgroundColor: '#F59E0B',
             shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
@@ -1472,7 +1640,7 @@ function StockTakeAreaInventoryScreen() {
               <TouchableOpacity onPress={()=>setReviewOpen(false)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'700' }}>Back to counting</Text>
               </TouchableOpacity>
-                            <TouchableOpacity
+              <TouchableOpacity
                 onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }}
                 disabled={submittingArea}
                 style={{
