@@ -8,7 +8,6 @@ import { useNavigation } from '@react-navigation/native';
 import { exportCsv, exportPdf } from '../../utils/exporters';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
-import ReconciliationCard from './components/ReconciliationCard';
 
 import { pickParseAndUploadProductsCsv } from 'src/services/imports/pickAndUploadCsv';
 import { callProcessProductsCsv } from 'src/services/imports/processProductsCsv';
@@ -202,20 +201,44 @@ export default function ReportsIndexScreen() {
             onPress={createSampleCsvAndShare}
             color={busy ? '#374151' : '#2563EB'}
           />
-  <TouchableOpacity onPress={async () => {
-    const res = await importProductsPdf();
-    if (res) Alert.alert('Products PDF Uploaded', `Path: ${res.fullPath}`);
-  }} style={{ padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginTop:8 }}>
-    <Text style={{fontWeight:'700'}}>Import Products PDF</Text>
-    <Text style={{opacity:0.8, marginTop:2}}>Upload a supplier PDF using the same storage flow as Products CSV.</Text>
-  </TouchableOpacity>
+          <TouchableOpacity onPress={async () => {
+            const res = await importProductsPdf();
+            if (res) Alert.alert('Products PDF Uploaded', `Path: ${res.fullPath}`);
+          }} style={{ padding:12, backgroundColor:'#F3F4F6', borderRadius:10, marginTop:8 }}>
+            <Text style={{fontWeight:'700'}}>Import Products PDF</Text>
+            <Text style={{opacity:0.8, marginTop:2}}>Upload a supplier PDF using the same storage flow as Products CSV.</Text>
+          </TouchableOpacity>
 
-
-          <Tile title="Variance Snapshot" subtitle="Compare on-hand vs expected" onPress={go('VarianceSnapshot')} color="#0EA5E9" />
-          <Tile title="Last Cycle Summary" subtitle="Session KPIs & top variances" onPress={go('LastCycleSummary')} color="#059669" />
-          <Tile title="Budgets" subtitle="Spend by period & supplier" onPress={go('Budgets')} color="#F59E0B" />
-          <Tile title="Department Variance" subtitle="Shortage & excess by department" onPress={go('DepartmentVariance')} color="#10B981" />
-          <ReconciliationCard venueId={venueId} onOpenOrder={(id)=>nav.navigate('OrderDetail', { orderId: id })} />
+          <Tile
+            title="Variance Snapshot"
+            subtitle="Compare on-hand vs expected"
+            onPress={go('VarianceSnapshot')}
+            color="#0EA5E9"
+          />
+          <Tile
+            title="Last Cycle Summary"
+            subtitle="Session KPIs & top variances"
+            onPress={go('LastCycleSummary')}
+            color="#059669"
+          />
+          <Tile
+            title="Budgets"
+            subtitle="Spend by period & supplier"
+            onPress={go('Budgets')}
+            color="#F59E0B"
+          />
+          <Tile
+            title="Department Variance"
+            subtitle="Shortage & excess by department"
+            onPress={go('DepartmentVariance')}
+            color="#10B981"
+          />
+          <Tile
+            title="Invoice Reconciliations"
+            subtitle="Review invoice matches, deltas, and issues"
+            onPress={go('Reconciliations')}
+            color="#4B5563"
+          />
         </ScrollView>
       </View>
     </LocalThemeGate>

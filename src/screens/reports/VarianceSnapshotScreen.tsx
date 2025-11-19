@@ -80,8 +80,7 @@ export default function VarianceSnapshotScreen() {
         {/* Top Excess */}
         <Text style={styles.sectionTitle}>Top Excess (value impact)</Text>
         <SectionCard>
-          {loading && <RowLoading />}
-          {!loading && filteredExcess.length === 0 && <RowEmpty text="No excess in this cycle" />}
+          {loading && filteredExcess.length === 0 && <RowEmpty text="No excess in this cycle" />}
           {!loading && filteredExcess.map((r, i) => (
             <Row key={r.id || i} row={r} divider={i < filteredExcess.length - 1} venueId={venueId} />
           ))}
@@ -106,23 +105,54 @@ function SectionCard({ children }: { children: React.ReactNode }) {
 }
 
 function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; venueId: string }) {
-  const { id, productId, name, unit, supplierName, par, onHand, variance, value, lastDeliveryAt, auditTrail } = (row || {}) as any;
+  const {
+    id,
+    productId,
+    name,
+    unit,
+    supplierName,
+    par,
+    onHand,
+    variance,
+    value,
+  } = (row || {}) as any;
+
+  // Derived cost line: simple, user-friendly.
+  const shrinkUnits = typeof row?.shrinkUnits === 'number' ? row.shrinkUnits : 0;
+  const hasShrink = shrinkUnits > 0;
+
+  const baseCost =
+    (typeof row?.landedCost === 'number' && row.landedCost > 0)
+      ? row.landedCost
+      : ((typeof row?.listCost === 'number' && row.listCost > 0) ? row.listCost : null);
+
+  const realCost =
+    (typeof row?.realCostPerUnit === 'number' && row.realCostPerUnit > 0)
+      ? row.realCostPerUnit
+      : null;
 
   async function onExplain() {
     try {
       const counted = typeof onHand === 'number' ? onHand : 0;
       const expected = (typeof counted === 'number' && typeof variance === 'number') ? (counted - variance) : 0;
 
-      const ctx = {
+      const ctx: any = {
         venueId,
         areaId: null,
         productId: productId || id || String(name || 'unknown'),
         expected,
         counted,
         unit: unit || null,
-        lastDeliveryAt: lastDeliveryAt || null,
+        lastDeliveryAt: row?.lastDeliveryAt || null,
         lastSalesLookbackDays: 3,
-        auditTrail: Array.isArray(auditTrail) ? auditTrail : [],
+        auditTrail: Array.isArray(row?.auditTrail) ? row.auditTrail : [],
+        // NEW: cost + flow context so AI can talk about real COGS and shrinkage honestly
+        costPerUnit: baseCost,
+        realCostPerUnit: realCost,
+        shrinkUnits: shrinkUnits || 0,
+        shrinkValue: row?.shrinkValue ?? null,
+        salesQty: row?.salesQty ?? null,
+        invoiceQty: row?.invoiceQty ?? null,
       };
 
       const res = await explainVariance(ctx);
@@ -149,6 +179,10 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
     }
   }
 
+  const costLine = hasShrink && baseCost != null && realCost != null
+    ? `Cost $${formatMoney(baseCost)} → Real $${formatMoney(realCost)} (lost ${shrinkUnits}${unit ? ' ' + unit : ''})`
+    : null;
+
   return (
     <View style={[styles.row, divider && styles.rowDivider]}>
       <View style={{ flex: 1 }}>
@@ -156,6 +190,11 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
         <Text style={styles.subtle} numberOfLines={1}>
           {(unit ? unit : '') + (supplierName ? (unit ? ' • ' : '') + supplierName : '')}
         </Text>
+        {costLine ? (
+          <Text style={styles.subtle} numberOfLines={1}>
+            {costLine}
+          </Text>
+        ) : null}
       </View>
       <Cell label="Par" value={par} />
       <Cell label="On-hand" value={onHand} />

@@ -1,12 +1,12 @@
 export type SourceRow = {
   sku: string;
   name?: string;
-  unitCost?: number;      // per unit
+  unitCost?: number;      // per unit (currently "cost" – may be list or landed depending on data source)
   departmentId?: string;
 };
 
 export type CountRow = SourceRow & {
-  onHand: number;         // current count
+  onHand: number;         // current count (last stock take snapshot)
   expected?: number;      // par or computed expected
 };
 
@@ -22,15 +22,33 @@ export type UnifiedResultRow = {
   sku: string;
   name?: string;
   departmentId?: string;
+
+  // Base cost (from products/invoices). For now this is our "list" and "landed"
+  // until we wire explicit freight allocation per invoice.
   unitCost?: number;
 
   onHand: number;
   expected: number;
   variance: number;            // onHand - expected
   value?: number;              // variance * unitCost (signed)
+
   salesQty: number;            // window sales
   invoiceQty: number;          // window receipts
-  shrinkage: number;           // expected - invoices + ??? vs onHand (see calc below)
+
+  // Shrinkage (negative => loss)
+  shrinkage: number;
+
+  // NEW: explicit shrinkage metrics + cost tiers
+  // shrinkUnits: absolute units lost (0 if none)
+  // shrinkValue: value of shrinkage at unitCost
+  // listCostPerUnit: current cost from master/last invoice
+  // landedCostPerUnit: same as listCostPerUnit for now; future: include freight
+  // realCostPerUnit: "burdened" cost per remaining unit after shrinkage
+  shrinkUnits?: number;
+  shrinkValue?: number;
+  listCostPerUnit?: number;
+  landedCostPerUnit?: number;
+  realCostPerUnit?: number;
 };
 
 export type UnifiedResult = {
@@ -49,10 +67,19 @@ export type UnifiedResult = {
  * Core math:
  * - expected is provided by adapters per SKU (par/movingAvg/salesDriven are upstream choices)
  * - variance = onHand - expected
- * - shrinkage ≈ (expected + sales - invoices) - onHand
+ * - shrinkage ≈ (expected + invoices - sales) - onHand
  *     Interpretation:
- *       You *should* end with expected; then sales reduce stock; invoices add stock.
+ *       You *should* end with expected; invoices add stock; sales reduce stock.
  *       Compare that theoretical end to actual onHand → negative means loss/shrink.
+ *
+ * Cost tiers:
+ * - listCostPerUnit: unitCost from source (product master / last invoice)
+ * - landedCostPerUnit: same as listCostPerUnit for now (freight to be wired later)
+ * - realCostPerUnit:
+ *      If there is shrinkage, we treat the lost value as burden sharing onto remaining units:
+ *         totalValue = unitCost * (onHand + shrinkUnits)
+ *         realCostPerUnit = totalValue / onHand
+ *      This matches: lose 2 units out of 9, remaining 7 carry the cost of 9.
  */
 export function computeUnified(
   counts: CountRow[],
@@ -73,11 +100,31 @@ export function computeUnified(
     const onHand = c.onHand ?? 0;
     const variance = onHand - expected;
     const unitCost = c.unitCost;
+
     const value = unitCost != null ? variance * unitCost : undefined;
 
-    // shrinkage formula (see block-level JSDoc):
-    const theoretical = expected - s + r; // what we'd expect to have now
+    // Shrinkage formula (see block-level JSDoc):
+    const theoretical = expected + r - s; // what we'd expect to have now
     const shrinkage = theoretical - onHand; // negative => loss
+
+    const shrinkUnits = shrinkage < 0 ? Math.abs(shrinkage) : 0;
+    const shrinkValue = unitCost != null && shrinkUnits > 0 ? shrinkUnits * unitCost : 0;
+
+    // Cost tiers:
+    const listCostPerUnit = unitCost != null ? unitCost : undefined;
+    const landedCostPerUnit = listCostPerUnit;
+
+    // Real cost per remaining saleable unit:
+    // If there is shrinkage and we still have stock, remaining units carry the loss.
+    let realCostPerUnit: number | undefined = undefined;
+    if (landedCostPerUnit != null) {
+      if (onHand > 0 && shrinkUnits > 0) {
+        const totalUnitsValue = landedCostPerUnit * (onHand + shrinkUnits);
+        realCostPerUnit = totalUnitsValue / onHand;
+      } else {
+        realCostPerUnit = landedCostPerUnit;
+      }
+    }
 
     return {
       sku: c.sku,
@@ -91,6 +138,11 @@ export function computeUnified(
       salesQty: s,
       invoiceQty: r,
       shrinkage,
+      shrinkUnits,
+      shrinkValue,
+      listCostPerUnit,
+      landedCostPerUnit,
+      realCostPerUnit,
     };
   });
 
@@ -98,8 +150,8 @@ export function computeUnified(
   const excesses: UnifiedResultRow[] = [];
   let shortageValue = 0;
   let excessValue = 0;
-  let shrinkUnits = 0;
-  let shrinkValue = 0;
+  let shrinkUnitsTotal = 0;
+  let shrinkValueTotal = 0;
 
   for (const r of rows) {
     if (r.variance < 0) {
@@ -109,9 +161,11 @@ export function computeUnified(
       excesses.push(r);
       if (r.value != null) excessValue += Math.max(r.value, 0);
     }
+
     if (r.shrinkage < 0) {
-      shrinkUnits += Math.abs(r.shrinkage);
-      if (r.unitCost != null) shrinkValue += Math.abs(r.shrinkage) * r.unitCost;
+      const su = Math.abs(r.shrinkage);
+      shrinkUnitsTotal += su;
+      if (r.unitCost != null) shrinkValueTotal += su * r.unitCost;
     }
   }
 
@@ -124,8 +178,8 @@ export function computeUnified(
     totals: {
       shortageValue: round2(shortageValue),
       excessValue: round2(excessValue),
-      shrinkageUnits: round2(shrinkUnits),
-      shrinkageValue: round2(shrinkValue),
+      shrinkageUnits: round2(shrinkUnitsTotal),
+      shrinkageValue: round2(shrinkValueTotal),
     },
   };
 }
