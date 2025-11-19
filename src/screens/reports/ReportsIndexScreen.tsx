@@ -92,11 +92,20 @@ export default function ReportsIndexScreen() {
             color="#0EA5E9"
           />
 
-          {/* Completed Stock Takes (list of completed sessions) */}
+          {/* Completed Stock Takes – placeholder until wired to real route */}
           <Tile
             title="Completed Stock Takes"
-            subtitle="See previous full stock takes and timestamps."
-            onPress={go('PastSubmissions')}
+            subtitle="List of completed full stock takes (coming soon)."
+            onPress={() => {
+              if (!hasVenue) {
+                Alert.alert('Select a venue', 'Pick a venue first, then open Reports again.');
+                return;
+              }
+              Alert.alert(
+                'Coming soon',
+                'Completed stock takes will show here once we wire this to your existing history screen.'
+              );
+            }}
             color="#6366F1"
           />
 
