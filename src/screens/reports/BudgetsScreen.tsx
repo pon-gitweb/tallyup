@@ -3,6 +3,9 @@ import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableO
 import { useVenueId } from '../../context/VenueProvider';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
 import { listSuppliers, Supplier } from '../../services/suppliers';
+import { exportPdf } from '../../utils/exporters';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 
 type Row = Budget & { progress?: { spent: number; remaining: number; pct: number } };
 
@@ -75,6 +78,30 @@ export default function BudgetsScreen() {
       Alert.alert('Create failed', e?.message || 'Unknown error');
     }
   }
+
+  const onExportPdf = async () => {
+    if (!venueId) {
+      Alert.alert('Not ready', 'Select a venue first.');
+      return;
+    }
+    if (!rows.length) {
+      Alert.alert('Nothing to export', 'No budgets defined yet.');
+      return;
+    }
+    try {
+      const venueName = await fetchVenueName(venueId);
+      const html = buildBudgetsHtml(venueName, rows, supplierMap);
+      const out = await exportPdf('Budgets', html);
+      if (!out.ok) {
+        Alert.alert(
+          'PDF generated',
+          'Sharing may be unavailable or failed on this device, but the PDF was written to storage if supported.',
+        );
+      }
+    } catch (e: any) {
+      Alert.alert('Export failed', e?.message || 'Could not export budgets.');
+    }
+  };
 
   if (loading) {
     return (<View style={styles.center}><ActivityIndicator /><Text>Loading budgets…</Text></View>);
@@ -162,6 +189,12 @@ export default function BudgetsScreen() {
         }}
         ListEmptyComponent={<Text>No budgets yet.</Text>}
       />
+
+      {rows.length > 0 && (
+        <TouchableOpacity style={styles.exportButton} onPress={onExportPdf}>
+          <Text style={styles.exportButtonText}>Export Budgets (PDF)</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -187,4 +220,79 @@ const styles = StyleSheet.create({
   notes: { marginTop:4 },
   barWrap: { height:10, backgroundColor:'#E3E6EA', borderRadius:8, overflow:'hidden', marginTop:6 },
   barFill: { height:10, backgroundColor:'#0A84FF' },
+
+  exportButton: { marginTop:12, backgroundColor:'#1D4ED8', paddingVertical:12, borderRadius:12, alignItems:'center' },
+  exportButtonText: { color:'#fff', fontWeight:'800' },
 });
+
+async function fetchVenueName(venueId: string | null | undefined) {
+  if (!venueId) return 'Venue';
+  try {
+    const snap = await getDoc(doc(db, 'venues', venueId));
+    if (snap.exists()) {
+      const d: any = snap.data() || {};
+      return d.name || d.venueName || 'Venue';
+    }
+  } catch (e) {
+    // best-effort only
+  }
+  return 'Venue';
+}
+
+function buildBudgetsHtml(venueName: string, rows: Row[], supplierMap: Map<string, Supplier>) {
+  const bodyRows = rows && rows.length
+    ? rows.map((b) => {
+        const name = b.supplierId ? (supplierMap.get(b.supplierId)?.name || b.supplierId) : 'All Suppliers';
+        const start = tsToIso(b.periodStart);
+        const end = tsToIso(b.periodEnd);
+        const spent = b.progress ? b.progress.spent : null;
+        const amount = typeof b.amount === 'number' ? b.amount : null;
+        const pct = b.progress ? b.progress.pct : 0;
+        return `
+          <tr>
+            <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(name)}</td>
+            <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(start)} → ${escapeHtml(end)}</td>
+            <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${spent == null ? '—' : '$' + Number(spent).toFixed(2)}</td>
+            <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${amount == null ? '—' : '$' + Number(amount).toFixed(2)}</td>
+            <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${pct.toFixed(0)}%</td>
+          </tr>
+        `;
+      }).join('')
+    : '<tr><td colspan="5" style="padding:8px;text-align:center;color:#6B7280;">No budgets defined.</td></tr>';
+
+  return `
+    <html>
+      <body style="font-family:-apple-system,Roboto,sans-serif;padding:16px;">
+        <h2>${escapeHtml(venueName)} — Budgets</h2>
+        <p style="color:#4B5563;margin:0 0 12px 0;">
+          Supplier and venue-level spend limits with current utilisation.
+        </p>
+
+        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Supplier</th>
+              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Period</th>
+              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Spent</th>
+              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Budget</th>
+              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Used</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${bodyRows}
+          </tbody>
+        </table>
+      </body>
+    </html>
+  `;
+}
+
+function escapeHtml(str: any) {
+  const s = String(str ?? '');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}

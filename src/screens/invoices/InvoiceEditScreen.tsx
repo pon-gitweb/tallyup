@@ -6,7 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import { fetchOrderWithLines, upsertInvoiceFromOrder, InvoiceLineInput } from '../../services/invoices';
 import { useVenue } from '../../context/VenueProvider'; // Assumes this exists and provides { venueId, user }
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db } from '../../services/firebase';
 
 type RootStackParamList = {
   InvoiceEdit: { orderId: string; status?: string; existingInvoiceId?: string };

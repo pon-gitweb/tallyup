@@ -156,7 +156,7 @@ export default function ReconciliationCard({ venueId: propVenueId, onOpenOrder, 
       <View style={{ padding: 16, borderBottomColor: '#1F2A44', borderBottomWidth: 1 }}>
         <Text style={{ color: 'white', fontWeight: '900', fontSize: 16 }}>Invoice Reconciliations</Text>
         <Text style={{ color: '#93A4C1', marginTop: 4, fontSize: 12 }}>
-          Read-only. Grouped by supplier, newest first. Tap a row to open the order.
+          Read-only. Grouped by supplier, newest first. Tap a row to open the related order.
         </Text>
 
         {/* Search */}
@@ -207,6 +207,56 @@ export default function ReconciliationCard({ venueId: propVenueId, onOpenOrder, 
                 const dt = created ? new Date(created) : null;
                 const when = dt ? dt.toLocaleString() : '—';
                 const po = r?.invoice?.poNumber || '—';
+
+                const counts = r.summary?.counts || {};
+                const chips: { key: string; label: string; value: number; bg: string; fg: string }[] = [];
+
+                if (typeof counts.matched === 'number' && counts.matched > 0) {
+                  chips.push({
+                    key: 'matched',
+                    label: 'matched',
+                    value: counts.matched,
+                    bg: '#022C22',
+                    fg: '#22C55E',
+                  });
+                }
+                if (typeof counts.priceChanges === 'number' && counts.priceChanges > 0) {
+                  chips.push({
+                    key: 'priceChanges',
+                    label: 'price changes',
+                    value: counts.priceChanges,
+                    bg: '#3B2610',
+                    fg: '#FBBF24',
+                  });
+                }
+                if (typeof counts.qtyDiffs === 'number' && counts.qtyDiffs > 0) {
+                  chips.push({
+                    key: 'qtyDiffs',
+                    label: 'qty diffs',
+                    value: counts.qtyDiffs,
+                    bg: '#3B2610',
+                    fg: '#FBBF24',
+                  });
+                }
+                if (typeof counts.unknown === 'number' && counts.unknown > 0) {
+                  chips.push({
+                    key: 'unknown',
+                    label: 'unknown lines',
+                    value: counts.unknown,
+                    bg: '#3F1D2B',
+                    fg: '#F97373',
+                  });
+                }
+                if (typeof counts.missingOnInvoice === 'number' && counts.missingOnInvoice > 0) {
+                  chips.push({
+                    key: 'missingOnInvoice',
+                    label: 'missing on invoice',
+                    value: counts.missingOnInvoice,
+                    bg: '#3F1D2B',
+                    fg: '#F97373',
+                  });
+                }
+
                 return (
                   <TouchableOpacity
                     key={`${r.orderId}:${r.id}`}
@@ -237,13 +287,41 @@ export default function ReconciliationCard({ venueId: propVenueId, onOpenOrder, 
                         </Text>
                       </View>
                     </View>
-                    <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 12 }}>PO: {po} · {when}</Text>
+
+                    <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 12 }}>
+                      PO: {po} · {when}
+                    </Text>
+
                     {r.summary?.totals ? (
                       <Text style={{ color: '#9CA3AF', marginTop: 2, fontSize: 12 }}>
                         Invoiced ${Number(r.summary.totals.invoiced || 0).toFixed(2)}
-                        {Number.isFinite(r.summary.totals.delta) ? ` · Δ $${Number(r.summary.totals.delta || 0).toFixed(2)}` : ''}
+                        {Number.isFinite(r.summary.totals.delta)
+                          ? ` · Δ $${Number(r.summary.totals.delta || 0).toFixed(2)}`
+                          : ''}
                       </Text>
                     ) : null}
+
+                    {chips.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+                        {chips.map(ch => (
+                          <View
+                            key={`${r.id}:${ch.key}`}
+                            style={{
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 999,
+                              marginRight: 6,
+                              marginBottom: 4,
+                              backgroundColor: ch.bg,
+                            }}
+                          >
+                            <Text style={{ color: ch.fg, fontSize: 11, fontWeight: '600' }}>
+                              {ch.value} {ch.label}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </TouchableOpacity>
                 );
               })}

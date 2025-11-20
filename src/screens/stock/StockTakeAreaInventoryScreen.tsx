@@ -7,7 +7,7 @@ import {
 } from 'react-native';
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc
+  orderBy, query, serverTimestamp, updateDoc, runTransaction
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
@@ -395,7 +395,11 @@ function StockTakeAreaInventoryScreen() {
 
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
 
-  const uid = getAuth().currentUser?.uid;
+  // Current user and label (for area locking)
+  const auth = getAuth();
+  const uid = auth.currentUser?.uid;
+  const userLabel = auth.currentUser?.displayName || auth.currentUser?.email || 'Staff member';
+
   const [isManager, setIsManager] = useState(false);
 
   // Remember “last area” per department for resume in AreaSelection
@@ -405,6 +409,90 @@ function StockTakeAreaInventoryScreen() {
     const key = `lastArea:${venueId}:${departmentId}`;
     AS.setItem(key, areaId).catch(() => {});
   }, [venueId, departmentId, areaId]);
+
+  // [ONE AREA, ONE USER] — acquire a lock on this area while this screen is active.
+  const lockHeldRef = useRef(false);
+
+  useEffect(() => {
+    if (!itemsPathOk || !venueId || !departmentId || !areaId || !uid) return;
+
+    const areaRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId);
+    let cancelled = false;
+
+    const acquireLock = async () => {
+      try {
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(areaRef);
+          if (!snap.exists()) {
+            throw new Error('Area not found');
+          }
+          const data: any = snap.data() || {};
+          const lock = data.currentLock || {};
+          const now = Date.now();
+          const existingUid = lock.uid;
+          const lockedAtMillis = lock.lockedAtMillis || 0;
+          const STALE_MS = 45 * 60 * 1000; // 45 minutes
+
+          const isStale = !lockedAtMillis || (now - lockedAtMillis > STALE_MS);
+
+          if (existingUid && existingUid !== uid && !isStale) {
+            const err: any = new Error('TAKEN_BY_OTHER');
+            err.lockedBy = lock.name || 'another staff member';
+            throw err;
+          }
+
+          tx.update(areaRef, {
+            currentLock: {
+              uid,
+              name: userLabel,
+              lockedAtMillis: now,
+            },
+          });
+        });
+
+        if (!cancelled) {
+          lockHeldRef.current = true;
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+
+        if (e?.message === 'TAKEN_BY_OTHER') {
+          const who = e.lockedBy || 'someone else';
+          Alert.alert(
+            'Area already in use',
+            `This area is currently being counted by ${who}.\n\nOnly one person can work in an area at a time.`,
+            [{ text: 'OK', onPress: () => nav.goBack() }],
+          );
+        } else {
+          if (__DEV__) console.log('[AreaLock] acquire failed', e?.message || e);
+          Alert.alert(
+            'Could not open area',
+            'There was a problem reserving this area for you. Please try again in a moment.',
+            [{ text: 'OK', onPress: () => nav.goBack() }],
+          );
+        }
+      }
+    };
+
+    acquireLock();
+
+    return () => {
+      cancelled = true;
+      if (!lockHeldRef.current) return;
+
+      runTransaction(db, async (tx) => {
+        const snap = await tx.get(areaRef);
+        if (!snap.exists()) return;
+        const data: any = snap.data() || {};
+        const lock = data.currentLock;
+        if (lock?.uid === uid) {
+          tx.update(areaRef, { currentLock: null });
+        }
+      }).catch((e) => {
+        if (__DEV__) console.log('[AreaLock] release failed', e?.message || e);
+      });
+    };
+  }, [itemsPathOk, venueId, departmentId, areaId, uid, userLabel, nav]);
 
   // [PAIR2] global density
   const { density, setDensity, isCompact } = useDensity();

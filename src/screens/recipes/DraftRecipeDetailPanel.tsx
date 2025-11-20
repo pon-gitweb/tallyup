@@ -44,10 +44,14 @@ export default function DraftRecipeDetailPanel({
   const [derivedBatchWeightG, setDerivedBatchWeightG] = useState<number>(0);
   const [derivedBatchCount, setDerivedBatchCount] = useState<number>(0);
 
-  // Pricing: GP ↔︎ RRP (with GST toggle)
+    // Pricing: GP ↔︎ RRP (with GST toggle)
   const [gpPct, setGpPct] = useState<string>('70');
   const [rrp, setRrp] = useState<string>('');
   const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
+
+  // POS linkage — which POS/menu item this recipe feeds + how many portions per sale
+  const [outputProductId, setOutputProductId] = useState<string>('');   // e.g. POS button name / code
+  const [outputPortionQty, setOutputPortionQty] = useState<string>('1'); // how many recipe "serves" per POS sale
 
   // Notes
   const [method, setMethod] = useState<string>('');

@@ -10,13 +10,22 @@ import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot,
   doc, serverTimestamp
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { MaterialIcons } from '@expo/vector-icons';
 
 type Params = { venueId: string; departmentId: string };
-type AreaRow = { id: string; name?: string; startedAt?: any; completedAt?: any };
+type AreaRow = {
+  id: string;
+  name?: string;
+  startedAt?: any;
+  completedAt?: any;
+  lockedByUid?: string | null;
+  lockedByName?: string | null;
+  lockedAt?: any | null;
+};
 
 function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
   const fillCount = status === 'done' ? 3 : status === 'inprog' ? 1 : 0;
@@ -36,6 +45,8 @@ function AreaSelectionInner() {
   const route = useRoute<any>();
   const { venueId, departmentId } = (route.params || {}) as Params;
 
+  const uid = getAuth().currentUser?.uid || null;
+
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,16 +55,23 @@ function AreaSelectionInner() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
-  const [fromCache, setFromCache] = useState(false);
   const didAlertRef = useRef(false);
 
+  // If nav is broken or missing params, show a safe fallback instead of crashing
+  const paramsMissing = !venueId || !departmentId;
+
   useEffect(() => {
+    if (paramsMissing) {
+      setLoading(false);
+      setAreas([]);
+      return;
+    }
+
     setLoading(true);
     try {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
       const qy = query(ref, orderBy('name', 'asc'));
       const unsub = onSnapshot(qy, (snap) => {
-        setFromCache(Boolean(snap.metadata.fromCache));
         const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setAreas(rows);
         setLoading(false);
@@ -71,7 +89,7 @@ function AreaSelectionInner() {
       if (__DEV__) console.log('[Areas] listener setup failed', e?.message);
       setLoading(false);
     }
-  }, [venueId, departmentId]);
+  }, [venueId, departmentId, paramsMissing]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -85,10 +103,17 @@ function AreaSelectionInner() {
     return areas.filter(a => (a.name || a.id).toLowerCase().includes(term));
   }, [areas, dq]);
 
-  const openArea = useCallback((areaId: string) => {
-    // ✅ Route name aligned with your navigator
-    nav.navigate('AreaInventory', { venueId, departmentId, areaId });
-  }, [nav, venueId, departmentId]);
+  const openArea = useCallback((area: AreaRow) => {
+    // Hard lock at selection level: if someone else holds the lock, block.
+    if (area.lockedByUid && area.lockedByUid !== uid) {
+      Alert.alert(
+        'Area in use',
+        `“${area.name || area.id}” is currently being counted by ${area.lockedByName || 'another user'}.`,
+      );
+      return;
+    }
+    nav.navigate('AreaInventory', { venueId, departmentId, areaId: area.id });
+  }, [nav, venueId, departmentId, uid]);
 
   const deleteArea = useCallback(async (id: string) => {
     Alert.alert('Delete area?', 'This removes the area and its items.', [
@@ -110,6 +135,10 @@ function AreaSelectionInner() {
       Alert.alert('Name required', 'Please enter an area name.');
       return;
     }
+    if (paramsMissing) {
+      Alert.alert('Missing details', 'Please go back and reopen this department from Stock Control.');
+      return;
+    }
     setAdding(true);
     try {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
@@ -117,6 +146,9 @@ function AreaSelectionInner() {
         name: newName.trim(),
         startedAt: null,
         completedAt: null,
+        lockedByUid: null,
+        lockedByName: null,
+        lockedAt: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -130,14 +162,27 @@ function AreaSelectionInner() {
   }
 
   async function fixLegacyNulls() {
+    if (paramsMissing) {
+      Alert.alert('Missing details', 'Please go back and reopen this department from Stock Control.');
+      return;
+    }
     try {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
       const snap = await getDocs(ref);
       let count = 0;
       for (const d of snap.docs) {
         const data:any = d.data();
-        if (!('startedAt' in data) || !('completedAt' in data)) {
-          await updateDoc(d.ref, { startedAt: null, completedAt: null });
+        const patch:any = {};
+        let needsPatch = false;
+
+        if (!('startedAt' in data)) { patch.startedAt = null; needsPatch = true; }
+        if (!('completedAt' in data)) { patch.completedAt = null; needsPatch = true; }
+        if (!('lockedByUid' in data)) { patch.lockedByUid = null; needsPatch = true; }
+        if (!('lockedByName' in data)) { patch.lockedByName = null; needsPatch = true; }
+        if (!('lockedAt' in data)) { patch.lockedAt = null; needsPatch = true; }
+
+        if (needsPatch) {
+          await updateDoc(d.ref, patch);
           count++;
         }
       }
@@ -152,19 +197,69 @@ function AreaSelectionInner() {
     const statusLabel = status === 'done' ? 'Completed' : status === 'inprog' ? 'In Progress' : 'Not started';
     const pillStyle = status === 'done' ? styles.pillDone : status === 'inprog' ? styles.pillInProg : styles.pillIdle;
 
+    const lockedByOther = !!item.lockedByUid && item.lockedByUid !== uid;
+    const lockedByMe = !!item.lockedByUid && item.lockedByUid === uid;
+
     return (
-      <TouchableOpacity style={styles.row} onPress={() => openArea(item.id)} onLongPress={() => deleteArea(item.id)}>
+      <TouchableOpacity
+        style={[
+          styles.row,
+          lockedByOther && { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' },
+        ]}
+        onPress={() => openArea(item)}
+        onLongPress={() => deleteArea(item.id)}
+        disabled={lockedByOther}
+      >
         <View style={{ flex: 1, paddingRight: 10 }}>
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
             <Stars status={status} />
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+
+            {lockedByOther && (
+              <Text style={[styles.pill, styles.pillLocked]}>
+                In use by {item.lockedByName || 'another user'}
+              </Text>
+            )}
+
+            {lockedByMe && (
+              <Text style={[styles.pill, styles.pillMine]}>
+                You are in this area
+              </Text>
+            )}
           </View>
         </View>
         <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
       </TouchableOpacity>
     );
   };
+
+  // If params are missing, show a gentle error + back button
+  if (paramsMissing) {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Areas</Text>
+            <Text style={styles.sub}>We couldn&apos;t find the department details.</Text>
+          </View>
+          <IdentityBadge />
+        </View>
+
+        <Text style={{ color: '#6B7280', marginTop: 8 }}>
+          Please go back to Stock Control or Departments and reopen this department. This prevents partial or
+          orphaned stock takes.
+        </Text>
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, { marginTop: 16, alignSelf: 'flex-start' }]}
+          onPress={() => nav.goBack()}
+        >
+          <Text style={styles.primaryText}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
@@ -175,7 +270,6 @@ function AreaSelectionInner() {
           <Text style={styles.sub}>Choose an area to count</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {fromCache ? <Text style={styles.offlinePill}>Offline</Text> : null}
           <IdentityBadge />
         </View>
       </View>
@@ -226,7 +320,7 @@ function AreaSelectionInner() {
         <FlatList
           data={filtered}
           keyExtractor={(x) => x.id}
-          renderItem={Item}
+          renderItem={({ item }) => <Item item={item} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListEmptyComponent={
             <View style={{ paddingVertical: 20, alignItems: 'center' }}>
@@ -283,8 +377,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white'
   },
 
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#F9FAFB' },
+  row: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
+    marginBottom: 10, backgroundColor: '#F9FAFB'
+  },
   rowTitle: { fontSize: 16, fontWeight: '700' },
   rowSub: { color: '#6B7280' },
 
@@ -298,8 +395,8 @@ const styles = StyleSheet.create({
   pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
   pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
   pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
-
-  offlinePill: { backgroundColor: '#FEE2E2', color: '#991B1B', fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
+  pillLocked: { backgroundColor: '#FEE2E2', color: '#B91C1C' },
+  pillMine: { backgroundColor: '#DBEAFE', color: '#1D4ED8' },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },

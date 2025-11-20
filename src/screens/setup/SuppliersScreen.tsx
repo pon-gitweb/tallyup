@@ -13,6 +13,7 @@ import {
   ScrollView,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+
 import { useVenueId } from '../../context/VenueProvider';
 import {
   listSuppliers,
@@ -22,6 +23,7 @@ import {
   Supplier,
 } from '../../services/suppliers';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
+import { pickParseAndUploadProductsCsv } from '../../services/imports/pickAndUploadCsv';
 
 function isValidHHmm(s: string) {
   if (!s) return true; // allow blank (means none)
@@ -45,7 +47,8 @@ export default function SuppliersScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [orderingMethod, setOrderingMethod] = useState<'email' | 'portal' | 'phone'>('email');
+  const [orderingMethod, setOrderingMethod] =
+    useState<'email' | 'portal' | 'phone'>('email');
   const [portalUrl, setPortalUrl] = useState('');
   const [leadDays, setLeadDays] = useState('2');
 
@@ -55,6 +58,7 @@ export default function SuppliersScreen() {
 
   const [saving, setSaving] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   async function load() {
     if (!venueId) {
@@ -130,7 +134,10 @@ export default function SuppliersScreen() {
     }
     const mergeNum = mergeWindowHours.trim() ? Number(mergeWindowHours) : null;
     if (mergeNum != null && !Number.isFinite(mergeNum)) {
-      Alert.alert('Invalid merge hours', 'Enter a whole number of hours or leave blank.');
+      Alert.alert(
+        'Invalid merge hours',
+        'Enter a whole number of hours or leave blank.'
+      );
       return;
     }
 
@@ -181,7 +188,7 @@ export default function SuppliersScreen() {
     ]);
   }
 
-  // NEW: scan business card / invoice via Photo OCR
+  // Photo OCR scan for business card / invoice → prefill supplier fields
   async function scanFromPhoto(kind: 'card' | 'invoice') {
     try {
       if (!venueId) {
@@ -212,7 +219,6 @@ export default function SuppliersScreen() {
         localUri: asset.uri,
       });
 
-      // We keep this very defensive; we only auto-fill if fields are obvious and form fields are empty.
       const raw: any = parsed?.raw || parsed?.result || {};
       const supplierName = parsed?.supplierName || raw?.supplierName || '';
 
@@ -271,6 +277,33 @@ export default function SuppliersScreen() {
     }
   }
 
+  // NEW: Upload supplier catalogue via server function (CSV only, no Blob)
+  async function uploadSupplierCsv() {
+    try {
+      if (!venueId) {
+        Alert.alert('No Venue', 'Attach or create a venue first.');
+        return;
+      }
+      setUploadBusy(true);
+
+      const res = await pickParseAndUploadProductsCsv(venueId);
+      if (res.cancelled) {
+        return;
+      }
+
+      // We don't yet attach it per-supplier; server stores against venue/catalogue.
+      // Later we can extend the function to tag supplierId.
+      Alert.alert(
+        'Catalogue uploaded',
+        'We have uploaded this CSV for this venue. Next, go to Stock Control → Manage Products → Supplier Tools to map items to this supplier.'
+      );
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message || 'Unknown error');
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return rows;
@@ -278,7 +311,9 @@ export default function SuppliersScreen() {
       const name = (s.name || '').toLowerCase();
       const email = (s.email || '').toLowerCase();
       const phone = (s.phone || '').toLowerCase();
-      return name.includes(needle) || email.includes(needle) || phone.includes(needle);
+      return (
+        name.includes(needle) || email.includes(needle) || phone.includes(needle)
+      );
     });
   }, [rows, q]);
 
@@ -296,8 +331,8 @@ export default function SuppliersScreen() {
       <Text style={styles.title}>Suppliers</Text>
 
       <Text style={styles.hint}>
-        Add suppliers here first. Then go to Stock Control → Manage Products → Supplier Tools to
-        attach them to items and keep prices in sync.
+        Add suppliers here first. Then go to Stock Control → Manage Products →
+        Supplier Tools to attach them to items and keep prices in sync.
       </Text>
 
       {/* Search + Add */}
@@ -334,7 +369,10 @@ export default function SuppliersScreen() {
                 </Text>
               )}
             </View>
-            <TouchableOpacity style={styles.smallBtn} onPress={() => openEditForm(item)}>
+            <TouchableOpacity
+              style={styles.smallBtn}
+              onPress={() => openEditForm(item)}
+            >
               <Text style={styles.smallText}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -346,7 +384,11 @@ export default function SuppliersScreen() {
           </View>
         )}
         ListEmptyComponent={
-          <Text>{q.trim() ? 'No suppliers match your search.' : 'No suppliers yet.'}</Text>
+          <Text>
+            {q.trim()
+              ? 'No suppliers match your search.'
+              : 'No suppliers yet.'}
+          </Text>
         }
       />
 
@@ -370,8 +412,8 @@ export default function SuppliersScreen() {
             <View style={styles.captureCard}>
               <Text style={styles.captureTitle}>Fast add from photo</Text>
               <Text style={styles.captureHint}>
-                Take a photo of a business card or invoice and we’ll auto-fill what we can for this
-                supplier.
+                Take a photo of a business card or invoice and we’ll auto-fill
+                what we can for this supplier.
               </Text>
 
               <View style={styles.captureRow}>
@@ -397,15 +439,17 @@ export default function SuppliersScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.capturePill, { alignSelf: 'flex-start', marginTop: 6 }]}
-                onPress={() =>
-                  Alert.alert(
-                    'Upload CSV / PDF',
-                    'Coming soon: drop in a CSV or PDF from this supplier and we’ll set them up and prepare their catalogue.'
-                  )
-                }
+                style={[
+                  styles.capturePill,
+                  { alignSelf: 'flex-start', marginTop: 6 },
+                  uploadBusy && { opacity: 0.6 },
+                ]}
+                disabled={uploadBusy}
+                onPress={uploadSupplierCsv}
               >
-                <Text style={styles.capturePillText}>Upload CSV / PDF</Text>
+                <Text style={styles.capturePillText}>
+                  {uploadBusy ? 'Uploading…' : 'Upload catalogue CSV'}
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -470,8 +514,9 @@ export default function SuppliersScreen() {
             <View style={{ height: 4 }} />
             <Text style={styles.section}>Order Timing Policy (optional)</Text>
             <Text style={styles.hintSmall}>
-              Use this if the supplier has a daily cutoff (e.g. “orders before 4pm go on tomorrow’s
-              truck”) or if you want TallyUp to hold and merge orders for a few hours.
+              Use this if the supplier has a daily cutoff (e.g. “orders before
+              4pm go on tomorrow’s truck”) or if you want TallyUp to hold and
+              merge orders for a few hours.
             </Text>
 
             <Text style={styles.lbl}>Order Cutoff (HH:mm, venue local time)</Text>
@@ -496,12 +541,13 @@ export default function SuppliersScreen() {
             <View style={styles.toolsCard}>
               <Text style={styles.toolsTitle}>Next steps</Text>
               <Text style={styles.toolsText}>
-                After you save, go to Stock Control → Manage Products → Supplier Tools to link this
-                supplier to items and keep their price list up to date.
+                After you save, go to Stock Control → Manage Products → Supplier
+                Tools to link this supplier to items and keep their price list
+                up to date.
               </Text>
               <Text style={styles.toolsTextSmall}>
-                Later, you’ll also be able to upload their catalogue or scan invoices/cards here to
-                auto-fill details.
+                Later, we’ll expand this to use uploaded catalogues and scanned
+                invoices to keep pricing in sync automatically.
               </Text>
             </View>
           </ScrollView>
@@ -537,7 +583,12 @@ const styles = StyleSheet.create({
   hint: { fontSize: 12, color: '#6B7280', marginBottom: 10 },
   hintSmall: { fontSize: 11, color: '#6B7280', marginBottom: 4 },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
   search: {
     flex: 1,
     borderWidth: 1,
@@ -641,23 +692,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  toolsTitle: { fontWeight: '800', marginBottom: 4 },
-  toolsText: { fontSize: 12, color: '#4B5563' },
-  toolsTextSmall: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
+  toolsTitle: {
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  toolsText: {
+    fontSize: 12,
+    color: '#4B5563',
+    marginBottom: 4,
+  },
+  toolsTextSmall: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
 
   formActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     gap: 10,
     paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    marginTop: 8,
   },
   cancelBtn: {
-    backgroundColor: '#E5E7EB',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    minWidth: 110,
+    flex: 1,
     alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
   },
-  cancelText: { color: '#111827', fontWeight: '800' },
+  cancelText: {
+    fontWeight: '700',
+    color: '#111827',
+  },
 });

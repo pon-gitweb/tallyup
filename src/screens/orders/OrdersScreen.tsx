@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
@@ -210,7 +211,6 @@ export default function OrdersScreen(){
   },[nav]);
 
   const startReceive=useCallback((row:OrderRow)=>{ setReceiveFor(row); },[]);
-
   const confirmDelete=useCallback(async (row:OrderRow)=>{
     Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
       { text:'Cancel', style:'cancel' },
@@ -232,6 +232,7 @@ export default function OrdersScreen(){
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
     const statusText = (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
+
     const isSubmitted=STATUS_GROUPS.submitted(item);
     const isDraft = STATUS_GROUPS.drafts(item);
 
@@ -243,7 +244,11 @@ export default function OrdersScreen(){
         <TouchableOpacity
           style={S.left}
           onPress={()=>openRow(item)}
-          onLongPress={()=>{ if(isDraft) confirmDelete(item); }}
+          onLongPress={()=>{
+            // Draft: long-press = delete
+            if (isDraft) confirmDelete(item);
+            // Submitted: no long-press action (tap opens detail where Receive lives)
+          }}
           delayLongPress={350}
           activeOpacity={0.8}
         >
@@ -263,15 +268,16 @@ export default function OrdersScreen(){
               </View>
             ) : null}
             {Array.isArray(item.deptScope) && item.deptScope.length>0 ? (
-              <View style={S.pill}><Text style={S.pillText}>{(item.deptScope as string[]).join(' · ')}</Text></View>
+              <View style={S.pill}><Text style={S.pillText}>{(item.deptScope as string[]).join(' • ')}</Text></View>
             ) : null}
           </View>
         </TouchableOpacity>
 
-        {null}
+        {/* Right-side actions deliberately empty */}
+        <View />
       </View>
     );
-  },[openRow,startReceive,confirmDelete]);
+  },[openRow,confirmDelete]);
 
   const onRefresh=useCallback(()=>{ setRefreshing(true); setTimeout(()=>setRefreshing(false),200); },[]);
 
@@ -338,7 +344,15 @@ export default function OrdersScreen(){
         keyExtractor={(x)=>x.id}
         renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListEmptyComponent={<View style={S.empty}><Text style={S.emptyText}>No orders</Text></View>}
+        ListEmptyComponent={()=>(
+          <View style={S.empty}>
+            <Text style={S.emptyText}>
+              {tab==='submitted'
+                ? 'No submitted orders yet.\nSubmit an order, then tap it to open and Receive.'
+                : 'No orders'}
+            </Text>
+          </View>
+        )}
       />
 
       {/* FAB for New Order */}
@@ -346,7 +360,7 @@ export default function OrdersScreen(){
         <Text style={S.fabText}>New Order</Text>
       </TouchableOpacity>
 
-      {/* Receive Options Modal (baseline) */}
+      {/* Receive Options Modal remains available (opened from OrderDetail) */}
       <Modal visible={!!receiveFor} transparent animationType="fade" onRequestClose={()=>setReceiveFor(null)}>
         <TouchableOpacity activeOpacity={1} style={{flex:1,justifyContent:'flex-end',backgroundColor:'rgba(0,0,0,0.3)'}} onPress={()=>setReceiveFor(null)}>
           <View style={{backgroundColor:'#fff',padding:16,borderTopLeftRadius:16,borderTopRightRadius:16}}>

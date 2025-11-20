@@ -35,6 +35,9 @@ type Props = {
   onOpenMore: () => void;
 
   nameInputRef: any;
+
+  // New: live presence summary, e.g. "Also here: Chris + 1 other"
+  presenceLabel?: string | null;
 };
 
 const fmt = (d: Date | null) => (d ? d.toLocaleString() : '—');
@@ -57,6 +60,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   stats,
   onOpenMore,
   nameInputRef,
+  presenceLabel,
 }: Props) {
   return (
     <View style={{ backgroundColor: 'white', paddingBottom: dens(8), borderBottomWidth: 1, borderBottomColor: '#eee' }}>
@@ -86,6 +90,24 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
           </View>
         </View>
 
+        {/* Presence pill when other users are also in this area */}
+        {presenceLabel ? (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: 2,
+              paddingVertical: 2,
+              paddingHorizontal: 8,
+              borderRadius: 999,
+              backgroundColor: '#EEF2FF',
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#3730A3' }}>
+              {presenceLabel}
+            </Text>
+          </View>
+        ) : null}
+
         {offline ? (
           <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
             <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
@@ -99,7 +121,10 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
             <Text style={{ color:'#1E3A8A' }}>
               “Expected” is our guidance based on last count and movements. Type your Count and press Save (or Approve now).
             </Text>
-            <TouchableOpacity onPress={dismissLegend} style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}>
+            <TouchableOpacity
+              onPress={dismissLegend}
+              style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}
+            >
               <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
             </TouchableOpacity>
           </View>
@@ -108,16 +133,21 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
         {/* Search + toggle */}
         <View style={{ flexDirection: 'row', gap: 8, alignItems:'center', flexWrap:'wrap' }}>
           <View style={{ flex: 1 }}>
-  <SearchBarDebounced
-    value={filter}
-    onChangeText={setFilter}
-    onDebouncedChange={setFilter}
-    placeholder="Search items…"
-    debounceMs={200}
-  />
-</View>
-          <TouchableOpacity onPress={() => setShowExpected(!showExpected)} style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}>
-            <Text style={{ color: '#558B2F', fontWeight: '700' }}>{showExpected ? 'Hide expected' : 'Show expected'}</Text>
+            <SearchBarDebounced
+              value={filter}
+              onChangeText={setFilter}
+              onDebouncedChange={setFilter}
+              placeholder="Search items…"
+              debounceMs={200}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowExpected(!showExpected)}
+            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}
+          >
+            <Text style={{ color: '#558B2F', fontWeight: '700' }}>
+              {showExpected ? 'Hide expected' : 'Show expected'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -129,13 +159,23 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               value={addingName}
               onChangeText={setAddingName}
               placeholder="Quick add item name"
-              style={{ flex: 1, paddingVertical: dens(8), paddingHorizontal: dens(12), borderWidth: 1, borderColor: '#ccc', borderRadius: 12, height: Math.max(40, dens(40)) }}
+              style={{
+                flex: 1,
+                paddingVertical: dens(8),
+                paddingHorizontal: dens(12),
+                borderWidth: 1,
+                borderColor: '#ccc',
+                borderRadius: 12,
+                height: Math.max(40, dens(40)),
+              }}
               returnKeyType="done"
               blurOnSubmit={false}
               onSubmitEditing={onAddQuickItem}
             />
-            <TouchableOpacity onPress={onAddQuickItem}
-              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}>
+            <TouchableOpacity
+              onPress={onAddQuickItem}
+              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}
+            >
               <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
             </TouchableOpacity>
           </View>

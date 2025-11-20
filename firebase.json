@@ -4,6 +4,16 @@
     "runtime": "nodejs20"
   },
   "emulators": {
-    "functions": { "port": 5001 }
+    "functions": {
+      "port": 5001
+    }
+  },
+  "hosting": {
+    "public": "web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
   }
 }

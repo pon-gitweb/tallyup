@@ -25,6 +25,80 @@ function tierForConfidence(c?: number): 'low'|'medium'|'high' {
   return 'low';
 }
 
+// ---------- Parsed invoice sanity checks ----------
+
+type ParsedInvoiceLine = { qty?: number; unitPrice?: number };
+
+/** Aggregate quick stats from parsed lines (CSV/PDF). */
+function analyseParsedInvoice(lines: Array<ParsedInvoiceLine|any>) {
+  const safe = Array.isArray(lines) ? lines : [];
+  let total = 0;
+  let pricedCount = 0;
+
+  for (const l of safe) {
+    const qty = Number((l as any)?.qty);
+    const unitPrice = Number((l as any)?.unitPrice);
+    if (Number.isFinite(qty) && qty > 0 && Number.isFinite(unitPrice) && unitPrice >= 0) {
+      total += qty * unitPrice;
+      pricedCount += 1;
+    }
+  }
+
+  const lineCount = safe.length;
+  const missingPriceRatio = lineCount ? (lineCount - pricedCount) / lineCount : 1;
+
+  return { total, missingPriceRatio, lineCount };
+}
+
+/**
+ * Returns a short human message if the invoice looks "weird" enough that
+ * we should pause before posting.
+ */
+function parsedInvoiceWeirdMessage(stats: { total: number; missingPriceRatio: number; lineCount: number }): string | null {
+  const issues: string[] = [];
+
+  if (stats.lineCount <= 2) {
+    issues.push('only a couple of lines were detected');
+  }
+  if (stats.total === 0) {
+    issues.push('the invoice total appears to be $0');
+  }
+  if (stats.missingPriceRatio > 0.6) {
+    issues.push('most lines are missing unit prices');
+  }
+
+  if (!issues.length) return null;
+  return `This invoice looks unusual — ${issues.join(', ')}.`;
+}
+
+// ---------- Step 5: friendlier error messages ----------
+
+function humanizeInvoiceError(err: any) {
+  const raw = String(err?.message || err || '') || '';
+
+  // Common AI / PDF parse shapes
+  const lower = raw.toLowerCase();
+  if (lower.includes('pdf parse failed')) {
+    return 'We could not reliably read this PDF invoice. Try a clearer copy or use Manual Receive for this order.';
+  }
+  if (lower.includes('bad xref')) {
+    return 'This PDF is in a format our reader struggles with. You can still receive the order manually.';
+  }
+  if (lower.includes('process-invoices-pdf failed')) {
+    return 'Our invoice reader had trouble reading this PDF. Please try again later or receive this order manually.';
+  }
+  if (lower.includes('process-invoices-csv')) {
+    return 'We had trouble reading that CSV. Please check the file format or use Manual Receive instead.';
+  }
+  if (lower.includes('http 500') || lower.includes('status 500')) {
+    return 'The invoice reader had a temporary problem. Please try again, or receive manually if it keeps happening.';
+  }
+
+  // Fallback to the raw message if it’s reasonably short; otherwise generic
+  if (raw && raw.length <= 140) return raw;
+  return 'Something went wrong while reading the invoice. Please try again or use Manual Receive.';
+}
+
 export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
@@ -160,6 +234,13 @@ export default function OrderDetailScreen() {
         }
       } catch {}
 
+      // Invoice-level sanity note into warnings
+      try {
+        const stats = analyseParsedInvoice(review.lines || []);
+        const weirdMsg = parsedInvoiceWeirdMessage(stats);
+        if (weirdMsg) warnings.push(weirdMsg);
+      } catch {}
+
       setCsvReview({
         ...review,
         storagePath: up.fullPath,
@@ -169,7 +250,15 @@ export default function OrderDetailScreen() {
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] csv pick/process fail', e);
-      Alert.alert('Upload failed', String(e?.message || e));
+      const msg = humanizeInvoiceError(e);
+      Alert.alert(
+        'Invoice reader issue',
+        msg,
+        [
+          { text:'OK', style:'cancel' },
+          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
+        ]
+      );
     }
   },[venueId,orderId,orderMeta,lines]);
 
@@ -212,11 +301,30 @@ export default function OrderDetailScreen() {
         );
         return;
       }
-      setPdfReview({ ...parsed, storagePath: up.fullPath });
+
+      // Add "weird" invoice info into PDF warnings as well
+      let warnings = parsed?.warnings || [];
+      try {
+        const stats = analyseParsedInvoice(parsed.lines || []);
+        const weirdMsg = parsedInvoiceWeirdMessage(stats);
+        if (weirdMsg) {
+          warnings = [...warnings, weirdMsg];
+        }
+      } catch {}
+
+      setPdfReview({ ...parsed, storagePath: up.fullPath, warnings });
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] pdf upload/parse fail', e);
-      Alert.alert('Upload failed', String(e?.message || e));
+      const msg = humanizeInvoiceError(e);
+      Alert.alert(
+        'Invoice reader issue',
+        msg,
+        [
+          { text:'OK', style:'cancel' },
+          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
+        ]
+      );
     }
   },[venueId,orderId,orderMeta]);
 
@@ -265,7 +373,18 @@ export default function OrderDetailScreen() {
           );
           return;
         }
-        setPdfReview({ ...parsed, storagePath: up.fullPath });
+
+        // PDF weirdness into warnings
+        let warnings = parsed?.warnings || [];
+        try {
+          const stats = analyseParsedInvoice(parsed.lines || []);
+          const weirdMsg = parsedInvoiceWeirdMessage(stats);
+          if (weirdMsg) {
+            warnings = [...warnings, weirdMsg];
+          }
+        } catch {}
+
+        setPdfReview({ ...parsed, storagePath: up.fullPath, warnings });
         setReceiveOpen(false);
         return;
       }
@@ -323,6 +442,13 @@ export default function OrderDetailScreen() {
           }
         } catch {}
 
+        // Invoice-level sanity note into warnings
+        try {
+          const stats = analyseParsedInvoice(review.lines || []);
+          const weirdMsg = parsedInvoiceWeirdMessage(stats);
+          if (weirdMsg) warnings.push(weirdMsg);
+        } catch {}
+
         setCsvReview({ ...review, storagePath: up.fullPath, confidence: effectiveConfidence, warnings });
         setReceiveOpen(false);
         return;
@@ -331,7 +457,15 @@ export default function OrderDetailScreen() {
       Alert.alert('Unsupported file', 'Please choose a PDF or CSV invoice.');
     }catch(e){
       console.error('[OrderDetail] file pick route fail', e);
-      Alert.alert('Upload failed', String(e?.message || e));
+      const msg = humanizeInvoiceError(e);
+      Alert.alert(
+        'Invoice reader issue',
+        msg,
+        [
+          { text:'OK', style:'cancel' },
+          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
+        ]
+      );
     }
   },[venueId, orderId, orderMeta, lines]);
 
@@ -341,13 +475,15 @@ export default function OrderDetailScreen() {
       t==='low'    ? 'Low confidence: results may be inaccurate. Consider Manual Receive.'
     : t==='medium' ? 'Medium confidence: please review carefully before confirming.'
     :                 'High confidence: looks good.';
+
     const bg = t==='low' ? '#FEF3C7' : t==='medium' ? '#E0E7FF' : '#DCFCE7';
     const fg = t==='low' ? '#92400E' : t==='medium' ? '#1E3A8A' : '#065F46';
+    const pct = typeof score === 'number' && isFinite(score) ? Math.round(score * 100) : null;
 
     return (
       <View style={{backgroundColor:bg, padding:10, borderRadius:8, marginBottom:10}}>
         <Text style={{color:fg, fontWeight:'700'}}>
-          {msg} {Number.isFinite(score)? `(confidence ${(score!*100).toFixed(0)}%)`:''}
+          {msg} {pct !== null ? `(confidence ${pct}%)` : ''}
         </Text>
         {t==='low' ? (
           <TouchableOpacity
@@ -360,37 +496,6 @@ export default function OrderDetailScreen() {
       </View>
     );
   };
-
-  // Auto-confirm CSV on very high confidence
-  useEffect(()=>{
-    if (!csvReview || autoConfirmedRef.current) return;
-    const t = tierForConfidence(csvReview.confidence);
-    if (t === 'high') {
-      autoConfirmedRef.current = true;
-      (async ()=>{
-        try{
-          await finalizeReceiveFromCsv({
-            venueId,
-            orderId,
-            parsed: {
-              invoice: csvReview.invoice,
-              lines: csvReview.lines,
-              matchReport: csvReview.matchReport,
-              confidence: csvReview.confidence,
-              warnings: csvReview.warnings
-            }
-          });
-          Alert.alert('Received', 'High-confidence invoice auto-accepted and posted.');
-          setReceiveOpen(false);
-          setCsvReview(null);
-          nav.goBack();
-        }catch(e){
-          autoConfirmedRef.current = false;
-          Alert.alert('Auto-receive failed', String(e?.message || e));
-        }
-      })();
-    }
-  },[csvReview, venueId, orderId, nav]);
 
   const totalOrdered = useMemo(()=>{
     return lines.reduce((sum,line)=>{
@@ -409,6 +514,64 @@ export default function OrderDetailScreen() {
     if (!pdfReview) return [];
     return (pdfReview.warnings || pdfReview.matchReport?.warnings || []);
   }, [pdfReview]);
+
+  // helper to post a CSV review (used by auto-confirm + button)
+  const postCsvReview = useCallback(async () => {
+    if (!csvReview) return;
+    autoConfirmedRef.current = true;
+    try{
+      await finalizeReceiveFromCsv({
+        venueId,
+        orderId,
+        parsed: {
+          invoice: csvReview.invoice,
+          lines: csvReview.lines,
+          matchReport: csvReview.matchReport,
+          confidence: csvReview.confidence,
+          warnings: csvReview.warnings
+        }
+      });
+      Alert.alert('Received', 'Invoice posted and order marked received.');
+      setReceiveOpen(false);
+      setCsvReview(null);
+      nav.goBack();
+    }catch(e:any){
+      autoConfirmedRef.current = false;
+      const msg = humanizeInvoiceError(e);
+      Alert.alert(
+        'Receive failed',
+        msg,
+        [
+          { text:'OK', style:'cancel' },
+          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
+        ]
+      );
+    }
+  }, [csvReview, venueId, orderId, nav]);
+
+  // Auto-confirm CSV on very high confidence, *unless* invoice looks weird
+  useEffect(()=>{
+    if (!csvReview || autoConfirmedRef.current) return;
+    const t = tierForConfidence(csvReview.confidence);
+    if (t !== 'high') return;
+
+    try {
+      const stats = analyseParsedInvoice(csvReview.lines || []);
+      const weirdMsg = parsedInvoiceWeirdMessage(stats);
+      if (weirdMsg) {
+        Alert.alert(
+          'Please review invoice',
+          `${weirdMsg}\n\nWe’ve saved the parsed invoice, but automatic posting was disabled so you can double-check first.`
+        );
+        autoConfirmedRef.current = true;
+        return;
+      }
+    } catch {
+      // If analysis fails, just fall back to existing behaviour
+    }
+
+    postCsvReview().catch(()=>{});
+  },[csvReview, postCsvReview]);
 
   if (loading) return <View style={S.loading}><ActivityIndicator/></View>;
 
@@ -458,28 +621,22 @@ export default function OrderDetailScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}}
-                onPress={async ()=>{
-                  autoConfirmedRef.current = true;
-                  try{
-                    await finalizeReceiveFromCsv({
-                      venueId,
-                      orderId,
-                      parsed: {
-                        invoice: csvReview.invoice,
-                        lines: csvReview.lines,
-                        matchReport: csvReview.matchReport,
-                        confidence: csvReview.confidence,
-                        warnings: csvReview.warnings
-                      }
-                    });
-                    Alert.alert('Received', 'Invoice posted and order marked received.');
-                    setReceiveOpen(false);
-                    setCsvReview(null);
-                    nav.goBack();
-                  }catch(e){
-                    autoConfirmedRef.current = false;
-                    Alert.alert('Receive failed', String(e?.message || e));
+                onPress={()=>{
+                  const stats = analyseParsedInvoice(csvReview.lines || []);
+                  const weirdMsg = parsedInvoiceWeirdMessage(stats);
+                  if (weirdMsg) {
+                    Alert.alert(
+                      'Check before posting',
+                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn’t look right.`,
+                      [
+                        { text:'Cancel', style:'cancel' },
+                        { text:'Manual Receive', onPress:()=>setManualOpen(true) },
+                        { text:'Post anyway', style:'destructive', onPress: ()=>{ postCsvReview(); } }
+                      ]
+                    );
+                    return;
                   }
+                  postCsvReview();
                 }}
               >
                 <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm & Post</Text>

@@ -1,11 +1,18 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, FlatList, TextInput
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
-import { listProducts, deleteProductById} from '../../services/products';
+import { listProducts, deleteProductById } from '../../services/products';
 import ProductSupplierTools from '../../components/products/ProductSupplierTools';
 
 // Optional, best-effort read of global catalogs (won't throw if firebase/firestore isn't present)
@@ -22,7 +29,7 @@ export default function ProductsScreen() {
   try {
     const rn = (nav.getState()?.routeNames ?? []) as string[];
     // eslint-disable-next-line no-console
-    console.log("[Products] routeNames:", rn);
+    console.log('[Products] routeNames:', rn);
   } catch (e) {}
 
   const venueId = useVenueId();
@@ -79,7 +86,12 @@ export default function ProductsScreen() {
       safeProduct = JSON.parse(JSON.stringify(p));
     } catch {
       // Fallback: pass minimal shape if something was still not serializable
-      safeProduct = { id: p.id, name: (p as any)?.name ?? '', parLevel: (p as any)?.parLevel ?? null, supplierName: (p as any)?.supplierName ?? null };
+      safeProduct = {
+        id: p.id,
+        name: (p as any)?.name ?? '',
+        parLevel: (p as any)?.parLevel ?? null,
+        supplierName: (p as any)?.supplierName ?? null,
+      };
     }
     nav.navigate('EditProductScreen', { productId: p.id, product: safeProduct });
   }
@@ -88,7 +100,9 @@ export default function ProductsScreen() {
     Alert.alert('Delete Product', `Delete ${p.name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete', style: 'destructive', onPress: async () => {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
           try {
             if (!venueId || !p.id) return;
             await deleteProductById(venueId, p.id);
@@ -96,9 +110,37 @@ export default function ProductsScreen() {
           } catch (e: any) {
             Alert.alert('Delete Failed', e?.message || 'Unknown error');
           }
-        }
-      }
+        },
+      },
     ]);
+  }
+
+  // Best-effort navigation to the Products CSV import screen without changing nav config
+  function goToProductsCsvImport() {
+    try {
+      const state: any = nav.getState?.();
+      const names: string[] = (state?.routeNames ?? []) as any;
+
+      const target =
+        names?.find((n) => n === 'ProductsCsvImportScreen') ||
+        names?.find((n) => n === 'ProductsCsvImport') ||
+        names?.find((n) => typeof n === 'string' && n.toLowerCase().includes('productscsv'));
+
+      if (target) {
+        nav.navigate(target as never);
+        return;
+      }
+
+      Alert.alert(
+        'CSV import not wired',
+        'The Products CSV import screen is not wired in this build yet. Once it is added to navigation, this button will open it.',
+      );
+    } catch (e: any) {
+      Alert.alert(
+        'CSV import not available',
+        e?.message || 'The Products CSV import screen is not available in this build.',
+      );
+    }
   }
 
   const filtered = useMemo(() => {
@@ -109,9 +151,17 @@ export default function ProductsScreen() {
       const sku = (p as any)?.sku ? String((p as any).sku).toLowerCase() : '';
       const unit = (p as any)?.unit ? String((p as any).unit).toLowerCase() : '';
       const supplierName = (p as any)?.supplierName ? String((p as any).supplierName).toLowerCase() : '';
-      return name.includes(needle) || sku.includes(needle) || unit.includes(needle) || supplierName.includes(needle);
+      return (
+        name.includes(needle) ||
+        sku.includes(needle) ||
+        unit.includes(needle) ||
+        supplierName.includes(needle)
+      );
     });
   }, [rows, q]);
+
+  // Always show onboarding card for now so it's easy to spot and test
+  const showOnboarding = true;
 
   if (loading) {
     return (
@@ -126,11 +176,40 @@ export default function ProductsScreen() {
     <View style={styles.wrap}>
       <Text style={styles.title}>Products</Text>
 
+      {/* Onboarding helper card */}
+      {showOnboarding && (
+        <View style={styles.onboardCard}>
+          <Text style={styles.onboardTitle}>Fast ways to get your products in</Text>
+          <Text style={styles.onboardText}>
+            You can keep adding manually, or let TallyUp do the heavy lifting with supplier CSVs.
+          </Text>
+
+          {typeof globalSupplierCount === 'number' && (
+            <Text style={styles.onboardTextSmall}>
+              Global supplier catalogs detected: {globalSupplierCount}. Paste a CSV from one of these
+              suppliers into Supplier Tools to auto-link preferred suppliers and prices.
+            </Text>
+          )}
+
+          <View style={styles.onboardActionsRow}>
+            <TouchableOpacity
+              style={styles.onboardActionPrimary}
+              onPress={() => setToolsOpen(true)}
+            >
+              <Text style={styles.onboardActionPrimaryText}>Open Supplier Tools</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.onboardActionSecondary} onPress={onNew}>
+              <Text style={styles.onboardActionSecondaryText}>Add single product</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Pills row (includes Supplier Tools toggle) */}
       <View style={styles.pillsRow}>
         <TouchableOpacity
           style={[styles.pill, styles.pillPrimary]}
-          onPress={() => setToolsOpen(v => !v)}
+          onPress={() => setToolsOpen((v) => !v)}
         >
           <Text style={[styles.pillText, styles.pillTextPrimary]}>
             {toolsOpen ? 'Hide Supplier Tools' : 'Supplier Tools'}
@@ -139,25 +218,31 @@ export default function ProductsScreen() {
 
         <TouchableOpacity
           style={[styles.pill, styles.pillDisabled]}
-          onPress={() => Alert.alert('Coming soon', 'Bulk CSV import for products.')}
+          onPress={goToProductsCsvImport}
         >
           <Text style={styles.pillText}>Bulk CSV Import</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.pill, styles.pillDisabled]}
-          onPress={() => Alert.alert('Coming soon', 'Scan UPCs in batch to add/update products.')}
+          onPress={() =>
+            Alert.alert('Coming soon', 'Scan UPCs in batch to add/update products.')
+          }
         >
           <Text style={styles.pillText}>Scan UPC batch</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.pill, styles.pillDisabled]}
-          onPress={() => Alert.alert('Coming soon', 'Suggest PAR levels from history.')}
+          onPress={() =>
+            Alert.alert('Coming soon', 'Suggest PAR levels from history.')
+          }
         >
           <Text style={styles.pillText}>Suggest PARs</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.pill, styles.pillDisabled]}
-          onPress={() => Alert.alert('Coming soon', 'AI normalize units / pack sizes.')}
+          onPress={() =>
+            Alert.alert('Coming soon', 'AI normalize units / pack sizes.')
+          }
         >
           <Text style={styles.pillText}>AI normalize units</Text>
         </TouchableOpacity>
@@ -167,7 +252,14 @@ export default function ProductsScreen() {
       {toolsOpen ? (
         <View style={styles.toolsPanel}>
           {typeof globalSupplierCount === 'number' ? (
-            <View style={{ marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View
+              style={{
+                marginBottom: 8,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
               <Text style={styles.hint}>
                 Global catalogs available: {globalSupplierCount}
               </Text>
@@ -203,7 +295,9 @@ export default function ProductsScreen() {
         keyExtractor={(p) => p.id!}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => {
-          const supplierName = (item as any)?.supplierName ? String((item as any).supplierName) : '';
+          const supplierName = (item as any)?.supplierName
+            ? String((item as any).supplierName)
+            : '';
           const hasPreferred = !!supplierName;
           return (
             <View style={styles.rowCard}>
@@ -212,27 +306,38 @@ export default function ProductsScreen() {
                 <Text style={styles.sub}>
                   {(item as any)?.sku ? `SKU ${(item as any).sku} · ` : ''}
                   {(item as any)?.unit || 'unit?'}
-                  {(typeof (item as any).parLevel === 'number' ? ` · Par ${(item as any).parLevel}` : '')}
+                  {typeof (item as any).parLevel === 'number'
+                    ? ` · Par ${(item as any).parLevel}`
+                    : ''}
                 </Text>
                 <View style={{ marginTop: 6 }}>
                   {hasPreferred ? (
-                    <Text style={[styles.badge, styles.badgeOk]}>Preferred: {supplierName}</Text>
+                    <Text style={[styles.badge, styles.badgeOk]}>
+                      Preferred: {supplierName}
+                    </Text>
                   ) : (
-                    <Text style={[styles.badge, styles.badgeWarn]}>Needs supplier</Text>
+                    <Text style={[styles.badge, styles.badgeWarn]}>
+                      Needs supplier
+                    </Text>
                   )}
                 </View>
               </View>
               <TouchableOpacity style={styles.smallBtn} onPress={() => onEdit(item)}>
                 <Text style={styles.smallText}>Edit</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]} onPress={() => onDelete(item)}>
+              <TouchableOpacity
+                style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]}
+                onPress={() => onDelete(item)}
+              >
                 <Text style={[styles.smallText, { color: 'white' }]}>Delete</Text>
               </TouchableOpacity>
             </View>
           );
         }}
         ListEmptyComponent={
-          <Text>{q.trim() ? 'No products match your search.' : 'No products yet.'}</Text>
+          <Text>
+            {q.trim() ? 'No products match your search.' : 'No products yet.'}
+          </Text>
         }
       />
     </View>
@@ -244,6 +349,49 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   title: { fontSize: 22, fontWeight: '800' },
 
+  // Onboarding card
+  onboardCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  onboardTitle: { fontSize: 14, fontWeight: '800', marginBottom: 4, color: '#1D4ED8' },
+  onboardText: { fontSize: 12, color: '#1F2937', marginBottom: 4 },
+  onboardTextSmall: { fontSize: 11, color: '#4B5563' },
+  onboardActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  onboardActionPrimary: {
+    backgroundColor: '#111827',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
+  onboardActionPrimaryText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  onboardActionSecondary: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  onboardActionSecondaryText: {
+    color: '#111827',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
   pillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
   pillDisabled: { backgroundColor: '#D6E9FF' },
@@ -251,24 +399,60 @@ const styles = StyleSheet.create({
   pillPrimary: { backgroundColor: '#111827' },
   pillTextPrimary: { color: '#fff' },
 
-  toolsPanel: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 12 },
+  toolsPanel: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 12,
+  },
   hint: { fontSize: 12, color: '#6b7280' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   search: {
-    flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff'
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#D0D3D7',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#fff',
   },
 
-  primary: { backgroundColor: '#0A84FF', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center' },
+  primary: {
+    backgroundColor: '#0A84FF',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
   primaryText: { color: 'white', fontWeight: '700' },
 
-  rowCard: { backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowCard: {
+    backgroundColor: '#EFEFF4',
+    padding: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   name: { fontWeight: '700' },
   sub: { opacity: 0.7, marginTop: 2 },
 
-  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  smallBtn: {
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
   smallText: { fontWeight: '700' },
-  badge: { fontSize: 11, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, alignSelf: 'flex-start' },
+  badge: {
+    fontSize: 11,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
   badgeOk: { backgroundColor: '#ecfdf5', color: '#065f46' },
-  badgeWarn: { backgroundColor: '#fffbeb', color: '#92400e' }});
+  badgeWarn: { backgroundColor: '#fffbeb', color: '#92400e' },
+});
