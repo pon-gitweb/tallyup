@@ -13,7 +13,7 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
-import { finalizeReceiveFromCsv } from '../../services/orders/receive';
+import { finalizeReceiveFromCsv, finalizeReceiveFromPdf } from '../../services/orders/receive';
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -549,6 +549,38 @@ export default function OrderDetailScreen() {
     }
   }, [csvReview, venueId, orderId, nav]);
 
+  // helper to post a PDF review (manual confirm only)
+  const postPdfReview = useCallback(async () => {
+    if (!pdfReview) return;
+    try{
+      await finalizeReceiveFromPdf({
+        venueId,
+        orderId,
+        parsed: {
+          invoice: pdfReview.invoice,
+          lines: pdfReview.lines,
+          matchReport: pdfReview.matchReport,
+          confidence: pdfReview.confidence,
+          warnings: pdfReview.warnings
+        }
+      });
+      Alert.alert('Received', 'Invoice posted and order marked received.');
+      setReceiveOpen(false);
+      setPdfReview(null);
+      nav.goBack();
+    }catch(e:any){
+      const msg = humanizeInvoiceError(e);
+      Alert.alert(
+        'Receive failed',
+        msg,
+        [
+          { text:'OK', style:'cancel' },
+          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
+        ]
+      );
+    }
+  }, [pdfReview, venueId, orderId, nav]);
+
   // Auto-confirm CSV on very high confidence, *unless* invoice looks weird
   useEffect(()=>{
     if (!csvReview || autoConfirmedRef.current) return;
@@ -672,10 +704,24 @@ export default function OrderDetailScreen() {
               <TouchableOpacity
                 style={{flex:1,paddingVertical:12,backgroundColor:'#111827',borderRadius:8}}
                 onPress={()=>{
-                  Alert.alert('Pending', 'PDF posting not wired to finalize yet.');
+                  const stats = analyseParsedInvoice(pdfReview.lines || []);
+                  const weirdMsg = parsedInvoiceWeirdMessage(stats);
+                  if (weirdMsg) {
+                    Alert.alert(
+                      'Check before posting',
+                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn’t look right.`,
+                      [
+                        { text:'Cancel', style:'cancel' },
+                        { text:'Manual Receive', onPress:()=>setManualOpen(true) },
+                        { text:'Post anyway', style:'destructive', onPress: ()=>{ postPdfReview(); } }
+                      ]
+                    );
+                    return;
+                  }
+                  postPdfReview();
                 }}
               >
-                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm (stub)</Text>
+                <Text style={{textAlign:'center',fontWeight:'700',color:'#fff'}}>Confirm & Post</Text>
               </TouchableOpacity>
             </View>
           </View>

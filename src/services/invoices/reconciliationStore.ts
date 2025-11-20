@@ -43,3 +43,50 @@ export async function persistFastReceiveSnapshot(args: {
     return { ok: false, error: String(e?.message || e) };
   }
 }
+
+/**
+ * Save the reconciliation bundle returned by the REST API.
+ * Used by finalizeReceiveFromCsv / finalizeReceiveFromPdf.
+ */
+export async function saveReconciliation(
+  venueId: string,
+  orderId: string,
+  payload: any
+) {
+  try {
+    const db = getFirestore(getApp());
+    const col = collection(db, 'venues', venueId, 'orders', orderId, 'reconciliations');
+
+    const toWrite = {
+      createdAt: serverTimestamp(),
+      venueId,
+      orderId,
+      ...payload,
+    };
+
+    const docRef = await addDoc(col, toWrite);
+
+    if (__DEV__) {
+      try {
+        console.log('[Reconcile][FS] saved reconciliation', {
+          venueId,
+          orderId,
+          id: docRef.id,
+          hasSummary: !!payload?.summary,
+        });
+      } catch {}
+    }
+
+    return { ok: true, id: docRef.id };
+  } catch (e: any) {
+    try {
+      console.log('[Reconcile][FS] saveReconciliation FAIL', {
+        venueId,
+        orderId,
+        err: (e && (e.code || e.message || String(e))),
+      });
+    } catch {}
+    if (__DEV__) console.log('[saveReconciliation] error', e?.message || e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
