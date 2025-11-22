@@ -7,17 +7,14 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "cover",
       "backgroundColor": "#0B132B"
     },
-
     "ios": {
       "supportsTablet": true
     },
-
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
@@ -27,17 +24,17 @@
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.tallyup"
     },
-
     "web": {
       "favicon": "./assets/favicon.png"
     },
-
     "extra": {
       "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
       "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
-      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e"
+      "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e",
+      "eas": {
+        "projectId": "f51fbba0-356b-46ef-9ef5-2017ee9ad59f"
+      }
     },
-
     "plugins": [
       "expo-asset",
       "expo-font"

@@ -1,160 +1,106 @@
-import {
-  addDoc, collection, doc, getDoc, setDoc, updateDoc,
-  serverTimestamp, writeBatch
-} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { db } from '../services/firebase';
-
-type SeedDef = { department: string; areas: string[] };
-
-const SEEDS: SeedDef[] = [
-  { department: 'Bar',     areas: ['Front Bar', 'Back Bar', 'Fridge', 'Cellar'] },
-  { department: 'Kitchen', areas: ['Prep', 'Cookline', 'Freezer', 'Dry Store'] },
-];
-
-function logStep(step: string, ctx: Record<string, any> = {}) {
-  console.log('[TallyUp CreateVenue]', step, JSON.stringify(ctx));
-}
-
-function keysOnly(obj: any) {
-  return obj && typeof obj === 'object' ? Object.keys(obj).sort() : [];
-}
 
 /**
- * Creates a first venue owned by the current user.
- * ORDER IS CRITICAL (to satisfy security rules):
- *  1) ensure user doc exists AND has venueId (null if new/missing)
- *  2) create venues/{id} with {ownerUid}
- *  3) set venues/{id}/members/{uid} (role: owner)
- *  4) seed departments & areas
- *  5) set sessions/current = {status: 'idle'}
- *  6) update users/{uid}.venueId (first time only)
+ * Call the Cloud Function to create a new venue owned by the currently signed-in user.
+ *
+ * Server behavior (createVenueOwnedByUser):
+ *   - Verifies Firebase ID token from Authorization: Bearer <idToken>
+ *   - Uses token.uid as the owner
+ *   - Creates venues/{venueId}
+ *   - Creates venues/{venueId}/members/{uid} with role "owner"
+ *   - Sets users/{uid}.venueId = venueId
+ *
+ * Returns the generated venueId as a string.
  */
+const FUNCTIONS_REGION = 'australia-southeast1';
+const PROJECT_ID = process.env.EXPO_PUBLIC_FB_PROJECT_ID || 'tallyup-f1463';
+const BASE_URL = `https://${FUNCTIONS_REGION}-${PROJECT_ID}.cloudfunctions.net`;
+
 export async function createVenueOwnedByCurrentUser(name: string): Promise<string> {
   const auth = getAuth();
   const user = auth.currentUser;
+
   if (!user) {
-    const err = new Error('Not signed in');
-    (err as any).code = 'auth/not-signed-in';
-    throw err;
-  }
-  const uid = user.uid;
-  logStep('begin', { uid, name });
-
-  // 1) Ensure users/{uid} exists AND has venueId field (explicit null if missing)
-  const userRef = doc(db, 'users', uid);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
-    const toWrite = { createdAt: serverTimestamp(), venueId: null };
-    logStep('write users/{uid}', { path: userRef.path, keys: keysOnly(toWrite) });
-    try {
-      await setDoc(userRef, toWrite, { merge: true });
-    } catch (e: any) {
-      logStep('fail users/{uid}', { path: userRef.path, code: e.code, message: e.message });
-      throw e;
-    }
-  } else {
-    const data = userSnap.data() || {};
-    const hasVenueIdField = Object.prototype.hasOwnProperty.call(data, 'venueId');
-    logStep('users/{uid} exists', { path: userRef.path, dataKeys: keysOnly(data), hasVenueIdField });
-    if (!hasVenueIdField) {
-      const patch = { venueId: null, touchedAt: serverTimestamp() };
-      logStep('patch users/{uid} venueId:null', { path: userRef.path, keys: keysOnly(patch) });
-      try {
-        await setDoc(userRef, patch, { merge: true });
-      } catch (e: any) {
-        logStep('fail users/{uid} patch', { path: userRef.path, code: e.code, message: e.message });
-        throw e;
-      }
-    }
+    throw new Error('Not signed in. Please log in before creating a venue.');
   }
 
-  // 2) Create venue doc with ownerUid == uid
-  const venuesCol = collection(db, 'venues');
-  const venuePayload = {
-    name,
-    ownerUid: uid,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  const trimmedName = (name || '').trim();
+  if (!trimmedName) {
+    throw new Error('Venue name is required.');
+  }
+
+  // Get Firebase ID token to satisfy Authorization requirement
+  let idToken: string;
+  try {
+    idToken = await user.getIdToken();
+  } catch (err: any) {
+    console.log('[createVenueOwnedByCurrentUser] getIdToken error', err?.message);
+    throw new Error('Could not obtain auth token. Please try signing in again.');
+  }
+
+  const url = `${BASE_URL}/createVenueOwnedByUser`;
+  console.log('[createVenueOwnedByCurrentUser] calling URL', url);
+
+  const payload = {
+    // Server will mainly trust the token, but we still send the name explicitly
+    name: trimmedName,
   };
-  logStep('create venues doc', { col: 'venues', keys: keysOnly(venuePayload) });
 
-  let venueId = '';
+  let res: Response;
   try {
-    const venueRef = await addDoc(venuesCol, venuePayload);
-    venueId = venueRef.id;
-    logStep('venues/{id} created', { venueId });
-  } catch (e: any) {
-    logStep('fail venues create', { code: e.code, message: e.message, keys: keysOnly(venuePayload) });
-    throw e;
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // This is what the function complained about previously
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err: any) {
+    console.log('[createVenueOwnedByCurrentUser] network error', err?.message);
+    throw new Error('Failed to reach the server. Check your connection and try again.');
   }
 
-  // 3) Set membership doc for owner
-  const memberRef = doc(db, 'venues', venueId, 'members', uid);
-  const memberPayload = { role: 'owner', createdAt: serverTimestamp() };
-  logStep('write members/{uid}', { path: memberRef.path, keys: keysOnly(memberPayload) });
-  try {
-    await setDoc(memberRef, memberPayload, { merge: true });
-  } catch (e: any) {
-    logStep('fail members/{uid}', { path: memberRef.path, code: e.code, message: e.message, keys: keysOnly(memberPayload) });
-    throw e;
-  }
-
-  // 4) Seed departments & areas (batch per department)
-  for (const seed of SEEDS) {
-    const deptRef = doc(db, 'venues', venueId, 'departments', seed.department);
-    const deptPayload = {
-      name: seed.department,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    logStep('seed department', { path: deptRef.path, keys: keysOnly(deptPayload) });
-
-    const batch = writeBatch(db);
-    batch.set(deptRef, deptPayload, { merge: true });
-
-    for (const area of seed.areas) {
-      const areaRef = doc(db, 'venues', venueId, 'departments', seed.department, 'areas', area);
-      const areaPayload = {
-        name: area,
-        startedAt: null,
-        completedAt: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      logStep('seed area', { path: areaRef.path, keys: keysOnly(areaPayload) });
-      batch.set(areaRef, areaPayload, { merge: true });
-    }
-
+  if (!res.ok) {
+    let bodyText: string | undefined;
     try {
-      await batch.commit();
-    } catch (e: any) {
-      logStep('fail seed department batch', { dept: seed.department, code: e.code, message: e.message });
-      throw e;
+      bodyText = await res.text();
+    } catch {
+      // ignore
     }
+    console.log('[createVenueOwnedByCurrentUser] HTTP error', res.status, bodyText);
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('You are not authorised to create a venue. Please sign in again and try once more.');
+    }
+
+    // If backend sends structured JSON { error: "..." }, try to surface that
+    try {
+      const maybeJson = bodyText ? JSON.parse(bodyText) : null;
+      if (maybeJson && typeof maybeJson.error === 'string') {
+        throw new Error(maybeJson.error);
+      }
+    } catch {
+      // fall through
+    }
+
+    throw new Error(bodyText || `Server error (${res.status})`);
   }
 
-  // 5) Seed sessions/current = idle
-  const sessionRef = doc(db, 'venues', venueId, 'sessions', 'current');
-  const sessionPayload = { status: 'idle', createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-  logStep('write sessions/current', { path: sessionRef.path, keys: keysOnly(sessionPayload) });
+  let json: any = null;
   try {
-    await setDoc(sessionRef, sessionPayload, { merge: true });
-  } catch (e: any) {
-    logStep('fail sessions/current', { path: sessionRef.path, code: e.code, message: e.message });
-    throw e;
+    json = await res.json();
+  } catch {
+    console.log('[createVenueOwnedByCurrentUser] response not JSON');
   }
 
-  // 6) Update users/{uid}.venueId (first time only—rules enforce immutability after set)
-  const venueIdUpdate = { venueId };
-  logStep('update users/{uid}.venueId', { path: userRef.path, keys: keysOnly(venueIdUpdate) });
-  try {
-    await updateDoc(userRef, venueIdUpdate as any);
-  } catch (e: any) {
-    logStep('fail users/{uid}.venueId', { path: userRef.path, code: e.code, message: e.message });
-    throw e;
+  const venueId = json?.venueId;
+  if (!venueId || typeof venueId !== 'string') {
+    console.log('[createVenueOwnedByCurrentUser] missing venueId in response', json);
+    throw new Error('Server did not return a venue id.');
   }
 
-  logStep('success', { venueId });
+  console.log('[createVenueOwnedByCurrentUser] success', { venueId });
   return venueId;
 }

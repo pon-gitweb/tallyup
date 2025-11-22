@@ -13,6 +13,7 @@ const firestore_1 = require("firebase/firestore");
  * Returns the reconciliationId actually written.
  */
 async function persistReconciliationResult(params) {
+    var _a, _b, _c;
     const { venueId, orderId, result } = params;
     // Basic validation to avoid "Cannot convert undefined value to object" style errors
     if (!venueId || !orderId)
@@ -25,7 +26,7 @@ async function persistReconciliationResult(params) {
     // Use server-provided ID if present; otherwise create a fresh one
     const recId = (result.reconciliationId && String(result.reconciliationId)) || (0, firestore_1.doc)(colRef).id;
     const docRef = (0, firestore_1.doc)(colRef, recId);
-    const poMatch = !!result.summary?.poMatch;
+    const poMatch = !!((_a = result.summary) === null || _a === void 0 ? void 0 : _a.poMatch);
     // If server didn’t supply confidence, enforce a safe rule locally
     const confidence = typeof result.confidence === "number" ? result.confidence : (poMatch ? 0.5 : 0);
     const payload = {
@@ -35,11 +36,11 @@ async function persistReconciliationResult(params) {
         invoiceMeta: {
             source: result.invoice.source,
             storagePath: result.invoice.storagePath,
-            poNumber: result.invoice.poNumber ?? null,
+            poNumber: (_b = result.invoice.poNumber) !== null && _b !== void 0 ? _b : null,
         },
         summary: result.summary,
         confidence,
-        warnings: result.warnings ?? [],
+        warnings: (_c = result.warnings) !== null && _c !== void 0 ? _c : [],
         createdAt: (0, firestore_1.serverTimestamp)(),
         updatedAt: (0, firestore_1.serverTimestamp)(),
     };
@@ -51,6 +52,7 @@ async function persistReconciliationResult(params) {
  * Accepts minimal fields and wraps them into ReconciliationResult.
  */
 async function persistAfterParse(opts) {
+    var _a;
     return persistReconciliationResult({
         venueId: opts.venueId,
         orderId: opts.orderId,
@@ -59,7 +61,7 @@ async function persistAfterParse(opts) {
             invoice: opts.invoice,
             summary: opts.summary,
             confidence: typeof opts.confidence === "number" ? opts.confidence : null,
-            warnings: opts.warnings ?? [],
+            warnings: (_a = opts.warnings) !== null && _a !== void 0 ? _a : [],
         },
     });
 }

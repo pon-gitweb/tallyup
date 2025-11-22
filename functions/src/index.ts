@@ -21,3 +21,6 @@ export { ocrSupplierCard } from "./ocr/ocrSupplierCard";
 
 // === Invoice photo OCR (direct photo → lines) ===
 export { ocrInvoicePhoto } from "./ocrInvoicePhoto";
+
+// === NEW: create venue from mobile app ===
+export { createVenueOwnedByUser } from "./createVenueOwnedByUser";

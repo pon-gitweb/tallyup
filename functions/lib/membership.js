@@ -40,9 +40,9 @@ const auth = admin.auth();
 async function setClaims(uid, venueId, role) {
     const user = await auth.getUser(uid);
     const existing = user.customClaims || {};
-    const venues = { ...(existing.venues || {}), [venueId]: true };
-    const venue_roles = { ...(existing.venue_roles || {}), [venueId]: role };
-    const next = { ...existing, venues, venue_roles };
+    const venues = Object.assign(Object.assign({}, (existing.venues || {})), { [venueId]: true });
+    const venue_roles = Object.assign(Object.assign({}, (existing.venue_roles || {})), { [venueId]: role });
+    const next = Object.assign(Object.assign({}, existing), { venues, venue_roles });
     const was = JSON.stringify({ venues: existing.venues, venue_roles: existing.venue_roles });
     const now = JSON.stringify({ venues, venue_roles });
     if (was !== now) {
@@ -52,13 +52,14 @@ async function setClaims(uid, venueId, role) {
 exports.onMemberWrite = functions.firestore
     .document('venues/{venueId}/members/{uid}')
     .onWrite(async (snap, ctx) => {
+    var _a, _b, _c;
     const { venueId, uid } = ctx.params;
     const after = snap.after.exists ? snap.after.data() : null;
     if (!after) {
         // Member removed -> strip this venue from claims
         const user = await auth.getUser(uid);
         const cc = user.customClaims || {};
-        if (cc.venues?.[venueId] || cc.venue_roles?.[venueId]) {
+        if (((_a = cc.venues) === null || _a === void 0 ? void 0 : _a[venueId]) || ((_b = cc.venue_roles) === null || _b === void 0 ? void 0 : _b[venueId])) {
             if (cc.venues)
                 delete cc.venues[venueId];
             if (cc.venue_roles)
@@ -67,17 +68,18 @@ exports.onMemberWrite = functions.firestore
         }
         return;
     }
-    const role = after.role ?? 'member';
+    const role = (_c = after.role) !== null && _c !== void 0 ? _c : 'member';
     await setClaims(uid, venueId, role);
     // Optional nudge for clients to refresh snapshots
     await admin.firestore().doc(`users/${uid}`).set({ touchedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 });
 exports.refreshMyClaims = functions.https.onCall(async (data, context) => {
+    var _a;
     if (!context.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'Sign in required');
     }
     const uid = context.auth.uid;
-    const venueId = String(data?.venueId || '');
+    const venueId = String((data === null || data === void 0 ? void 0 : data.venueId) || '');
     if (!venueId) {
         throw new functions.https.HttpsError('invalid-argument', 'venueId required');
     }
@@ -85,7 +87,7 @@ exports.refreshMyClaims = functions.https.onCall(async (data, context) => {
     if (!memberSnap.exists) {
         return { refreshed: false, reason: 'not_member' };
     }
-    const role = memberSnap.data()?.role || 'member';
+    const role = ((_a = memberSnap.data()) === null || _a === void 0 ? void 0 : _a.role) || 'member';
     await setClaims(uid, venueId, role);
     return { refreshed: true };
 });

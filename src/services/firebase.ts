@@ -1,57 +1,44 @@
-// src/services/firebase.ts
-// React Native Firebase bootstrap for TallyUp (tallyup-f1463)
+// React Native Firebase bootstrap (Expo SDK53+ / Hermes)
+// Env-driven to avoid pointing at the wrong project by accident.
 
 import { initializeApp, getApps } from 'firebase/app';
-import {
-  getAuth,
-  initializeAuth,
-  getReactNativePersistence,
-} from 'firebase/auth';
+import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
-// This is the web config from your Firebase console for TallyUp
-// (project: tallyup-f1463).
+// Read config from env (Expo only exposes EXPO_PUBLIC_* at runtime)
 const firebaseConfig = {
-  apiKey: 'AIzaSyCvDiUSXBCCP6LnBTP6nDkWzQIpj5vUGIM',
-  authDomain: 'tallyup-f1463.firebaseapp.com',
-  projectId: 'tallyup-f1463',
-  storageBucket: 'tallyup-f1463.firebasestorage.app',
-  messagingSenderId: '596901666549',
-  appId: '1:596901666549:web:cadce20353a7b69665efbc',
-  // measurementId optional, and not needed in RN
+  apiKey:         process.env.EXPO_PUBLIC_FB_API_KEY!,
+  authDomain:     process.env.EXPO_PUBLIC_FB_AUTH_DOMAIN!,
+  projectId:      process.env.EXPO_PUBLIC_FB_PROJECT_ID!,
+  storageBucket:  process.env.EXPO_PUBLIC_FB_STORAGE_BUCKET!,
+  messagingSenderId: process.env.EXPO_PUBLIC_FB_MESSAGING_SENDER_ID!,
+  appId:          process.env.EXPO_PUBLIC_FB_APP_ID!,
+  measurementId:  process.env.EXPO_PUBLIC_FB_MEASUREMENT_ID, // optional
 };
 
-// Create (or reuse) the app
+// Create (or reuse) app
 export const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 
-// On React Native we should use initializeAuth with AsyncStorage persistence,
-// but fall back safely if it’s already initialised by another module.
-let authInstance;
-try {
-  authInstance = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
-} catch (e) {
-  // If initializeAuth was already called somewhere else, just use getAuth.
-  authInstance = getAuth(app);
-}
+// RN requires initializeAuth with AsyncStorage persistence
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage),
+});
 
-export const auth = authInstance;
+// Firestore / Storage
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// Debug: confirm which project + key we are bound to
+// Debug: confirm which project we’re bound to
 if (__DEV__) {
   try {
-    // @ts-ignore
-    const opts = app.options || {};
+    // @ts-ignore – options is present on app
     console.log(
       '[TallyUp Firebase] Initialized:',
-      opts.projectId,
+      app?.options?.projectId || '(unknown)',
       '| key:',
-      (opts.apiKey || '').slice(0, 8) + '…'
+      String(firebaseConfig.apiKey || '').slice(0, 8) + '…'
     );
   } catch {}
 }

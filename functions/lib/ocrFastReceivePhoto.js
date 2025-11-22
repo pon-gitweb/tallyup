@@ -46,7 +46,7 @@ function extractPo(text) {
     ];
     for (const rx of patterns) {
         const m = text.match(rx);
-        if (m?.[1])
+        if (m === null || m === void 0 ? void 0 : m[1])
             return m[1].toUpperCase().slice(0, 64);
     }
     return null;
@@ -84,13 +84,14 @@ function extractLines(text) {
 exports.ocrFastReceivePhoto = functions
     .region("us-central1")
     .https.onCall(async (data, context) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
     }
     const uid = String(context.auth.uid || "");
-    const venueId = String(data?.venueId || "");
-    const fastId = data?.fastId ? String(data.fastId) : "";
-    const storagePathArg = data?.storagePath ? String(data.storagePath) : "";
+    const venueId = String((data === null || data === void 0 ? void 0 : data.venueId) || "");
+    const fastId = (data === null || data === void 0 ? void 0 : data.fastId) ? String(data.fastId) : "";
+    const storagePathArg = (data === null || data === void 0 ? void 0 : data.storagePath) ? String(data.storagePath) : "";
     if (!venueId) {
         throw new functions.https.HttpsError("invalid-argument", "venueId is required.");
     }
@@ -103,7 +104,7 @@ exports.ocrFastReceivePhoto = functions
     // Load snapshot by ID, else fallback to storagePath
     let fastRef = fastId ? db.doc(`venues/${venueId}/fastReceives/${fastId}`) : null;
     let fastSnap = fastRef ? await fastRef.get() : null;
-    if (!fastSnap?.exists) {
+    if (!(fastSnap === null || fastSnap === void 0 ? void 0 : fastSnap.exists)) {
         if (!storagePathArg) {
             throw new functions.https.HttpsError("not-found", "Snapshot not found and no storagePath provided.");
         }
@@ -120,7 +121,7 @@ exports.ocrFastReceivePhoto = functions
     }
     const fast = fastSnap.data() || {};
     const storagePath = String(fast.storagePath ||
-        fast?.payload?.invoice?.storagePath ||
+        ((_b = (_a = fast === null || fast === void 0 ? void 0 : fast.payload) === null || _a === void 0 ? void 0 : _a.invoice) === null || _b === void 0 ? void 0 : _b.storagePath) ||
         storagePathArg ||
         "");
     if (!storagePath) {
@@ -134,23 +135,20 @@ exports.ocrFastReceivePhoto = functions
     }
     catch (e) {
         const err = e;
-        const msg = err?.message || String(err);
+        const msg = (err === null || err === void 0 ? void 0 : err.message) || String(err);
         console.error("[ocrFastReceivePhoto] download failed", { storagePath }, msg);
         throw new functions.https.HttpsError("internal", "download failed: " + msg);
     }
     const [result] = await vision.textDetection({ image: { content: buf } });
-    const text = result?.fullTextAnnotation?.text ||
-        result?.textAnnotations?.[0]?.description ||
+    const text = ((_c = result === null || result === void 0 ? void 0 : result.fullTextAnnotation) === null || _c === void 0 ? void 0 : _c.text) ||
+        ((_e = (_d = result === null || result === void 0 ? void 0 : result.textAnnotations) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.description) ||
         "";
     if (!text.trim()) {
         await fastRef.set({
-            payload: {
-                ...(fast.payload || {}),
-                warnings: [
-                    ...(fast.payload?.warnings || []),
+            payload: Object.assign(Object.assign({}, (fast.payload || {})), { warnings: [
+                    ...(((_f = fast.payload) === null || _f === void 0 ? void 0 : _f.warnings) || []),
                     "OCR returned no text.",
-                ],
-            },
+                ] }),
         }, { merge: true });
         return { ok: true, parsedPo: null, linesCount: 0, info: "no-text" };
     }
@@ -158,21 +156,12 @@ exports.ocrFastReceivePhoto = functions
     const lines = extractLines(text);
     const confidence = 0.5;
     await fastRef.set({
-        parsedPo: parsedPo ?? null,
-        payload: {
-            ...(fast.payload || {}),
-            invoice: {
-                ...(fast.payload?.invoice || {}),
-                source: "photo",
-                storagePath,
-            },
-            lines,
-            confidence,
-            warnings: [
-                ...(fast.payload?.warnings || []),
+        parsedPo: parsedPo !== null && parsedPo !== void 0 ? parsedPo : null,
+        payload: Object.assign(Object.assign({}, (fast.payload || {})), { invoice: Object.assign(Object.assign({}, (((_g = fast.payload) === null || _g === void 0 ? void 0 : _g.invoice) || {})), { source: "photo", storagePath }), lines,
+            confidence, warnings: [
+                ...(((_h = fast.payload) === null || _h === void 0 ? void 0 : _h.warnings) || []),
                 "OCR processed (beta heuristics).",
-            ],
-        },
+            ] }),
     }, { merge: true });
     return { ok: true, parsedPo, linesCount: lines.length };
 });

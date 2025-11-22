@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = OrderDetailScreen;
 // @ts-nocheck
@@ -62,7 +63,7 @@ function tierForConfidence(c) {
     return 'low';
 }
 // REST base (same pattern used elsewhere)
-const API_BASE = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_AI_URL)
+const API_BASE = (typeof process !== 'undefined' && ((_a = process.env) === null || _a === void 0 ? void 0 : _a.EXPO_PUBLIC_AI_URL))
     ? String(process.env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
     : 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 // Simple fetch JSON helper
@@ -91,10 +92,11 @@ async function reconcileOnServer(input) {
     });
 }
 function OrderDetailScreen() {
+    var _a;
     const nav = (0, native_1.useNavigation)();
     const route = (0, native_1.useRoute)();
     const venueId = (0, VenueProvider_1.useVenueId)();
-    const orderId = route.params?.orderId;
+    const orderId = (_a = route.params) === null || _a === void 0 ? void 0 : _a.orderId;
     const [orderMeta, setOrderMeta] = (0, react_1.useState)(null);
     const [lines, setLines] = (0, react_1.useState)([]);
     const [loading, setLoading] = (0, react_1.useState)(true);
@@ -114,7 +116,7 @@ function OrderDetailScreen() {
                 const oVal = oSnap.exists() ? oSnap.data() : {};
                 if (!alive)
                     return;
-                setOrderMeta({ id: oSnap.id, ...oVal });
+                setOrderMeta(Object.assign({ id: oSnap.id }, oVal));
                 const linesSnap = await (0, firestore_1.getDocs)((0, firestore_1.collection)(db, 'venues', venueId, 'orders', orderId, 'lines'));
                 const linesData = [];
                 linesSnap.forEach((docSnap) => {
@@ -141,11 +143,12 @@ function OrderDetailScreen() {
     }, [db, venueId, orderId]);
     // ---- Common: after we parse, always reconcile + persist (even if PO mismatch) ----
     const reconcileAndPersist = (0, react_1.useCallback)(async (kind, parsed) => {
-        const orderPo = String(orderMeta?.poNumber ?? '').trim() || null;
+        var _a, _b, _c, _d, _e, _f, _g;
+        const orderPo = String((_a = orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) !== null && _a !== void 0 ? _a : '').trim() || null;
         // 1) Ask server to reconcile against submitted order snapshot
         const rec = await reconcileOnServer({
             venueId, orderId,
-            invoice: { source: kind, storagePath: parsed.storagePath, poNumber: parsed.invoice?.poNumber ?? null },
+            invoice: { source: kind, storagePath: parsed.storagePath, poNumber: (_c = (_b = parsed.invoice) === null || _b === void 0 ? void 0 : _b.poNumber) !== null && _c !== void 0 ? _c : null },
             lines: parsed.lines || [],
             orderPo
         });
@@ -154,24 +157,25 @@ function OrderDetailScreen() {
             await (0, reconciliationStore_1.persistAfterParse)({
                 venueId, orderId,
                 reconciliationId: rec.reconciliationId,
-                invoice: { source: kind, storagePath: parsed.storagePath, poNumber: parsed.invoice?.poNumber ?? null },
+                invoice: { source: kind, storagePath: parsed.storagePath, poNumber: (_e = (_d = parsed.invoice) === null || _d === void 0 ? void 0 : _d.poNumber) !== null && _e !== void 0 ? _e : null },
                 summary: rec.summary,
                 // If server decides confidence later, we still store our local parse confidence now;
                 // PO mismatch will be encoded in summary.poMatch=false and we keep confidence conservative in UI decisions.
-                confidence: parsed.confidence ?? null,
-                warnings: parsed.warnings || parsed.matchReport?.warnings || [],
+                confidence: (_f = parsed.confidence) !== null && _f !== void 0 ? _f : null,
+                warnings: parsed.warnings || ((_g = parsed.matchReport) === null || _g === void 0 ? void 0 : _g.warnings) || [],
             });
         }
         catch (e) {
             console.warn('[persistAfterParse] error', e);
         }
         return rec; // give caller a chance to branch on poMatch
-    }, [venueId, orderId, orderMeta?.poNumber]);
+    }, [venueId, orderId, orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber]);
     /** CSV: pick -> upload URI -> parse -> reconcile+persist -> optional PO guard -> stage review */
     const pickCsvAndProcess = (0, react_1.useCallback)(async () => {
+        var _a, _b, _c, _d, _e;
         try {
             const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv', multiple: false, copyToCacheDirectory: true });
-            if (res.canceled || !res.assets?.[0])
+            if (res.canceled || !((_a = res.assets) === null || _a === void 0 ? void 0 : _a[0]))
                 return;
             const a = res.assets[0];
             const uri = a.uri || a.file || '';
@@ -185,36 +189,37 @@ function OrderDetailScreen() {
                 console.log('[Receive][CSV] uploaded', up);
             const review = await (0, processInvoicesCsv_1.processInvoicesCsv)({ venueId, orderId, storagePath: up.fullPath });
             if (__DEV__)
-                console.log('[Receive][CSV] processed', { lines: review?.lines?.length ?? 0 });
+                console.log('[Receive][CSV] processed', { lines: (_c = (_b = review === null || review === void 0 ? void 0 : review.lines) === null || _b === void 0 ? void 0 : _b.length) !== null && _c !== void 0 ? _c : 0 });
             const parsed = {
                 storagePath: up.fullPath,
-                confidence: review?.confidence,
-                warnings: review?.warnings,
-                lines: review?.lines || [],
-                invoice: { source: 'csv', storagePath: up.fullPath, poNumber: review?.invoice?.poNumber ?? null },
-                matchReport: review?.matchReport
+                confidence: review === null || review === void 0 ? void 0 : review.confidence,
+                warnings: review === null || review === void 0 ? void 0 : review.warnings,
+                lines: (review === null || review === void 0 ? void 0 : review.lines) || [],
+                invoice: { source: 'csv', storagePath: up.fullPath, poNumber: (_e = (_d = review === null || review === void 0 ? void 0 : review.invoice) === null || _d === void 0 ? void 0 : _d.poNumber) !== null && _e !== void 0 ? _e : null },
+                matchReport: review === null || review === void 0 ? void 0 : review.matchReport
             };
             // Reconcile+persist (records even when PO mismatches)
             const rec = await reconcileAndPersist('csv', parsed);
             // If PO mismatch: soft-reject (but we already persisted the snapshot)
-            if (rec?.summary && rec.summary.poMatch === false) {
-                react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${orderMeta?.poNumber || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
+            if ((rec === null || rec === void 0 ? void 0 : rec.summary) && rec.summary.poMatch === false) {
+                react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
                 return;
             }
             // Otherwise stage the normal CSV review
-            setCsvReview({ ...review, storagePath: up.fullPath });
+            setCsvReview(Object.assign(Object.assign({}, review), { storagePath: up.fullPath }));
             setReceiveOpen(false);
         }
         catch (e) {
             console.error('[OrderDetail] csv pick/process fail', e);
-            react_native_1.Alert.alert('Upload failed', String(e?.message || e));
+            react_native_1.Alert.alert('Upload failed', String((e === null || e === void 0 ? void 0 : e.message) || e));
         }
     }, [venueId, orderId, orderMeta, reconcileAndPersist]);
     /** PDF: pick -> upload URI -> parse -> reconcile+persist -> optional PO guard -> stage review */
     const pickPdfAndUpload = (0, react_1.useCallback)(async () => {
+        var _a, _b, _c, _d, _e;
         try {
             const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', multiple: false, copyToCacheDirectory: true });
-            if (res.canceled || !res.assets?.[0])
+            if (res.canceled || !((_a = res.assets) === null || _a === void 0 ? void 0 : _a[0]))
                 return;
             const a = res.assets[0];
             const uri = a.uri || a.file || '';
@@ -228,36 +233,37 @@ function OrderDetailScreen() {
                 console.log('[Receive][PDF] uploaded', up);
             const parsedPdf = await (0, processInvoicesPdf_1.processInvoicesPdf)({ venueId, orderId, storagePath: up.fullPath });
             if (__DEV__)
-                console.log('[Receive][PDF] processed', { lines: parsedPdf?.lines?.length ?? 0 });
+                console.log('[Receive][PDF] processed', { lines: (_c = (_b = parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.lines) === null || _b === void 0 ? void 0 : _b.length) !== null && _c !== void 0 ? _c : 0 });
             const parsed = {
                 storagePath: up.fullPath,
-                confidence: parsedPdf?.confidence,
-                warnings: parsedPdf?.warnings,
-                lines: parsedPdf?.lines || [],
-                invoice: { source: 'pdf', storagePath: up.fullPath, poNumber: parsedPdf?.invoice?.poNumber ?? null },
-                matchReport: parsedPdf?.matchReport
+                confidence: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.confidence,
+                warnings: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.warnings,
+                lines: (parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.lines) || [],
+                invoice: { source: 'pdf', storagePath: up.fullPath, poNumber: (_e = (_d = parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.invoice) === null || _d === void 0 ? void 0 : _d.poNumber) !== null && _e !== void 0 ? _e : null },
+                matchReport: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.matchReport
             };
             const rec = await reconcileAndPersist('pdf', parsed);
-            if (rec?.summary && rec.summary.poMatch === false) {
-                react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${orderMeta?.poNumber || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
+            if ((rec === null || rec === void 0 ? void 0 : rec.summary) && rec.summary.poMatch === false) {
+                react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
                 return;
             }
-            setPdfReview({ ...parsedPdf, storagePath: up.fullPath });
+            setPdfReview(Object.assign(Object.assign({}, parsedPdf), { storagePath: up.fullPath }));
             setReceiveOpen(false);
         }
         catch (e) {
             console.error('[OrderDetail] pdf upload/parse fail', e);
-            react_native_1.Alert.alert('Upload failed', String(e?.message || e));
+            react_native_1.Alert.alert('Upload failed', String((e === null || e === void 0 ? void 0 : e.message) || e));
         }
     }, [venueId, orderId, orderMeta, reconcileAndPersist]);
     /** Unified file picker routes */
     const pickFileAndRoute = (0, react_1.useCallback)(async () => {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j;
         try {
             const res = await DocumentPicker.getDocumentAsync({
                 type: ['application/pdf', 'text/csv', 'text/comma-separated-values', 'text/plain'],
                 multiple: false, copyToCacheDirectory: true
             });
-            if (res.canceled || !res.assets?.[0])
+            if (res.canceled || !((_a = res.assets) === null || _a === void 0 ? void 0 : _a[0]))
                 return;
             const a = res.assets[0];
             const name = (a.name || '').toLowerCase();
@@ -274,21 +280,21 @@ function OrderDetailScreen() {
                     console.log('[Receive][FILE][PDF] uploaded', up);
                 const parsedPdf = await (0, processInvoicesPdf_1.processInvoicesPdf)({ venueId, orderId, storagePath: up.fullPath });
                 if (__DEV__)
-                    console.log('[Receive][FILE][PDF] processed', { lines: parsedPdf?.lines?.length ?? 0 });
+                    console.log('[Receive][FILE][PDF] processed', { lines: (_c = (_b = parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.lines) === null || _b === void 0 ? void 0 : _b.length) !== null && _c !== void 0 ? _c : 0 });
                 const parsed = {
                     storagePath: up.fullPath,
-                    confidence: parsedPdf?.confidence,
-                    warnings: parsedPdf?.warnings,
-                    lines: parsedPdf?.lines || [],
-                    invoice: { source: 'pdf', storagePath: up.fullPath, poNumber: parsedPdf?.invoice?.poNumber ?? null },
-                    matchReport: parsedPdf?.matchReport
+                    confidence: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.confidence,
+                    warnings: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.warnings,
+                    lines: (parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.lines) || [],
+                    invoice: { source: 'pdf', storagePath: up.fullPath, poNumber: (_e = (_d = parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.invoice) === null || _d === void 0 ? void 0 : _d.poNumber) !== null && _e !== void 0 ? _e : null },
+                    matchReport: parsedPdf === null || parsedPdf === void 0 ? void 0 : parsedPdf.matchReport
                 };
                 const rec = await reconcileAndPersist('pdf', parsed);
-                if (rec?.summary && rec.summary.poMatch === false) {
-                    react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${orderMeta?.poNumber || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
+                if ((rec === null || rec === void 0 ? void 0 : rec.summary) && rec.summary.poMatch === false) {
+                    react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
                     return;
                 }
-                setPdfReview({ ...parsedPdf, storagePath: up.fullPath });
+                setPdfReview(Object.assign(Object.assign({}, parsedPdf), { storagePath: up.fullPath }));
                 setReceiveOpen(false);
                 return;
             }
@@ -298,21 +304,21 @@ function OrderDetailScreen() {
                     console.log('[Receive][FILE][CSV] uploaded', up);
                 const review = await (0, processInvoicesCsv_1.processInvoicesCsv)({ venueId, orderId, storagePath: up.fullPath });
                 if (__DEV__)
-                    console.log('[Receive][FILE][CSV] processed', { lines: review?.lines?.length ?? 0 });
+                    console.log('[Receive][FILE][CSV] processed', { lines: (_g = (_f = review === null || review === void 0 ? void 0 : review.lines) === null || _f === void 0 ? void 0 : _f.length) !== null && _g !== void 0 ? _g : 0 });
                 const parsed = {
                     storagePath: up.fullPath,
-                    confidence: review?.confidence,
-                    warnings: review?.warnings,
-                    lines: review?.lines || [],
-                    invoice: { source: 'csv', storagePath: up.fullPath, poNumber: review?.invoice?.poNumber ?? null },
-                    matchReport: review?.matchReport
+                    confidence: review === null || review === void 0 ? void 0 : review.confidence,
+                    warnings: review === null || review === void 0 ? void 0 : review.warnings,
+                    lines: (review === null || review === void 0 ? void 0 : review.lines) || [],
+                    invoice: { source: 'csv', storagePath: up.fullPath, poNumber: (_j = (_h = review === null || review === void 0 ? void 0 : review.invoice) === null || _h === void 0 ? void 0 : _h.poNumber) !== null && _j !== void 0 ? _j : null },
+                    matchReport: review === null || review === void 0 ? void 0 : review.matchReport
                 };
                 const rec = await reconcileAndPersist('csv', parsed);
-                if (rec?.summary && rec.summary.poMatch === false) {
-                    react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${orderMeta?.poNumber || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
+                if ((rec === null || rec === void 0 ? void 0 : rec.summary) && rec.summary.poMatch === false) {
+                    react_native_1.Alert.alert('PO mismatch', `Invoice PO (${parsed.invoice.poNumber || '—'}) does not match order PO (${(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) || '—'}).\nA reconciliation snapshot was saved.\nUse Manual Receive to proceed.`, [{ text: 'OK' }, { text: 'Manual Receive', onPress: () => setManualOpen(true) }]);
                     return;
                 }
-                setCsvReview({ ...review, storagePath: up.fullPath });
+                setCsvReview(Object.assign(Object.assign({}, review), { storagePath: up.fullPath }));
                 setReceiveOpen(false);
                 return;
             }
@@ -320,7 +326,7 @@ function OrderDetailScreen() {
         }
         catch (e) {
             console.error('[OrderDetail] file pick route fail', e);
-            react_native_1.Alert.alert('Upload failed', String(e?.message || e));
+            react_native_1.Alert.alert('Upload failed', String((e === null || e === void 0 ? void 0 : e.message) || e));
         }
     }, [venueId, orderId, orderMeta, reconcileAndPersist]);
     const ConfidenceBanner = ({ kind, score }) => {
@@ -364,7 +370,7 @@ function OrderDetailScreen() {
                 }
                 catch (e) {
                     autoConfirmedRef.current = false;
-                    react_native_1.Alert.alert('Auto-receive failed', String(e?.message || e));
+                    react_native_1.Alert.alert('Auto-receive failed', String((e === null || e === void 0 ? void 0 : e.message) || e));
                 }
             })();
         }
@@ -377,26 +383,28 @@ function OrderDetailScreen() {
         }, 0);
     }, [lines]);
     const csvWarnings = (0, react_1.useMemo)(() => {
+        var _a;
         if (!csvReview)
             return [];
-        return (csvReview.warnings || csvReview.matchReport?.warnings || []);
+        return (csvReview.warnings || ((_a = csvReview.matchReport) === null || _a === void 0 ? void 0 : _a.warnings) || []);
     }, [csvReview]);
     const pdfWarnings = (0, react_1.useMemo)(() => {
+        var _a;
         if (!pdfReview)
             return [];
-        return (pdfReview.warnings || pdfReview.matchReport?.warnings || []);
+        return (pdfReview.warnings || ((_a = pdfReview.matchReport) === null || _a === void 0 ? void 0 : _a.warnings) || []);
     }, [pdfReview]);
     if (loading)
         return <react_native_1.View style={S.loading}><react_native_1.ActivityIndicator /></react_native_1.View>;
     return (<react_native_1.View style={S.wrap}>
       <react_native_1.View style={S.top}>
         <react_native_1.View>
-          <react_native_1.Text style={S.title}>{orderMeta?.supplierName || 'Order'}</react_native_1.Text>
+          <react_native_1.Text style={S.title}>{(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.supplierName) || 'Order'}</react_native_1.Text>
           <react_native_1.Text style={S.meta}>
-            {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
+            {(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.status) ? `Status: ${orderMeta.status}` : ''}{(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.poNumber) ? ` • PO: ${orderMeta.poNumber}` : ''}
           </react_native_1.Text>
         </react_native_1.View>
-        {String(orderMeta?.status).toLowerCase() === 'submitted' ? (<react_native_1.TouchableOpacity style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={() => setReceiveOpen(true)}>
+        {String(orderMeta === null || orderMeta === void 0 ? void 0 : orderMeta.status).toLowerCase() === 'submitted' ? (<react_native_1.TouchableOpacity style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]} onPress={() => setReceiveOpen(true)}>
             <react_native_1.Text style={S.receiveBtnText}>Receive</react_native_1.Text>
           </react_native_1.TouchableOpacity>) : null}
       </react_native_1.View>
@@ -408,10 +416,13 @@ function OrderDetailScreen() {
             {csvWarnings.length > 0 ? (<react_native_1.View style={{ marginBottom: 8 }}>
                 {csvWarnings.map((w, idx) => (<react_native_1.Text key={idx} style={{ color: '#92400E' }}>• {w}</react_native_1.Text>))}
               </react_native_1.View>) : null}
-            {(csvReview.lines || []).slice(0, 40).map((pl, idx) => (<react_native_1.View key={idx} style={{ paddingVertical: 6, borderBottomWidth: react_native_1.StyleSheet.hairlineWidth, borderColor: '#E5E7EB' }}>
+            {(csvReview.lines || []).slice(0, 40).map((pl, idx) => {
+                var _a;
+                return (<react_native_1.View key={idx} style={{ paddingVertical: 6, borderBottomWidth: react_native_1.StyleSheet.hairlineWidth, borderColor: '#E5E7EB' }}>
                 <react_native_1.Text style={{ fontWeight: '700' }}>{pl.name || pl.code || '(line)'}</react_native_1.Text>
-                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2) || '0.00'}</react_native_1.Text>
-              </react_native_1.View>))}
+                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {pl.qty} • Unit: ${((_a = pl.unitPrice) === null || _a === void 0 ? void 0 : _a.toFixed(2)) || '0.00'}</react_native_1.Text>
+              </react_native_1.View>);
+            })}
             {(csvReview.lines || []).length > 40 ? <react_native_1.Text style={{ marginTop: 8, color: '#6B7280' }}>... and {csvReview.lines.length - 40} more lines</react_native_1.Text> : null}
 
             <react_native_1.View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
@@ -439,7 +450,7 @@ function OrderDetailScreen() {
                 }
                 catch (e) {
                     autoConfirmedRef.current = false;
-                    react_native_1.Alert.alert('Receive failed', String(e?.message || e));
+                    react_native_1.Alert.alert('Receive failed', String((e === null || e === void 0 ? void 0 : e.message) || e));
                 }
             }}>
                 <react_native_1.Text style={{ textAlign: 'center', fontWeight: '700', color: '#fff' }}>Confirm & Post</react_native_1.Text>
@@ -453,10 +464,13 @@ function OrderDetailScreen() {
             {pdfWarnings.length > 0 ? (<react_native_1.View style={{ marginBottom: 8 }}>
                 {pdfWarnings.map((w, idx) => (<react_native_1.Text key={idx} style={{ color: '#92400E' }}>• {w}</react_native_1.Text>))}
               </react_native_1.View>) : null}
-            {(pdfReview.lines || []).slice(0, 40).map((pl, idx) => (<react_native_1.View key={idx} style={{ paddingVertical: 6, borderBottomWidth: react_native_1.StyleSheet.hairlineWidth, borderColor: '#E5E7EB' }}>
+            {(pdfReview.lines || []).slice(0, 40).map((pl, idx) => {
+                var _a;
+                return (<react_native_1.View key={idx} style={{ paddingVertical: 6, borderBottomWidth: react_native_1.StyleSheet.hairlineWidth, borderColor: '#E5E7EB' }}>
                 <react_native_1.Text style={{ fontWeight: '700' }}>{pl.name || pl.code || '(line)'}</react_native_1.Text>
-                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {pl.qty} • Unit: ${pl.unitPrice?.toFixed(2) || '0.00'}</react_native_1.Text>
-              </react_native_1.View>))}
+                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {pl.qty} • Unit: ${((_a = pl.unitPrice) === null || _a === void 0 ? void 0 : _a.toFixed(2)) || '0.00'}</react_native_1.Text>
+              </react_native_1.View>);
+            })}
             {(pdfReview.lines || []).length > 40 ? <react_native_1.Text style={{ marginTop: 8, color: '#6B7280' }}>... and {pdfReview.lines.length - 40} more lines</react_native_1.Text> : null}
 
             <react_native_1.View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
@@ -471,10 +485,13 @@ function OrderDetailScreen() {
             </react_native_1.View>
           </react_native_1.View>
         </react_native_1.ScrollView>) : (<react_native_1.View style={{ flex: 1 }}>
-          <react_native_1.FlatList data={lines} keyExtractor={(it) => it.id} contentContainerStyle={{ padding: 16 }} ItemSeparatorComponent={() => <react_native_1.View style={{ height: 8 }}/>} renderItem={({ item }) => (<react_native_1.View style={S.line}>
+          <react_native_1.FlatList data={lines} keyExtractor={(it) => it.id} contentContainerStyle={{ padding: 16 }} ItemSeparatorComponent={() => <react_native_1.View style={{ height: 8 }}/>} renderItem={({ item }) => {
+                var _a;
+                return (<react_native_1.View style={S.line}>
                 <react_native_1.Text style={{ fontWeight: '700' }}>{item.name || item.productId || item.id}</react_native_1.Text>
-                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {item.qty ?? 0} • Unit: ${Number(item.unitCost || 0).toFixed(2)}</react_native_1.Text>
-              </react_native_1.View>)} ListHeaderComponent={(<react_native_1.View style={{ paddingBottom: 8 }}>
+                <react_native_1.Text style={{ color: '#6B7280' }}>Qty: {(_a = item.qty) !== null && _a !== void 0 ? _a : 0} • Unit: ${Number(item.unitCost || 0).toFixed(2)}</react_native_1.Text>
+              </react_native_1.View>);
+            }} ListHeaderComponent={(<react_native_1.View style={{ paddingBottom: 8 }}>
                 <react_native_1.Text style={{ fontSize: 16, fontWeight: '800' }}>Order Lines</react_native_1.Text>
                 <react_native_1.Text style={{ color: '#6B7280' }}>Estimated total: ${totalOrdered.toFixed(2)}</react_native_1.Text>
               </react_native_1.View>)}/>

@@ -42,19 +42,20 @@ const client = new vision.ImageAnnotatorClient();
 exports.onOcrJobQueued = functions.firestore
     .document('venues/{venueId}/ocrJobs/{jobId}')
     .onUpdate(async (change, context) => {
+    var _a;
     const before = change.before.data();
     const after = change.after.data();
     const { venueId, jobId } = context.params;
     // Only act when status flips to queued
-    if (before?.status === after?.status || after?.status !== 'queued')
+    if ((before === null || before === void 0 ? void 0 : before.status) === (after === null || after === void 0 ? void 0 : after.status) || (after === null || after === void 0 ? void 0 : after.status) !== 'queued')
         return;
     try {
-        const file = after?.file;
-        if (!file?.gsUrl)
+        const file = after === null || after === void 0 ? void 0 : after.file;
+        if (!(file === null || file === void 0 ? void 0 : file.gsUrl))
             throw new Error('Missing gsUrl');
         // 1) Run OCR
         const [result] = await client.documentTextDetection(file.gsUrl);
-        const text = result?.fullTextAnnotation?.text || '';
+        const text = ((_a = result === null || result === void 0 ? void 0 : result.fullTextAnnotation) === null || _a === void 0 ? void 0 : _a.text) || '';
         // 2) Naive parse (MVP): split lines and try to infer qty/price
         // You can improve this parser later; it returns a stable normalized shape now.
         const lines = [];
@@ -87,7 +88,7 @@ exports.onOcrJobQueued = functions.firestore
         await change.after.ref.update({
             status: 'error',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            errorMessage: e?.message || String(e)
+            errorMessage: (e === null || e === void 0 ? void 0 : e.message) || String(e)
         });
     }
 });
