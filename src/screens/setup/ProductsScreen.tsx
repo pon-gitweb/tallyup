@@ -74,8 +74,22 @@ export default function ProductsScreen() {
   }, []);
 
   function onNew() {
-    // keep route name the same as currently wired
-    nav.navigate('EditProductScreen', { productId: null, product: null });
+    // Seed a valid, induction-ready product shape so EditProductScreen can enforce meta rules
+    const seed: any = {
+      name: '',
+      sku: null,
+      unit: '',
+      size: '',
+      packSize: null,
+      abv: null,
+      costPrice: null,
+      gstPercent: 15,
+      parLevel: null,
+      supplierId: null,
+      supplierName: '',
+      active: true,
+    };
+    nav.navigate('EditProductScreen', { productId: null, product: seed });
   }
 
   function onEdit(p: Product) {
@@ -276,17 +290,22 @@ export default function ProductsScreen() {
         </View>
       ) : null}
 
-      {/* Search + Add */}
-      <View style={styles.row}>
+      {/* Search existing products */}
+      <View style={styles.searchSection}>
+        <Text style={styles.searchLabel}>Search existing products</Text>
         <TextInput
           value={q}
           onChangeText={setQ}
-          placeholder="Search products (name, SKU, unit, supplier)"
+          placeholder="Search by name, SKU, unit, or supplier"
           autoCapitalize="none"
           style={styles.search}
         />
+      </View>
+
+      {/* Create new product */}
+      <View style={styles.addSection}>
         <TouchableOpacity style={styles.primary} onPress={onNew}>
-          <Text style={styles.primaryText}>Add Product</Text>
+          <Text style={styles.primaryText}>+ Create product</Text>
         </TouchableOpacity>
       </View>
 
@@ -408,15 +427,26 @@ const styles = StyleSheet.create({
   },
   hint: { fontSize: 12, color: '#6b7280' },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  searchSection: {
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  searchLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
+    marginBottom: 4,
+  },
   search: {
-    flex: 1,
     borderWidth: 1,
     borderColor: '#D0D3D7',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     backgroundColor: '#fff',
+  },
+  addSection: {
+    marginBottom: 8,
   },
 
   primary: {

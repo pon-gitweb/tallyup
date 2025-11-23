@@ -1,7 +1,17 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
@@ -48,7 +58,7 @@ export default function EditProductScreen() {
   const [form, setForm] = useState<any>(() => ({
     name: seed?.name ?? '',
     sku: seed?.sku ?? seed?.externalSku ?? null,
-    unit: seed?.unit ?? null,
+    unit: seed?.unit ?? '',
     size: seed?.size ?? null,               // "700ml"
     packSize: seed?.packSize ?? null,       // units per case
     abv: seed?.abv ?? null,                 // %
@@ -58,7 +68,7 @@ export default function EditProductScreen() {
 
     // existing link fields (do not set automatically here)
     supplierId: seed?.supplierId ?? null,
-    supplierName: seed?.supplierName ?? seed?.supplier?.name ?? null,
+    supplierName: seed?.supplierName ?? seed?.supplier?.name ?? '',
 
     // hints from global catalog (non-authoritative)
     supplierNameSuggested: seed?.supplierNameSuggested ?? null,
@@ -70,6 +80,7 @@ export default function EditProductScreen() {
   }));
 
   const [saving, setSaving] = useState(false);
+  const [inductionMissing, setInductionMissing] = useState<string[] | null>(null);
 
   const canSave = useMemo(() => {
     return clean(form.name).length > 0 && !!venueId;
@@ -86,20 +97,34 @@ export default function EditProductScreen() {
       return;
     }
 
+    // Induction: enforce minimum metadata for a fully valid product
+    const missing: string[] = [];
+    if (!clean(form.unit)) missing.push('Unit');
+    if (!intOrNull(form.packSize)) missing.push('Pack size (units per case)');
+    const gstNum = numOrNull(form.gstPercent ?? 15);
+    if (gstNum === null) missing.push('GST %');
+    if (!clean(form.supplierName)) missing.push('Supplier');
+
+    if (missing.length > 0) {
+      setInductionMissing(missing);
+      return;
+    }
+
     // Prepare payload: keep fields flat and tolerant to your legacy schema
+    const skuClean = clean(form.sku || '');
     const payload:any = {
       name: clean(form.name),
-      sku: clean(form.sku || ''),
-      unit: form.unit || null,
-      size: form.size || null,
+      sku: skuClean || null,
+      unit: clean(form.unit),
+      size: form.size || null,               // free text "700ml"
       packSize: intOrNull(form.packSize),
       abv: numOrNull(form.abv),
       costPrice: numOrNull(form.costPrice),
-      gstPercent: numOrNull(form.gstPercent ?? 15) ?? 15,
+      gstPercent: gstNum ?? 15,
       parLevel: intOrNull(form.parLevel),
 
       supplierId: form.supplierId || null,
-      supplierName: form.supplierName || null,
+      supplierName: clean(form.supplierName),
 
       // keep hints for UI; they’re safe to store or ignore
       supplierNameSuggested: form.supplierNameSuggested || null,
@@ -114,8 +139,7 @@ export default function EditProductScreen() {
     try {
       if (hasUpsert) {
         // prefer unified upsert if your services expose it
-        const res = await svc.upsertProduct(venueId, editingId || undefined, payload);
-        // navigate back on success
+        await svc.upsertProduct(venueId, editingId || undefined, payload);
         nav.goBack();
         return;
       }
@@ -159,7 +183,10 @@ export default function EditProductScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.select({ ios:'padding', android: undefined })}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.select({ ios:'padding', android: undefined })}
+    >
       <ScrollView contentContainerStyle={styles.wrap}>
         <Text style={styles.title}>{editingId ? 'Edit Product' : 'Add Product'}</Text>
 
@@ -221,7 +248,7 @@ export default function EditProductScreen() {
           </FieldRow>
 
           <FieldRow>
-            <Field label="Unit" style={{ flex: 1 }}>
+            <Field label="Unit *" style={{ flex: 1 }}>
               <TextInput
                 value={form.unit ?? ''}
                 onChangeText={(v)=>setForm((p:any)=>({ ...p, unit: v }))}
@@ -241,7 +268,7 @@ export default function EditProductScreen() {
               />
             </Field>
 
-            <Field label="Pack (units)" style={{ width: 120 }}>
+            <Field label="Pack (units) *" style={{ width: 120 }}>
               <TextInput
                 value={form.packSize?.toString() ?? ''}
                 onChangeText={(v)=>setForm((p:any)=>({ ...p, packSize: v.replace(/[^0-9]/g,'') }))}
@@ -273,7 +300,7 @@ export default function EditProductScreen() {
               />
             </Field>
 
-            <Field label="GST %" style={{ width: 110 }}>
+            <Field label="GST % *" style={{ width: 110 }}>
               <TextInput
                 value={form.gstPercent?.toString() ?? '15'}
                 onChangeText={(v)=>setForm((p:any)=>({ ...p, gstPercent: v.replace(/[^0-9.]/g,'') }))}
@@ -283,6 +310,16 @@ export default function EditProductScreen() {
               />
             </Field>
           </FieldRow>
+
+          <Field label="Supplier *">
+            <TextInput
+              value={form.supplierName ?? ''}
+              onChangeText={(v)=>setForm((p:any)=>({ ...p, supplierName: v }))}
+              placeholder="Who do you usually buy this from?"
+              autoCapitalize="words"
+              style={styles.input}
+            />
+          </Field>
         </View>
 
         {/* ---- Supplier hints (non-binding) ---- */}
@@ -290,10 +327,14 @@ export default function EditProductScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Supplier hint</Text>
             {!!form.supplierNameSuggested && (
-              <Text style={styles.hint}>Suggested supplier: <Text style={styles.bold}>{form.supplierNameSuggested}</Text></Text>
+              <Text style={styles.hint}>
+                Suggested supplier: <Text style={styles.bold}>{form.supplierNameSuggested}</Text>
+              </Text>
             )}
             {!!form.categorySuggested && (
-              <Text style={styles.hint}>Suggested category: <Text style={styles.bold}>{form.categorySuggested}</Text></Text>
+              <Text style={styles.hint}>
+                Suggested category: <Text style={styles.bold}>{form.categorySuggested}</Text>
+              </Text>
             )}
             {!!form.supplierGlobalId && (
               <Text style={styles.hintDim}>Catalog source: {form.supplierGlobalId}</Text>
@@ -315,12 +356,49 @@ export default function EditProductScreen() {
             onPress={save}
             disabled={!canSave || saving}
           >
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>{editingId ? 'Save' : 'Create'}</Text>}
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.btnPrimaryText}>{editingId ? 'Save' : 'Create'}</Text>
+            )}
           </TouchableOpacity>
         </View>
 
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      {/* Induction modal for missing required metadata */}
+      {inductionMissing && (
+        <Modal
+          transparent
+          visible={!!inductionMissing}
+          animationType="fade"
+          onRequestClose={() => setInductionMissing(null)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Just a few details</Text>
+              <Text style={styles.modalText}>
+                To use this product in stocktakes and ordering, we need:
+              </Text>
+              {inductionMissing.map((m) => (
+                <Text key={m} style={styles.modalBullet}>• {m}</Text>
+              ))}
+              <Text style={[styles.modalText, { marginTop: 8 }]}>
+                Fill these in above and tap Save again.
+              </Text>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalBtn}
+                  onPress={() => setInductionMissing(null)}
+                >
+                  <Text style={styles.modalBtnText}>Got it</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -345,19 +423,73 @@ const styles = StyleSheet.create({
   wrap: { padding: 16, backgroundColor: '#fff' },
   title: { fontSize: 22, fontWeight: '800', marginBottom: 12 },
 
-  card: { backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 12, marginBottom: 12 },
+  card: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 12,
+    marginBottom: 12,
+  },
   cardTitle: { fontWeight: '800', marginBottom: 6 },
 
   label: { fontWeight: '700', marginBottom: 4 },
-  input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  input: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
 
   hint: { color: '#374151' },
   hintDim: { color: '#6B7280', fontSize: 12 },
   bold: { fontWeight: '700' },
 
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
-  btnPrimary: { backgroundColor: '#0A84FF', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, minWidth: 110, alignItems: 'center' },
+  btnPrimary: {
+    backgroundColor: '#0A84FF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    minWidth: 110,
+    alignItems: 'center',
+  },
   btnPrimaryText: { color: '#fff', fontWeight: '800' },
-  btnSecondary: { backgroundColor: '#E5E7EB', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, minWidth: 110, alignItems: 'center' },
+  btnSecondary: {
+    backgroundColor: '#E5E7EB',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    minWidth: 110,
+    alignItems: 'center',
+  },
   btnSecondaryText: { color: '#111827', fontWeight: '800' },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    width: '100%',
+    maxWidth: 420,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 8 },
+  modalText: { fontSize: 14, color: '#111827' },
+  modalBullet: { fontSize: 14, color: '#111827', marginTop: 4 },
+  modalActions: { marginTop: 16, flexDirection: 'row', justifyContent: 'flex-end' },
+  modalBtn: {
+    backgroundColor: '#111827',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+  },
+  modalBtnText: { color: '#FFFFFF', fontWeight: '700' },
 });
