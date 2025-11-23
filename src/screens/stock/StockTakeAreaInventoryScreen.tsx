@@ -865,6 +865,8 @@ function StockTakeAreaInventoryScreen() {
   
 const addQuickItem = async () => {
   const nm = (addingName || '').trim();
+  const unit = (addingUnit || '').trim();
+  const supplier = (addingSupplier || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
     Alert.alert('Missing context', 'Venue, department or area is missing.');
@@ -875,16 +877,40 @@ const addQuickItem = async () => {
     return;
   }
 
-  const payload = { name: nm, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  // NOTE:
+  // For now we ONLY send the bare-minimum payload that we know
+  // is allowed by Firestore rules for area items.
+  // Unit/supplier + induction flags are handled later via Stock Control.
+  const payload: any = {
+    name: nm,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
   console.log('[Area quick add] Attempting to create with data:', payload);
 
   try {
-    const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
+    const colRef = collection(
+      db,
+      'venues',
+      venueId,
+      'departments',
+      departmentId,
+      'areas',
+      areaId,
+      'items',
+    );
     const docRef = await addDoc(colRef, payload);
 
     console.log('[Area quick add] SUCCESS id=', docRef.id);
     Alert.alert('Added', `“${nm}” was added to this area.`);
+
+    // Clear only the name so the user can keep their preferred unit/supplier
     setAddingName('');
+
+    // Remember their preferred unit / supplier locally for next adds
+    rememberQuickAdd(unit, supplier);
+
     hapticSuccess?.();
   } catch (e: any) {
     console.log('[Area quick add] FAILED', e?.code, e?.message);
