@@ -1,14 +1,14 @@
 // @ts-nocheck
+import {
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
+  orderBy, query, serverTimestamp, updateDoc, runTransaction
+} from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
   Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
 } from 'react-native';
-import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc, runTransaction
-} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -19,7 +19,7 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
-
+import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -42,6 +42,10 @@ type Item = {
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
   flagRecount?: boolean;
+
+  // Induction flags (quick-add / other partial items)
+  inductionStatus?: 'pending' | 'complete';
+  inductionSource?: string | null;
 };
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
 type MemberDoc = { role?: string };
@@ -562,6 +566,7 @@ function StockTakeAreaInventoryScreen() {
   const [addingName, setAddingName] = useState('');
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
+  const [addingQty, setAddingQty] = useState('');
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
@@ -857,22 +862,35 @@ function StockTakeAreaInventoryScreen() {
     } else { await doApprove(); }
   };
 
-  const addQuickItem = async () => {
-    const nm = (addingName || '').trim();
-    if (!nm) return Alert.alert('Name required');
-    try {
-      const payload: any = {
-        name: nm,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      const unitTrim = (addingUnit || '').trim();
-      if (unitTrim) payload.unit = unitTrim;
-      await addDoc(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'), payload);
-    } catch (e:any){ Alert.alert('Could not add item', e?.message ?? String(e)); return; }
-    setAddingName(''); await rememberQuickAdd(addingUnit, addingSupplier);
-    nameInputRef.current?.blur(); Keyboard.dismiss(); hapticSuccess();
-  };
+  
+const addQuickItem = async () => {
+  const nm = (addingName || '').trim();
+
+  if (!venueId || !departmentId || !areaId) {
+    Alert.alert('Missing context', 'Venue, department or area is missing.');
+    return;
+  }
+  if (!nm) {
+    Alert.alert('Name required', 'Please enter an item name first.');
+    return;
+  }
+
+  const payload = { name: nm, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  console.log('[Area quick add] Attempting to create with data:', payload);
+
+  try {
+    const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
+    const docRef = await addDoc(colRef, payload);
+
+    console.log('[Area quick add] SUCCESS id=', docRef.id);
+    Alert.alert('Added', `“${nm}” was added to this area.`);
+    setAddingName('');
+    hapticSuccess?.();
+  } catch (e: any) {
+    console.log('[Area quick add] FAILED', e?.code, e?.message);
+    Alert.alert('Could not add item', e?.message ?? String(e));
+  }
+};
 
   const removeItem = async (itemId: string) => {
     Alert.alert('Delete item', 'Are you sure?', [
@@ -1323,7 +1341,7 @@ function StockTakeAreaInventoryScreen() {
           />
         )}
         ListHeaderComponent={
-          <AreaInvHeader
+                    <AreaInvHeader
             areaName={areaName}
             isCompact={isCompact}
             dens={dens}
@@ -1342,6 +1360,8 @@ function StockTakeAreaInventoryScreen() {
             setAddingUnit={setAddingUnit}
             addingSupplier={addingSupplier}
             setAddingSupplier={setAddingSupplier}
+            addingQty={addingQty}                 
+            setAddingQty={setAddingQty}           
             onAddQuickItem={addQuickItem}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}

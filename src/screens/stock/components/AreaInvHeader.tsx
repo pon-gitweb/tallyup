@@ -3,7 +3,13 @@ import React from 'react';
 import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import SearchBarDebounced from '../../../components/SearchBarDebounced';
 
-type Stats = { countedCount: number; total: number; lowCount: number; flaggedCount: number; progressPct: number };
+type Stats = {
+  countedCount: number;
+  total: number;
+  lowCount: number;
+  flaggedCount: number;
+  progressPct: number;
+};
 
 type Props = {
   areaName?: string;
@@ -29,6 +35,11 @@ type Props = {
   setAddingUnit: (s: string) => void;
   addingSupplier: string;
   setAddingSupplier: (s: string) => void;
+
+  // NEW: qty on quick add
+  addingQty: string;
+  setAddingQty: (s: string) => void;
+
   onAddQuickItem: () => void;
 
   stats: Stats;
@@ -51,11 +62,18 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   offline,
   legendDismissed,
   dismissLegend,
-  showExpected, setShowExpected,
-  filter, setFilter,
-  addingName, setAddingName,
-  addingUnit, setAddingUnit,
-  addingSupplier, setAddingSupplier,
+  showExpected,
+  setShowExpected,
+  filter,
+  setFilter,
+  addingName,
+  setAddingName,
+  addingUnit,
+  setAddingUnit,
+  addingSupplier,
+  setAddingSupplier,
+  addingQty,
+  setAddingQty,
   onAddQuickItem,
   stats,
   onOpenMore,
@@ -63,29 +81,74 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   presenceLabel,
 }: Props) {
   return (
-    <View style={{ backgroundColor: 'white', paddingBottom: dens(8), borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+    <View
+      style={{
+        backgroundColor: 'white',
+        paddingBottom: dens(8),
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+      }}
+    >
       <View style={{ padding: dens(12), gap: 8 }}>
         {/* Title + stats + ⋯ */}
-        <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <View style={{ flexShrink: 1 }}>
-            <Text style={{ fontSize: isCompact ? 16 : 18, fontWeight: '800' }} numberOfLines={1}>
+            <Text
+              style={{ fontSize: isCompact ? 16 : 18, fontWeight: '800' }}
+              numberOfLines={1}
+            >
               {areaName ?? 'Area Inventory'}
             </Text>
-            <View style={{ flexDirection:'row', alignItems:'center', marginTop: 4 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: 4,
+              }}
+            >
               <Text style={{ opacity: 0.7, fontSize: 12 }} numberOfLines={1}>
-                Started at: {fmt(startedAt)} • Last activity: {fmt(lastActivityDate)}
+                Started at: {fmt(startedAt)} • Last activity:{' '}
+                {fmt(lastActivityDate)}
               </Text>
             </View>
           </View>
 
-          <View style={{ flexDirection:'row', gap:8, alignItems:'center' }}>
-            <View style={{ paddingVertical:2, paddingHorizontal:8, backgroundColor:'#F3F4F6', borderRadius:12 }}>
-              <Text style={{ fontWeight:'800', color:'#374151' }}>
-                {stats.countedCount}/{stats.total} • {stats.lowCount} low • {stats.flaggedCount} flag • {stats.progressPct}%
+          <View
+            style={{
+              flexDirection: 'row',
+              gap: 8,
+              alignItems: 'center',
+            }}
+          >
+            <View
+              style={{
+                paddingVertical: 2,
+                paddingHorizontal: 8,
+                backgroundColor: '#F3F4F6',
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ fontWeight: '800', color: '#374151' }}>
+                {stats.countedCount}/{stats.total} • {stats.lowCount} low •{' '}
+                {stats.flaggedCount} flag • {stats.progressPct}%
               </Text>
             </View>
-            <TouchableOpacity onPress={onOpenMore} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:12, backgroundColor:'#E5E7EB' }}>
-              <Text style={{ fontWeight:'900' }}>⋯</Text>
+            <TouchableOpacity
+              onPress={onOpenMore}
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 12,
+                backgroundColor: '#E5E7EB',
+              }}
+            >
+              <Text style={{ fontWeight: '900' }}>⋯</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -102,36 +165,77 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               backgroundColor: '#EEF2FF',
             }}
           >
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#3730A3' }}>
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: '700',
+                color: '#3730A3',
+              }}
+            >
               {presenceLabel}
             </Text>
           </View>
         ) : null}
 
         {offline ? (
-          <View style={{ backgroundColor:'#FEF3C7', borderColor:'#F59E0B', borderWidth:1, padding:6, borderRadius:8 }}>
-            <Text style={{ color:'#92400E', fontWeight:'700' }}>Offline</Text>
-            <Text style={{ color:'#92400E' }}>You can keep counting; changes will sync when back online.</Text>
+          <View
+            style={{
+              backgroundColor: '#FEF3C7',
+              borderColor: '#F59E0B',
+              borderWidth: 1,
+              padding: 6,
+              borderRadius: 8,
+            }}
+          >
+            <Text style={{ color: '#92400E', fontWeight: '700' }}>Offline</Text>
+            <Text style={{ color: '#92400E' }}>
+              You can keep counting; changes will sync when back online.
+            </Text>
           </View>
         ) : null}
 
         {!legendDismissed ? (
-          <View style={{ backgroundColor:'#EFF6FF', borderColor:'#93C5FD', borderWidth:1, padding:8, borderRadius:10 }}>
-            <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Tip</Text>
-            <Text style={{ color:'#1E3A8A' }}>
-              “Expected” is our guidance based on last count and movements. Type your Count and press Save (or Approve now).
+          <View
+            style={{
+              backgroundColor: '#EFF6FF',
+              borderColor: '#93C5FD',
+              borderWidth: 1,
+              padding: 8,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ color: '#1E3A8A', fontWeight: '700' }}>Tip</Text>
+            <Text style={{ color: '#1E3A8A' }}>
+              “Expected” is our guidance based on last count and movements. Type
+              your Count and press Save (or Approve now).
             </Text>
             <TouchableOpacity
               onPress={dismissLegend}
-              style={{ alignSelf:'flex-start', marginTop:6, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#DBEAFE', borderRadius:8 }}
+              style={{
+                alignSelf: 'flex-start',
+                marginTop: 6,
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                backgroundColor: '#DBEAFE',
+                borderRadius: 8,
+              }}
             >
-              <Text style={{ color:'#1E3A8A', fontWeight:'700' }}>Got it</Text>
+              <Text style={{ color: '#1E3A8A', fontWeight: '700' }}>
+                Got it
+              </Text>
             </TouchableOpacity>
           </View>
         ) : null}
 
         {/* Search + toggle */}
-        <View style={{ flexDirection: 'row', gap: 8, alignItems:'center', flexWrap:'wrap' }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <View style={{ flex: 1 }}>
             <SearchBarDebounced
               value={filter}
@@ -143,7 +247,12 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
           </View>
           <TouchableOpacity
             onPress={() => setShowExpected(!showExpected)}
-            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius: 10, backgroundColor: '#F1F8E9' }}
+            style={{
+              paddingVertical: dens(8),
+              paddingHorizontal: dens(12),
+              borderRadius: 10,
+              backgroundColor: '#F1F8E9',
+            }}
           >
             <Text style={{ color: '#558B2F', fontWeight: '700' }}>
               {showExpected ? 'Hide expected' : 'Show expected'}
@@ -153,7 +262,13 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
 
         {/* Quick Add */}
         <View style={{ gap: 8 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
             <TextInput
               ref={nameInputRef}
               value={addingName}
@@ -174,17 +289,30 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
             />
             <TouchableOpacity
               onPress={onAddQuickItem}
-              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 }}
+              style={{
+                backgroundColor: '#0A84FF',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 12,
+              }}
             >
               <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
             </TouchableOpacity>
           </View>
-          <View style={{ flexDirection:'row', gap:8 }}>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
             <TextInput
               value={addingUnit}
               onChangeText={setAddingUnit}
               placeholder="Unit (e.g. bottles, kg)"
-              style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 10,
+              }}
               returnKeyType="done"
               blurOnSubmit={false}
               onSubmitEditing={onAddQuickItem}
@@ -193,7 +321,36 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               value={addingSupplier}
               onChangeText={setAddingSupplier}
               placeholder="Supplier"
-              style={{ flex:1, paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 10,
+              }}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              onSubmitEditing={onAddQuickItem}
+            />
+          </View>
+
+          {/* Qty for quick-add */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TextInput
+              value={addingQty}
+              onChangeText={setAddingQty}
+              placeholder="Qty now (optional)"
+              keyboardType="decimal-pad"
+              inputMode="decimal"
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderWidth: 1,
+                borderColor: '#ddd',
+                borderRadius: 10,
+              }}
               returnKeyType="done"
               blurOnSubmit={false}
               onSubmitEditing={onAddQuickItem}
