@@ -1715,89 +1715,226 @@ const addQuickItem = async () => {
       </TouchableOpacity>
 
       {/* Pre-Submit Review Modal (polished) */}
-      <Modal visible={reviewOpen} animationType="slide" transparent onRequestClose={()=>setReviewOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16, maxHeight:'80%' }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:4 }}>Review before submit</Text>
-            <Text style={{ color:'#374151', marginBottom:10 }}>
-              {countedCount}/{items.length} counted • {lowCount} low • {flaggedCount} flagged • {progressPct}%
+<Modal
+  visible={reviewOpen}
+  animationType="slide"
+  transparent
+  onRequestClose={() => setReviewOpen(false)}
+>
+  <View
+    style={{
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.35)',
+      justifyContent: 'flex-end',
+    }}
+  >
+    <View
+      style={{
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        padding: 16,
+        maxHeight: '80%',
+      }}
+    >
+      {/* Make the content scrollable so Submit is always reachable */}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 16 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 4 }}>
+          Review before submit
+        </Text>
+        <Text style={{ color: '#374151', marginBottom: 10 }}>
+          {countedCount}/{items.length} counted • {lowCount} low •{' '}
+          {flaggedCount} flagged • {progressPct}%
+        </Text>
+
+        <View style={{ gap: 10 }}>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              padding: 10,
+            }}
+          >
+            <Text style={{ fontWeight: '800', marginBottom: 6 }}>
+              Counted this cycle ({reviewCounted.length})
             </Text>
+            {reviewCounted.length === 0 ? (
+              <Text style={{ color: '#6B7280' }}>
+                No items have been counted yet.
+              </Text>
+            ) : (
+              reviewCounted.map((it) => (
+                <TouchableOpacity
+                  key={it.id}
+                  onPress={() => {
+                    setReviewOpen(false);
+                    setTimeout(
+                      () => inputRefs.current[it.id]?.focus?.(),
+                      80,
+                    );
+                  }}
+                  style={{ paddingVertical: 6 }}
+                >
+                  <Text style={{ fontWeight: '700' }}>{it.name}</Text>
+                  <Text style={{ color: '#374151' }}>
+                    Saved:{' '}
+                    {typeof it.lastCount === 'number'
+                      ? it.lastCount
+                      : '—'}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
 
-            <View style={{ gap:10 }}>
-              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
-                <Text style={{ fontWeight:'800', marginBottom:6 }}>Counted this cycle ({reviewCounted.length})</Text>
-                {reviewCounted.length === 0 ? (
-                  <Text style={{ color:'#6B7280' }}>No items have been counted yet.</Text>
-                ) : reviewCounted.map((it) => (
-                  <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
-                    <Text style={{ fontWeight:'700' }}>{it.name}</Text>
-                    <Text style={{ color:'#374151' }}>Saved: {typeof it.lastCount === 'number' ? it.lastCount : '—'}</Text>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              padding: 10,
+            }}
+          >
+            <Text style={{ fontWeight: '800', marginBottom: 6 }}>
+              Will be saved as 0
+            </Text>
+            {reviewMissing.length === 0 ? (
+              <Text style={{ color: '#6B7280' }}>
+                None — all items have been counted.
+              </Text>
+            ) : (
+              <>
+                {reviewMissing.slice(0, 3).map((it) => (
+                  <TouchableOpacity
+                    key={it.id}
+                    onPress={() => {
+                      setReviewOpen(false);
+                      setTimeout(
+                        () => inputRefs.current[it.id]?.focus?.(),
+                        80,
+                      );
+                    }}
+                    style={{ paddingVertical: 6 }}
+                  >
+                    <Text style={{ fontWeight: '700' }}>{it.name}</Text>
+                    <Text style={{ color: '#6B7280' }}>Tap to jump to it</Text>
                   </TouchableOpacity>
                 ))}
-              </View>
+                {reviewMissing.length > 3 ? (
+                  <Text style={{ color: '#6B7280', marginTop: 4 }}>
+                    and {reviewMissing.length - 3} more…
+                  </Text>
+                ) : null}
+              </>
+            )}
+          </View>
 
-              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
-                <Text style={{ fontWeight:'800', marginBottom:6 }}>Will be saved as 0</Text>
-                {reviewMissing.length === 0 ? (
-                  <Text style={{ color:'#6B7280' }}>None — all items have been counted.</Text>
-                ) : (
-                  <>
-                    {reviewMissing.slice(0, 3).map((it) => (
-                      <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
-                        <Text style={{ fontWeight:'700' }}>{it.name}</Text>
-                        <Text style={{ color:'#6B7280' }}>Tap to jump to it</Text>
-                      </TouchableOpacity>
-                    ))}
-                    {reviewMissing.length > 3 ? (
-                      <Text style={{ color:'#6B7280', marginTop:4 }}>
-                        and {reviewMissing.length - 3} more…
-                      </Text>
-                    ) : null}
-                  </>
-                )}
-              </View>
-
-              <View style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
-                <Text style={{ fontWeight:'800', marginBottom:6 }}>Flagged for recount ({reviewFlagged.length})</Text>
-                {reviewFlagged.length === 0 ? (
-                  <Text style={{ color:'#6B7280' }}>No items are flagged.</Text>
-                ) : reviewFlagged.map((it) => (
-                  <TouchableOpacity key={it.id} onPress={()=>{ setReviewOpen(false); setTimeout(()=>inputRefs.current[it.id]?.focus?.(),80); }} style={{ paddingVertical:6 }}>
-                    <Text style={{ fontWeight:'700' }}>{it.name}</Text>
-                    <Text style={{ color:'#92400E' }}>Marked “Recount”</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            <View style={{ flexDirection:'row', gap:10, marginTop:12 }}>
-              <TouchableOpacity onPress={()=>setReviewOpen(false)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
-                <Text style={{ textAlign:'center', fontWeight:'700' }}>Back to counting</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={()=>{ setReviewOpen(false); throttleAction(completeArea)(); }}
-                disabled={submittingArea}
-                style={{
-                  padding:12,
-                  borderRadius:10,
-                  backgroundColor: submittingArea ? '#16A34A99' : '#16A34A',
-                  flex:1,
-                }}
-              >
-                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>
-                  {submittingArea ? 'Submitting…' : 'Submit now'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {countedCount > 0 ? (
-              <TouchableOpacity onPress={exportCsvChangesOnly} style={{ marginTop:10, padding:10, borderRadius:10, backgroundColor:'#DBEAFE' }}>
-                <Text style={{ textAlign:'center', color:'#1E40AF', fontWeight:'800' }}>Export CSV — Changes only</Text>
-              </TouchableOpacity>
-            ) : null}
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              padding: 10,
+            }}
+          >
+            <Text style={{ fontWeight: '800', marginBottom: 6 }}>
+              Flagged for recount ({reviewFlagged.length})
+            </Text>
+            {reviewFlagged.length === 0 ? (
+              <Text style={{ color: '#6B7280' }}>
+                No items are flagged.
+              </Text>
+            ) : (
+              reviewFlagged.map((it) => (
+                <TouchableOpacity
+                  key={it.id}
+                  onPress={() => {
+                    setReviewOpen(false);
+                    setTimeout(
+                      () => inputRefs.current[it.id]?.focus?.(),
+                      80,
+                    );
+                  }}
+                  style={{ paddingVertical: 6 }}
+                >
+                  <Text style={{ fontWeight: '700' }}>{it.name}</Text>
+                  <Text style={{ color: '#92400E' }}>
+                    Marked “Recount”
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
           </View>
         </View>
-      </Modal>
+
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <TouchableOpacity
+            onPress={() => setReviewOpen(false)}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: '#ECEFF1',
+              flex: 1,
+            }}
+          >
+            <Text style={{ textAlign: 'center', fontWeight: '700' }}>
+              Back to counting
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              setReviewOpen(false);
+              throttleAction(completeArea)();
+            }}
+            disabled={submittingArea}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: submittingArea ? '#16A34A99' : '#16A34A',
+              flex: 1,
+            }}
+          >
+            <Text
+              style={{
+                textAlign: 'center',
+                color: '#fff',
+                fontWeight: '800',
+              }}
+            >
+              {submittingArea ? 'Submitting…' : 'Submit now'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {countedCount > 0 ? (
+          <TouchableOpacity
+            onPress={exportCsvChangesOnly}
+            style={{
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 10,
+              backgroundColor: '#DBEAFE',
+            }}
+          >
+            <Text
+              style={{
+                textAlign: 'center',
+                color: '#1E40AF',
+                fontWeight: '800',
+              }}
+            >
+              Export CSV — Changes only
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
 
       {/* Info explainer (timestamps) */}
       <Modal visible={infoOpen} animationType="fade" transparent onRequestClose={() => setInfoOpen(false)}>
