@@ -1,7 +1,7 @@
 {
   "name": "tallyup",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -59,8 +59,8 @@
     "slugify": "^1.6.6",
     "ts-jest": "^29.2.5",
     "ts-prune": "^0.10.3",
-    "typescript": "~5.8.3",
     "unimported": "^1.31.0",
+    "typescript": "~5.8.3",
     "yargs": "^18.0.0"
   },
   "private": true

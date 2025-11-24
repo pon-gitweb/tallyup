@@ -16,14 +16,15 @@
       "supportsTablet": true
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon-foreground.png",
-        "backgroundColor": "#0B132B",
-        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
-      },
-      "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.tallyup"
-    },
+  "adaptiveIcon": {
+    "foregroundImage": "./assets/adaptive-icon-foreground.png",
+    "backgroundColor": "#0B132B",
+    "monochromeImage": "./assets/adaptive-icon-monochrome.png"
+  },
+  "edgeToEdgeEnabled": true,
+  "package": "com.anonymous.tallyup",
+  "versionCode": 2
+},
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -31,6 +32,7 @@
       "EXPO_PUBLIC_DEV_EMAIL": "test@example.com",
       "EXPO_PUBLIC_DEV_PASSWORD": "test1234",
       "EXPO_PUBLIC_DEV_VENUE_ID": "v_7ykrc92wuw58gbrgyicr7e",
+      "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
       "eas": {
         "projectId": "f51fbba0-356b-46ef-9ef5-2017ee9ad59f"
       }
