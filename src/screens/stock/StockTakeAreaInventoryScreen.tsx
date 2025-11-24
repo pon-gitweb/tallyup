@@ -112,7 +112,7 @@ const Row = React.memo(function Row({
   const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
 
   const typedRaw = (localQty[item.id] ?? '').trim();
-  const typedNum = /^\d+(\.\d+)?$/.test(typedRaw) ? parseFloat(typedRaw) : null;
+  const typedNum = /^(\d+(\.\d+)?|\.\d+)$/.test(typedRaw) ? parseFloat(typedRaw) : null;
   const visibleCount: number | null =
     typedNum != null ? typedNum :
     (typeof item.lastCount === 'number' ? item.lastCount : null);
@@ -308,7 +308,7 @@ const Row = React.memo(function Row({
           value={localQty[item.id] ?? ''}
           onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
           placeholder={placeholder}
-          keyboardType="number-pad"
+          keyboardType="decimal-pad"
           inputMode="decimal"
           maxLength={32}
           returnKeyType="done"
@@ -816,22 +816,38 @@ function StockTakeAreaInventoryScreen() {
     };
 
     if (typed === '') {
-      return Alert.alert('No quantity',`Save “${item.name}” as 0?`,[
-        {text:'Cancel',style:'cancel'},
-        {text:'Save as 0',onPress:()=>proceedWith(0)}
-      ]);
-    }
-    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid','Enter number');
-    await proceedWith(parseFloat(typed));
+  return Alert.alert('No quantity', `Save “${item.name}” as 0?`, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Save as 0', onPress: () => proceedWith(0) },
+  ]);
+}
+
+// If NOT a valid number, show error
+if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
+  return Alert.alert('Invalid', 'Enter number');
+}
+
+await proceedWith(parseFloat(typed));
   };
 
   const approveNow = async (item: Item) => {
     const typed = (localQty[item.id] ?? '').trim();
-    if (!ENABLE_MANAGER_INLINE_APPROVE) return;
-    if (!isManager) return Alert.alert('Manager only', 'Only managers can approve directly.');
-    if (!/^\d+(\.\d+)?$/.test(typed)) return Alert.alert('Invalid number', 'Enter a numeric quantity');
+if (!ENABLE_MANAGER_INLINE_APPROVE) return;
+if (!isManager) {
+  return Alert.alert('Manager only', 'Only managers can approve directly.');
+}
 
-    const qty = parseFloat(typed);
+// Require something in the box
+if (!typed) {
+  return Alert.alert('No quantity', 'Enter a quantity to approve');
+}
+
+// If NOT a valid number, show error
+if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
+  return Alert.alert('Invalid number', 'Enter a numeric quantity');
+}
+
+const qty = parseFloat(typed);
     const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
     const prevAt = item.lastCountAt ?? null;
 
@@ -862,34 +878,59 @@ function StockTakeAreaInventoryScreen() {
     } else { await doApprove(); }
   };
 
-  
-const addQuickItem = async () => {
+  const addQuickItem = async () => {
   const nm = (addingName || '').trim();
   const unit = (addingUnit || '').trim();
   const supplier = (addingSupplier || '').trim();
+  const qtyStr = (addingQty || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
     Alert.alert('Missing context', 'Venue, department or area is missing.');
     return;
   }
+
   if (!nm) {
     Alert.alert('Name required', 'Please enter an item name first.');
     return;
   }
 
-  // NOTE:
-  // For now we ONLY send the bare-minimum payload that we know
-  // is allowed by Firestore rules for area items.
-  // Unit/supplier + induction flags are handled later via Stock Control.
+  // Optional: parse starting quantity
+  let qty: number | null = null;
+  if (qtyStr) {
+    if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
+      Alert.alert('Invalid quantity', 'Enter a numeric quantity for Qty now.');
+      return;
+    }
+    qty = parseFloat(qtyStr);
+  }
+
+  const nowTs = serverTimestamp ? serverTimestamp() : new Date();
+
   const payload: any = {
     name: nm,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    unit: unit || null,
+    supplierName: supplier || null,
+
+    // Mark as a partial / inducted-from-area item
+    inductionStatus: 'pending',
+    inductionSource: 'quick-add',
+
+    createdAt: nowTs,
+    updatedAt: nowTs,
   };
+
+  // If the user provided a starting quantity, save it as the current count
+  if (qty != null) {
+    payload.lastCount = qty;
+    payload.lastCountAt = nowTs;
+  }
 
   console.log('[Area quick add] Attempting to create with data:', payload);
 
   try {
+    // Ensure this area has a startedAt for this stocktake window
+    await ensureAreaStarted();
+
     const colRef = collection(
       db,
       'venues',
@@ -900,13 +941,15 @@ const addQuickItem = async () => {
       areaId,
       'items',
     );
+
     const docRef = await addDoc(colRef, payload);
 
     console.log('[Area quick add] SUCCESS id=', docRef.id);
     Alert.alert('Added', `“${nm}” was added to this area.`);
 
-    // Clear only the name so the user can keep their preferred unit/supplier
+    // Clear only the name & qty so the user can keep their preferred unit/supplier
     setAddingName('');
+    setAddingQty('');
 
     // Remember their preferred unit / supplier locally for next adds
     rememberQuickAdd(unit, supplier);
@@ -930,17 +973,28 @@ const addQuickItem = async () => {
 
   const openAdjustment = (item: Item) => { setAdjModalFor(item); setAdjQty(''); setAdjReason(''); };
   const submitAdjustment = async () => {
-    const it = adjModalFor!; const qtyStr = adjQty.trim();
-    if (!/^\d+(\.\d+)?$/.test(qtyStr)) return Alert.alert('Invalid number');
-    if (!adjReason.trim()) return Alert.alert('Reason required');
-    try {
-      await addDoc(collection(db, 'venues', venueId!, 'sessions'), {
-        type: 'stock-adjustment-request', status: 'pending',
-        venueId, departmentId, areaId, itemId: it.id, itemName: it.name,
-        fromQty: it.lastCount ?? null, proposedQty: parseFloat(qtyStr),
-        reason: adjReason.trim(), requestedBy: getAuth().currentUser?.uid ?? null,
-        requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
-      });
+  const it = adjModalFor!;
+  const qtyStr = adjQty.trim();
+
+if (!qtyStr) {
+  return Alert.alert('No quantity', 'Enter a proposed quantity');
+}
+
+// If NOT a valid number, show error
+if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
+  return Alert.alert('Invalid number');
+}
+
+if (!adjReason.trim()) return Alert.alert('Reason required');
+
+try {
+  await addDoc(collection(db, 'venues', venueId!, 'sessions'), {
+    type: 'stock-adjustment-request', status: 'pending',
+    venueId, departmentId, areaId, itemId: it.id, itemName: it.name,
+    fromQty: it.lastCount ?? null, proposedQty: parseFloat(qtyStr),
+    reason: adjReason.trim(), requestedBy: getAuth().currentUser?.uid ?? null,
+    requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
+  });
       setAdjModalFor(null);
     } catch (e: any) { Alert.alert('Could not submit request', e?.message ?? String(e)); }
   };
@@ -1418,7 +1472,7 @@ const addQuickItem = async () => {
             </Text>
             <View style={{ marginBottom: 10 }}>
               <Text style={{ fontWeight: '600', marginBottom: 4 }}>Proposed qty</Text>
-              <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="number-pad" inputMode="decimal"
+              <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="decimal-pad" inputMode="decimal"
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
             </View>
             <View style={{ marginBottom: 10 }}>
@@ -1522,7 +1576,8 @@ const addQuickItem = async () => {
                   value={editPar}
                   onChangeText={setEditPar}
                   placeholder="e.g. 24"
-                  keyboardType="number-pad"
+                  placeholder="e.g. 24"
+                  keyboardType="decimal-pad"
                   inputMode="decimal"
                   style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
                 />

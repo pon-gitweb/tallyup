@@ -15,7 +15,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
 import { runAISuggest } from '../../services/orders/suggestAI';
-import { createDraftsFromSuggestions } from '../../services/orders/createFromSuggestions';
+import { createDraftsFromSuggestions, computeSuggestionKey } from '../../services/orders/createFromSuggestions';
 import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
@@ -31,13 +31,6 @@ const RECEIVED_SET  = new Set(['received','complete','closed']);
 type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
 type Dept = { id:string; name:string };
 type SupplierLite = { id:string; name:string };
-
-function buildSuggestionKey(supplierId:string|null, lines:any[]){
-  const parts=(Array.isArray(lines)?lines:[])
-    .map(l=>`${String(l?.productId||'')}:${m1(l?.qty)}`)
-    .filter(Boolean).sort().join(',');
-  return `${supplierId ?? 'unassigned'}|${parts}`;
-}
 
 function sumByProduct(lines:any[]){
   const map:Record<string, any> = {};
@@ -256,7 +249,10 @@ export default function SuggestedOrderScreen(){
         }));
     }
 
-    const suggestionKey=buildSuggestionKey(supplierId==='unassigned'?null:supplierId,previewLines);
+    const suggestionKey=computeSuggestionKey(
+      supplierId==='unassigned'?null:supplierId,
+      previewLines
+    );
     const alreadyDrafted=existingKeys.has(suggestionKey);
     dlog('preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted);
     setSupplierPreview({ supplierId,supplierName,lines:previewLines,suggestionKey,alreadyDrafted });

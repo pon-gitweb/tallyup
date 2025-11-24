@@ -1,3 +1,5 @@
+// src/services/products/index.ts
+
 // Re-export existing helpers
 export * from './searchProductsLite';
 export * from './updateProduct';
@@ -23,6 +25,12 @@ export type SupplierProductLite = {
   supplierName?: string | null;
   cost?: number | null;
   packSize?: number | null;
+
+  // Measurement model v2 (optional)
+  unitModel?: 'each' | 'ml' | 'l' | 'g' | 'kg' | 'portion' | null;
+  unitSize?: number | null;
+  unitLabel?: string | null;
+  packUnits?: number | null;
 };
 
 /**
@@ -35,8 +43,9 @@ async function pageProductsForSupplier(opts: {
   cursor?: string | null;
 }): Promise<{ items: SupplierProductLite[]; nextCursor: string | null }> {
   const { venueId, supplierId, pageSize = 20, cursor = null } = opts;
-  if (!venueId || !supplierId)
+  if (!venueId || !supplierId) {
     return { items: [], nextCursor: null };
+  }
 
   const db = getFirestore(getApp());
   const colRef = collection(db, 'venues', venueId, 'products');
@@ -65,7 +74,9 @@ async function pageProductsForSupplier(opts: {
         );
       }
     } catch (e) {
-      if (__DEV__) console.warn('[pageProductsForSupplier] cursor failed', e);
+      if (__DEV__) {
+        console.warn('[pageProductsForSupplier] cursor failed', e);
+      }
     }
   }
 
@@ -86,6 +97,17 @@ async function pageProductsForSupplier(opts: {
         : null,
       packSize: Number.isFinite(data.packSize)
         ? Number(data.packSize)
+        : null,
+
+      // Measurement model v2 (all optional; tolerate missing fields)
+      unitModel: data.unitModel ?? null,
+      unitSize: Number.isFinite(data.unitSize)
+        ? Number(data.unitSize)
+        : null,
+      unitLabel:
+        typeof data.unitLabel === 'string' ? data.unitLabel : null,
+      packUnits: Number.isFinite(data.packUnits)
+        ? Number(data.packUnits)
         : null,
     };
   });

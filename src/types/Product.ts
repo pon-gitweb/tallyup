@@ -28,6 +28,25 @@ export type Product = {
   category?: string | null;       // 'Beverage', 'Food', 'Consumable'
   subcategory?: string | null;    // 'Vodka', 'Rum', 'Mixer', etc.
 
+  // Measurement model v2 (coexists with legacy unit/size/packSize)
+  unitModel?: 'each' | 'ml' | 'l' | 'g' | 'kg' | 'portion' | null;
+  /**
+   * Numeric size for the unitModel, e.g.
+   *  - 700 (ml) for a 700ml bottle
+   *  - 20 (l) for a 20L keg
+   *  - 375 (g) for a 375g pack
+   */
+  unitSize?: number | null;
+  /**
+   * Canonical label for the unit, e.g. 'ml', 'l', 'g', 'kg', 'each', 'portion'.
+   * This is primarily for display and conversions in maths layers.
+   */
+  unitLabel?: string | null;
+  /**
+   * Units per outer (e.g. 24 bottles per case). Optional.
+   */
+  packUnits?: number | null;
+
   // Stock & purchasing
   par?: number | null;            // desired shelf level
   packSize?: number | null;       // units per order pack/case

@@ -1,3 +1,4 @@
+// src/services/products/updateProduct.ts
 // @ts-nocheck
 import { getFirestore, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
