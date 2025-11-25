@@ -2,7 +2,7 @@
   "expo": {
     "name": "tallyup",
     "slug": "tallyup",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,18 +13,19 @@
       "backgroundColor": "#0B132B"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.tallyup"
     },
     "android": {
-  "adaptiveIcon": {
-    "foregroundImage": "./assets/adaptive-icon-foreground.png",
-    "backgroundColor": "#0B132B",
-    "monochromeImage": "./assets/adaptive-icon-monochrome.png"
-  },
-  "edgeToEdgeEnabled": true,
-  "package": "com.anonymous.tallyup",
-  "versionCode": 2
-},
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
+        "backgroundColor": "#0B132B",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.anonymous.tallyup",
+      "versionCode": 4
+    },
     "web": {
       "favicon": "./assets/favicon.png"
     },
