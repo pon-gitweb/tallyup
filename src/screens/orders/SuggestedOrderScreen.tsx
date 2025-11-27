@@ -1,4 +1,3 @@
-// src/screens/orders/SuggestedOrderScreen.tsx
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,13 +19,9 @@ import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
 
-const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};;
+const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
-const n = (v:any,d=0)=>{const x=Number(v);return Number.isFinite(x)?x:d;};
 const m1=(v:any)=>{const x=Number(v);return Number.isFinite(x)?Math.max(1,Math.round(x)):1;};
-
-const SUBMITTED_SET = new Set(['submitted','sent','placed','approved','awaiting','processing']);
-const RECEIVED_SET  = new Set(['received','complete','closed']);
 
 type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
 type Dept = { id:string; name:string };
@@ -53,7 +48,13 @@ function sumByProduct(lines:any[]){
   return Object.values(map);
 }
 
-export function __showSuggestToast(msg:string){try{require("react-native").ToastAndroid.show(msg,require("react-native").ToastAndroid.SHORT)}catch{try{require("react-native").Alert.alert("Notice",msg)}catch{}}}
+export function __showSuggestToast(msg:string){
+  try{
+    require("react-native").ToastAndroid.show(msg,require("react-native").ToastAndroid.SHORT);
+  }catch{
+    try{require("react-native").Alert.alert("Notice",msg);}catch{}
+  }
+}
 
 export default function SuggestedOrderScreen(){
   const nav=useNavigation<any>();
@@ -83,8 +84,6 @@ export default function SuggestedOrderScreen(){
   const [assignOpen,setAssignOpen]=useState(false);
 
   const didInitRef=useRef(false);
-  const createBusyRef=useRef(false);
-  const toggleBusyRef=useRef(false);
 
   const loadSuppliers = useCallback(async()=>{
     if(!venueId){ setSuppliers([]); return; }
@@ -114,35 +113,98 @@ export default function SuggestedOrderScreen(){
       if(lines.length>0)real[sid]={lines, supplierName:b?.supplierName};
     });
     const unassigned={lines:unPool};
-    return {buckets:real,unassigned};
+    const meta = compat && compat._meta ? compat._meta : null;
+    return {buckets:real,unassigned,_meta:meta};
   },[]);
 
-  const loadExistingSuggestionKeys=useCallback(async()=>{
-    if(!venueId){setExistingKeys(new Set());return;}
-    const ref=collection(db,'venues',venueId,'orders');
-    const snap=await getDocs(ref);
-    const keys=new Set<string>();
-    snap.forEach(d=>{
-      const data:any=d.data()||{};
-      const status=String(data.displayStatus||data.status||'draft').toLowerCase();
-      const isDraft = status==='draft';
-      const isSubmitted = SUBMITTED_SET.has(status);
-      const isReceived  = RECEIVED_SET.has(status);
-      if((isDraft || isSubmitted || isReceived) && data?.source==='suggestions' && typeof data?.suggestionKey==='string'){
-        keys.add(data.suggestionKey);
+  // Real per-cycle dedupe: read suggestionKey set from Firestore, scoped by stockCycleKey when available.
+  const loadExistingSuggestionKeys = useCallback(async (cycleKey?: string | null) => {
+    if (!venueId) {
+      setExistingKeys(new Set());
+      return;
+    }
+
+    try {
+      const baseRef = collection(db, 'venues', venueId, 'orders');
+
+      let qRef;
+      if (cycleKey && String(cycleKey).trim().length > 0) {
+        // Scoped to current stock cycle
+        qRef = query(
+          baseRef,
+          where('status', '==', 'draft'),
+          where('source', '==', 'suggestions'),
+          where('stockCycleKey', '==', String(cycleKey).trim())
+        );
+      } else {
+        // Fallback: no cycle key yet → just look at all suggestions drafts
+        qRef = query(
+          baseRef,
+          where('status', '==', 'draft'),
+          where('source', '==', 'suggestions')
+        );
       }
-    });
-    setExistingKeys(keys);
-    dlog('existingKeys', keys.size, 'sample', keys.size ? Array.from(keys)[0] : '(none)');
-  },[db,venueId]);
+
+      const snap = await getDocs(qRef);
+      const set = new Set<string>();
+      snap.forEach(d => {
+        const v: any = d.data() || {};
+        const sk = typeof v.suggestionKey === 'string' ? v.suggestionKey.trim() : '';
+        if (sk) set.add(sk);
+      });
+
+      const sample = Array.from(set).slice(0, 3);
+      dlog(
+        'existingKeys',
+        set.size,
+        'sample',
+        sample.length ? sample : '(none)',
+        'cycleKey',
+        cycleKey || '(none)'
+      );
+      setExistingKeys(set);
+    } catch (err:any) {
+      console.warn('[Suggested] loadExistingSuggestionKeys failed, falling back without cycle filter', err?.message || err);
+
+      // Fallback: ignore stockCycleKey filter if index is missing or query fails
+      try {
+        const baseRef = collection(db, 'venues', venueId, 'orders');
+        const qRef = query(
+          baseRef,
+          where('status', '==', 'draft'),
+          where('source', '==', 'suggestions')
+        );
+        const snap = await getDocs(qRef);
+        const set = new Set<string>();
+        snap.forEach(d => {
+          const v: any = d.data() || {};
+          const sk = typeof v.suggestionKey === 'string' ? v.suggestionKey.trim() : '';
+          if (sk) set.add(sk);
+        });
+        const sample = Array.from(set).slice(0, 3);
+        dlog(
+          'existingKeys (fallback)',
+          set.size,
+          'sample',
+          sample.length ? sample : '(none)'
+        );
+        setExistingKeys(set);
+      } catch (err2:any) {
+        console.warn('[Suggested] loadExistingSuggestionKeys fallback also failed', err2?.message || err2);
+        setExistingKeys(new Set());
+      }
+    }
+  }, [db, venueId]);
 
   const computeRowsFromSnapshot=useCallback(async(snapCompat:any)=>{
-    let { buckets,unassigned }=snapCompat;
+    let { buckets,unassigned,_meta }=snapCompat || {};
 
     // supplier name lookup
     const supMap:Record<string,string>={};
-    const supSnap=await getDocs(collection(db,'venues',venueId,'suppliers'));
-    supSnap.forEach(d=>{ supMap[d.id]=String((d.data() as any)?.name || 'Supplier'); });
+    if(venueId){
+      const supSnap=await getDocs(collection(db,'venues',venueId,'suppliers'));
+      supSnap.forEach(d=>{ supMap[d.id]=String((d.data() as any)?.name || 'Supplier'); });
+    }
 
     const projectLines = (lines:any[])=>{
       if(selectedDeptId==='ALL') return sumByProduct(lines);
@@ -174,16 +236,22 @@ export default function SuggestedOrderScreen(){
     const uIdx=tmp.findIndex(r=>r.id==='unassigned');
     const sorted=tmp.filter(r=>r.id!=='unassigned').sort((a,b)=>(b.itemsCount||0)-(a.itemsCount||0));
     setRows(uIdx>=0?[tmp[uIdx],...sorted]:sorted);
-    setSnapshot({buckets,unassigned});
+    setSnapshot({buckets,unassigned,_meta});
   },[db,venueId,selectedDeptId]);
 
   const doRefreshRaw=useCallback(async()=>{
-    if(!venueId){setRows([]);setSnapshot(null);setExistingKeys(new Set());return;}
-    await loadExistingSuggestionKeys();
+    if(!venueId){
+      setRows([]);
+      setSnapshot(null);
+      setExistingKeys(new Set());
+      return;
+    }
     const compat:any=await buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
     const graduated=normalizeCompat(compat);
     await computeRowsFromSnapshot(graduated);
-  },[venueId,loadExistingSuggestionKeys,computeRowsFromSnapshot,normalizeCompat]);
+    const cycleKey = graduated?._meta?.stockCycleKey || null;
+    await loadExistingSuggestionKeys(cycleKey);
+  },[venueId,computeRowsFromSnapshot,normalizeCompat,loadExistingSuggestionKeys]);
 
   const doRefresh=useCallback(async()=>{
     setRefreshing(true);
@@ -212,7 +280,7 @@ export default function SuggestedOrderScreen(){
         await loadSuppliers();
         await loadDepartments();
         await doRefreshRaw();
-      } finally {
+      } finally{
         if(!cancelled) setRefreshing(false);
       }
     })();
@@ -254,7 +322,7 @@ export default function SuggestedOrderScreen(){
       previewLines
     );
     const alreadyDrafted=existingKeys.has(suggestionKey);
-    dlog('preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted);
+    dlog('preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted, 'cycleKey', snapshot?._meta?.stockCycleKey || null);
     setSupplierPreview({ supplierId,supplierName,lines:previewLines,suggestionKey,alreadyDrafted });
     setSupplierOpen(true);
   },[snapshot,existingKeys,selectedDeptId]);
@@ -295,18 +363,12 @@ export default function SuggestedOrderScreen(){
     await batch.commit();
   },[db,venueId]);
 
-  // ===== Robust preflight lock checker =====
-  /**
-   * - Looks for ANY draft for this supplier (no source filter).
-   * - Supports legacy scope fields: deptScope, deptScopeField, dept, department.
-   * Semantics:
-   *   ALL scope: 'ALL' | null/undefined | array length > 1
-   *   Dept scope: single string OR array length === 1
-   */
+  // ===== Robust preflight lock checker (scoped to stockCycleKey) =====
   async function __probeSupplierLocks(
     venueId: string,
     supplierId: string | null,
-    wantAll: boolean
+    wantAll: boolean,
+    cycleKey: string | null
   ): Promise<'ALL_EXISTS' | 'DEPT_EXISTS' | null> {
     const colRef = collection(db, 'venues', venueId, 'orders');
     const qRef = supplierId != null
@@ -314,43 +376,66 @@ export default function SuggestedOrderScreen(){
       : query(colRef, where('status','==','draft'), where('supplierId','==', null));
 
     const snap = await getDocs(qRef);
-    const docs:any[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const allDocs:any[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+    const docs = cycleKey
+      ? allDocs.filter(d => d.stockCycleKey === cycleKey)
+      : allDocs;
 
     const readScope = (d:any) => d?.deptScope ?? d?.deptScopeField ?? d?.dept ?? d?.department ?? null;
 
     const anyALL = docs.some(d => {
       const s = readScope(d);
-      if (s === 'ALL' || s == null) return true;
-      if (Array.isArray(s) && s.length > 1) return true;
+      if (s === 'ALL') return true;
       return false;
     });
 
     const anyDept = docs.some(d => {
       const s = readScope(d);
       if (s === 'ALL' || s == null) return false;
-      if (Array.isArray(s)) return s.length === 1;
+      if (Array.isArray(s)) return s.length >= 1;
       return typeof s === 'string' && s.trim().length > 0;
     });
 
     console.log('[OrdersLockProbe]', {
       supplierId, wantAll, docs: docs.length, anyALL, anyDept,
+      cycleKey,
       sample: docs.slice(0,3).map(d => ({ id: d.id, scope: readScope(d), status: d.status }))
     });
 
-    if (wantAll) return anyDept ? 'DEPT_EXISTS' : null;
+    // NEW: correct logic
+    if (wantAll) {
+      // Creating an ALL-scope draft: block if ANY ALL-scope draft already exists,
+      // or optionally if dept-specific drafts already exist.
+      if (anyALL) return 'ALL_EXISTS';
+      if (anyDept) return 'DEPT_EXISTS';
+      return null;
+    }
+
+    // Creating a dept-specific draft: block if an ALL-scope draft exists.
     return anyALL ? 'ALL_EXISTS' : null;
   }
 
   const createDraftForPreview=useCallback(async()=>{
-    if(!venueId||!supplierPreview)return;
+    if(!venueId||!supplierPreview||!snapshot)return;
+
+    // HARD GUARD: if this suggestionKey is already present for this cycle, do nothing.
+    const sKey = supplierPreview.suggestionKey;
+    if (sKey && existingKeys.has(sKey)) {
+      showToast('Draft already exists for this supplier for this stocktake cycle.');
+      return;
+    }
+
     try{
       const key = supplierPreview.supplierId || 'unassigned';
       const supplierIdOrNull = key==='unassigned' ? null : key;
+      const cycleKey = snapshot?._meta?.stockCycleKey || null;
 
-      // ---- Preflight lock (blocks double-handling) ----
-      const lock = await __probeSupplierLocks(venueId, supplierIdOrNull, selectedDeptId==='ALL');
-      if (lock === 'ALL_EXISTS') { showToast('Blocked: ALL order already exists for this supplier.'); return; }
-      if (lock === 'DEPT_EXISTS') { showToast('Blocked: Department draft(s) already exist for this supplier.'); return; }
+      // ---- Preflight lock (blocks double-handling *within this cycle* only) ----
+      const wantAll = selectedDeptId === 'ALL';
+      const lock = await __probeSupplierLocks(venueId, supplierIdOrNull, wantAll, cycleKey);
+      if (lock === 'ALL_EXISTS') { showToast('Blocked: ALL order already exists for this supplier for this cycle.'); return; }
+      if (lock === 'DEPT_EXISTS') { showToast('Blocked: Department draft(s) already exist for this supplier for this cycle.'); return; }
 
       const existingId = await findExistingDraftForSupplier(key==='unassigned'?null:key);
 
@@ -358,12 +443,15 @@ export default function SuggestedOrderScreen(){
         const legacyMap = {
           [key]: { supplierName: supplierPreview.supplierName ?? null, lines: supplierPreview.lines || [] },
         };
-        const res = await createDraftsFromSuggestions(venueId, legacyMap, { createdBy: uid });
+        const res = await createDraftsFromSuggestions(venueId, legacyMap, {
+          createdBy: uid,
+          stockCycleKey: cycleKey || null,
+        });
         if (!res || !Array.isArray(res.created)) { showToast('Could not create draft.'); return; }
         if ((res as any).blockedReason) {
           const why = (res as any).blockedReason;
-          if (why === 'ALL_EXISTS') showToast('Blocked: ALL order already exists for this supplier.');
-          if (why === 'DEPT_EXISTS') showToast('Blocked: Department draft(s) already exist for this supplier.');
+          if (why === 'ALL_EXISTS') showToast('Blocked: ALL order already exists for this supplier for this cycle.');
+          if (why === 'DEPT_EXISTS') showToast('Blocked: Department draft(s) already exist for this supplier for this cycle.');
           if (why === 'NEED_MANAGER') showToast('Only managers can create an ALL-scope draft.');
           return;
         }
@@ -398,7 +486,7 @@ export default function SuggestedOrderScreen(){
     }catch(e:any){
       Alert.alert('Could not create draft',e?.message||'Please try again.');
     }
-  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,selectedDeptId]);
+  },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,snapshot,selectedDeptId,existingKeys]);
 
   // Quick-assign supplier for a product (from Unassigned preview)
   const openAssignForProduct = useCallback(async(productId:string)=>{
@@ -452,7 +540,10 @@ export default function SuggestedOrderScreen(){
 
   const keyExtractor=useCallback((r:BucketRow)=>String(r.id),[]);
   const renderRow=useCallback(({item:row}:{item:BucketRow})=>(
-    <TouchableOpacity style={[S.row,row.supplierId==='unassigned'?S.rowUnassigned:null]} onPress={()=>openSupplierPreview(row.supplierId,row.supplierName)}>
+    <TouchableOpacity
+      style={[S.row,row.supplierId==='unassigned'?S.rowUnassigned:null]}
+      onPress={()=>openSupplierPreview(row.supplierId,row.supplierName)}
+    >
       <View style={{flex:1}}>
         <Text style={S.rowTitle}>{row.supplierName}</Text>
         <Text style={S.rowSub}>{row.itemsCount} item{row.itemsCount===1?'':'s'}</Text>
@@ -464,7 +555,9 @@ export default function SuggestedOrderScreen(){
   const HeaderRight=useMemo(()=>(
     <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
       <View style={[S.badge,entitled?S.badgeOk:S.badgeLock]}>
-        <Text style={[S.badgeText,entitled?S.badgeTextOk:S.badgeTextLock]}>{entitled?'AI enabled':'AI locked'}</Text>
+        <Text style={[S.badgeText,entitled?S.badgeTextOk:S.badgeTextLock]}>
+          {entitled?'AI enabled':'AI locked'}
+        </Text>
       </View>
       <View style={S.segmentWrap}>
         <TouchableOpacity onPress={()=>onToggleMode('math')} style={[S.segmentBtn,mode==='math'&&S.segmentActive]}>
@@ -506,17 +599,60 @@ export default function SuggestedOrderScreen(){
     </View>
   ),[depts,selectedDeptId,doRefreshRaw]);
 
-  const listHeader=useMemo(()=>(
-    <View style={S.header}>
-      <View style={{flex:1}}>
-        <Text style={S.title}>Suggested Orders</Text>
-        <Text style={S.rowSub}>
-          {selectedDeptId==='ALL' ? 'Combined across departments' : 'Department-specific'}
-        </Text>
+  const listHeader=useMemo(()=>{
+    const meta = snapshot && snapshot._meta ? snapshot._meta : null;
+
+    let scopeLabel = 'Combined across departments';
+    if (selectedDeptId !== 'ALL') {
+      const dept = depts.find(d => d.id === selectedDeptId);
+      scopeLabel = dept ? `Department: ${dept.name}` : 'Department-specific';
+    }
+
+    let generatedLabel: string | null = null;
+    if (meta && meta.generatedAt) {
+      try {
+        const d = new Date(meta.generatedAt);
+        generatedLabel = `Snapshot at ${d.toLocaleString()}`;
+      } catch {
+        generatedLabel = null;
+      }
+    }
+
+    const cycleLabel = meta?.stockCycleKey
+      ? `Stocktake cycle: ${meta.stockCycleKey}`
+      : null;
+
+    return (
+      <View>
+        <View style={S.header}>
+          <View style={{flex:1}}>
+            <Text style={S.title}>Suggested Orders</Text>
+            <Text style={S.rowSub}>{scopeLabel}</Text>
+          </View>
+          <IdentityBadge/>
+        </View>
+        {meta && (
+          <View style={S.metaCard}>
+            <Text style={S.metaTitle}>
+              {mode === 'ai' ? 'AI snapshot context' : 'Math snapshot context'}
+            </Text>
+            <Text style={S.metaText}>
+              Engine: {mode === 'ai' ? 'AI + recent history (beta)' : 'PAR-based maths'}
+            </Text>
+            <Text style={S.metaText}>
+              Suppliers: {meta.suppliersWithLines ?? 0} · Lines: {meta.totalLines ?? 0}
+            </Text>
+            {generatedLabel && (
+              <Text style={S.metaText}>{generatedLabel}</Text>
+            )}
+            {cycleLabel && (
+              <Text style={S.metaText}>{cycleLabel}</Text>
+            )}
+          </View>
+        )}
       </View>
-      <IdentityBadge/>
-    </View>
-  ),[selectedDeptId]);
+    );
+  },[snapshot,selectedDeptId,depts,mode]);
 
   return (
     <View style={S.wrap}>
@@ -531,7 +667,9 @@ export default function SuggestedOrderScreen(){
         ListEmptyComponent={!refreshing?(
           <View style={S.empty}>
             <Text style={S.emptyTitle}>All items are at or above PAR</Text>
-            <Text style={S.emptyText}>Based on your most recent stock takes and per-dept PARs, there’s nothing to top up right now.</Text>
+            <Text style={S.emptyText}>
+              Based on your most recent stock takes and per-dept PARs, there’s nothing to top up right now.
+            </Text>
           </View>
         ):null}
       />
@@ -575,14 +713,12 @@ export default function SuggestedOrderScreen(){
                 <Text style={[S.smallBtnText,{color:'#111827'}]}>Close</Text>
               </TouchableOpacity>
 
+              {/* guarded create: per-cycle suggestionKey + lock probe */}
               <TouchableOpacity
                 onPress={createDraftForPreview}
-                disabled={!!supplierPreview?.alreadyDrafted}
-                style={[S.smallBtn, supplierPreview?.alreadyDrafted && { opacity: 0.5 }]}
+                style={S.smallBtn}
               >
-                <Text style={S.smallBtnText}>
-                  {supplierPreview?.alreadyDrafted ? 'Already drafted' : 'Create draft'}
-                </Text>
+                <Text style={S.smallBtnText}>Create draft</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -643,7 +779,10 @@ const S = StyleSheet.create({
 
   chipsBar: { paddingTop: 8, paddingBottom: 6 },
   chipsRow: { paddingHorizontal: 16, alignItems: 'center', gap: 8 },
-  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor:'#fff' },
+  chip: {
+    paddingVertical: 6, paddingHorizontal: 12,
+    borderRadius: 999, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor:'#fff'
+  },
   chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
   chipText: { fontSize: 12, fontWeight: '800', color:'#111827' },
   chipTextActive: { color: '#fff' },
@@ -678,7 +817,11 @@ const S = StyleSheet.create({
   emptyTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
   emptyText: { fontSize: 13, color: '#6b7280' },
 
-  lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee' },
+  lineRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee'
+  },
   lineName: { fontSize: 14, fontWeight: '600' },
 
   smallBtn: { backgroundColor: '#111827', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
@@ -690,4 +833,15 @@ const S = StyleSheet.create({
   modalBack: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 24 },
   modalCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, maxHeight: '75%' },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+
+  metaCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+  },
+  metaTitle: { fontSize: 12, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  metaText: { fontSize: 11, color: '#64748b' },
 });
