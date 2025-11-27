@@ -1,6 +1,20 @@
 /* @ts-nocheck */
-import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+} from 'react';
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Alert,
+  TextInput,
+} from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 
@@ -23,7 +37,7 @@ export default function FastReceiveDetailModal({
   visible,
   item,
   onClose,
-  onAttached, // callback after successful attach
+  onAttached,
 }: {
   visible: boolean;
   item: FastRec | null;
@@ -33,18 +47,41 @@ export default function FastReceiveDetailModal({
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
 
-  const po = useMemo(() => item?.parsedPo ?? item?.payload?.invoice?.poNumber ?? '—', [item]);
+  // Editable copy of the OCR lines
+  const [draftLines, setDraftLines] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (item && Array.isArray(item?.payload?.lines)) {
+      const cloned = item.payload.lines.map((l: any) => ({ ...l }));
+      setDraftLines(cloned);
+    } else {
+      setDraftLines([]);
+    }
+  }, [item?.id]);
+
+  const po = useMemo(
+    () => item?.parsedPo ?? item?.payload?.invoice?.poNumber ?? '—',
+    [item]
+  );
   const when = useMemo(
     () => (item?.createdAt?.toDate ? item.createdAt.toDate().toISOString() : '—'),
     [item]
   );
-  const src = useMemo(() => item?.source || item?.payload?.invoice?.source || '—', [item]);
-  const path = useMemo(() => item?.storagePath || item?.payload?.invoice?.storagePath || '—', [item]);
-  const lines = useMemo(() => Array.isArray(item?.payload?.lines) ? item!.payload!.lines : [], [item]);
+  const src = useMemo(
+    () => item?.source || item?.payload?.invoice?.source || '—',
+    [item]
+  );
+  const path = useMemo(
+    () => item?.storagePath || item?.payload?.invoice?.storagePath || '—',
+    [item]
+  );
+
+  const lines = useMemo(() => draftLines, [draftLines]);
   const warnings = useMemo(() => item?.payload?.warnings || [], [item]);
 
   const totals = useMemo(() => {
-    let n = 0, sum = 0;
+    let n = 0;
+    let sum = 0;
     for (const l of lines) {
       n += 1;
       const up = Number(l?.unitPrice ?? 0);
@@ -54,11 +91,38 @@ export default function FastReceiveDetailModal({
     return { count: n, extTotal: sum };
   }, [lines]);
 
-  const tryAttach = useCallback(async ()=>{
+  const updateLine = useCallback((idx: number, patch: { qty?: string; unitPrice?: string }) => {
+    setDraftLines(prev => {
+      const next = prev.slice();
+      const current = next[idx] || {};
+      let qty = current.qty;
+      let unit = current.unitPrice;
+
+      if (patch.qty !== undefined) {
+        const raw = parseFloat(String(patch.qty).replace(/[^0-9.\-]/g, ''));
+        qty = Number.isFinite(raw) && raw > 0 ? raw : 0;
+      }
+      if (patch.unitPrice !== undefined) {
+        const raw = parseFloat(String(patch.unitPrice).replace(/[^0-9.\-]/g, ''));
+        unit = Number.isFinite(raw) && raw >= 0 ? raw : 0;
+      }
+
+      next[idx] = {
+        ...current,
+        qty,
+        unitPrice: unit,
+      };
+      return next;
+    });
+  }, []);
+
+  const tryAttach = useCallback(async () => {
     try{
       if (!venueId) throw new Error('No venue selected');
       if (!item) throw new Error('No snapshot selected');
       setBusy(true);
+
+      const effectiveLines = Array.isArray(lines) ? lines : [];
 
       const result = await tryAttachToOrderOrSavePending({
         venueId,
@@ -68,12 +132,12 @@ export default function FastReceiveDetailModal({
             source: (item?.source || item?.payload?.invoice?.source || 'unknown') as any,
             storagePath: item?.storagePath || item?.payload?.invoice?.storagePath || '',
           },
-          lines: item?.payload?.lines || [],
+          lines: effectiveLines,
           confidence: item?.payload?.confidence ?? null,
           warnings: item?.payload?.warnings ?? [],
         },
         storagePath: item?.storagePath || '',
-        noPendingFallback: true, // do NOT create duplicates
+        noPendingFallback: true,
       });
 
       if (result.attached && result.orderId) {
@@ -87,7 +151,7 @@ export default function FastReceiveDetailModal({
     } finally {
       setBusy(false);
     }
-  }, [venueId, item, onAttached]);
+  }, [venueId, item, lines, onAttached]);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -111,22 +175,51 @@ export default function FastReceiveDetailModal({
             </View>
 
             <View style={S.block}>
-              <Text style={S.blockTitle}>Top Lines</Text>
+              <Text style={S.blockTitle}>Lines (editable)</Text>
+              <Text style={S.tip}>
+                Fix any OCR mistakes here before attaching to an order.
+              </Text>
               {lines.length === 0 ? (
                 <Text style={S.dim}>No lines detected.</Text>
               ) : (
-                lines.slice(0, 20).map((l, i) => (
-                  <View key={`${i}-${l?.name}`} style={S.row}>
-                    <Text style={[S.cell, { flex:5 }]} numberOfLines={1}>{l?.name || '(unnamed)'}</Text>
-                    <Text style={[S.cell, { flex:2 }]}>{Number(l?.qty ?? 0)}</Text>
-                    <Text style={[S.cell, { flex:3, textAlign:'right' }]}>
-                      {l?.unitPrice != null ? `$${Number(l.unitPrice).toFixed(2)}` : '—'}
+                lines.slice(0, 40).map((l, i) => (
+                  <View key={`${i}-${l?.name}`} style={S.lineRow}>
+                    <Text style={S.lineName} numberOfLines={2}>
+                      {l?.name || '(unnamed)'}
                     </Text>
+                    <View style={S.editRow}>
+                      <View style={S.editField}>
+                        <Text style={S.editLabel}>Qty</Text>
+                        <TextInput
+                          keyboardType="numeric"
+                          value={
+                            typeof l?.qty === 'number' && isFinite(l.qty)
+                              ? String(l.qty)
+                              : ''
+                          }
+                          onChangeText={(txt)=>updateLine(i, { qty: txt })}
+                          style={S.input}
+                        />
+                      </View>
+                      <View style={S.editField}>
+                        <Text style={S.editLabel}>Unit</Text>
+                        <TextInput
+                          keyboardType="numeric"
+                          value={
+                            typeof l?.unitPrice === 'number' && isFinite(l.unitPrice)
+                              ? String(l.unitPrice)
+                              : ''
+                          }
+                          onChangeText={(txt)=>updateLine(i, { unitPrice: txt })}
+                          style={S.input}
+                        />
+                      </View>
+                    </View>
                   </View>
                 ))
               )}
-              {lines.length > 20 ? (
-                <Text style={S.dim}>+ {lines.length - 20} more…</Text>
+              {lines.length > 40 ? (
+                <Text style={S.dim}>+ {lines.length - 40} more…</Text>
               ) : null}
             </View>
 
@@ -149,7 +242,11 @@ export default function FastReceiveDetailModal({
           >
             <Text style={S.btnText}>{busy ? 'Attaching…' : 'Try Attach to Order'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity disabled={busy} onPress={onClose} style={[S.btn, { backgroundColor:'#F3F4F6' }]}>
+          <TouchableOpacity
+            disabled={busy}
+            onPress={onClose}
+            style={[S.btn, { backgroundColor:'#F3F4F6' }]}
+          >
             <Text style={[S.btnText, { color:'#111' }]}>Close</Text>
           </TouchableOpacity>
         </View>
@@ -159,18 +256,72 @@ export default function FastReceiveDetailModal({
 }
 
 const S = StyleSheet.create({
-  header: { flexDirection:'row', alignItems:'center', justifyContent:'space-between', padding:12, borderBottomWidth:1, borderColor:'#E5E7EB' },
+  header: {
+    flexDirection:'row',
+    alignItems:'center',
+    justifyContent:'space-between',
+    padding:12,
+    borderBottomWidth:1,
+    borderColor:'#E5E7EB'
+  },
   back: { fontSize:18, color:'#2563EB', width:60 },
   title: { fontSize:18, fontWeight:'800' },
-  block: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, padding:12, backgroundColor:'#F9FAFB' },
-  blockTitle: { fontWeight:'800', marginBottom:8 },
+
+  block: {
+    borderWidth:1,
+    borderColor:'#E5E7EB',
+    borderRadius:12,
+    padding:12,
+    backgroundColor:'#F9FAFB'
+  },
+  blockTitle: { fontWeight:'800', marginBottom:4 },
   kv: { color:'#374151', marginTop:2 },
   v: { fontWeight:'700' },
-  row: { flexDirection:'row', gap:8, paddingVertical:6, borderBottomWidth:StyleSheet.hairlineWidth, borderBottomColor:'#E5E7EB' },
-  cell: { color:'#111' },
-  dim: { color:'#94A3B8' },
-  warn: { color:'#92400e', backgroundColor:'#fffbeb', paddingVertical:4, paddingHorizontal:8, borderRadius:8, marginTop:4 },
-  footer: { flexDirection:'row', gap:10, padding:16, borderTopWidth:1, borderTopColor:'#E5E7EB' },
-  btn: { flex:1, padding:14, borderRadius:12, alignItems:'center', justifyContent:'center' },
+
+  lineRow: {
+    paddingVertical:6,
+    borderBottomWidth:StyleSheet.hairlineWidth,
+    borderBottomColor:'#E5E7EB'
+  },
+  lineName: { fontWeight:'600', marginBottom:4 },
+  editRow: { flexDirection:'row', gap:8 },
+  editField: { flex:1 },
+  editLabel: { fontSize:11, color:'#6B7280', marginBottom:2 },
+  input: {
+    borderWidth:1,
+    borderColor:'#E5E7EB',
+    borderRadius:8,
+    paddingHorizontal:8,
+    paddingVertical:6,
+    backgroundColor:'#fff',
+    fontSize:13,
+  },
+
+  dim: { color:'#94A3B8', marginTop:4 },
+  tip: { color:'#6B7280', marginBottom:6, fontSize:12 },
+
+  warn: {
+    color:'#92400e',
+    backgroundColor:'#fffbeb',
+    paddingVertical:4,
+    paddingHorizontal:8,
+    borderRadius:8,
+    marginTop:4
+  },
+
+  footer: {
+    flexDirection:'row',
+    gap:10,
+    padding:16,
+    borderTopWidth:1,
+    borderTopColor:'#E5E7EB'
+  },
+  btn: {
+    flex:1,
+    padding:14,
+    borderRadius:12,
+    alignItems:'center',
+    justifyContent:'center'
+  },
   btnText: { color:'#fff', fontWeight:'800' },
 });
