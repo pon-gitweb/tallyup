@@ -264,7 +264,8 @@ function extractPdfLines(text) {
   const warnings = [];
 
   const raw = String(text || '')
-    .replace(//g, '')
+    .replace(/
+/g, '')
     .split('
 ')
     .map(l => l.replace(/ /g, ' ').trim())   // normalize NBSP

@@ -24,3 +24,6 @@ export { ocrInvoicePhoto } from "./ocrInvoicePhoto";
 
 // === NEW: create venue from mobile app ===
 export { createVenueOwnedByUser } from "./createVenueOwnedByUser";
+
+// === NEW: Sales PDF normaliser (used by SalesImportPanel) ===
+export { processSalesPdf } from "./processSalesPdf";
