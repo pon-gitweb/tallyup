@@ -414,13 +414,21 @@ function StockTakeAreaInventoryScreen() {
     AS.setItem(key, areaId).catch(() => {});
   }, [venueId, departmentId, areaId]);
 
-  // [ONE AREA, ONE USER] — acquire a lock on this area while this screen is active.
+    // [ONE AREA, ONE USER] — acquire a lock on this area while this screen is active.
   const lockHeldRef = useRef(false);
 
   useEffect(() => {
     if (!itemsPathOk || !venueId || !departmentId || !areaId || !uid) return;
 
-    const areaRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId);
+    const areaRef = doc(
+      db,
+      'venues',
+      venueId,
+      'departments',
+      departmentId,
+      'areas',
+      areaId,
+    );
     let cancelled = false;
 
     const acquireLock = async () => {
@@ -430,6 +438,7 @@ function StockTakeAreaInventoryScreen() {
           if (!snap.exists()) {
             throw new Error('Area not found');
           }
+
           const data: any = snap.data() || {};
           const lock = data.currentLock || {};
           const now = Date.now();
@@ -437,7 +446,7 @@ function StockTakeAreaInventoryScreen() {
           const lockedAtMillis = lock.lockedAtMillis || 0;
           const STALE_MS = 45 * 60 * 1000; // 45 minutes
 
-          const isStale = !lockedAtMillis || (now - lockedAtMillis > STALE_MS);
+          const isStale = !lockedAtMillis || now - lockedAtMillis > STALE_MS;
 
           if (existingUid && existingUid !== uid && !isStale) {
             const err: any = new Error('TAKEN_BY_OTHER');
@@ -445,7 +454,8 @@ function StockTakeAreaInventoryScreen() {
             throw err;
           }
 
-          tx.update(areaRef, {
+          // Take/refresh the lock for this user
+                    tx.update(areaRef, {
             currentLock: {
               uid,
               name: userLabel,
@@ -480,6 +490,7 @@ function StockTakeAreaInventoryScreen() {
 
     acquireLock();
 
+    // Cleanup: only clear the lock if we still hold it
     return () => {
       cancelled = true;
       if (!lockHeldRef.current) return;
@@ -487,16 +498,20 @@ function StockTakeAreaInventoryScreen() {
       runTransaction(db, async (tx) => {
         const snap = await tx.get(areaRef);
         if (!snap.exists()) return;
+
         const data: any = snap.data() || {};
         const lock = data.currentLock;
+
         if (lock?.uid === uid) {
-          tx.update(areaRef, { currentLock: null });
+          tx.update(areaRef, {
+            currentLock: null,
+          });
         }
       }).catch((e) => {
         if (__DEV__) console.log('[AreaLock] release failed', e?.message || e);
       });
     };
-  }, [itemsPathOk, venueId, departmentId, areaId, uid, userLabel, nav]);
+  }, [itemsPathOk, venueId, departmentId, areaId, uid, userLabel]);
 
   // [PAIR2] global density
   const { density, setDensity, isCompact } = useDensity();
@@ -1176,10 +1191,14 @@ try {
       } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
     };
 
-    Alert.alert('Initialise with zeros', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Confirm', style: 'destructive', onPress: throttleAction(doIt) }
-    ]);
+   Alert.alert(
+  'Initialise with zeros',
+  msg,
+  [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Confirm', style: 'destructive', onPress: throttleAction(doIt) },
+  ],
+);
   };
 
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
@@ -1575,7 +1594,6 @@ try {
                   ref={editParRef}
                   value={editPar}
                   onChangeText={setEditPar}
-                  placeholder="e.g. 24"
                   placeholder="e.g. 24"
                   keyboardType="decimal-pad"
                   inputMode="decimal"

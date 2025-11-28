@@ -1,36 +1,45 @@
-import React, { useEffect, useMemo, useState } from 'react';
+// @ts-nocheck
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   View,
   Text,
-  FlatList,
-  TextInput,
-  TouchableOpacity,
-  Alert,
-  ActivityIndicator,
   StyleSheet,
-  Modal,
-  SafeAreaView,
+  FlatList,
+  TouchableOpacity,
+  TextInput,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import {
-  collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
-} from 'firebase/firestore';
+import { useNavigation } from '@react-navigation/native';
+import { MaterialIcons } from '@expo/vector-icons';
+
 import { db } from '../../services/firebase';
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+} from 'firebase/firestore';
+
 import { useVenueId } from '../../context/VenueProvider';
-import { throttleNav } from '../../utils/pressThrottle';
-import { dlog } from '../../utils/devlog';
+import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
-import { resetDepartment } from '../../services/reset';
+import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 
-type Dept = { id: string; name: string };
-type AreaDoc = { startedAt?: any; completedAt?: any };
-
-type DeptWithStatus = Dept & {
-  status: 'Completed' | 'In progress' | 'Not started';
-  totalAreas: number;
-  completedAreas: number;
-  inProgressAreas: number;
+type DeptRow = {
+  id: string;
+  name: string;
+  order?: number;
+  startedAt?: any;
+  completedAt?: any;
 };
 
 function DepartmentSelectionScreen() {
@@ -38,488 +47,281 @@ function DepartmentSelectionScreen() {
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
-  const [departments, setDepartments] = useState<DeptWithStatus[]>([]);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebouncedValue(search, 200);
+  const [refreshing, setRefreshing] = useState(false);
+  const [departments, setDepartments] = useState<DeptRow[]>([]);
+  const [q, setQ] = useState('');
+  const dq = useDebouncedValue(q, 150);
 
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
+  // Ensure we only try to seed once per mount to avoid loops
+  const seedTriedRef = useRef(false);
 
-  const [renaming, setRenaming] = useState<Dept | null>(null);
-  const [renameTo, setRenameTo] = useState('');
+  // If venueId is missing, show a soft error
+  const venueMissing = !venueId;
 
-  const paramsMissing = !venueId;
-
-  async function computeDeptStatus(dep: Dept): Promise<DeptWithStatus> {
+  useEffect(() => {
     if (!venueId) {
-      return {
-        ...dep,
-        status: 'Not started',
-        totalAreas: 0,
-        completedAreas: 0,
-        inProgressAreas: 0,
-      };
-    }
-
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
-    if (areasSnap.empty) {
-      return {
-        ...dep,
-        status: 'Not started',
-        totalAreas: 0,
-        completedAreas: 0,
-        inProgressAreas: 0,
-      };
-    }
-
-    let anyProgress = false;
-    let allCompleted = true;
-    let totalAreas = 0;
-    let completedAreas = 0;
-    let inProgressAreas = 0;
-
-    areasSnap.forEach((d) => {
-      totalAreas += 1;
-      const a = d.data() as AreaDoc;
-      const started = !!(a?.startedAt);
-      const completed = !!(a?.completedAt);
-
-      if (started || completed) anyProgress = true;
-      if (!completed) allCompleted = false;
-
-      if (completed) {
-        completedAreas += 1;
-      } else if (started) {
-        inProgressAreas += 1;
-      }
-    });
-
-    let status: DeptWithStatus['status'];
-    if (allCompleted) {
-      status = 'Completed';
-    } else if (anyProgress) {
-      status = 'In progress';
-    } else {
-      status = 'Not started';
-    }
-
-    return {
-      ...dep,
-      status,
-      totalAreas,
-      completedAreas,
-      inProgressAreas,
-    };
-  }
-
-  async function reload() {
-    if (!venueId) {
-      setDepartments([]);
       setLoading(false);
+      setDepartments([]);
       return;
     }
-    try {
-      setLoading(true);
-      const colRef = collection(db, 'venues', venueId, 'departments');
-      const snap = await getDocs(query(colRef, orderBy('name'), limit(500)));
-      const base = snap.docs.map(d => ({ id: d.id, name: (d.data() as any)?.name || d.id }));
-      const withStatuses: DeptWithStatus[] = [];
-      for (const dep of base) {
-        withStatuses.push(await computeDeptStatus(dep));
-      }
-      setDepartments(withStatuses);
-    } catch (e) {
-      dlog('[Departments] reload error', (e as any)?.message);
-      setDepartments([]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  useEffect(() => { reload(); }, [venueId]);
-  useFocusEffect(React.useCallback(() => { reload(); }, [venueId]));
+    setLoading(true);
+    const col = collection(db, 'venues', venueId, 'departments');
+    const qy = query(col, orderBy('order', 'asc'));
 
-  // If we somehow have no venueId, show a clear message + back button instead of a blank list
-  if (paramsMissing) {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.wrap}>
-          <Text style={styles.title}>Departments</Text>
-          <Text style={styles.hint}>
-            We couldn&apos;t find your venue details. Please go back and reopen Stock Control from your home screen.
-          </Text>
-          <TouchableOpacity
-            style={[styles.primaryBtn, { marginTop: 12, alignSelf: 'flex-start' }]}
-            onPress={() => nav.goBack()}
-          >
-            <Text style={styles.primaryText}>Go back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+    const unsub = onSnapshot(
+      qy,
+      async (snap) => {
+        // No departments yet → try to seed defaults once
+        if (snap.empty) {
+          setDepartments([]);
+          setLoading(false);
+
+          if (!seedTriedRef.current) {
+            seedTriedRef.current = true;
+            try {
+              const result = await seedDefaultDepartmentsAndAreas(venueId);
+              if (__DEV__)
+
+                console.log('[Departments] seeded default departments/areas', {
+                  venueId,
+                  result,
+                });
+            } catch (e: any) {
+              if (__DEV__)
+                console.log(
+                  '[Departments] seedDefaultDepartmentsAndAreas failed',
+                  e?.code,
+                  e?.message || String(e),
+                );
+              // Don’t block the user; they can still add departments manually later.
+            }
+          }
+
+          return;
+        }
+
+        const rows: DeptRow[] = [];
+        snap.forEach((d) => {
+          rows.push({
+            id: d.id,
+            ...(d.data() as any),
+          });
+        });
+
+        setDepartments(rows);
+        setLoading(false);
+      },
+      (e: any) => {
+        if (__DEV__) {
+          console.log('[Departments] listener error', e?.code, e?.message || e);
+        }
+        setDepartments([]);
+        setLoading(false);
+        Alert.alert(
+          'Could not load departments',
+          e?.message || 'Permission or connectivity issue',
+        );
+      },
     );
-  }
+
+    return () => unsub();
+  }, [venueId]);
+
+  const onRefresh = useCallback(() => {
+    // Realtime listener keeps things fresh; we just show the spinner briefly.
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 300);
+  }, []);
 
   const filtered = useMemo(() => {
-    const n = debouncedSearch.trim().toLowerCase();
-    if (!n) return departments;
-    return departments.filter(d => d.name.toLowerCase().includes(n));
-  }, [departments, debouncedSearch]);
+    const term = dq.trim().toLowerCase();
+    if (!term) return departments;
+    return departments.filter((d) =>
+      (d.name || d.id).toLowerCase().includes(term),
+    );
+  }, [departments, dq]);
 
-  async function onAdd() {
-    const name = newName.trim();
-    if (!name) {
-      Alert.alert('Missing name', 'Please enter a department name.');
-      return;
-    }
-    try {
+  const openDepartment = useCallback(
+    (dept: DeptRow) => {
       if (!venueId) return;
-      const now = serverTimestamp();
-      await addDoc(collection(db, 'venues', venueId, 'departments'), { name, createdAt: now, updatedAt: now });
-      setNewName('');
-      setAdding(false);
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Create failed', e?.message ?? 'Unknown error');
-    }
-  }
+      nav.navigate('AreaSelection', {
+        venueId,
+        departmentId: dept.id,
+        departmentName: dept.name,
+      });
+    },
+    [nav, venueId],
+  );
 
-  async function onRenameConfirm() {
-    if (!renaming || !venueId) return;
-    const newLabel = renameTo.trim();
-    if (!newLabel) {
-      Alert.alert('Missing name', 'Please enter a department name.');
-      return;
-    }
-    try {
-      const dref = doc(db, 'venues', venueId, 'departments', renaming.id);
-      await updateDoc(dref, { name: newLabel, updatedAt: serverTimestamp() });
-      setRenaming(null);
-      setRenameTo('');
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Rename failed', e?.message ?? 'Unknown error');
-    }
-  }
+  const renderDept = ({ item }: { item: DeptRow }) => {
+    const status: 'idle' | 'inprog' | 'done' = item.completedAt
+      ? 'done'
+      : item.startedAt
+      ? 'inprog'
+      : 'idle';
 
-  async function onDelete(dep: Dept) {
-    if (!venueId) return;
-    let proceed = false;
-    await new Promise<void>((resolve) => {
-      Alert.alert(
-        'Delete department',
-        `Delete “${dep.name}”? This cannot be undone.`,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-          { text: 'Delete', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
-        ],
-      );
-    });
-    if (!proceed) return;
+    const statusLabel =
+      status === 'done'
+        ? 'Completed'
+        : status === 'inprog'
+        ? 'In progress'
+        : 'Not started';
 
-    try {
-      await deleteDoc(doc(db, 'venues', venueId, 'departments', dep.id));
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Delete failed', e?.message ?? 'Unknown error');
-    }
-  }
-
-  async function onResetDepartment(dep: Dept) {
-    if (!venueId) return;
-    let proceed = false;
-    await new Promise<void>((resolve) => {
-      Alert.alert(
-        'Reset department',
-        `Reset all areas in “${dep.name}” to Not started?\n\nThis clears started/completed flags only.`,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-          { text: 'Reset', style: 'destructive', onPress: () => { proceed = true; resolve(); } },
-        ],
-      );
-    });
-    if (!proceed) return;
-    try {
-      await resetDepartment(venueId, dep.id);
-      await reload();
-    } catch (e: any) {
-      Alert.alert('Reset failed', e?.message ?? 'Unknown error');
-    }
-  }
-
-  const makeGoToAreas = (departmentId: string) =>
-    throttleNav(() => nav.navigate('Areas', { venueId, departmentId }));
-
-  function Row({ item }: { item: DeptWithStatus }) {
-    const pill = {
-      Completed: { bg: '#E8F5E9', fg: '#2E7D32' },
-      'In progress': { bg: '#FFF8E1', fg: '#FF6F00' },
-      'Not started': { bg: '#ECEFF1', fg: '#455A64' },
-    }[item.status];
-
-    const { totalAreas, completedAreas, inProgressAreas } = item;
-    let summary = '';
-    if (totalAreas > 0) {
-      if (completedAreas > 0) {
-        summary = `${completedAreas} of ${totalAreas} areas completed`;
-      } else if (inProgressAreas > 0) {
-        summary = `${inProgressAreas} of ${totalAreas} areas started`;
-      } else {
-        summary = `0 of ${totalAreas} areas started`;
-      }
-    }
+    const pillStyle =
+      status === 'done'
+        ? styles.pillDone
+        : status === 'inprog'
+        ? styles.pillInProg
+        : styles.pillIdle;
 
     return (
       <TouchableOpacity
         style={styles.row}
-        onPress={makeGoToAreas(item.id)}
-        onLongPress={() => onResetDepartment(item)}
-        delayLongPress={450}
+        onPress={() => openDepartment(item)}
+        activeOpacity={0.9}
       >
-        <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{item.name}</Text>
-          {summary ? (
-            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
-              {summary}
-            </Text>
-          ) : null}
+        <View style={{ flex: 1, paddingRight: 10 }}>
+          <Text style={styles.rowTitle}>{item.name || item.id}</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 4,
+            }}
+          >
+            <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+          </View>
         </View>
-        <View style={[styles.statusPill, { backgroundColor: pill.bg }]}>
-          <Text style={{ color: pill.fg, fontWeight: '700' }}>{item.status}</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.smallBtn}
-          onPress={() => {
-            setRenaming(item);
-            setRenameTo(item.name);
-          }}
-        >
-          <Text style={styles.smallBtnText}>Rename</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.smallBtn, { backgroundColor: '#FF3B30' }]}
-          onPress={() => onDelete(item)}
-        >
-          <Text style={[styles.smallBtnText, { color: 'white' }]}>Del</Text>
-        </TouchableOpacity>
+        <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
       </TouchableOpacity>
+    );
+  };
+
+  if (venueMissing) {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Departments</Text>
+            <Text style={styles.sub}>
+              We couldn&apos;t find a current venue. Please go back and reopen.
+            </Text>
+          </View>
+          <IdentityBadge />
+        </View>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.wrap}>
-        <Text style={styles.title}>Departments</Text>
-        <Text style={styles.hint}>
-          Tap a department to continue your stocktake. Long-press to reset its areas back to{' '}
-          <Text style={styles.hintBold}>Not started</Text>. Status shows Not started, In progress, or Completed.
-        </Text>
-
-        <View style={styles.searchRow}>
-          <TextInput
-            placeholder="Search departments…"
-            value={search}
-            onChangeText={setSearch}
-            style={styles.search}
-          />
-          <TouchableOpacity style={styles.primaryBtn} onPress={() => setAdding(true)}>
-            <Text style={styles.primaryText}>New</Text>
-          </TouchableOpacity>
+    <View style={styles.wrap}>
+      {/* Header */}
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={styles.title}>Departments</Text>
+          <Text style={styles.sub}>Choose a department to start counting</Text>
         </View>
-
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
-            <Text>Loading…</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={d => d.id}
-            ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-            contentContainerStyle={{ paddingBottom: 40 }}
-            renderItem={Row}
-          />
-        )}
-
-        {/* Add modal */}
-        <Modal
-          visible={adding}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setAdding(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>New department</Text>
-              <TextInput
-                autoFocus
-                placeholder="Department name"
-                value={newName}
-                onChangeText={setNewName}
-                style={styles.input}
-              />
-              <View style={styles.modalRow}>
-                <TouchableOpacity
-                  style={[styles.secondaryBtn]}
-                  onPress={() => setAdding(false)}
-                >
-                  <Text style={styles.secondaryText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.primaryBtn, !newName.trim() && styles.disabled]}
-                  onPress={onAdd}
-                  disabled={!newName.trim()}
-                >
-                  <Text style={styles.primaryText}>Create</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Rename modal */}
-        <Modal
-          visible={!!renaming}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setRenaming(null)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Rename department</Text>
-              <TextInput
-                autoFocus
-                placeholder="New name"
-                value={renameTo}
-                onChangeText={setRenameTo}
-                style={styles.input}
-              />
-              <View style={styles.modalRow}>
-                <TouchableOpacity
-                  style={styles.secondaryBtn}
-                  onPress={() => setRenaming(null)}
-                >
-                  <Text style={styles.secondaryText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.primaryBtn, !renameTo.trim() && styles.disabled]}
-                  onPress={onRenameConfirm}
-                  disabled={!renameTo.trim()}
-                >
-                  <Text style={styles.primaryText}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
+        <IdentityBadge />
       </View>
-    </SafeAreaView>
+
+      {/* Search */}
+      <View style={styles.searchRow}>
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="Search departments"
+          placeholderTextColor="#94A3B8"
+          style={styles.searchInput}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          blurOnSubmit={false}
+        />
+      </View>
+
+      {/* List */}
+      {loading ? (
+        <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+          <ActivityIndicator />
+          <Text style={{ marginTop: 8, color: '#6B7280' }}>
+            Loading departments…
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(x) => x.id}
+          renderItem={renderDept}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+              <Text style={{ color: '#6B7280', textAlign: 'center' }}>
+                No departments found yet.{'\n'}
+                We&apos;ll create defaults (Bar, Kitchen, etc.) automatically
+                for new venues.
+              </Text>
+            </View>
+          }
+          contentContainerStyle={{ paddingBottom: 40 }}
+        />
+      )}
+    </View>
   );
 }
 
-export default withErrorBoundary(DepartmentSelectionScreen, 'Departments');
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: 'white' },
-  wrap: { flex: 1, padding: 16, backgroundColor: 'white' },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
-  hint: {
-    fontSize: 12,
-    color: '#6B7280',
+  wrap: { flex: 1, backgroundColor: 'white', padding: 16 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 10,
   },
-  hintBold: {
-    fontWeight: '700',
-    color: '#374151',
-  },
+  title: { fontSize: 22, fontWeight: '800' },
+  sub: { color: '#6B7280', marginTop: 2 },
+
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  search: {
+  searchInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#D0D3D7',
     borderRadius: 10,
     paddingHorizontal: 12,
-    height: 40,
-    backgroundColor: '#F9FAFB',
+    paddingVertical: 10,
+    backgroundColor: 'white',
   },
-  primaryBtn: {
-    backgroundColor: '#0A84FF',
-    paddingHorizontal: 16,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryText: { color: 'white', fontWeight: '700' },
-  secondaryBtn: {
-    paddingHorizontal: 16,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  secondaryText: { color: '#0A84FF', fontWeight: '700' },
-  disabled: { opacity: 0.5 },
-  center: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 24,
-    gap: 8,
-  },
+
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    justifyContent: 'space-between',
+    padding: 14,
     borderRadius: 12,
-  },
-  name: { fontSize: 16, fontWeight: '600' },
-  smallBtn: {
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  smallBtnText: { fontWeight: '700', color: '#0A84FF' },
-  input: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 40,
+    marginBottom: 10,
     backgroundColor: '#F9FAFB',
   },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
+  rowTitle: { fontSize: 16, fontWeight: '700' },
+
+  pill: {
+    fontWeight: '700',
+    fontSize: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 999,
   },
-  modalCard: {
-    width: '100%',
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
-  modalTitle: { fontSize: 18, fontWeight: '700' },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
+  pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
+  pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
 });
+
+export default withErrorBoundary(DepartmentSelectionScreen, 'Departments');

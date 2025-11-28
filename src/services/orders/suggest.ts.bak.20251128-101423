@@ -1,0 +1,428 @@
+// @ts-nocheck
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getApp } from 'firebase/app';
+import { getVenueSession } from '../completion';
+
+const dlog = (...a: any[]) => console.log('[SuggestedOrders]', ...a);
+
+function n(v: any, d = 0) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : d;
+}
+function s(v: any, d = '') {
+  return typeof v === 'string' && v.trim().length ? v.trim() : d;
+}
+
+export type DeptSnap = { id: string; name: string };
+export type SuggestedLine = {
+  productId: string;
+  productName: string;
+  qty: number;
+  unitCost: number | null;
+  packSize: number | null;
+  cost?: number | null;
+  needsPar?: boolean;
+  needsSupplier?: boolean;
+  reason?: string | null;
+  deptId?: string | null;
+  deptName?: string | null;
+  qtyDept?: number | null;
+};
+
+/** Re-usable: turn any Firestore timestamp/number/string into YYYYMMDD-HHMMSS (UTC). */
+function deriveKeyFromAnyTimestamp(ts: any): string | null {
+  if (!ts) return null;
+  try {
+    let ms: number | null = null;
+
+    if (ts?.toMillis && typeof ts.toMillis === 'function') {
+      ms = ts.toMillis();
+    } else if (typeof ts === 'number') {
+      ms = ts;
+    } else if (typeof ts === 'string') {
+      const parsed = Date.parse(ts);
+      if (!Number.isNaN(parsed)) ms = parsed;
+    }
+
+    if (!ms || !Number.isFinite(ms)) return null;
+    const d = new Date(ms);
+
+    const pad = (x: number, len = 2) => String(x).padStart(len, '0');
+    return [
+      d.getUTCFullYear(),
+      pad(d.getUTCMonth() + 1),
+      pad(d.getUTCDate()),
+      '-',
+      pad(d.getUTCHours()),
+      pad(d.getUTCMinutes()),
+      pad(d.getUTCSeconds()),
+    ].join('');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * In-memory cache for "math" suggested orders.
+ *
+ * Keyed by: venueId + stockCycleKey (or 'none') + options.
+ * This ensures we only run the heavy Firestore aggregation once per
+ * stocktake cycle per venue, per options.
+ */
+type SuggestSnapshot = {
+  buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }>;
+  unassigned: { lines: SuggestedLine[] };
+  _meta: any;
+};
+const _suggestCache: Record<string, { snapshot: SuggestSnapshot }> = {};
+
+function makeCacheKey(args: {
+  venueId: string;
+  stockCycleKey: string | null;
+  roundToPack: boolean;
+  defaultPar: number;
+}): string {
+  return [
+    args.venueId,
+    args.stockCycleKey || 'none',
+    args.roundToPack ? 'R1' : 'R0',
+    `P${args.defaultPar}`,
+  ].join('|');
+}
+
+/**
+ * Decide the stockCycleKey based on the current venue session.
+ *
+ * Priority:
+ *   1) Explicit session.cycleKey (if present).
+ *   2) Otherwise, derive from the *newest* timestamp among:
+ *      startedAt, restartedAt, resumedAt, completedAt, finalizedAt.
+ *
+ * This way each full cycle (or explicit reset) gets a fresh key, and
+ * legacy sessions without cycleKey still work.
+ */
+async function resolveStockCycleKey(venueId: string): Promise<string | null> {
+  try {
+    const session = await getVenueSession(venueId);
+    if (!session) {
+      dlog('resolveStockCycleKey: no session');
+      return null;
+    }
+
+    const status = session.status || null;
+
+    // 1) Explicit key wins if present
+    const explicitRaw = (session as any).cycleKey;
+    if (typeof explicitRaw === 'string' && explicitRaw.trim().length > 0) {
+      const key = explicitRaw.trim();
+      dlog('resolveStockCycleKey: using explicit cycleKey', {
+        status,
+        key,
+      });
+      return key;
+    }
+
+    // 2) Derive from newest timestamp among known session timestamps
+    const candidates: { label: string; value: any }[] = [];
+    const add = (label: string, value: any) => {
+      if (value) candidates.push({ label, value });
+    };
+
+    add('startedAt', (session as any).startedAt);
+    add('restartedAt', (session as any).restartedAt);
+    add('resumedAt', (session as any).resumedAt);
+    add('completedAt', (session as any).completedAt);
+    add('finalizedAt', (session as any).finalizedAt);
+
+    const toMs = (v: any): number | null => {
+      try {
+        if (!v) return null;
+        if (typeof v.toMillis === 'function') return v.toMillis();
+        if (typeof v === 'number') return v;
+        if (typeof v === 'string') {
+          const p = Date.parse(v);
+          return Number.isNaN(p) ? null : p;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    let bestLabel: string | null = null;
+    let bestMs: number | null = null;
+
+    for (const c of candidates) {
+      const ms = toMs(c.value);
+      if (ms == null) continue;
+      if (bestMs == null || ms > bestMs) {
+        bestMs = ms;
+        bestLabel = c.label;
+      }
+    }
+
+    if (bestMs == null) {
+      dlog('resolveStockCycleKey: no usable timestamp', { status });
+      return null;
+    }
+
+    const key = deriveKeyFromAnyTimestamp(bestMs);
+    dlog('resolveStockCycleKey: derived from newest timestamp', {
+      status,
+      source: bestLabel,
+      key,
+    });
+    return key;
+  } catch (e: any) {
+    console.warn(
+      '[SuggestedOrders] resolveStockCycleKey failed',
+      e?.message || e
+    );
+    return null;
+  }
+}
+
+export async function buildSuggestedOrdersInMemory(
+  venueId: string,
+  opts: { roundToPack?: boolean; defaultParIfMissing?: number } = {
+    roundToPack: true,
+    defaultParIfMissing: 6,
+  }
+): Promise<SuggestSnapshot> {
+  const normOpts = {
+    roundToPack: !!opts.roundToPack,
+    defaultParIfMissing: Number.isFinite(opts.defaultParIfMissing)
+      ? Number(opts.defaultParIfMissing)
+      : 6,
+  };
+
+  dlog('ENTER buildSuggestedOrdersInMemory', { opts: normOpts, venueId });
+
+  const db = getFirestore(getApp());
+  const roundToPack = normOpts.roundToPack;
+  const defaultPar = normOpts.defaultParIfMissing;
+
+  // ─── Derive stockCycleKey from current venue session ─────────────────────────
+  const stockCycleKey = await resolveStockCycleKey(venueId);
+  dlog('cycleKey', stockCycleKey || '(none)');
+
+  // ─── CACHE CHECK ─────────────────────────────────────────────────────────────
+  const cacheKey = makeCacheKey({
+    venueId,
+    stockCycleKey,
+    roundToPack,
+    defaultPar,
+  });
+  const hit = _suggestCache[cacheKey];
+  if (hit) {
+    dlog('CACHE hit for SuggestedOrders', { cacheKey });
+    return hit.snapshot;
+  }
+  dlog('CACHE miss for SuggestedOrders', { cacheKey });
+
+  // Departments
+  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  const departments: DeptSnap[] = depsSnap.docs.map((d) => ({
+    id: d.id,
+    name: s((d.data() as any)?.name, 'Department'),
+  }));
+
+  // Suppliers
+  dlog('reading suppliers');
+  const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+  const supplierNameById: Record<string, string> = {};
+  suppliersSnap.forEach((d) => {
+    supplierNameById[d.id] = s((d.data() as any)?.name, 'Supplier');
+  });
+
+  // Products
+  dlog('reading products');
+  const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+  type ProdMeta = {
+    name?: string;
+    par?: number | undefined;
+    deptPar?: Record<string, number> | undefined;
+    supplierId?: string | undefined;
+    supplierName?: string | undefined;
+    packSize?: number | null;
+    cost?: number;
+  };
+  const prodMeta: Record<string, ProdMeta> = {};
+  productsSnap.forEach((d) => {
+    const v: any = d.data() || {};
+    const sid = v?.supplierId || v?.supplier?.id || undefined;
+    const sname =
+      v?.supplierName || v?.supplier?.name || (sid ? supplierNameById[sid] : undefined);
+    const deptPar = v?.deptPar && typeof v.deptPar === 'object' ? v.deptPar : undefined;
+    prodMeta[d.id] = {
+      name: s(v?.name, String(d.id)),
+      par: Number.isFinite(v?.par)
+        ? Number(v.par)
+        : Number.isFinite(v?.parLevel)
+        ? Number(v.parLevel)
+        : undefined,
+      deptPar,
+      supplierId: sid,
+      supplierName: sname,
+      packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
+      cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
+    };
+  });
+
+  // Per-dept on-hand ONLY from items that exist in that department
+  dlog('reading departments/areas/items');
+  const onHand: Record<string, Record<string, number>> = {};
+  for (const dep of depsSnap.docs) {
+    const depId = dep.id;
+    onHand[depId] = onHand[depId] || {};
+    const areasSnap = await getDocs(
+      collection(db, 'venues', venueId, 'departments', depId, 'areas')
+    );
+    for (const area of areasSnap.docs) {
+      const itemsSnap = await getDocs(
+        collection(
+          db,
+          'venues',
+          venueId,
+          'departments',
+          depId,
+          'areas',
+          area.id,
+          'items'
+        )
+      );
+      itemsSnap.forEach((it) => {
+        const v: any = it.data() || {};
+        const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
+        if (!pid) return;
+        const qty = n(v?.lastCount, 0);
+        onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
+      });
+    }
+  }
+
+  const buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }> = {};
+  const unassigned: { lines: SuggestedLine[] } = { lines: [] };
+
+  for (const dep of departments) {
+    const depId = dep.id;
+    const onHandDept = onHand[depId] || {};
+    const productIds = Object.keys(onHandDept); // only products seen in this dept
+
+    for (const pid of productIds) {
+      const meta = prodMeta[pid] || {};
+      const name = s(meta.name, pid);
+
+      const parDeptRaw =
+        meta.deptPar && Number.isFinite(meta.deptPar[depId])
+          ? Number(meta.deptPar[depId])
+          : Number.isFinite(meta.par)
+          ? Number(meta.par)
+          : undefined;
+      const usedPar = Number.isFinite(parDeptRaw) ? Number(parDeptRaw) : defaultPar;
+
+      const onHandQty = n(onHandDept[pid], 0);
+      const needed = Math.max(0, usedPar - onHandQty);
+      if (needed <= 0) continue;
+
+      const sid = s(meta.supplierId || '');
+      const sname = s(
+        meta.supplierName || (sid ? supplierNameById[sid] : ''),
+        'Supplier'
+      );
+      const pack = Number.isFinite(meta.packSize) ? Number(meta.packSize) : null;
+      const cost = n(meta.cost, 0);
+      const qtyDept =
+        pack && pack > 0 && roundToPack
+          ? Math.ceil(needed / pack) * pack
+          : Math.round(needed);
+
+      const line: SuggestedLine = {
+        productId: pid,
+        productName: name,
+        qty: qtyDept,
+        unitCost: cost > 0 ? cost : null,
+        packSize: pack,
+        cost: cost > 0 ? cost : null,
+        needsPar: !Number.isFinite(parDeptRaw),
+        needsSupplier: !sid,
+        reason: !sid
+          ? 'No preferred supplier set'
+          : !Number.isFinite(parDeptRaw)
+          ? `Dept PAR missing; used default ${usedPar}`
+          : null,
+        deptId: depId,
+        deptName: dep.name,
+        qtyDept,
+      };
+
+      if (!sid) {
+        unassigned.lines.push(line);
+      } else {
+        if (!buckets[sid]) buckets[sid] = { supplierName: sname, lines: [] };
+        buckets[sid].lines.push(line);
+      }
+    }
+  }
+
+  Object.keys(buckets).forEach((sid) => {
+    buckets[sid].lines = (buckets[sid].lines || []).filter(
+      (l) => (l.qtyDept ?? l.qty ?? 0) > 0
+    );
+  });
+  unassigned.lines = (unassigned.lines || []).filter(
+    (l) => (l.qtyDept ?? l.qty ?? 0) > 0
+  );
+
+  const suppliersWithLines =
+    Object.values(buckets).filter((b) => (b.lines || []).length > 0).length +
+    (unassigned.lines.length > 0 ? 1 : 0);
+
+  const totalLines =
+    Object.values(buckets).reduce((a, b) => a + (b.lines?.length || 0), 0) +
+    unassigned.lines.length;
+
+  dlog('summary', { suppliersWithLines, totalLines });
+
+  const meta: any = {
+    departments,
+    suppliersWithLines,
+    totalLines,
+    generatedAt: new Date().toISOString(),
+    stockCycleKey: stockCycleKey || null,
+  };
+
+  const snapshot: SuggestSnapshot = {
+    buckets,
+    unassigned,
+    _meta: meta,
+  };
+
+  // Save into cache for this (venue, cycle, opts) combo
+  _suggestCache[cacheKey] = { snapshot };
+  dlog('CACHE store for SuggestedOrders', { cacheKey });
+
+  return snapshot;
+}
+
+/**
+ * Clear the in-memory Suggested Orders cache.
+ *
+ * Call this from places that materially change ordering context
+ * (eg: after receiving invoices, importing sales, or resetting a stocktake)
+ * to force the next Suggested Orders run to rebuild from Firestore.
+ */
+export function clearSuggestedOrdersCache() {
+  const keys = Object.keys(_suggestCache);
+  keys.forEach((k) => delete _suggestCache[k]);
+  dlog('CACHE cleared for SuggestedOrders', { cleared: keys.length });
+}
+
+/** Legacy shape kept for compatibility with createFromSuggestions/drafts/fromSuggestions. */
+export type SuggestedLegacyMap = Record<
+  string,
+  {
+    supplierName?: string | null;
+    lines: SuggestedLine[];
+  }
+>;

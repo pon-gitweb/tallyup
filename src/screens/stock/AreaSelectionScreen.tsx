@@ -19,12 +19,25 @@ import { MaterialIcons } from '@expo/vector-icons';
 type Params = { venueId: string; departmentId: string };
 type AreaRow = {
   id: string;
-  name?: string;
+  name: string;
   startedAt?: any;
   completedAt?: any;
+
+  // New lock shape (preferred)
+  currentLock?: {
+    uid?: string | null;
+    name?: string | null;
+    lockedAtMillis?: number | null;
+  } | null;
+
+  // Legacy lock fields (still in Firestore; ignored for UI)
   lockedByUid?: string | null;
   lockedByName?: string | null;
-  lockedAt?: any | null;
+  lockedAt?: any;
+
+  // Stats
+  items?: number;
+  counted?: number;
 };
 
 function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
@@ -104,14 +117,20 @@ function AreaSelectionInner() {
   }, [areas, dq]);
 
   const openArea = useCallback((area: AreaRow) => {
+    // Only trust currentLock for concurrency; ignore legacy lock fields.
+    const lock = (area.currentLock || {}) as any;
+    const lockUid = lock.uid || null;
+    const lockName = lock.name || null;
+
     // Hard lock at selection level: if someone else holds the lock, block.
-    if (area.lockedByUid && area.lockedByUid !== uid) {
+    if (lockUid && lockUid !== uid) {
       Alert.alert(
         'Area in use',
-        `“${area.name || area.id}” is currently being counted by ${area.lockedByName || 'another user'}.`,
+        `“${area.name || area.id}” is currently being counted by ${lockName || 'another user'}.`,
       );
       return;
     }
+
     nav.navigate('AreaInventory', { venueId, departmentId, areaId: area.id });
   }, [nav, venueId, departmentId, uid]);
 
@@ -197,8 +216,13 @@ function AreaSelectionInner() {
     const statusLabel = status === 'done' ? 'Completed' : status === 'inprog' ? 'In Progress' : 'Not started';
     const pillStyle = status === 'done' ? styles.pillDone : status === 'inprog' ? styles.pillInProg : styles.pillIdle;
 
-    const lockedByOther = !!item.lockedByUid && item.lockedByUid !== uid;
-    const lockedByMe = !!item.lockedByUid && item.lockedByUid === uid;
+    // Only trust new currentLock for visuals; ignore legacy lock fields
+    const lock = (item.currentLock || {}) as any;
+    const lockUid = lock.uid || null;
+    const lockName = lock.name || null;
+
+    const lockedByOther = !!lockUid && lockUid !== uid;
+    const lockedByMe = !!lockUid && lockUid === uid;
 
     return (
       <TouchableOpacity
@@ -212,17 +236,25 @@ function AreaSelectionInner() {
       >
         <View style={{ flex: 1, paddingRight: 10 }}>
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 4,
+              flexWrap: 'wrap',
+            }}
+          >
             <Stars status={status} />
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
 
-            {lockedByOther && (
+            {lockedByOther && status !== 'done' && (
               <Text style={[styles.pill, styles.pillLocked]}>
-                In use by {item.lockedByName || 'another user'}
+                In use by {lockName || 'another user'}
               </Text>
             )}
 
-            {lockedByMe && (
+            {lockedByMe && status !== 'done' && (
               <Text style={[styles.pill, styles.pillMine]}>
                 You are in this area
               </Text>

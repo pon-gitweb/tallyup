@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput } from 'reac
 import { createVenueOwnedByCurrentUser } from '../../services/venues';
 import { signOutAll } from '../../services/auth';
 import { useNavigation } from '@react-navigation/native';
+import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 
 export default function CreateVenueScreen() {
   const nav = useNavigation<any>();
@@ -18,9 +19,29 @@ export default function CreateVenueScreen() {
     }
     try {
       setBusy(true);
+
+      // 1) Create venue via Cloud Function
       const { venueId } = await createVenueOwnedByCurrentUser(trimmed);
+
+      // 2) Seed default departments + areas for this new venue
+      try {
+        const result = await seedDefaultDepartmentsAndAreas(venueId);
+        if (__DEV__) console.log('[Onboarding] seeded default departments/areas', { venueId, result });
+      } catch (e: any) {
+        // Don’t block user if seeding fails – log for dev
+        if (__DEV__) console.log('[Onboarding] seedDefaultDepartmentsAndAreas failed', e?.code, e?.message || String(e));
+      }
+
+      // 3) Move them into the new venue dashboard
       Alert.alert('Venue created', `Welcome to ${trimmed}!`, [
-        { text: 'OK', onPress: () => nav.reset({ index: 0, routes: [{ name: 'ExistingVenueDashboard', params: { venueId } }] }) }
+        {
+          text: 'OK',
+          onPress: () =>
+            nav.reset({
+              index: 0,
+              routes: [{ name: 'ExistingVenueDashboard', params: { venueId } }],
+            }),
+        },
       ]);
     } catch (e: any) {
       Alert.alert('Create failed', e?.message ?? 'Unknown error');
@@ -30,13 +51,21 @@ export default function CreateVenueScreen() {
   };
 
   const onJoinWithCode = () => {
-    Alert.alert('Join with invite code', 'Coming soon (MVP++). Ask your admin for an invite code.');
+    Alert.alert(
+      'Join with invite code',
+      'Coming soon (MVP++). Ask your admin for an invite code.',
+    );
   };
 
   const onBackToLogin = async () => {
-    try { setBusy(true); await signOutAll(); }
-    catch (e: any) { Alert.alert('Sign out failed', e?.message ?? 'Unknown error'); }
-    finally { setBusy(false); }
+    try {
+      setBusy(true);
+      await signOutAll();
+    } catch (e: any) {
+      Alert.alert('Sign out failed', e?.message ?? 'Unknown error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -78,11 +107,25 @@ const S = StyleSheet.create({
   copy: { color: '#333', textAlign: 'center', marginBottom: 16 },
   card: { backgroundColor: '#F7F7F8', padding: 14, borderRadius: 12, marginBottom: 10 },
   label: { fontWeight: '600', marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, backgroundColor: '#fff', marginBottom: 10 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: '#fff',
+    marginBottom: 10,
+  },
   primary: { backgroundColor: '#10B981', padding: 14, borderRadius: 10, alignItems: 'center' },
   primaryText: { color: '#fff', fontWeight: '700' },
   disabled: { opacity: 0.6 },
-  cardAlt: { backgroundColor: '#EEF2FF', padding: 12, borderRadius: 12, marginBottom: 10, borderColor: '#DCE6FF', borderWidth: 1 },
+  cardAlt: {
+    backgroundColor: '#EEF2FF',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderColor: '#DCE6FF',
+    borderWidth: 1,
+  },
   subhead: { fontWeight: '700', marginBottom: 6, color: '#1E3A8A' },
   secondary: { backgroundColor: '#E5E7EB', padding: 12, borderRadius: 10, alignItems: 'center' },
   secondaryText: { color: '#111', fontWeight: '600' },
