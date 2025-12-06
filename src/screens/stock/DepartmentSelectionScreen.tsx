@@ -23,9 +23,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { db } from '../../services/firebase';
 import {
   collection,
-  query,
-  orderBy,
   onSnapshot,
+  getDocs,
 } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
@@ -33,6 +32,7 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
+import { resetDepartment } from '../../services/reset';
 
 type DeptRow = {
   id: string;
@@ -40,7 +40,69 @@ type DeptRow = {
   order?: number;
   startedAt?: any;
   completedAt?: any;
+  status?: 'idle' | 'inprog' | 'done';
 };
+
+// Derive department-level status from its areas
+async function enrichDepartmentsWithAreaStatus(
+  venueId: string,
+  rows: DeptRow[],
+): Promise<DeptRow[]> {
+  if (!venueId || rows.length === 0) return rows;
+
+  const enriched = await Promise.all(
+    rows.map(async (row) => {
+      try {
+        const areasCol = collection(
+          db,
+          'venues',
+          venueId,
+          'departments',
+          row.id,
+          'areas',
+        );
+        const snap = await getDocs(areasCol);
+        if (snap.empty) {
+          // No areas yet – fall back to whatever is on the dept doc
+          let existingStatus: 'idle' | 'inprog' | 'done' = 'idle';
+          if (row.completedAt) existingStatus = 'done';
+          else if (row.startedAt) existingStatus = 'inprog';
+          return { ...row, status: existingStatus };
+        }
+
+        let anyStarted = false;
+        let allCompleted = true;
+
+        snap.forEach((d) => {
+          const a: any = d.data();
+          const started = !!a.startedAt;
+          const completed = !!a.completedAt;
+
+          if (started) anyStarted = true;
+          if (!completed) allCompleted = false;
+        });
+
+        let derived: 'idle' | 'inprog' | 'done' = 'idle';
+        if (allCompleted) derived = 'done';
+        else if (anyStarted) derived = 'inprog';
+
+        return { ...row, status: derived };
+      } catch (e: any) {
+        if (__DEV__) {
+          console.log(
+            '[Departments] enrich status failed',
+            row.id,
+            e?.message || String(e),
+          );
+        }
+        // On error, don’t blow up UI – just return original row
+        return row;
+      }
+    }),
+  );
+
+  return enriched;
+}
 
 function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
@@ -66,55 +128,93 @@ function DepartmentSelectionScreen() {
     }
 
     setLoading(true);
-    const col = collection(db, 'venues', venueId, 'departments');
-    const qy = query(col, orderBy('order', 'asc'));
+    const colRef = collection(db, 'venues', venueId, 'departments');
 
     const unsub = onSnapshot(
-      qy,
-      async (snap) => {
-        // No departments yet → try to seed defaults once
-        if (snap.empty) {
-          setDepartments([]);
-          setLoading(false);
+      colRef,
+      (snap) => {
+        (async () => {
+          // No departments yet → try to seed defaults once
+          if (snap.empty) {
+            setDepartments([]);
+            setLoading(false);
 
-          if (!seedTriedRef.current) {
-            seedTriedRef.current = true;
-            try {
-              const result = await seedDefaultDepartmentsAndAreas(venueId);
-              if (__DEV__)
-
-                console.log('[Departments] seeded default departments/areas', {
-                  venueId,
-                  result,
-                });
-            } catch (e: any) {
-              if (__DEV__)
-                console.log(
-                  '[Departments] seedDefaultDepartmentsAndAreas failed',
-                  e?.code,
-                  e?.message || String(e),
-                );
-              // Don’t block the user; they can still add departments manually later.
+            if (!seedTriedRef.current) {
+              seedTriedRef.current = true;
+              try {
+                const result = await seedDefaultDepartmentsAndAreas(venueId);
+                if (__DEV__) {
+                  console.log(
+                    '[Departments] seeded default departments/areas',
+                    { venueId, result },
+                  );
+                }
+              } catch (e: any) {
+                if (__DEV__) {
+                  console.log(
+                    '[Departments] seedDefaultDepartmentsAndAreas failed',
+                    e?.code,
+                    e?.message || String(e),
+                  );
+                }
+                // Don’t block the user; they can still add departments manually later.
+              }
             }
+
+            return;
           }
 
-          return;
-        }
-
-        const rows: DeptRow[] = [];
-        snap.forEach((d) => {
-          rows.push({
-            id: d.id,
-            ...(d.data() as any),
+          const rows: DeptRow[] = [];
+          snap.forEach((d) => {
+            rows.push({
+              id: d.id,
+              ...(d.data() as any),
+            });
           });
-        });
 
-        setDepartments(rows);
-        setLoading(false);
+          // Robust sort: honour numeric `order` when present, then name/id.
+          rows.sort((a, b) => {
+            const ao =
+              typeof a.order === 'number'
+                ? a.order
+                : Number.MAX_SAFE_INTEGER;
+            const bo =
+              typeof b.order === 'number'
+                ? b.order
+                : Number.MAX_SAFE_INTEGER;
+            if (ao !== bo) return ao - bo;
+
+            const an = (a.name || a.id || '').toLowerCase();
+            const bn = (b.name || b.id || '').toLowerCase();
+            return an.localeCompare(bn);
+          });
+
+          // Derive status from areas
+          const withStatus = await enrichDepartmentsWithAreaStatus(
+            venueId,
+            rows,
+          );
+
+          setDepartments(withStatus);
+          setLoading(false);
+        })().catch((e: any) => {
+          if (__DEV__) {
+            console.log(
+              '[Departments] snapshot handler failed',
+              e?.message || String(e),
+            );
+          }
+          setDepartments([]);
+          setLoading(false);
+        });
       },
       (e: any) => {
         if (__DEV__) {
-          console.log('[Departments] listener error', e?.code, e?.message || e);
+          console.log(
+            '[Departments] listener error',
+            e?.code,
+            e?.message || e,
+          );
         }
         setDepartments([]);
         setLoading(false);
@@ -145,7 +245,8 @@ function DepartmentSelectionScreen() {
   const openDepartment = useCallback(
     (dept: DeptRow) => {
       if (!venueId) return;
-      nav.navigate('AreaSelection', {
+      // IMPORTANT: this must match the actual route name in your navigator ("Areas")
+      nav.navigate('Areas', {
         venueId,
         departmentId: dept.id,
         departmentName: dept.name,
@@ -154,12 +255,38 @@ function DepartmentSelectionScreen() {
     [nav, venueId],
   );
 
+  const resetDept = useCallback(
+    (dept: DeptRow) => {
+      if (!venueId) return;
+      Alert.alert(
+        'Reset department?',
+        `This will clear progress for all areas in “${dept.name || dept.id}”. Counts stay attached to the last completed stock take.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reset',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await resetDepartment(venueId, dept.id);
+              } catch (e: any) {
+                Alert.alert(
+                  'Reset failed',
+                  e?.message || 'Unknown error',
+                );
+              }
+            },
+          },
+        ],
+      );
+    },
+    [venueId],
+  );
+
   const renderDept = ({ item }: { item: DeptRow }) => {
-    const status: 'idle' | 'inprog' | 'done' = item.completedAt
-      ? 'done'
-      : item.startedAt
-      ? 'inprog'
-      : 'idle';
+    const status: 'idle' | 'inprog' | 'done' =
+      item.status ??
+      (item.completedAt ? 'done' : item.startedAt ? 'inprog' : 'idle');
 
     const statusLabel =
       status === 'done'
@@ -179,6 +306,8 @@ function DepartmentSelectionScreen() {
       <TouchableOpacity
         style={styles.row}
         onPress={() => openDepartment(item)}
+        onLongPress={() => resetDept(item)}
+        delayLongPress={500}
         activeOpacity={0.9}
       >
         <View style={{ flex: 1, paddingRight: 10 }}>
