@@ -2,12 +2,9 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
 
   "entry": [
-    "index.js",
     "App.tsx",
     "src/App.tsx",
-    "src/navigation/RootNavigator.tsx",
-    "babel.config.js",
-    "metro.config.js"
+    "src/navigation/RootNavigator.tsx"
   ],
 
   "project": [
