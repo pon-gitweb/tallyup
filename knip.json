@@ -7,7 +7,7 @@
     "src/navigation/RootNavigator.tsx"
   ],
   "project": [
-    "node_modules/reusify/tsconfig.json"
+    "./tsconfig.json"
   ],
   "ignore": [
     "backups/**",
