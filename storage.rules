@@ -1,0 +1,71 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function supplierId() {
+      return isSignedIn()
+        && request.auth.token != null
+        && request.auth.token.supplierId != null
+        ? request.auth.token.supplierId
+        : null;
+    }
+    function isSupplierUser() {
+      return supplierId() != null;
+    }
+
+    function isVenueMember(venueId) {
+      return isSignedIn() &&
+        (
+          (request.auth.token.venues != null && request.auth.token.venues[venueId] == true) ||
+          exists(/databases/(default)/documents/venues/$(venueId)/members/$(request.auth.uid))
+        );
+    }
+
+    function supplierMatchesOrder(venueId, orderId) {
+      return isSupplierUser()
+        && exists(/databases/(default)/documents/venues/$(venueId)/orders/$(orderId))
+        && get(/databases/(default)/documents/venues/$(venueId)/orders/$(orderId)).data.supplierId == supplierId();
+    }
+
+    function isCsvOrPdf() {
+      return (
+        request.resource.contentType == 'text/csv' ||
+        request.resource.contentType == 'application/pdf'
+      );
+    }
+
+    match /venues/{venueId}/invoices/raw/{orderId}/{filename} {
+      allow read: if isVenueMember(venueId) || supplierMatchesOrder(venueId, orderId);
+      allow write: if (isVenueMember(venueId) || supplierMatchesOrder(venueId, orderId))
+        && request.resource.size < 20 * 1024 * 1024
+        && isCsvOrPdf();
+    }
+
+    match /uploads/{venueId}/orders/{orderId}/invoices/{anyFile=**} {
+      allow read: if isVenueMember(venueId) || supplierMatchesOrder(venueId, orderId);
+      allow write: if (isVenueMember(venueId) || supplierMatchesOrder(venueId, orderId))
+        && request.resource.size < 20 * 1024 * 1024
+        && isCsvOrPdf();
+    }
+
+    match /uploads/{venueId}/fast-receive/{anyFile=**} {
+      allow read: if isVenueMember(venueId);
+      allow write: if isVenueMember(venueId)
+        && request.resource.size < 20 * 1024 * 1024
+        && isCsvOrPdf();
+    }
+
+    match /venues/{venueId}/ocr/{uid}/{jobFile=**} {
+      allow write: if isVenueMember(venueId)
+        && request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024;
+
+      allow read: if false;
+    }
+  }
+}
