@@ -38,3 +38,6 @@ backups/
 .backups/
 .rollback_backups/
 __tests__.disabled/
+firestore-debug.log
+*-debug.log
+ui-debug.log
