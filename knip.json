@@ -39,10 +39,8 @@
     "@react-native-community/netinfo",
     "react-native-get-random-values",
     "@expo/vector-icons",
-    "uuid"
-  ],
+    "uuid",
 
-  "ignoreDevDependencies": [
     "@babel/core",
     "@testing-library/react-native",
     "firebase-admin",
