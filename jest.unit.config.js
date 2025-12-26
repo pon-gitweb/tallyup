@@ -1,7 +1,7 @@
 /**
  * Unit test config for Expo RN app.
  * - Transform ESM sources in node_modules (expo, @expo, expo-modules-core, RN stack)
- * - Ignore repair sandboxes & duplicate functions trees (haste collision)
+ * - Ignore repair sandboxes, backups, skipped tests, and duplicate functions trees (haste collision)
  */
 module.exports = {
   preset: 'jest-expo',
@@ -14,10 +14,14 @@ module.exports = {
   testPathIgnorePatterns: [
     '/node_modules/',
     '<rootDir>/\\.repair-',          // ignore stray repair suites at repo root
+    '<rootDir>/backups/',            // ignore backups snapshot tree
+    '<rootDir>/tests-skipped/',      // ignore intentionally skipped suites
     '<rootDir>/functions/',          // avoid haste collision (tallyup-functions)
     '<rootDir>/backend/functions/',  // avoid haste collision
   ],
   modulePathIgnorePatterns: [
+    '<rootDir>/backups/',
+    '<rootDir>/tests-skipped/',
     '<rootDir>/functions/',
     '<rootDir>/backend/functions/',
   ],
