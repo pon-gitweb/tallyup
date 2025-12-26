@@ -44,3 +44,26 @@ ui-debug.log
 
 # local config backups
 *.backup.*
+
+# ---- local/editor backups & scratch ----
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+*.old
+*.orig
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# common “timestamped” variants we’ve seen
+*.bak-*
+*.pre-*
+*.my-new
+*.broken.*
+*.stale.*
+
+# Archived/quarantined code (kept out of builds/tooling)
+_archive/

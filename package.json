@@ -10,7 +10,8 @@
     "test": "jest --config jest.unit.config.js",
     "catalog:parse": "node scripts/catalog/parse-all.cjs",
     "catalog:preview": "node scripts/catalog/preview-sample.cjs",
-    "catalog:import": "node scripts/catalog/import-to-firestore.cjs"
+    "catalog:import": "node scripts/catalog/import-to-firestore.cjs",
+    "check:no-backups": "bash scripts/deny-backups.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
