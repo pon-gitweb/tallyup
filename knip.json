@@ -40,5 +40,12 @@
     "react-native-get-random-values",
     "@expo/vector-icons",
     "uuid"
+  ],
+
+  "ignoreDevDependencies": [
+    "@babel/core",
+    "@testing-library/react-native",
+    "firebase-admin",
+    "pdf-parse"
   ]
 }
