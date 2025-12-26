@@ -64,3 +64,6 @@ ui-debug.log
 *.my-new
 *.broken.*
 *.stale.*
+
+# Archived/quarantined code (kept out of builds/tooling)
+_archive/
