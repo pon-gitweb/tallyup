@@ -1,11 +1,8 @@
 const { getDefaultConfig } = require('expo/metro-config');
-const exclusionList = require('metro-config/src/defaults/exclusionList');
 
 const config = getDefaultConfig(__dirname);
-// Never bundle server-only code
-config.resolver.blockList = exclusionList([
-  /\/server\/.*/,
-  /\/functions\/.*/,
-]);
+
+// Keep this file minimal; avoid absolute paths or deep node_modules imports.
+// Add customizations only when you have a concrete Metro issue to fix.
 
 module.exports = config;

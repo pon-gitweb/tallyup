@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/navigation/RootNavigator.tsx"
+  ],
+  "project": [
+    "./tsconfig.knip.json"
+  ],
+  "ignore": [
+    "backups/**",
+    "tests-skipped/**",
+    "_archive/**",
+    "**/*.backup.*",
+    "**/*.broken.*",
+    "**/*.stale.*",
+
+    "functions/**",
+    "backend/functions/**",
+    "server/**",
+    "scripts/**",
+
+    "node_modules/**"
+  ]
+}
