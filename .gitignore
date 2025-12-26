@@ -19,3 +19,22 @@ package-lock.json
 .env
 *.local.*
 /keys
+
+# Local environment files (never commit)
+.env
+.env.*
+server/.env
+
+# Editor/OS/backup junk
+.DS_Store
+*.swp
+*.swo
+*.bak
+*.bak.*
+*~
+
+# Local backups / dumps (never commit)
+backups/
+.backups/
+.rollback_backups/
+__tests__.disabled/
