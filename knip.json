@@ -1,13 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
-    "index.js",
-    "App.tsx",
-    "src/App.tsx",
     "src/navigation/RootNavigator.tsx"
   ],
   "project": [
-    "./tsconfig.json"
+    "./tsconfig.knip.json"
   ],
   "ignore": [
     "backups/**",
