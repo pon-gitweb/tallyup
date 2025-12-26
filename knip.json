@@ -25,5 +25,20 @@
     "scripts/**",
 
     "node_modules/**"
+  ],
+
+  "ignoreDependencies": [
+    "firebase",
+    "expo-constants",
+    "expo-document-picker",
+    "expo-file-system",
+    "expo-haptics",
+    "expo-image-picker",
+    "expo-print",
+    "expo-sharing",
+    "@react-native-community/netinfo",
+    "react-native-get-random-values",
+    "@expo/vector-icons",
+    "uuid"
   ]
 }
