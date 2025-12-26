@@ -41,3 +41,6 @@ __tests__.disabled/
 firestore-debug.log
 *-debug.log
 ui-debug.log
+
+# local config backups
+*.backup.*
