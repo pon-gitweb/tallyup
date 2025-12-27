@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { OrdersService } from 'src/domain/orders';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet } from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
@@ -245,8 +246,7 @@ export default function OrderEditorScreen() {
       Alert.alert('No lines', 'Add at least one line before submitting.');
       return;
     }
-    const { submitOrHoldDraftOrder } = await import('../../services/orders/submit');
-    await submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
+        await OrdersService.submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
     Alert.alert('Submitted', 'Order submitted (or queued to merge before cutoff).');
     nav.navigate('Orders');
   } catch (e:any) {
