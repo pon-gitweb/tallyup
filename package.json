@@ -11,7 +11,8 @@
     "catalog:parse": "node scripts/catalog/parse-all.cjs",
     "catalog:preview": "node scripts/catalog/preview-sample.cjs",
     "catalog:import": "node scripts/catalog/import-to-firestore.cjs",
-    "check:no-backups": "bash scripts/deny-backups.sh"
+    "check:no-backups": "bash scripts/deny-backups.sh",
+    "check:no-legacy-orders-imports": "bash scripts/deny-legacy-orders-imports.sh"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

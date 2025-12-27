@@ -12,7 +12,6 @@ import {
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
-import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
 import { OrdersService } from 'src/domain/orders';
 import { createDraftsFromSuggestions, computeSuggestionKey } from '../../services/orders/createFromSuggestions';
 import { showToast } from './_toast';
@@ -246,7 +245,7 @@ export default function SuggestedOrderScreen(){
       setExistingKeys(new Set());
       return;
     }
-    const compat:any=await buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
+    const compat:any=await OrdersService.buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
     const graduated=normalizeCompat(compat);
     await computeRowsFromSnapshot(graduated);
     const cycleKey = graduated?._meta?.stockCycleKey || null;

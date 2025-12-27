@@ -9,7 +9,7 @@ jest.mock('../suggest', () => ({
 // Jest-only RN shim to avoid ReferenceError in Node
 ;(global as any).__DEV__ = false
 
-import { runAISuggest } from '../suggestAI';
+import { OrdersService } from 'src/domain/orders';
 
 describe('runAISuggest', () => {
   const venueId = 'v_demo';
@@ -20,7 +20,7 @@ describe('runAISuggest', () => {
   });
 
   it('returns baseline shape on network error', async () => {
-    const res = await runAISuggest(venueId, { historyDays: 7, k: 2, max: 100 });
+    const res = await OrdersService.runAISuggest(venueId, { historyDays: 7, k: 2, max: 100 });
     expect(res).toHaveProperty('buckets');
     expect(res).toHaveProperty(['unassigned', 'lines']);
   });

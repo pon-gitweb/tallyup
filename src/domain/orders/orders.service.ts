@@ -4,7 +4,9 @@
  * Screens should import from `src/domain/orders` eventually.
  */
 import { runAISuggest as runAISuggestLegacy } from '../../services/orders/suggestAI';
+import { buildSuggestedOrdersInMemory as buildSuggestedOrdersInMemoryLegacy } from '../../services/orders/suggest';
 
 export const OrdersService = {
   runAISuggest: runAISuggestLegacy,
+  buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
 };
