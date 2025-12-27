@@ -13,7 +13,6 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from 'src/domain/orders';
-import { createDraftsFromSuggestions, computeSuggestionKey } from '../../services/orders/createFromSuggestions';
 import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';
@@ -316,7 +315,7 @@ export default function SuggestedOrderScreen(){
         }));
     }
 
-    const suggestionKey=computeSuggestionKey(
+    const suggestionKey=OrdersService.computeSuggestionKey(
       supplierId==='unassigned'?null:supplierId,
       previewLines
     );
@@ -442,7 +441,7 @@ export default function SuggestedOrderScreen(){
         const legacyMap = {
           [key]: { supplierName: supplierPreview.supplierName ?? null, lines: supplierPreview.lines || [] },
         };
-        const res = await createDraftsFromSuggestions(venueId, legacyMap, {
+        const res = await OrdersService.createDraftsFromSuggestions(venueId, legacyMap, {
           createdBy: uid,
           stockCycleKey: cycleKey || null,
         });
