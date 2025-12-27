@@ -1,8 +1,7 @@
 // Domain "repo" layer: owns persistence / Firestore details.
 // Keep functions small + testable; services/screens should call via OrdersService/OrdersRepo.
 
-import {
-  getApp } from 'firebase/app';
+import { getApp } from 'firebase/app';
 import {
   getFirestore,
   collection,
