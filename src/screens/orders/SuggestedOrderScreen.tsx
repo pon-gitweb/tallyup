@@ -13,7 +13,7 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { buildSuggestedOrdersInMemory } from '../../services/orders/suggest';
-import { runAISuggest } from '../../services/orders/suggestAI';
+import { OrdersService } from 'src/domain/orders';
 import { createDraftsFromSuggestions, computeSuggestionKey } from '../../services/orders/createFromSuggestions';
 import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
@@ -526,7 +526,7 @@ export default function SuggestedOrderScreen(){
       if(nextMode==='math'){
         await doRefreshRaw();
       } else {
-        const res=await runAISuggest(venueId,{historyDays:28,k:3,max:400},'ai');
+        const res=await OrdersService.runAISuggest(venueId,{historyDays:28,k:3,max:400},'ai');
         const graduated=normalizeCompat(res);
         await computeRowsFromSnapshot(graduated);
         if(res?.meter)setAiMeter(res.meter);
