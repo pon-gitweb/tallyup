@@ -5,8 +5,15 @@
  */
 import { runAISuggest as runAISuggestLegacy } from '../../services/orders/suggestAI';
 import { buildSuggestedOrdersInMemory as buildSuggestedOrdersInMemoryLegacy } from '../../services/orders/suggest';
+import {
+  createDraftsFromSuggestions as createDraftsFromSuggestionsLegacy,
+  computeSuggestionKey as computeSuggestionKeyLegacy,
+} from '../../services/orders/createFromSuggestions';
 
 export const OrdersService = {
   runAISuggest: runAISuggestLegacy,
   buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
+
+  createDraftsFromSuggestions: createDraftsFromSuggestionsLegacy,
+  computeSuggestionKey: computeSuggestionKeyLegacy,
 };
