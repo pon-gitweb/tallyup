@@ -1,3 +1,5 @@
+import { saveReconciliation } from '../../services/invoices/reconciliationStore';
+import { reconcileInvoiceREST } from '../../services/invoices/reconcile';
 // Domain "repo" layer: owns persistence / Firestore details.
 // Keep functions small + testable; services/screens should call via OrdersService/OrdersRepo.
 
@@ -101,6 +103,51 @@ async function ensurePoFields(db: ReturnType<typeof getFirestore>, venueId: stri
   // Fallback: never block submit
   const poNumber3 = fallbackPoNumber(dateKey, venueId, orderId);
   await updateDoc(orderRef, { poNumber: poNumber3, poDate: serverTimestamp() });
+}
+
+
+type Parsed = {
+  invoice?: { source?: 'csv'|'pdf'|'manual'|string; storagePath?: string; poNumber?: string|null } | null;
+  lines?: Array<{ code?:string; name:string; qty:number; unitPrice?:number }>;
+  matchReport?: any;
+  confidence?: number | null;
+  warnings?: string[] | null;
+};
+
+async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:string; orderId:string; parsed: Parsed }) {
+  const { venueId, orderId, parsed } = args;
+  const db = getFirestore(getApp());
+
+  // 1) Reconcile on server (authoritative)
+  const reconciled = await reconcileInvoiceREST(venueId, orderId, {
+    invoice: {
+      source: kind,
+      storagePath: parsed?.invoice?.storagePath || '',
+      poNumber: parsed?.invoice?.poNumber ?? null,
+      confidence: parsed?.confidence ?? null,
+      warnings: parsed?.warnings ?? []
+    },
+    lines: parsed?.lines || [],
+    matchReport: parsed?.matchReport,
+    confidence: parsed?.confidence ?? null,
+    warnings: parsed?.warnings ?? []
+  });
+
+  if (!reconciled?.ok) {
+    return { ok:false, error: reconciled?.error || 'reconcile failed' };
+  }
+
+  // 2) Persist reconciliation summary bundle (id used on order)
+  const saved = await saveReconciliation(venueId, orderId, reconciled);
+
+  // 3) Mark received
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'received',
+    receivedAt: serverTimestamp(),
+    lastReconciliationId: saved?.id || reconciled?.reconciliationId || null
+  });
+
+  return { ok:true, reconciliationId: saved?.id || reconciled?.reconciliationId || null };
 }
 
 export const OrdersRepo = {
