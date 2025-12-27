@@ -32,20 +32,5 @@ export async function submitOrHoldDraftOrder(
   supplierId: string | null | undefined,
   opts?: { defaultWindowHours?: number; uid?: string }
 ) {
-  const now = new Date();
-
-  let mergeWindowHours: number | null = null;
-  let cutoffLocal: string | null = null;
-
-  // If you have supplier-driven hold/cutoff logic, read it here (unchanged)
-  // ...left as-is for brevity; your earlier implementation can be reinserted...
-
-  // No policy → immediate submit
-  if (!mergeWindowHours && !cutoffLocal) {
-    await finalizeToSubmitted(venueId, orderId, opts?.uid);
-    return;
-  }
-
-  // If you re-enable holding logic, ensure you DO NOT set submittedAt here.
-  // (Pending-merge write omitted in this minimized version)
+  return OrdersRepo.submitOrHoldDraftOrder(venueId, orderId, supplierId, opts);
 }
