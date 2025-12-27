@@ -1,7 +1,8 @@
 // Domain "repo" layer: owns persistence / Firestore details.
 // Keep functions small + testable; services/screens should call via OrdersService/OrdersRepo.
 
-import { getApp } from 'firebase/app';
+import {
+  getApp } from 'firebase/app';
 import {
   getFirestore,
   collection,
@@ -14,6 +15,11 @@ import {
   getDoc,
   writeBatch,
   deleteDoc,
+  updateDoc,
+  serverTimestamp,
+  runTransaction,
+  setDoc,
+  increment
 } from 'firebase/firestore';
 
 export type SubmittedOrderLite = {
@@ -23,7 +29,115 @@ export type SubmittedOrderLite = {
   createdAt?: any;
 };
 
+function yyyymmdd(d: Date){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}${m}${day}`;
+}
+function venueShort(venueId: string){
+  const s = String(venueId||'').replace(/[^a-zA-Z0-9]/g,'');
+  return s.slice(-5) || 'VENUE';
+}
+function fallbackPoNumber(dateKey: string, venueId: string, orderId: string){
+  const tail = (orderId || '').slice(-4).toUpperCase() || Math.floor(Math.random()*10000).toString().padStart(4,'0');
+  return `PO-${dateKey}-${venueShort(venueId)}-${tail}`;
+}
+
+/**
+ * Best-effort PO assignment:
+ * 1) Try venue orderCounters/{dateKey}
+ * 2) Try alternate counters path counters_orders/{dateKey}
+ * 3) If blocked, generate fallback PO and proceed
+ */
+async function ensurePoFields(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string){
+  const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) return;
+
+  const v: any = snap.data() || {};
+  if (v.poNumber && v.poDate) return;
+
+  const now = new Date();
+  const dateKey = yyyymmdd(now);
+
+  // Try #1: venues/{venueId}/orderCounters/{dateKey}
+  try {
+    const c1 = doc(db, 'venues', venueId, 'orderCounters', dateKey);
+    await runTransaction(db, async (tx) => {
+      const cs = await tx.get(c1);
+      if (cs.exists()) {
+        tx.update(c1, { seq: increment(1) });
+      } else {
+        tx.set(c1, { seq: 1, dateKey, createdAt: serverTimestamp() });
+      }
+    });
+    const after = await getDoc(c1);
+    const seqNum = Number(after.data()?.seq || 1);
+    const seq4 = String(seqNum).padStart(4,'0');
+    const poNumber = `PO-${dateKey}-${venueShort(venueId)}-${seq4}`;
+    await updateDoc(orderRef, { poNumber, poDate: serverTimestamp() });
+    return;
+  } catch (e:any) {}
+
+  // Try #2: venues/{venueId}/counters_orders/{dateKey}
+  try {
+    const c2 = doc(db, 'venues', venueId, 'counters_orders', dateKey);
+    await runTransaction(db, async (tx) => {
+      const cs = await tx.get(c2);
+      if (cs.exists()) {
+        tx.update(c2, { seq: increment(1) });
+      } else {
+        tx.set(c2, { seq: 1, dateKey, createdAt: serverTimestamp() });
+      }
+    });
+    const after2 = await getDoc(c2);
+    const seqNum2 = Number(after2.data()?.seq || 1);
+    const seq42 = String(seqNum2).padStart(4,'0');
+    const poNumber2 = `PO-${dateKey}-${venueShort(venueId)}-${seq42}`;
+    await updateDoc(orderRef, { poNumber: poNumber2, poDate: serverTimestamp() });
+    return;
+  } catch (e2:any) {}
+
+  // Fallback: never block submit
+  const poNumber3 = fallbackPoNumber(dateKey, venueId, orderId);
+  await updateDoc(orderRef, { poNumber: poNumber3, poDate: serverTimestamp() });
+}
+
 export const OrdersRepo = {
+  async finalizeToSubmitted(
+    venueId: string,
+    orderId: string,
+    uid?: string
+  ) {
+    const db = getFirestore(getApp());
+    const ref = doc(db, 'venues', venueId, 'orders', orderId);
+
+    await updateDoc(ref, {
+      status: 'submitted',
+      displayStatus: 'submitted',
+      submittedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      updatedBy: uid ?? null,
+      submittedBy: uid ?? null,
+
+      plannedSubmitAt: null,
+      isConsolidating: null,
+      submitHoldUntil: null,
+      cutoffAt: null,
+      merge: null,
+      queued: null,
+      pending: null,
+      pendingReason: null,
+    });
+
+    await ensurePoFields(db, venueId, orderId);
+  },
+
+  /** Legacy immediate submit (kept for compatibility) */
+  async submitDraftOrder(venueId: string, orderId: string, uid?: string) {
+    return this.finalizeToSubmitted(venueId, orderId, uid);
+  },
   async listSubmittedOrders(venueId: string, max: number = 100): Promise<SubmittedOrderLite[]> {
     if (!venueId) return [];
     const db = getFirestore(getApp());
