@@ -217,7 +217,7 @@ export default function OrdersScreen(){
       { text:'Delete', style:'destructive', onPress: async ()=>{
         try{
           if (!venueId) return;
-          await OrdersService.OrdersService.deleteDraft(venueId, row.id);
+          await OrdersService.deleteDraft(venueId, row.id);
         }catch(e){
           const msg = (e && (e as any).message) ? (e as any).message : 'Could not delete draft.';
           Alert.alert('Delete failed', msg);
