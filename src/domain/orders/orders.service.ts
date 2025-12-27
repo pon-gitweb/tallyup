@@ -6,7 +6,6 @@
 import { runAISuggest as runAISuggestLegacy } from '../../services/orders/suggestAI';
 import { OrdersRepo } from './orders.repo';
 import { buildSuggestedOrdersInMemory as buildSuggestedOrdersInMemoryLegacy } from '../../services/orders/suggest';
-import { finalizeReceiveFromCsv as finalizeReceiveFromCsvLegacy, finalizeReceiveFromPdf as finalizeReceiveFromPdfLegacy } from '../../services/orders/receive';
 import {
   createDraftsFromSuggestions as createDraftsFromSuggestionsLegacy,
   computeSuggestionKey as computeSuggestionKeyLegacy,
@@ -23,6 +22,6 @@ export const OrdersService = {
   deleteDraft: OrdersRepo.deleteDraft,
   submitDraftOrder: OrdersRepo.submitDraftOrder,
   submitOrHoldDraftOrder: OrdersRepo.submitOrHoldDraftOrder,
-  finalizeReceiveFromCsv: finalizeReceiveFromCsvLegacy,
-  finalizeReceiveFromPdf: finalizeReceiveFromPdfLegacy,
+  finalizeReceiveFromCsv: OrdersRepo.finalizeReceiveFromCsv,
+  finalizeReceiveFromPdf: OrdersRepo.finalizeReceiveFromPdf,
 };

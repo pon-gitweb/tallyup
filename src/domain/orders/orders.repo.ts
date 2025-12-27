@@ -166,6 +166,14 @@ export const OrdersRepo = {
     // If you re-enable holding logic, ensure you DO NOT set submittedAt here.
     // (Pending-merge write omitted in current legacy behavior)
   },
+
+  async finalizeReceiveFromCsv(args:{ venueId:string; orderId:string; parsed: Parsed }) {
+  return finalizeReceiveCore('csv', args);
+},
+
+  async finalizeReceiveFromPdf(args:{ venueId:string; orderId:string; parsed: Parsed }) {
+  return finalizeReceiveCore('pdf', args);
+},
   async listSubmittedOrders(venueId: string, max: number = 100): Promise<SubmittedOrderLite[]> {
     if (!venueId) return [];
     const db = getFirestore(getApp());
