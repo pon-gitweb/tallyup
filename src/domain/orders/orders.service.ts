@@ -10,6 +10,7 @@ import {
   computeSuggestionKey as computeSuggestionKeyLegacy,
 } from '../../services/orders/createFromSuggestions';
 import { listSubmittedOrders as listSubmittedOrdersLegacy } from '../../services/orders/listSubmittedOrders';
+import { submitDraftOrder as submitDraftOrderLegacy } from '../../services/orders/submit';
 
 export const OrdersService = {
   runAISuggest: runAISuggestLegacy,
@@ -19,4 +20,5 @@ export const OrdersService = {
   computeSuggestionKey: computeSuggestionKeyLegacy,
 
   listSubmittedOrders: listSubmittedOrdersLegacy,
+  submitDraftOrder: submitDraftOrderLegacy,
 };

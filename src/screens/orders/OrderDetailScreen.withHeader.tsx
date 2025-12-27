@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useCallback, useLayoutEffect, useState, useEffect } from 'react';
+import { OrdersService } from 'src/domain/orders';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import OriginalOrderDetailScreen from './OrderDetailScreen';
@@ -7,7 +8,6 @@ import OriginalOrderDetailScreen from './OrderDetailScreen';
 import { getApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
-import { submitDraftOrder } from '../../services/orders/submit';
 
 export default function OrderDetailWithHeader(props: any) {
   const navigation = useNavigation<any>();
@@ -51,7 +51,7 @@ export default function OrderDetailWithHeader(props: any) {
         Alert.alert('Submit', 'This draft has no lines to submit.');
         return;
       }
-      await submitDraftOrder(venueId, orderId, user?.uid);
+      await OrdersService.submitDraftOrder(venueId, orderId, user?.uid);
       Alert.alert('Order', 'Order submitted.');
     } catch (e: any) {
       console.warn('[OrderDetailHeader] submit error', e);
