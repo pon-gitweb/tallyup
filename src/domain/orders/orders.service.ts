@@ -11,6 +11,7 @@ import {
 } from '../../services/orders/createFromSuggestions';
 import { listSubmittedOrders as listSubmittedOrdersLegacy } from '../../services/orders/listSubmittedOrders';
 import { submitDraftOrder as submitDraftOrderLegacy } from '../../services/orders/submit';
+import { submitOrHoldDraftOrder as submitOrHoldDraftOrderLegacy } from '../../services/orders/submit';
 import { deleteDraft as deleteDraftLegacy } from '../../services/orders/deleteDraft';
 import { finalizeReceiveFromCsv as finalizeReceiveFromCsvLegacy, finalizeReceiveFromPdf as finalizeReceiveFromPdfLegacy } from '../../services/orders/receive';
 
@@ -23,6 +24,7 @@ export const OrdersService = {
 
   listSubmittedOrders: listSubmittedOrdersLegacy,
   submitDraftOrder: submitDraftOrderLegacy,
+  submitOrHoldDraftOrder: submitOrHoldDraftOrderLegacy,
   deleteDraft: deleteDraftLegacy,
   finalizeReceiveFromCsv: finalizeReceiveFromCsvLegacy,
   finalizeReceiveFromPdf: finalizeReceiveFromPdfLegacy,
