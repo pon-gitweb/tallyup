@@ -11,6 +11,7 @@ import {
 } from '../../services/orders/createFromSuggestions';
 import { listSubmittedOrders as listSubmittedOrdersLegacy } from '../../services/orders/listSubmittedOrders';
 import { submitDraftOrder as submitDraftOrderLegacy } from '../../services/orders/submit';
+import { deleteDraft as deleteDraftLegacy } from '../../services/orders/deleteDraft';
 
 export const OrdersService = {
   runAISuggest: runAISuggestLegacy,
@@ -21,4 +22,5 @@ export const OrdersService = {
 
   listSubmittedOrders: listSubmittedOrdersLegacy,
   submitDraftOrder: submitDraftOrderLegacy,
+  deleteDraft: deleteDraftLegacy,
 };
