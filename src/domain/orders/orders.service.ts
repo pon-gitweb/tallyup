@@ -9,6 +9,7 @@ import {
   createDraftsFromSuggestions as createDraftsFromSuggestionsLegacy,
   computeSuggestionKey as computeSuggestionKeyLegacy,
 } from '../../services/orders/createFromSuggestions';
+import { listSubmittedOrders as listSubmittedOrdersLegacy } from '../../services/orders/listSubmittedOrders';
 
 export const OrdersService = {
   runAISuggest: runAISuggestLegacy,
@@ -16,4 +17,6 @@ export const OrdersService = {
 
   createDraftsFromSuggestions: createDraftsFromSuggestionsLegacy,
   computeSuggestionKey: computeSuggestionKeyLegacy,
+
+  listSubmittedOrders: listSubmittedOrdersLegacy,
 };

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import { OrdersService } from 'src/domain/orders';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { collection, getDocs, orderBy, query, limit, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
@@ -7,7 +8,6 @@ import { getFirestore } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
-import { listSubmittedOrders } from '../../services/orders/listSubmittedOrders';
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
 import { runPhotoOcr } from '../../services/fastReceive/runPhotoOcr';
 
@@ -187,7 +187,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
         setChooserFor(it);
         setChooserOpen(true);
         setOrdersBusy(true);
-        const list = await listSubmittedOrders(venueId, 200);
+        const list = await OrdersService.listSubmittedOrders(venueId, 200);
         setOrders(list);
       } catch (e: any) {
         Alert.alert('Load orders failed', String(e?.message || e));
