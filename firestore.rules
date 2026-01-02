@@ -151,6 +151,35 @@ service cloud.firestore {
         allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
         match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
       }
+      // ===== Authority scaffolding (server-only writes) =====
+
+      // Entitlements: free allowance, counters, paywall state, enforcement mode.
+      match /entitlements/{docId} {
+        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow write: if false;
+      }
+
+      // Billing: subscription status + readOnly. Written by server/webhooks only.
+      match /billing/{docId} {
+        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow write: if false;
+      }
+
+      // Ownership: transfer + recovery requests. Server-only.
+      match /ownership/{docId} {
+        allow read: if isOwnerOfVenue(venueId);
+        allow write: if false;
+        match /{sub=**} {
+          allow read: if isOwnerOfVenue(venueId);
+          allow write: if false;
+        }
+      }
+
+      // Events/Audit: governance + telemetry. Server-only.
+      match /events/{eventId} {
+        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow write: if false;
+      }
     }
   }
 }
