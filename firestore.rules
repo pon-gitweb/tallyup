@@ -56,10 +56,13 @@ service cloud.firestore {
         allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
       }
 
-      match /members/{memberId} {
+           match /members/{memberId} {
         allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
 
         // ========= Ownership invariants (client-side enforcement) =========
+        // - Exactly one owner per venue (server functions maintain this)
+        // - No client may set role='owner'
+        // - No client may edit/delete the current owner's member doc
         function venueOwnerUid() {
           return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid;
         }
@@ -71,6 +74,8 @@ service cloud.firestore {
             && request.resource.data.role == 'owner';
         }
 
+        // Only OWNER can manage member docs from client.
+        // (Managers can be re-enabled later with strict allowlists.)
         allow create, update, delete: if isOwnerOfVenue(venueId)
           && !settingOwnerRole()
           && !targetIsOwner();
@@ -86,10 +91,33 @@ service cloud.firestore {
         match /areas/{areaId} {
           allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
 
-          allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId));
-          
+          function isCycleReset() {
+            return request.resource.data.keys().hasAll(['cycleResetAt'])
+              && request.resource.data.startedAt == null
+              && request.resource.data.completedAt == null;
+          }
+
+          allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId)) && (
+            !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) ||
+            (
+              exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) &&
+              get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+            ) ||
+            isCycleReset()
+          );
+
           match /items/{itemId} {
-            allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+            allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+            function isCountUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+                || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+            }
+            allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId))
+              && isCountUpdate()
+              && (
+                !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId))
+                || get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+              );
           }
         }
       }
@@ -113,6 +141,7 @@ service cloud.firestore {
         match /{sub=**}   { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
       }
 
+      // NEW: invoices + lines
       match /invoices/{invoiceId} {
         allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
         match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
@@ -121,32 +150,6 @@ service cloud.firestore {
       match /budgets/{budgetId} {
         allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
         match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
-      }
-
-      // ===== Authority scaffolding (server-only writes) =====
-
-      match /entitlements/{docId} {
-        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        allow write: if false;
-      }
-
-      match /billing/{docId} {
-        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        allow write: if false;
-      }
-
-      match /ownership/{docId} {
-        allow read: if isOwnerOfVenue(venueId);
-        allow write: if false;
-        match /{sub=**} {
-          allow read: if isOwnerOfVenue(venueId);
-          allow write: if false;
-        }
-      }
-
-      match /events/{eventId} {
-        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        allow write: if false;
       }
     }
   }
