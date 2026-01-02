@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { OrdersService } from 'src/domain/orders';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -13,7 +14,6 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
-import { deleteDraft as deleteDraftSvc } from '../../services/orders/deleteDraft';
 
 function normalizeDisplayStatus(o:any){
   const s = (o?.status || "draft");
@@ -217,7 +217,7 @@ export default function OrdersScreen(){
       { text:'Delete', style:'destructive', onPress: async ()=>{
         try{
           if (!venueId) return;
-          await deleteDraftSvc(venueId, row.id);
+          await OrdersService.OrdersService.deleteDraft(venueId, row.id);
         }catch(e){
           const msg = (e && (e as any).message) ? (e as any).message : 'Could not delete draft.';
           Alert.alert('Delete failed', msg);

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { OrdersService } from 'src/domain/orders';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
@@ -13,7 +14,6 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 
 import ReceiveOptionsModal from './receive/ReceiveOptionsModal';
 import ManualReceiveScreen from './receive/ManualReceiveScreen';
-import { finalizeReceiveFromCsv, finalizeReceiveFromPdf } from '../../services/orders/receive';
 
 type Params = { orderId: string };
 type Line = { id: string; productId?: string; name?: string; qty?: number; unitCost?: number };
@@ -520,7 +520,7 @@ export default function OrderDetailScreen() {
     if (!csvReview) return;
     autoConfirmedRef.current = true;
     try{
-      await finalizeReceiveFromCsv({
+      await OrdersService.finalizeReceiveFromCsv({
         venueId,
         orderId,
         parsed: {
@@ -553,7 +553,7 @@ export default function OrderDetailScreen() {
   const postPdfReview = useCallback(async () => {
     if (!pdfReview) return;
     try{
-      await finalizeReceiveFromPdf({
+      await OrdersService.finalizeReceiveFromPdf({
         venueId,
         orderId,
         parsed: {

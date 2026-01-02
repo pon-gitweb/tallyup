@@ -12,6 +12,11 @@ import {
 } from '../../services/orders/createFromSuggestions';
 
 export const OrdersService = {
+  finalizeReceiveFromPdf: OrdersRepo.finalizeReceiveFromPdf,
+  finalizeReceiveFromCsv: OrdersRepo.finalizeReceiveFromCsv,
+  submitOrHoldDraftOrder: OrdersRepo.submitOrHoldDraftOrder,
+  submitDraftOrder: OrdersRepo.submitDraftOrder,
+  deleteDraft: OrdersRepo.deleteDraft,
   runAISuggest: runAISuggestLegacy,
   buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
 
