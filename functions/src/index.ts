@@ -27,3 +27,8 @@ export { createVenueOwnedByUser } from "./createVenueOwnedByUser";
 
 // === NEW: Sales PDF normaliser (used by SalesImportPanel) ===
 export { processSalesPdf } from "./processSalesPdf";
+
+// === Authority: ensure default server-owned docs exist ===
+export { ensureVenueDefaultsCallable } from "./ensureVenueDefaults";
+
+// === Authority: ensure default server-owned docs exist ===

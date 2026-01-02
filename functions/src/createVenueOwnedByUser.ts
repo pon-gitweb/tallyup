@@ -1,5 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+import { ensureVenueDefaults } from "./ensureVenueDefaults";
 
 // Helper: generate a v_ style venue id similar to your existing ones
 function generateVenueId(): string {
@@ -94,6 +95,9 @@ export const createVenueOwnedByUser = onRequest(
       });
 
       console.log("[createVenueOwnedByUser] created", { uid, venueId, name: trimmedName });
+
+      // Ensure server-owned defaults exist (idempotent).
+      await ensureVenueDefaults(venueId, uid);
       res.status(200).json({ ok: true, venueId });
     } catch (err: any) {
       console.error("[createVenueOwnedByUser] error", err);
