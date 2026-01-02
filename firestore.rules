@@ -56,9 +56,29 @@ service cloud.firestore {
         allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
       }
 
-      match /members/{memberId} {
+           match /members/{memberId} {
         allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        allow write: if (memberId == uid()) && (hasVenueAccess(venueId) || isOwnerOfVenue(venueId));
+
+        // ========= Ownership invariants (client-side enforcement) =========
+        // - Exactly one owner per venue (server functions maintain this)
+        // - No client may set role='owner'
+        // - No client may edit/delete the current owner's member doc
+        function venueOwnerUid() {
+          return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid;
+        }
+        function targetIsOwner() {
+          return memberId == venueOwnerUid();
+        }
+        function settingOwnerRole() {
+          return request.resource.data.keys().hasAny(['role'])
+            && request.resource.data.role == 'owner';
+        }
+
+        // Only OWNER can manage member docs from client.
+        // (Managers can be re-enabled later with strict allowlists.)
+        allow create, update, delete: if isOwnerOfVenue(venueId)
+          && !settingOwnerRole()
+          && !targetIsOwner();
       }
 
       match /departments/{departmentId} {
