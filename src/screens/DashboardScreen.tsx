@@ -4,6 +4,7 @@ import {
   View,
   Text,
   TouchableOpacity,
+  Alert,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
@@ -14,6 +15,7 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../context/VenueProvider';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
+import { canStartStocktakeTrial } from '../services/trialStocktake';
 
 export default function DashboardScreen() {
   const nav = useNavigation<any>();
@@ -36,6 +38,17 @@ export default function DashboardScreen() {
     if (busy) return;
     try {
       setBusy(true);
+
+      // Trial gate (TEMP): block once 2 full stocktakes have been submitted
+      const gate = await canStartStocktakeTrial();
+      if (!gate.ok) {
+        Alert.alert(
+          'Trial ended',
+          'You’ve used your 2 free full stock takes. Please subscribe to continue.',
+        );
+        return;
+      }
+
       nav.navigate('DepartmentSelection');
     } finally {
       setBusy(false);
@@ -159,7 +172,6 @@ export default function DashboardScreen() {
 }
 
 const PRIMARY = '#0B132B';
-const ACCENT = '#3B82F6';
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'white' },
@@ -167,7 +179,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 32, // extra bottom padding so last card is reachable
+    paddingBottom: 32,
   },
 
   headerRow: {
@@ -196,58 +208,58 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
+    marginBottom: 6,
     color: PRIMARY,
-    marginBottom: 4,
   },
   cardSub: {
-    fontSize: 13,
     color: '#4B5563',
     marginBottom: 12,
     lineHeight: 18,
   },
 
   button: {
-    paddingVertical: 14,
-    borderRadius: 999,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: 'center',
   },
-  primary: { backgroundColor: ACCENT },
-  buttonText: { color: 'white', fontWeight: '700', fontSize: 15 },
+  primary: {
+    backgroundColor: '#0A84FF',
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: '800',
+  },
 
   rowButtons: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
   },
   buttonSmall: {
+    flex: 1,
     paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 999,
+    borderRadius: 12,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   dark: {
     backgroundColor: '#111827',
   },
   muted: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    backgroundColor: '#EEF2FF',
   },
   buttonSmallText: {
     color: 'white',
-    fontWeight: '600',
-    fontSize: 13,
+    fontWeight: '800',
   },
   buttonSmallTextDark: {
-    color: PRIMARY,
-    fontWeight: '600', 
-    fontSize: 13,
+    color: '#111827',
+    fontWeight: '800',
   },
+
   footerHint: {
-    fontSize: 11,
+    marginTop: 6,
+    fontSize: 12,
     color: '#9CA3AF',
-    marginBottom: 8,
+    textAlign: 'center',
   },
 });

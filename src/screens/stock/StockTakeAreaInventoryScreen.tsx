@@ -20,6 +20,7 @@ import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
+import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -1091,6 +1092,11 @@ try {
         lastStockTakeAt: serverTimestamp(),
         lastStockTakeWindowHours: roundedHours,
       });
+
+      // Trial decrement (TEMP local-only): count a FULL stocktake submission
+      // NOTE: this is increment-on-submit, not on start.
+      try { await incrementFullStocktakeCompleted(); } catch {}
+
 
       const submittedAt = new Date();
       Alert.alert(

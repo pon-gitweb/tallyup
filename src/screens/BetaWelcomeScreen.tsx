@@ -7,8 +7,10 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { canStartStocktakeTrial } from '../services/trialStocktake';
 
 // Uses your app icon from /assets/icon.png
 const appIcon = require('../assets/icon.png');
@@ -17,7 +19,17 @@ export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
 
   const goDashboard = () => navigation.navigate('Dashboard');
-  const goStockTake = () => navigation.navigate('DepartmentSelection');
+  const goStockTake = async () => {
+    const gate = await canStartStocktakeTrial();
+    if (!gate.ok) {
+      Alert.alert(
+        'Trial ended',
+        'You’ve used your 2 free full stock takes. Please subscribe to continue.',
+      );
+      return;
+    }
+    navigation.navigate('DepartmentSelection');
+  };
   const goStockControl = () => navigation.navigate('StockControl');
   const goSuggestedOrders = () => navigation.navigate('SuggestedOrders');
   const goOrders = () => navigation.navigate('Orders');
@@ -137,136 +149,64 @@ const S = StyleSheet.create({
     borderRadius: 24,
     padding: 20,
     backgroundColor: '#0B1120',
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.35)',
-    alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
-  icon: {
-    width: 72,
-    height: 72,
-    borderRadius: 20,
-    marginBottom: 8,
-  },
+  icon: { width: 52, height: 52, borderRadius: 12, marginBottom: 10 },
   betaPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#1D4ED8',
+    color: 'white',
+    fontWeight: '800',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#38bdf8',
-    color: '#e0f2fe',
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 6,
+    overflow: 'hidden',
+    marginBottom: 10,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#F9FAFB',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#9CA3AF',
-    textAlign: 'center',
-  },
-  section: {
-    marginTop: 12,
-    gap: 10,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#E5E7EB',
-    marginBottom: 4,
-  },
+  title: { color: 'white', fontSize: 24, fontWeight: '900', marginBottom: 6 },
+  subtitle: { color: '#9CA3AF', lineHeight: 18 },
+
+  section: { marginTop: 10 },
+  sectionTitle: { color: 'white', fontWeight: '800', fontSize: 16, marginBottom: 10 },
+
   card: {
-    borderRadius: 16,
+    backgroundColor: '#0B1120',
+    borderRadius: 18,
     padding: 14,
-    backgroundColor: '#020617',
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(55,65,81,0.9)',
-    marginBottom: 8,
+    borderColor: '#111827',
   },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#F9FAFB',
-    marginBottom: 4,
-  },
-  cardBody: {
-    fontSize: 13,
-    color: '#D1D5DB',
-  },
-  cardHint: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 6,
-  },
+  cardTitle: { color: 'white', fontWeight: '900', marginBottom: 6 },
+  cardBody: { color: '#D1D5DB', lineHeight: 18 },
+  cardHint: { color: '#9CA3AF', marginTop: 10, lineHeight: 18 },
+
   cardBtn: {
-    marginTop: 10,
+    marginTop: 12,
+    backgroundColor: '#2563EB',
     paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#22c55e',
+    borderRadius: 12,
     alignItems: 'center',
   },
-  cardBtnText: {
-    color: '#022c22',
-    fontWeight: '800',
-    fontSize: 13,
-  },
+  cardBtnText: { color: 'white', fontWeight: '900' },
+
   cardBtnSecondary: {
-    marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#4B5563',
-    alignItems: 'center',
-  },
-  cardBtnSecondaryText: {
-    color: '#E5E7EB',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
-  },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    marginTop: 12,
     backgroundColor: '#111827',
-  },
-  chipText: {
-    fontSize: 11,
-    color: '#e5e7eb',
-    fontWeight: '600',
-  },
-  footer: {
-    marginTop: 16,
-    padding: 12,
-    borderRadius: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#1F2937',
-    backgroundColor: '#020617',
   },
-  footerTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#E5E7EB',
-    marginBottom: 4,
-  },
-  footerText: {
-    fontSize: 12,
-    color: '#D1D5DB',
-  },
-  footerTextDim: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 4,
-  },
+  cardBtnSecondaryText: { color: 'white', fontWeight: '900' },
+
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  chip: { backgroundColor: '#111827', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  chipText: { color: '#E5E7EB', fontWeight: '800', fontSize: 12 },
+
+  footer: { marginTop: 10, padding: 16 },
+  footerTitle: { color: 'white', fontWeight: '900', fontSize: 16, marginBottom: 6 },
+  footerText: { color: '#D1D5DB', lineHeight: 18 },
+  footerTextDim: { color: '#9CA3AF', marginTop: 6, lineHeight: 18 },
 });
