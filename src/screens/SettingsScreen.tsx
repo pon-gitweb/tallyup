@@ -25,9 +25,9 @@ export default function SettingsScreen() {
   async function doSignOut() {
     try {
       await auth.signOut();
-      console.log('[TallyUp Settings] signOut success');
+      console.log('[Hosti-Stock Settings] signOut success');
     } catch (e: any) {
-      console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
+      console.log('[Hosti-Stock Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
       Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
     }
   }
@@ -43,7 +43,7 @@ export default function SettingsScreen() {
           console.log('[Settings] reset ok', res);
           Alert.alert('Reset Complete', `Departments: ${res.departments} • Areas reopened: ${res.areasReset}`);
         } catch (e: any) {
-          console.log('[TallyUp Settings] reset error', JSON.stringify({ code: e?.code, message: e?.message }));
+          console.log('[Hosti-Stock Settings] reset error', JSON.stringify({ code: e?.code, message: e?.message }));
           Alert.alert('Reset Failed', e?.message || 'Unknown error.');
         }
       }}
@@ -62,9 +62,9 @@ export default function SettingsScreen() {
       if (hasVenueField) { Alert.alert('Cannot Attach', 'Your user already has venueId set.'); return; }
       await setDoc(uref, { venueId: devVenueId }, { merge: true });
       Alert.alert('Attached', `Pinned to dev venue: ${devVenueId}`);
-      console.log('[TallyUp Settings] attached dev venue', { uid: user.uid, venueId: devVenueId });
+      console.log('[Hosti-Stock Settings] attached dev venue', { uid: user.uid, venueId: devVenueId });
     } catch (e: any) {
-      console.log('[TallyUp Settings] attach error', JSON.stringify({ code: e?.code, message: e?.message }));
+      console.log('[Hosti-Stock Settings] attach error', JSON.stringify({ code: e?.code, message: e?.message }));
       Alert.alert('Attach Failed', e?.message || 'Unknown error.');
     }
   }
@@ -75,7 +75,7 @@ export default function SettingsScreen() {
       const res = await seedDemoSuppliersAndProducts(venueId);
       Alert.alert('Seeded', `Supplier + ${res.count} products added. Try Suggested Orders.`);
     } catch (e: any) {
-      console.log('[TallyUp Settings] seed error', JSON.stringify({ code: e?.code, message: e?.message }));
+      console.log('[Hosti-Stock Settings] seed error', JSON.stringify({ code: e?.code, message: e?.message }));
       Alert.alert('Seed Failed', e?.message || 'Unknown error');
     }
   }

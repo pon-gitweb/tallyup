@@ -29,7 +29,7 @@ async function attachToDevVenue(uid: string, email: string | null) {
   const vSnap = await getDoc(vref);
   if (!vSnap.exists()) {
     // Only minimal fields; we're attaching to an existing venue id you've been using
-    await setDoc(vref, { venueId: DEV_VENUE_ID, name: 'TallyUp Dev Venue', createdAt: serverTimestamp(), dev: true }, { merge: true });
+    await setDoc(vref, { venueId: DEV_VENUE_ID, name: 'Hosti-Stock Dev Venue', createdAt: serverTimestamp(), dev: true }, { merge: true });
   }
   await setDoc(mref, { uid, role: 'owner', joinedAt: serverTimestamp(), dev: true }, { merge: true });
   await setDoc(uref, { uid, email: email ?? null, venueId: DEV_VENUE_ID, updatedAt: serverTimestamp() }, { merge: true });
@@ -92,7 +92,7 @@ function LoginScreenInner() {
   return (
     <View style={S.container}>
       <View style={S.inner}>
-        <Text style={S.title}>Welcome to TallyUp</Text>
+        <Text style={S.title}>Welcome to Hosti-Stock</Text>
 
         <TextInput
           style={S.input}

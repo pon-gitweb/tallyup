@@ -58,7 +58,7 @@ export default function LoginScreen() {
 
   return (
     <View style={S.container}>
-      <Text style={S.title}>TallyUp</Text>
+      <Text style={S.title}>Hosti-Stock</Text>
 
       <View style={S.modeRow}>
         <TouchableOpacity style={[S.pill, !isRegister ? S.pillOn : S.pillOff]} onPress={() => setMode('signIn')}>

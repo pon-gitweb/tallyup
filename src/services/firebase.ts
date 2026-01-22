@@ -4,13 +4,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
+// Read config from env (Expo exposes EXPO_PUBLIC_* at runtime).
+// We are NOT renaming anything; this is purely to ensure we point at the correct Firebase project.
 const firebaseConfig = {
-  apiKey: 'AIzaSyAOeU2M8xTOnU3oP9H-0Rj',
-  authDomain: 'tallyup-dev.firebaseapp.com',
-  projectId: 'tallyup-dev',
-  storageBucket: 'tallyup-dev.appspot.com',
-  messagingSenderId: '1234567890',
-  appId: '1:1234567890:web:abcdef123456',
+  apiKey: process.env.EXPO_PUBLIC_FB_API_KEY!,
+  authDomain: process.env.EXPO_PUBLIC_FB_AUTH_DOMAIN!,
+  projectId: process.env.EXPO_PUBLIC_FB_PROJECT_ID!,
+  storageBucket: process.env.EXPO_PUBLIC_FB_STORAGE_BUCKET!,
+  messagingSenderId: process.env.EXPO_PUBLIC_FB_MESSAGING_SENDER_ID!,
+  appId: process.env.EXPO_PUBLIC_FB_APP_ID!,
+  measurementId: process.env.EXPO_PUBLIC_FB_MEASUREMENT_ID, // optional
 };
 
 // Firebase App singleton

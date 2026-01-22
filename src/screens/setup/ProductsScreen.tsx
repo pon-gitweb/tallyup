@@ -195,7 +195,7 @@ export default function ProductsScreen() {
         <View style={styles.onboardCard}>
           <Text style={styles.onboardTitle}>Fast ways to get your products in</Text>
           <Text style={styles.onboardText}>
-            You can keep adding manually, or let TallyUp do the heavy lifting with supplier CSVs.
+            You can keep adding manually, or let Hosti-Stock do the heavy lifting with supplier CSVs.
           </Text>
 
           {typeof globalSupplierCount === 'number' && (

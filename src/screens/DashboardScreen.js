@@ -55,7 +55,7 @@ export default function DashboardScreen() {
 
   return (
     <View style={{ flex:1, padding:24, gap:12 }}>
-      <Text style={{ fontSize:18, fontWeight:'700' }}>TallyUp</Text>
+      <Text style={{ fontSize:18, fontWeight:'700' }}>Hosti-Stock</Text>
       <Text>Signed in as {user?.email}</Text>
       <Button title={title} onPress={handleStartOrResume} />
       <View style={{ height:12 }} />

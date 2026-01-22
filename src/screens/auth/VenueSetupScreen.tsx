@@ -60,7 +60,7 @@ export default function VenueSetupScreen() {
   return (
     <View style={S.c}>
       <Text style={S.h1}>Set up your venue</Text>
-      <TextInput placeholder="Venue name (e.g. TallyUp Dev Venue)" value={name} onChangeText={setName} style={S.input} />
+      <TextInput placeholder="Venue name (e.g. Hosti-Stock Dev Venue)" value={name} onChangeText={setName} style={S.input} />
       <View style={S.row}>
         <Text style={{ fontWeight: '600' }}>Allow open signup (dev-friendly)</Text>
         <Switch value={openSignup} onValueChange={setOpenSignup} />

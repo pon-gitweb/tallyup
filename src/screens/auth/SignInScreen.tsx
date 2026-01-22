@@ -37,7 +37,7 @@ export default function SignInScreen() {
 
   return (
     <View style={{ flex:1, padding: 20, justifyContent:'center' }}>
-      <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 16 }}>TallyUp</Text>
+      <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 16 }}>Hosti-Stock</Text>
 
       <TextInput
         placeholder="Email"

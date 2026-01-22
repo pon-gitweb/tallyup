@@ -73,9 +73,9 @@ export default function ProductsStep() {
         count++;
       }
       Alert.alert('Import complete', `Imported ${count} products.`);
-      console.log('[TallyUp Setup] products imported', JSON.stringify({ count }));
+      console.log('[Hosti-Stock Setup] products imported', JSON.stringify({ count }));
     } catch (e: any) {
-      console.log('[TallyUp Setup] products import error', JSON.stringify({ code: e?.code, message: e?.message }));
+      console.log('[Hosti-Stock Setup] products import error', JSON.stringify({ code: e?.code, message: e?.message }));
       Alert.alert('Import failed', e?.message ?? 'Unknown error.');
     } finally {
       setBusy(false);

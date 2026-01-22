@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "tallyup",
+    "name": "Hosti-Stock",
     "slug": "tallyup",
     "version": "1.0.5",
     "orientation": "portrait",
@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.tallyup"
+      "bundleIdentifier": "com.anonymous.tallyup",
+      "infoPlist": {
+        "CFBundleDisplayName": "Hosti-Stock"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +27,8 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.tallyup",
-      "versionCode": 5
+      "versionCode": 5,
+      "displayName": "Hosti-Stock"
     },
     "web": {
       "favicon": "./assets/favicon.png"

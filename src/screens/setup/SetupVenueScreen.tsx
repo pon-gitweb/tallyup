@@ -15,9 +15,9 @@ export default function SetupWizard() {
     try {
       const auth = getAuth();
       await signOut(auth);
-      console.log('[TallyUp CreateVenue] back-to-login signOut ok');
+      console.log('[Hosti-Stock CreateVenue] back-to-login signOut ok');
     } catch (e:any) {
-      console.log('[TallyUp CreateVenue] back-to-login error', e?.message);
+      console.log('[Hosti-Stock CreateVenue] back-to-login error', e?.message);
     }
   };
 

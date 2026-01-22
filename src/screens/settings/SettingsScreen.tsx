@@ -70,9 +70,9 @@ export default function SettingsScreen() {
   async function doSignOut() {
     try {
       await auth.signOut();
-      if (__DEV__) console.log('[TallyUp Settings] signOut success');
+      if (__DEV__) console.log('[Hosti-Stock Settings] signOut success');
     } catch (e:any) {
-      if (__DEV__) console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
+      if (__DEV__) console.log('[Hosti-Stock Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
       Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
     }
   }
@@ -159,7 +159,7 @@ export default function SettingsScreen() {
             style={[styles.btn, styles.aboutBtn]}
             onPress={openAbout}
           >
-            <Text style={styles.btnText}>About TallyUp (BETA)</Text>
+            <Text style={styles.btnText}>About Hosti-Stock (BETA)</Text>
           </TouchableOpacity>
         </View>
 
@@ -183,7 +183,7 @@ export default function SettingsScreen() {
                 <TouchableOpacity onPress={closeAbout}>
                   <Text style={styles.aboutBack}>‹ Settings</Text>
                 </TouchableOpacity>
-                <Text style={styles.aboutTitle}>About TallyUp</Text>
+                <Text style={styles.aboutTitle}>About Hosti-Stock</Text>
                 <View style={{ width: 60 }} />
               </View>
 

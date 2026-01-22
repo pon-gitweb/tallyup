@@ -16,7 +16,7 @@ import { loadWeeklyPerformance, WeeklyPerformanceSummary } from '../../services/
 import { exportPdf } from '../../utils/exporters';
 
 const dlog = (...a: any[]) => {
-  if (__DEV__) console.log('[TallyUp Reports] WeeklyPerformance', ...a);
+  if (__DEV__) console.log('[Hosti-Stock Reports] WeeklyPerformance', ...a);
 };
 
 export default function LastCycleSummaryScreen() {
@@ -200,7 +200,7 @@ export default function LastCycleSummaryScreen() {
               <SectionCard title="Gross profit context">
                 <Text style={{ color: '#E5E7EB', marginBottom: 4 }}>
                   Expected and landed GP will get smarter as more products,
-                  invoices, and recipes flow through TallyUp.
+                  invoices, and recipes flow through Hosti-Stock.
                 </Text>
 
                 <Text
@@ -221,7 +221,7 @@ export default function LastCycleSummaryScreen() {
 
                 {s.gp.actual == null && (
                   <HintText>
-                    To unlock accurate GP, scan invoices into TallyUp and import
+                    To unlock accurate GP, scan invoices into Hosti-Stock and import
                     or connect your sales data.
                   </HintText>
                 )}

@@ -33,7 +33,7 @@ export default function AuthEntryScreen() {
 
   return (
     <View style={S.container}>
-      <Text style={S.title}>Welcome to TallyUp</Text>
+      <Text style={S.title}>Welcome to Hosti-Stock</Text>
 
       <View style={S.tabs}>
         <TouchableOpacity onPress={() => setTab('signin')} style={[S.tab, tab === 'signin' && S.tabActive]}><Text>Sign In</Text></TouchableOpacity>
