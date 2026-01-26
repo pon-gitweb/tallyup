@@ -12,8 +12,10 @@ import {
   query,
   where,
   getDocs,
+  orderBy,
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import StockNotesModal from '../../components/notes/StockNotesModal';
 
 function normalizeDisplayStatus(o:any){
   const s = (o?.status || "draft");
@@ -50,6 +52,23 @@ const S = StyleSheet.create({
   segActive:{backgroundColor:'#111827'},
   segText:{fontSize:13,fontWeight:'800',color:'#111827'},
   segTextActive:{color:'#fff'},
+
+  notesBannerWrap:{paddingHorizontal:16,paddingTop:10,paddingBottom:6},
+  notesBanner:{
+    borderWidth:1,
+    borderColor:'#FDE68A',
+    backgroundColor:'#FFFBEB',
+    borderRadius:14,
+    paddingHorizontal:12,
+    paddingVertical:10,
+    flexDirection:'row',
+    alignItems:'center',
+    justifyContent:'space-between',
+  },
+  notesBannerTitle:{fontSize:13,fontWeight:'900',color:'#92400E'},
+  notesBannerSub:{fontSize:12,color:'#6B7280',marginTop:2},
+  notesBannerBtn:{backgroundColor:'#111827',paddingVertical:8,paddingHorizontal:10,borderRadius:12},
+  notesBannerBtnText:{color:'#fff',fontSize:12,fontWeight:'900'},
 
   row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
   left:{flex:1},
@@ -131,6 +150,9 @@ export default function OrdersScreen(){
   const [refreshing,setRefreshing]=useState(false);
   const [receiveFor,setReceiveFor] = useState<OrderRow|null>(null);
 
+  const [notesOpenCount, setNotesOpenCount] = useState(0);
+  const [notesVisible, setNotesVisible] = useState(false);
+
   useEffect(()=>{
     if(!venueId) return;
     const ref = collection(db,'venues',venueId,'orders');
@@ -179,6 +201,19 @@ export default function OrdersScreen(){
     });
     return ()=>unsub();
   },[db,venueId]);
+
+  // Open notes count (ordering signals)
+  useEffect(() => {
+    if (!venueId) return;
+    const col = collection(db, 'venues', venueId, 'productNotes');
+    const qy = query(col, where('status', '==', 'open'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(
+      qy,
+      (snap) => setNotesOpenCount(snap.size),
+      () => setNotesOpenCount(0)
+    );
+    return () => unsub();
+  }, [db, venueId]);
 
   const counts = useMemo(()=>{
     let d=0,s=0,r=0;
@@ -339,6 +374,20 @@ export default function OrdersScreen(){
         </View>
       </View>
 
+      <View style={S.notesBannerWrap}>
+        <View style={S.notesBanner}>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text style={S.notesBannerTitle}>Open signals: {notesOpenCount}</Text>
+            <Text style={S.notesBannerSub}>
+              Service / prep / close notes that should affect ordering.
+            </Text>
+          </View>
+          <TouchableOpacity style={S.notesBannerBtn} onPress={() => setNotesVisible(true)}>
+            <Text style={S.notesBannerBtnText}>View</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       <FlatList
         data={rows}
         keyExtractor={(x)=>x.id}
@@ -359,6 +408,12 @@ export default function OrdersScreen(){
       <TouchableOpacity style={S.fab} onPress={()=>nav.navigate('NewOrderStart' as never)}>
         <Text style={S.fabText}>New Order</Text>
       </TouchableOpacity>
+
+      <StockNotesModal
+        visible={notesVisible}
+        onClose={() => setNotesVisible(false)}
+        venueId={venueId}
+      />
 
       {/* Receive Options Modal remains available (opened from OrderDetail) */}
       <Modal visible={!!receiveFor} transparent animationType="fade" onRequestClose={()=>setReceiveFor(null)}>

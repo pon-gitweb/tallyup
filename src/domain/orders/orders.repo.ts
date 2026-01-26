@@ -17,9 +17,10 @@ import {
   updateDoc,
   serverTimestamp,
   runTransaction,
-  setDoc,
   increment
 } from 'firebase/firestore';
+
+import { ProductNotesAutomation } from '../../services/productNotes';
 
 export type SubmittedOrderLite = {
   id: string;
@@ -103,6 +104,22 @@ async function ensurePoFields(db: ReturnType<typeof getFirestore>, venueId: stri
   await updateDoc(orderRef, { poNumber: poNumber3, poDate: serverTimestamp() });
 }
 
+async function loadOrderProductIds(db: ReturnType<typeof getFirestore>, venueId: string, orderId: string): Promise<string[]> {
+  try {
+    const linesCol = collection(db, 'venues', venueId, 'orders', orderId, 'lines');
+    const snap = await getDocs(linesCol);
+    const out: string[] = [];
+    snap.forEach(d => {
+      const v:any = d.data() || {};
+      const pid = String(v.productId || d.id || '').trim();
+      if (pid) out.push(pid);
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export const OrdersRepo = {
   async finalizeToSubmitted(
     venueId: string,
@@ -131,6 +148,19 @@ export const OrdersRepo = {
     });
 
     await ensurePoFields(db, venueId, orderId);
+
+    // Notes automation (best-effort; never block submit)
+    try {
+      const productIds = await loadOrderProductIds(db, venueId, orderId);
+      await ProductNotesAutomation.markNotesOrderedForSubmittedOrder({
+        venueId,
+        orderId,
+        productIds,
+        uid: uid ?? null,
+      });
+    } catch (e:any) {
+      console.log('[OrdersRepo] notes mark ordered failed (non-fatal)', e?.message || e);
+    }
   },
 
   /** Legacy immediate submit (kept for compatibility) */
@@ -148,9 +178,6 @@ export const OrdersRepo = {
     supplierId: string | null | undefined,
     opts?: { defaultWindowHours?: number; uid?: string }
   ) {
-    const db = getFirestore(getApp());
-    const now = new Date();
-
     let mergeWindowHours: number | null = null;
     let cutoffLocal: string | null = null;
 
@@ -166,6 +193,7 @@ export const OrdersRepo = {
     // If you re-enable holding logic, ensure you DO NOT set submittedAt here.
     // (Pending-merge write omitted in current legacy behavior)
   },
+
   async listSubmittedOrders(venueId: string, max: number = 100): Promise<SubmittedOrderLite[]> {
     if (!venueId) return [];
     const db = getFirestore(getApp());

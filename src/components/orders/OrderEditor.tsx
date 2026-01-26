@@ -14,10 +14,12 @@ import {
   deleteDoc,
   setDoc,
   serverTimestamp,
+  getDocs,
 } from 'firebase/firestore';
 import { useVenueId } from 'src/context/VenueProvider';
 import SupplierBadge from 'src/components/SupplierBadge';
 import { savedToast } from '../../utils/toast';
+import { ProductNotesAutomation } from '../../services/productNotes';
 
 type Line = { productId: string; name?: string | null; qty: number };
 type Props = { orderId: string; onSubmitted?: () => void };
@@ -88,18 +90,33 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
         Alert.alert('Submit', 'This draft has no lines.');
         return;
       }
+
       await updateDoc(orderRef, {
         status: 'submitted',
         displayStatus: 'Submitted',
         submittedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+
+      // Notes → ordered (non-fatal)
+      try {
+        const productIds = lines.map(l => String(l.productId)).filter(Boolean);
+        await ProductNotesAutomation.markNotesOrderedForSubmittedOrder({
+          venueId,
+          orderId,
+          productIds,
+          uid: null,
+        });
+      } catch (e) {
+        console.warn('[OrderEditor] notes mark ordered failed (non-fatal)', e);
+      }
+
       Alert.alert('Order', 'Order marked as submitted.');
       onSubmitted?.();
     } catch (e: any) {
       Alert.alert('Order', e?.message ?? 'Failed to submit order.');
     }
-  }, [orderRef, lines, onSubmitted]);
+  }, [orderRef, lines, onSubmitted, venueId, orderId]);
 
   if (!venueId) {
     return <View style={{ padding: 16 }}><Text>No venue selected.</Text></View>;

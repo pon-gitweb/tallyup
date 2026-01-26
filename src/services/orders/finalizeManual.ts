@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { getFirestore, doc, updateDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
+import { ProductNotesAutomation } from '../productNotes';
 
 export async function finalizeReceiveFromManual({
   venueId, orderId, parsed
@@ -39,6 +40,13 @@ export async function finalizeReceiveFromManual({
       poNumber: parsed?.invoice?.poNumber ?? null,
     }
   });
+
+  // Resolve notes (non-fatal)
+  try {
+    await ProductNotesAutomation.resolveNotesForReceivedOrder({ venueId, orderId, uid: null });
+  } catch (e) {
+    console.warn('[finalizeManual] resolve notes failed (non-fatal):', e);
+  }
 
   return { ok: true };
 }

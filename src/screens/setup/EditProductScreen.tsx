@@ -492,4 +492,23 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   modalBtnText: { color: '#FFFFFF', fontWeight: '700' },
+
+  noteCard: {
+    backgroundColor: "#FFFBEB",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    padding: 12,
+    marginBottom: 12,
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  noteTitle: { fontWeight: "900", color: "#92400E" },
+  noteSub: { color: "#6B7280", marginTop: 4, fontSize: 12, flex: 1 },
+  noteBtn: { backgroundColor: "#111827", paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+  noteBtnText: { color: "#fff", fontWeight: "900" },
+
 });
+
+    

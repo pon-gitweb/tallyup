@@ -9,6 +9,7 @@ import { getApp } from 'firebase/app';
 import { getFirestore, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { reconcileInvoiceREST } from '../invoices/reconcile';
 import { saveReconciliation } from '../invoices/reconciliationStore';
+import { ProductNotesAutomation } from '../productNotes';
 
 type Parsed = {
   invoice?: { source?: 'csv'|'pdf'|'manual'|string; storagePath?: string; poNumber?: string|null } | null;
@@ -50,6 +51,13 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
     receivedAt: serverTimestamp(),
     lastReconciliationId: saved?.id || reconciled?.reconciliationId || null
   });
+
+  // 4) Resolve notes for this order (non-fatal)
+  try {
+    await ProductNotesAutomation.resolveNotesForReceivedOrder({ venueId, orderId, uid: null });
+  } catch (e) {
+    console.warn('[receive] resolve notes failed (non-fatal)', e);
+  }
 
   return { ok:true, reconciliationId: saved?.id || reconciled?.reconciliationId || null };
 }
