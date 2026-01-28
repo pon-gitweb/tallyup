@@ -9,6 +9,10 @@ const base = require('./jest.unit.config.base');
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
 
 module.exports = {
+  moduleNameMapper: {
+    '^src/services/firebase$': '<rootDir>/__tests__/__mocks__/src.services.firebase.ts',
+  },
+
   ...base,
 
   // Only look for tests in these folders (prevents _archive/ from being scanned)

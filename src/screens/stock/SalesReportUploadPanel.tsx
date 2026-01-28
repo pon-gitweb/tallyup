@@ -47,7 +47,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       // Persist normalized report + attempt matching (non-throwing inside)
       const saved = await storeSalesReport({
         venueId,
-        report: parsed?.report || parsed, // tolerate server/local shapes
+        report: (parsed as any)?.report ?? parsed, // tolerate server/local shapes
         source: 'csv',
       });
 

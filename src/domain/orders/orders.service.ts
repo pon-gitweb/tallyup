@@ -12,8 +12,8 @@ import {
 } from '../../services/orders/createFromSuggestions';
 
 export const OrdersService = {
-  finalizeReceiveFromPdf: OrdersRepo.finalizeReceiveFromPdf,
-  finalizeReceiveFromCsv: OrdersRepo.finalizeReceiveFromCsv,
+  finalizeReceiveFromPdf: (OrdersRepo as any).finalizeReceiveFromPdf,
+  finalizeReceiveFromCsv: (OrdersRepo as any).finalizeReceiveFromCsv,
   submitOrHoldDraftOrder: OrdersRepo.submitOrHoldDraftOrder,
   submitDraftOrder: OrdersRepo.submitDraftOrder,
   deleteDraft: OrdersRepo.deleteDraft,
