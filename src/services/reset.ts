@@ -1,89 +1,122 @@
 import {
-  collection, collectionGroup, getDocs, writeBatch, doc, serverTimestamp, query, where
+  collection,
+  getDocs,
+  writeBatch,
+  doc,
+  serverTimestamp,
+  query,
+  where,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
-/**
- * Normalize an area's progress flags to "not started".
- * We set startedAt=null and completedAt=null, and stamp cycleResetAt/updatedAt.
- * This matches the allowed keysets in your rules.
- */
-function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, now: any) {
-  batch.update(areaRef, {
-    startedAt: null,
-    completedAt: null,
-    cycleResetAt: now,
-    updatedAt: now,
-  });
+const CHUNK = 400;
+
+function chunk<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function commitBatches(refs: any[], apply: (batch: any, ref: any) => void) {
+  for (const group of chunk(refs, CHUNK)) {
+    const batch = writeBatch(db);
+    for (const ref of group) apply(batch, ref);
+    await batch.commit();
+  }
+}
+
+async function collectDepartmentAreaRefs(venueId: string, departmentId: string) {
+  const refs: any[] = [];
+
+  // Nested areas: venues/{venue}/departments/{dep}/areas/*
+  const nestedSnap = await getDocs(
+    collection(db, 'venues', venueId, 'departments', departmentId, 'areas')
+  );
+  nestedSnap.forEach((d) => refs.push(d.ref));
+
+  // Legacy areas: venues/{venue}/areas/* where departmentId == dep (optional)
+  try {
+    const legacyQ = query(
+      collection(db, 'venues', venueId, 'areas'),
+      where('departmentId', '==', departmentId)
+    );
+    const legacySnap = await getDocs(legacyQ);
+    legacySnap.forEach((d) => refs.push(d.ref));
+  } catch {}
+
+  return refs;
 }
 
 /**
- * Per-department reset:
- * - Clears startedAt/completedAt on ALL areas under venues/{venue}/departments/{dep}/areas
- * - Also clears any legacy venue-level areas that are tagged with departmentId==depId (if present)
+ * Per-department reset (lock-safe):
+ * PASS A: clear currentLock ONLY (rules require changedKeys == ['currentLock'])
+ * PASS B: reset startedAt/completedAt + cycleResetAt/updatedAt
  */
 export async function resetDepartment(venueId: string, departmentId: string) {
   if (!venueId || !departmentId) return;
+
+  const refs = await collectDepartmentAreaRefs(venueId, departmentId);
   const now = serverTimestamp();
 
-  const batch = writeBatch(db);
-
-  // 1) Nested: venues/{venue}/departments/{dep}/areas/*
-  const nestedAreasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
-  nestedAreasSnap.forEach((d) => {
-    const aRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', d.id);
-    resetAreaInBatch(batch, aRef, now);
+  // PASS A — clear locks (single-key updates)
+  await commitBatches(refs, (batch, ref) => {
+    batch.update(ref, { currentLock: null });
   });
 
-  // 2) Legacy shortcut: venues/{venue}/areas/* where departmentId == dep
-  // (Only applies if your legacy docs carried departmentId; harmless if none)
-  const legacyAreasCol = collection(db, 'venues', venueId, 'areas');
-  try {
-    const legacyQ = query(legacyAreasCol, where('departmentId', '==', departmentId));
-    const legacySnap = await getDocs(legacyQ);
-    legacySnap.forEach((d) => {
-      const aRef = doc(db, 'venues', venueId, 'areas', d.id);
-      resetAreaInBatch(batch, aRef, now);
+  // PASS B — reset progress flags (no currentLock included)
+  await commitBatches(refs, (batch, ref) => {
+    batch.update(ref, {
+      startedAt: null,
+      completedAt: null,
+      cycleResetAt: now,
+      updatedAt: now,
     });
-  } catch {
-    // If the index/field doesn't exist or structure isn't there, silently ignore.
-  }
-
-  await batch.commit();
+  });
 }
 
 /**
- * Venue-wide "nuclear" reset (owner/manager):
- * - Iterates ALL departments and resets all nested areas
- * - Also sweeps legacy venue-level areas (no department filter)
- * - Updates venues/{venue}.cycleResetAt to allow UI cache busts / status recompute
+ * Venue-wide reset (owner/manager):
+ * - clears locks on ALL areas
+ * - resets progress flags on ALL areas
+ * - bumps venues/{venue}.cycleResetAt/updatedAt
  */
 export async function resetAllDepartmentsStockTake(venueId: string) {
   if (!venueId) return;
-  const now = serverTimestamp();
-  const batch = writeBatch(db);
 
-  // A) Reset nested areas under each department
+  const refs: any[] = [];
+  const now = serverTimestamp();
+
+  // All nested areas under all departments
   const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
   for (const dep of depsSnap.docs) {
-    const depId = dep.id;
-    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', depId, 'areas'));
-    areasSnap.forEach((a) => {
-      const aRef = doc(db, 'venues', venueId, 'departments', depId, 'areas', a.id);
-      resetAreaInBatch(batch, aRef, now);
-    });
+    const areasSnap = await getDocs(
+      collection(db, 'venues', venueId, 'departments', dep.id, 'areas')
+    );
+    areasSnap.forEach((a) => refs.push(a.ref));
   }
 
-  // B) Sweep legacy venue-level areas (if still present)
-  const venueAreasSnap = await getDocs(collection(db, 'venues', venueId, 'areas'));
-  venueAreasSnap.forEach((a) => {
-    const aRef = doc(db, 'venues', venueId, 'areas', a.id);
-    resetAreaInBatch(batch, aRef, now);
+  // All legacy venue-level areas (if still present)
+  const legacySnap = await getDocs(collection(db, 'venues', venueId, 'areas'));
+  legacySnap.forEach((a) => refs.push(a.ref));
+
+  // PASS A — clear locks
+  await commitBatches(refs, (batch, ref) => {
+    batch.update(ref, { currentLock: null });
   });
 
-  // C) Update venue root cycleResetAt (allowed by your rules)
-  const venueRef = doc(db, 'venues', venueId);
-  batch.update(venueRef, { cycleResetAt: now, updatedAt: now });
+  // PASS B — reset progress flags
+  await commitBatches(refs, (batch, ref) => {
+    batch.update(ref, {
+      startedAt: null,
+      completedAt: null,
+      cycleResetAt: now,
+      updatedAt: now,
+    });
+  });
 
+  // bump venue root (rules allow only these keys)
+  const venueRef = doc(db, 'venues', venueId);
+  const batch = writeBatch(db);
+  batch.update(venueRef, { cycleResetAt: now, updatedAt: now });
   await batch.commit();
 }

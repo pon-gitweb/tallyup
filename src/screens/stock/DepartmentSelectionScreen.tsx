@@ -112,6 +112,7 @@ function DepartmentSelectionScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [departments, setDepartments] = useState<DeptRow[]>([]);
   const [q, setQ] = useState('');
+  const [refreshTick, setRefreshTick] = useState(0);
   const dq = useDebouncedValue(q, 150);
 
   // Ensure we only try to seed once per mount to avoid loops
@@ -240,7 +241,7 @@ function DepartmentSelectionScreen() {
     return departments.filter((d) =>
       (d.name || d.id).toLowerCase().includes(term),
     );
-  }, [departments, dq]);
+  }, [departments, dq, refreshTick]);
 
   const openDepartment = useCallback(
     (dept: DeptRow) => {
@@ -269,6 +270,7 @@ function DepartmentSelectionScreen() {
             onPress: async () => {
               try {
                 await resetDepartment(venueId, dept.id);
+                setRefreshTick((x) => x + 1);
               } catch (e: any) {
                 Alert.alert(
                   'Reset failed',
