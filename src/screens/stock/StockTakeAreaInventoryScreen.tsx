@@ -808,8 +808,8 @@ function StockTakeAreaInventoryScreen() {
     } catch (e:any) { Alert.alert('Undo failed', e?.message ?? String(e)); }
   };
 
-  const saveCount = async (item: Item) => {
-    const typed = (localQty[item.id] ?? '').trim();
+  const saveCount = async (item: Item, overrideQty?: number) => {
+    const typed = (typeof overrideQty === 'number') ? String(overrideQty) : ((localQty[item.id] ?? '')).trim();
     const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
     const prevAt = item.lastCountAt ?? null;
 
@@ -2170,8 +2170,8 @@ const openHistory = throttleAction(async (item: Item) => {
           });
 
           setLocalQty((m) => ({ ...m, [photoFor.id]: String(count) }));
-          await saveCount(photoFor);
-        }}
+          await saveCount(photoFor, Number(count));
+}}
       />
 
 </SafeAreaView>
