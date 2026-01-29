@@ -1,7 +1,7 @@
 // @ts-nocheck
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc, $1, where
+  orderBy, query, serverTimestamp, updateDoc, runTransaction
 } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
