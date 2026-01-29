@@ -1,9 +1,12 @@
 // @ts-nocheck
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc, runTransaction
+  orderBy, query, serverTimestamp, updateDoc, $1, where
 } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
+import PhotoCountModal from "./components/PhotoCountModal";
+import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
+import { createStockTakePhotoDoc } from "../../services/stocktake/stockTakePhotos";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
@@ -607,6 +610,8 @@ function StockTakeAreaInventoryScreen() {
   const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
 
   const [offline, setOffline] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [photoFor, setPhotoFor] = useState<Item | null>(null);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
@@ -1208,9 +1213,11 @@ try {
   };
 
   const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
-  const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
-
-  const openHistory = throttleAction(async (item: Item) => {
+  const usePhotoFor = (item: Item) => {
+    setPhotoFor(item);
+    setPhotoOpen(true);
+  };
+const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
     setHistFor(item); setHistLoading(true);
     try { const rows = await fetchRecentItemAudits(venueId, item.id, 10); setHistRows(rows); }
@@ -2113,7 +2120,61 @@ try {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    
+      <PhotoCountModal
+        visible={photoOpen}
+        onClose={() => { setPhotoOpen(false); setPhotoFor(null); }}
+        item={photoFor}
+        areaName={areaName || null}
+        defaultCount={photoFor ? (typeof photoFor.lastCount === "number" ? photoFor.lastCount : null) : null}
+        onCaptured={async ({ fileUri, count, note }) => {
+          if (!photoFor) throw new Error('No item selected');
+          if (!venueId) throw new Error('Missing venueId');
+
+          if (offline) {
+            Alert.alert(
+              'Offline',
+              'You are offline. You can still save the count normally, but photo evidence needs internet to upload.'
+            );
+            return;
+          }
+
+          const up = await uploadStockTakePhoto({
+            venueId: venueId!,
+            areaId,
+            itemId: photoFor.id,
+            fileUri,
+          });
+
+          const storagePath = up?.fullPath || '';
+          if (!storagePath) throw new Error('Photo upload returned no fullPath');
+
+          const uid = (getAuth()?.currentUser && getAuth().currentUser.uid) ? getAuth().currentUser.uid : null;
+
+          await createStockTakePhotoDoc({
+            venueId: venueId!,
+            departmentId: departmentId || null,
+            areaId,
+            areaNameSnapshot: ((route?.params && (route.params as any).areaName) ? (route.params as any).areaName : null),
+            areaStartedAtMs: null,
+
+            itemId: photoFor.id,
+            itemNameSnapshot: photoFor?.name || null,
+            unitSnapshot: photoFor?.unit || null,
+
+            count: Number(count),
+            note: (note || '').trim() ? (note || '').trim() : null,
+
+            storagePath,
+            createdBy: uid,
+          });
+
+          setLocalQty((m) => ({ ...m, [photoFor.id]: String(count) }));
+          await saveCount(photoFor);
+        }}
+      />
+
+</SafeAreaView>
   );
 }
 
