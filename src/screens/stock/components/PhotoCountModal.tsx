@@ -1,18 +1,34 @@
-// @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
-export default function PhotoCountModal(props: {
+type ItemLike = {
+  name?: string | null;
+  productName?: string | null;
+} | null;
+
+type Props = {
   visible: boolean;
   onClose: () => void;
 
-  item: any | null;
+  item: ItemLike;
   areaName: string | null;
   defaultCount: number | null;
 
   onCaptured: (params: { fileUri: string; count: number; note: string | null }) => Promise<void>;
-}) {
+};
+
+const NUM_RE = /^(\d+(\.\d+)?|\.\d+)$/;
+
+function errMsg(e: unknown) {
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === 'string' && m.trim()) return m;
+  }
+  return String(e);
+}
+
+export default function PhotoCountModal(props: Props) {
   const { visible, onClose, item, areaName, defaultCount, onCaptured } = props;
 
   const [busy, setBusy] = useState(false);
@@ -32,7 +48,7 @@ export default function PhotoCountModal(props: {
     if (!fileUri) return false;
     const t = (countStr || '').trim();
     if (!t) return false;
-    if (!/^(\d+(\.\d+)?|\.\d+)$/.test(t)) return false;
+    if (!NUM_RE.test(t)) return false;
     return true;
   }, [fileUri, countStr]);
 
@@ -43,24 +59,28 @@ export default function PhotoCountModal(props: {
         Alert.alert('Permission needed', 'Camera access is required to take a photo.');
         return;
       }
+
       const photo = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         quality: 0.85,
       });
+
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
       setFileUri(photo.assets[0].uri);
-    } catch (e: any) {
-      Alert.alert('Camera failed', e?.message || String(e));
+    } catch (e: unknown) {
+      Alert.alert('Camera failed', errMsg(e));
     }
   }, []);
 
   const save = useCallback(async () => {
     if (!canSave || !fileUri) return;
+
     const t = (countStr || '').trim();
-    if (!/^(\d+(\.\d+)?|\.\d+)$/.test(t)) {
+    if (!NUM_RE.test(t)) {
       Alert.alert('Invalid', 'Enter a numeric quantity');
       return;
     }
+
     const count = parseFloat(t);
     const n = (note || '').trim() ? (note || '').trim() : null;
 
@@ -68,8 +88,8 @@ export default function PhotoCountModal(props: {
     try {
       await onCaptured({ fileUri, count, note: n });
       onClose();
-    } catch (e: any) {
-      Alert.alert('Photo count failed', e?.message || String(e));
+    } catch (e: unknown) {
+      Alert.alert('Photo count failed', errMsg(e));
     } finally {
       setBusy(false);
     }
@@ -107,7 +127,13 @@ export default function PhotoCountModal(props: {
                 keyboardType="decimal-pad"
                 inputMode="decimal"
                 editable={!busy}
-                style={{ paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12 }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderWidth: 1,
+                  borderColor: '#E5E7EB',
+                  borderRadius: 12,
+                }}
               />
             </View>
 
@@ -118,7 +144,13 @@ export default function PhotoCountModal(props: {
                 onChangeText={setNote}
                 placeholder="e.g. damaged, short delivery, moved…"
                 editable={!busy}
-                style={{ paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12 }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderWidth: 1,
+                  borderColor: '#E5E7EB',
+                  borderRadius: 12,
+                }}
               />
             </View>
           </View>
@@ -135,7 +167,12 @@ export default function PhotoCountModal(props: {
             <TouchableOpacity
               onPress={save}
               disabled={!canSave || busy}
-              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: (!canSave || busy) ? '#9CA3AF' : '#16A34A' }}
+              style={{
+                flex: 1,
+                paddingVertical: 12,
+                borderRadius: 12,
+                backgroundColor: (!canSave || busy) ? '#9CA3AF' : '#16A34A',
+              }}
             >
               {busy ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
