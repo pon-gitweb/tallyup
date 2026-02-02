@@ -34,52 +34,41 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.processShelfScanJob = processShelfScanJob;
+// @ts-nocheck
 const admin = __importStar(require("firebase-admin"));
-const now = () => admin.firestore.FieldValue.serverTimestamp();
-async function processShelfScanJob(params) {
-    const { venueId, jobId } = params;
+if (!admin.apps.length)
+    admin.initializeApp();
+async function processShelfScanJob({ venueId, jobId }) {
     const db = admin.firestore();
-    const jobRef = db.doc(`venues/${venueId}/shelfScanJobs/${jobId}`);
-    const snap = await jobRef.get();
-    if (!snap.exists)
-        return;
-    const job = snap.data();
-    // Process only once
-    if (!job || job.status !== "uploaded")
-        return;
-    await jobRef.update({
-        status: "processing",
-        updatedAt: now(),
-        processingStartedAt: now(),
-    });
-    try {
-        const storagePath = job.storagePath;
-        if (!storagePath)
-            throw new Error("Missing storagePath on job");
-        // Validate the file exists (catches path/rules mismatches fast)
-        const bucket = admin.storage().bucket();
-        const file = bucket.file(storagePath);
-        const [exists] = await file.exists();
-        if (!exists)
-            throw new Error(`Storage file not found at ${storagePath}`);
-        // MVP: return a deterministic dummy proposal so the UI proves end-to-end
-        const proposals = [
-            { key: "p1", name: "Example item (edit me)", itemId: null, count: 1, confidence: 0.5, isNew: true },
-        ];
-        await jobRef.update({
-            status: "done",
-            updatedAt: now(),
-            processedAt: now(),
-            result: { proposals, source: "dummy-v1" },
-        });
-    }
-    catch (e) {
-        await jobRef.update({
+    const ref = db.doc(`venues/${venueId}/shelfScanJobs/${jobId}`);
+    const snap = await ref.get();
+    const job = snap.data() || {};
+    console.log("[ShelfScan] start", { venueId, jobId, keys: Object.keys(job) });
+    // Expect at least one of these to exist
+    const photoPath = job.photoPath || job.fullPath || job.storagePath || job.path;
+    const downloadUrl = job.downloadUrl || job.photoUrl || job.url;
+    console.log("[ShelfScan] inputs", { photoPath, hasDownloadUrl: !!downloadUrl });
+    // Fail fast if missing photo
+    if (!photoPath && !downloadUrl) {
+        await ref.set({
             status: "failed",
-            updatedAt: now(),
-            failedAt: now(),
-            error: { message: e?.message ?? String(e) },
-        });
+            error: { message: "Missing photoPath/downloadUrl on job. Upload succeeded but job doc lacks a usable path." },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return;
     }
+    // TODO: Replace this stub with your real OCR/AI parsing.
+    // For now, prove the pipeline end-to-end by returning a deterministic proposal.
+    const proposals = [
+        { name: "TEST ITEM", count: 1, confidence: 0.1 }
+    ];
+    await ref.set({
+        status: "done",
+        result: { proposals },
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        doneAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    console.log("[ShelfScan] done", { venueId, jobId, proposals: proposals.length });
 }
 //# sourceMappingURL=processShelfScanJob.js.map
