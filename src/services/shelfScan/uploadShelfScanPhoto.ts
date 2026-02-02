@@ -15,26 +15,34 @@ export async function uploadShelfScanPhoto({
 }) {
   if (!fileUri) throw new Error("uploadShelfScanPhoto: missing fileUri");
 
-  // Expo-safe: read file as base64 (NO Blob usage)
-  const b64 = await FileSystem.readAsStringAsync(fileUri, {
+  const base64 = await FileSystem.readAsStringAsync(fileUri, {
     encoding: FileSystem.EncodingType.Base64,
   });
 
-  if (!b64 || b64.length < 32) {
+  if (!base64 || base64.length < 32) {
     throw new Error("uploadShelfScanPhoto: base64 read failed/empty");
   }
 
   const functions = getFunctions(undefined, "us-central1");
   const fn = httpsCallable(functions, "uploadShelfScanPhotoCallable");
 
-  // NOTE: callable derives uid from auth; we still pass uid for path consistency on client if needed elsewhere,
-  // but server ignores it (good).
-  const res: any = await fn({
+  const raw: any = await fn({
     venueId,
     scanId,
-    base64: b64,
+    base64,
     contentType: "image/jpeg",
   });
 
-  return res?.data || res;
+  // Callable responses are usually shaped as { data: ... }
+  const payload = raw?.data ?? raw;
+
+  console.log("[uploadShelfScanPhoto] callable raw:", raw);
+  console.log("[uploadShelfScanPhoto] callable payload:", payload);
+
+  const fullPath = payload?.fullPath || payload?.path;
+  if (!fullPath) {
+    throw new Error("uploadShelfScanPhoto: Upload returned no fullPath");
+  }
+
+  return { ...payload, fullPath };
 }
