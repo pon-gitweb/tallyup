@@ -32,7 +32,7 @@ export async function uploadShelfScanPhoto({
   const res: any = await fn({
     venueId,
     scanId,
-    b64,
+    base64: b64,
     contentType: "image/jpeg",
   });
 
