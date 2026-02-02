@@ -36,97 +36,85 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createVenueOwnedByUser = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-const uuid_1 = require("uuid");
-function getBearerToken(req) {
-    const authHeader = req.headers.authorization || req.headers.Authorization;
-    if (!authHeader || typeof authHeader !== "string")
-        return null;
-    const parts = authHeader.split(" ");
-    if (parts.length !== 2)
-        return null;
-    if (parts[0] !== "Bearer")
-        return null;
-    return parts[1];
+const ensureVenueDefaults_1 = require("./ensureVenueDefaults");
+// Helper: generate a v_ style venue id similar to your existing ones
+function generateVenueId() {
+    const autoId = admin.firestore().collection("_tmp").doc().id; // random 20-char id
+    return autoId.startsWith("v_") ? autoId : `v_${autoId}`;
 }
-// Simple HTTPS endpoint that expects:
-//   POST /createVenueOwnedByUser
-//   headers: Authorization: Bearer <idToken>
-//   body: { "name": "Venue Name" }
 exports.createVenueOwnedByUser = functions
     .region("australia-southeast1")
     .https.onRequest(async (req, res) => {
-    var _a, _b, _c, _d;
-    if (req.method !== "POST") {
-        res.status(405).send("Method Not Allowed");
-        return;
-    }
     try {
-        const token = getBearerToken(req);
-        if (!token) {
-            res.status(401).json({ error: "Missing or invalid Authorization header" });
+        // Accept both GET and POST, but prefer POST with JSON body.
+        const method = req.method.toUpperCase();
+        let name;
+        let uid;
+        let email;
+        if (method === "GET") {
+            name = req.query.name ?? undefined;
+            uid = req.query.uid ?? undefined;
+            email = req.query.email ?? undefined;
+        }
+        else if (method === "POST") {
+            const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+            name = typeof body.name === "string" ? body.name : undefined;
+            uid = typeof body.uid === "string" ? body.uid : undefined;
+            email = typeof body.email === "string" ? body.email : undefined;
+        }
+        else {
+            res.status(405).send("Method not allowed");
             return;
         }
-        const decoded = await admin.auth().verifyIdToken(token);
-        const uid = decoded.uid;
-        const email = (_a = decoded.email) !== null && _a !== void 0 ? _a : null;
-        const rawName = ((_c = (_b = req.body) === null || _b === void 0 ? void 0 : _b.name) !== null && _c !== void 0 ? _c : "").toString();
-        const name = rawName.trim();
-        if (!name) {
-            res.status(400).json({ error: "Venue name is required." });
+        const trimmedName = (name || "").trim();
+        if (!trimmedName) {
+            res.status(400).send("Missing venue name");
+            return;
+        }
+        if (!uid) {
+            res.status(400).send("Missing uid");
             return;
         }
         const db = admin.firestore();
-        const venueId = `v_${(0, uuid_1.v4)().replace(/-/g, "").slice(0, 20)}`;
-        const userRef = db.doc(`users/${uid}`);
-        const venueRef = db.doc(`venues/${venueId}`);
+        const venueId = generateVenueId();
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        const venueRef = db.collection("venues").doc(venueId);
         const memberRef = venueRef.collection("members").doc(uid);
+        const userRef = db.collection("users").doc(uid);
         await db.runTransaction(async (tx) => {
-            var _a, _b;
-            const userSnap = await tx.get(userRef);
-            const existingVenueId = userSnap.exists ? (_b = (_a = userSnap.data()) === null || _a === void 0 ? void 0 : _a.venueId) !== null && _b !== void 0 ? _b : null : null;
-            if (existingVenueId) {
-                throw new functions.https.HttpsError("failed-precondition", "User is already attached to a venue.");
-            }
-            const now = admin.firestore.FieldValue.serverTimestamp();
-            // venues/{venueId}
+            // 1) Venue root
             tx.set(venueRef, {
                 venueId,
-                name,
+                name: trimmedName,
                 createdAt: now,
                 ownerUid: uid,
-                ownerEmail: email,
-                dev: false
+                ownerEmail: email ?? null,
+                openSignup: false,
+                dev: false,
             }, { merge: true });
-            // venues/{venueId}/members/{uid}
+            // 2) Member doc (owner)
             tx.set(memberRef, {
                 uid,
                 role: "owner",
-                email,
-                joinedAt: now
+                email: email ?? null,
+                joinedAt: now,
             }, { merge: true });
-            // users/{uid}
+            // 3) User doc – this is what your VenueProvider watches (venueId)
             tx.set(userRef, {
                 uid,
-                email,
+                email: email ?? null,
                 venueId,
-                venues: admin.firestore.FieldValue.arrayUnion(venueId),
-                updatedAt: now
+                updatedAt: now,
             }, { merge: true });
         });
-        functions.logger.info("[createVenueOwnedByUser] created", { uid, venueId, name });
-        res.status(200).json({ venueId });
+        console.log("[createVenueOwnedByUser] created", { uid, venueId, name: trimmedName });
+        // Ensure server-owned defaults exist (idempotent).
+        await (0, ensureVenueDefaults_1.ensureVenueDefaults)(venueId, uid);
+        res.status(200).json({ ok: true, venueId });
     }
     catch (err) {
-        functions.logger.error("[createVenueOwnedByUser] failed", {
-            error: (_d = err === null || err === void 0 ? void 0 : err.message) !== null && _d !== void 0 ? _d : String(err)
-        });
-        if (err instanceof functions.https.HttpsError) {
-            const code = err.code || "internal";
-            const message = err.message || "Failed to create venue.";
-            res.status(code === "failed-precondition" ? 412 : 500).json({ error: message });
-            return;
-        }
-        res.status(500).json({ error: "Failed to create venue." });
+        console.error("[createVenueOwnedByUser] error", err);
+        res.status(500).send("Internal error");
     }
 });
 //# sourceMappingURL=createVenueOwnedByUser.js.map

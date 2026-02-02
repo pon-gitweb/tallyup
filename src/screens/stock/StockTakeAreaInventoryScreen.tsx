@@ -5,6 +5,11 @@ import {
 } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
+import SmartShelfModal from "./components/SmartShelfModal";
+import ShelfPhotoModal from "./components/ShelfPhotoModal";
+import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPhoto";
+import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
+import { subscribeShelfScanJob } from "../../services/shelfScan/subscribeShelfScanJob";
 import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
 import { createStockTakePhotoDoc } from "../../services/stocktake/stockTakePhotos";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -550,6 +555,14 @@ function StockTakeAreaInventoryScreen() {
   // More menu
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // Smart Shelf Count
+  const [shelfOpen, setShelfOpen] = useState(false);
+  const [shelfPhotoOpen, setShelfPhotoOpen] = useState(false);
+  const [shelfLoading, setShelfLoading] = useState(false);
+  const [shelfJobId, setShelfJobId] = useState(null);
+  const [shelfProposals, setShelfProposals] = useState([]);
+  const shelfUnsubRef = useRef<any>(null);
+
   // Persist/restore view prefs
   useEffect(() => { (async () => {
     if (!AS) return;
@@ -615,6 +628,14 @@ function StockTakeAreaInventoryScreen() {
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
+  }, []);
+
+  // Smart Shelf: cleanup subscription on unmount
+  useEffect(() => {
+    return () => {
+      if (shelfUnsubRef.current) { try { shelfUnsubRef.current(); } catch {} }
+      shelfUnsubRef.current = null;
+    };
   }, []);
 
   // Track items saved while offline (UI-only perceived sync)
@@ -2086,7 +2107,15 @@ const openHistory = throttleAction(async (item: Item) => {
             </TouchableOpacity>
 
             {/* Standardized export labels */}
-            <TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
+            
+            <TouchableOpacity
+              onPress={()=>{ setMoreOpen(false); setShelfPhotoOpen(true); }}
+              style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:"#ECFEFF", marginBottom:8 }}
+            >
+              <Text style={{ fontWeight:"800", color:"#155E75" }}>🤖 Smart Shelf Count</Text>
+            </TouchableOpacity>
+
+<TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — Current view</Text>
             </TouchableOpacity>
 
@@ -2121,6 +2150,109 @@ const openHistory = throttleAction(async (item: Item) => {
         </View>
       </Modal>
     
+      <ShelfPhotoModal
+        visible={shelfPhotoOpen}
+        onClose={() => setShelfPhotoOpen(false)}
+        onCaptured={async ({ fileUri }) => {
+          if (!venueId) throw new Error("Missing venueId");
+          if (!uid) throw new Error("Missing user");
+          if (offline) return Alert.alert("Offline", "You are offline. Smart Shelf needs internet to upload.");
+
+          const scanId = String(Date.now());
+          setShelfLoading(true);
+          setShelfOpen(true);
+
+          const up = await uploadShelfScanPhoto({ venueId: venueId!, uid, scanId, fileUri });
+          if (!up?.fullPath) throw new Error("Upload returned no fullPath");
+
+          const job = await createShelfScanJob({
+            venueId: venueId!,
+            departmentId,
+            areaId,
+            areaNameSnapshot: areaName || null,
+            storagePath: up.fullPath,
+            createdBy: uid,
+          });
+
+          setShelfJobId(job.id);
+          setShelfPhotoOpen(false);
+
+          // Live subscribe to backend results
+          if (shelfUnsubRef.current) { try { shelfUnsubRef.current(); } catch {} }
+          shelfUnsubRef.current = subscribeShelfScanJob({
+            venueId: venueId!,
+            jobId: job.id,
+            onData: (j) => {
+              const st = j?.status;
+              if (st === "processing" || st === "queued" || st === "uploaded") {
+                setShelfLoading(true);
+                return;
+              }
+              if (st === "failed") {
+                setShelfLoading(false);
+                Alert.alert("Smart Shelf failed", j?.error?.message ?? "Unknown error");
+                return;
+              }
+              if (st === "done") {
+                setShelfLoading(false);
+                const props = j?.result?.proposals || [];
+                setShelfProposals(props);
+              }
+              if (st === "applied") {
+                setShelfLoading(false);
+              }
+            },
+            onError: (e) => {
+              setShelfLoading(false);
+              Alert.alert("Smart Shelf", e?.message ?? String(e));
+            }
+          });
+        }}
+      />
+
+      <SmartShelfModal
+        visible={shelfOpen}
+        onClose={() => {
+          if (shelfUnsubRef.current) { try { shelfUnsubRef.current(); } catch {} }
+          shelfUnsubRef.current = null;
+          setShelfOpen(false);
+          setShelfJobId(null);
+          setShelfProposals([]);
+          setShelfLoading(false);
+        }}
+        jobId={shelfJobId}
+        proposals={shelfProposals}
+        loading={shelfLoading}
+        onSubmit={async (rows) => {
+          // Apply counts + add new items if needed
+          if (!venueId) throw new Error("Missing venueId");
+          await ensureAreaStarted();
+
+          for (const r of rows) {
+            // If matched to existing item: just save count
+            if (r.itemId) {
+              await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',r.itemId), { lastCount: Number(r.count), lastCountAt: serverTimestamp() });
+              continue;
+            }
+
+            // New item: add to area, then save count
+            const payload:any = {
+              name: (r.name || '').trim(),
+              inductionStatus: 'pending',
+              inductionSource: 'smart-shelf-scan',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              lastCount: Number(r.count),
+              lastCountAt: serverTimestamp(),
+            };
+            const colRef = collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items');
+            await addDoc(colRef, payload);
+          }
+
+          Alert.alert("Saved", "Applied shelf count(s).");
+        }}
+      />
+
       <PhotoCountModal
         visible={photoOpen}
         onClose={() => { setPhotoOpen(false); setPhotoFor(null); }}

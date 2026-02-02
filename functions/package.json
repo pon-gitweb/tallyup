@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.4",
+    "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",
     "express": "^5.1.0",
@@ -20,6 +21,7 @@
     "deploy": "firebase deploy --only functions"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3"
   }

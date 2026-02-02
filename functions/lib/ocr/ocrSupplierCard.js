@@ -52,8 +52,7 @@ const db = admin.firestore();
 exports.ocrSupplierCard = functions
     .region('us-central1')
     .https.onCall(async (data, context) => {
-    var _a;
-    const uid = ((_a = context.auth) === null || _a === void 0 ? void 0 : _a.uid) || null;
+    const uid = context.auth?.uid || null;
     if (!uid) {
         throw new functions.https.HttpsError('unauthenticated', 'Sign-in required.');
     }
@@ -81,7 +80,7 @@ exports.ocrSupplierCard = functions
         });
     }
     catch (e) {
-        functions.logger.warn('[ocrSupplierCard] audit write failed', e === null || e === void 0 ? void 0 : e.message);
+        functions.logger.warn('[ocrSupplierCard] audit write failed', e?.message);
     }
     const result = {
         ok: true,

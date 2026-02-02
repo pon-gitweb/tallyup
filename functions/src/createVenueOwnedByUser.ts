@@ -1,4 +1,4 @@
-import { onRequest } from "firebase-functions/v2/https";
+import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { ensureVenueDefaults } from "./ensureVenueDefaults";
 
@@ -8,9 +8,9 @@ function generateVenueId(): string {
   return autoId.startsWith("v_") ? autoId : `v_${autoId}`;
 }
 
-export const createVenueOwnedByUser = onRequest(
-  { region: "australia-southeast1" },
-  async (req, res) => {
+export const createVenueOwnedByUser = functions
+  .region("australia-southeast1")
+  .https.onRequest(async (req, res) => {
     try {
       // Accept both GET and POST, but prefer POST with JSON body.
       const method = req.method.toUpperCase();

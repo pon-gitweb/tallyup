@@ -32,3 +32,11 @@ export { processSalesPdf } from "./processSalesPdf";
 export { ensureVenueDefaultsCallable } from "./ensureVenueDefaults";
 
 // === Authority: ensure default server-owned docs exist ===
+
+export { onShelfScanJobCreate } from "./shelfScan/onShelfScanJobCreate";
+
+
+
+
+
+export { uploadShelfScanPhotoCallable } from "./shelfScan/uploadShelfScanPhotoCallable";

@@ -33,13 +33,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createVenueOwnedByUser = exports.ocrInvoicePhoto = exports.ocrSupplierCard = exports.ocrFastReceivePhoto = exports.onOcrJobQueued = exports.refreshMyClaims = exports.onMemberWrite = void 0;
+exports.uploadShelfScanPhotoCallable = exports.onShelfScanJobCreate = exports.ensureVenueDefaultsCallable = exports.processSalesPdf = exports.createVenueOwnedByUser = exports.ocrInvoicePhoto = exports.ocrSupplierCard = exports.ocrFastReceivePhoto = exports.onOcrJobQueued = exports.refreshMyClaims = exports.onMemberWrite = void 0;
 const admin = __importStar(require("firebase-admin"));
 // Initialize Admin exactly once (safe on hot reload)
 try {
     admin.app();
 }
-catch (_a) {
+catch {
     admin.initializeApp();
 }
 // === Membership (claims sync + callable) ===
@@ -61,4 +61,15 @@ Object.defineProperty(exports, "ocrInvoicePhoto", { enumerable: true, get: funct
 // === NEW: create venue from mobile app ===
 var createVenueOwnedByUser_1 = require("./createVenueOwnedByUser");
 Object.defineProperty(exports, "createVenueOwnedByUser", { enumerable: true, get: function () { return createVenueOwnedByUser_1.createVenueOwnedByUser; } });
+// === NEW: Sales PDF normaliser (used by SalesImportPanel) ===
+var processSalesPdf_1 = require("./processSalesPdf");
+Object.defineProperty(exports, "processSalesPdf", { enumerable: true, get: function () { return processSalesPdf_1.processSalesPdf; } });
+// === Authority: ensure default server-owned docs exist ===
+var ensureVenueDefaults_1 = require("./ensureVenueDefaults");
+Object.defineProperty(exports, "ensureVenueDefaultsCallable", { enumerable: true, get: function () { return ensureVenueDefaults_1.ensureVenueDefaultsCallable; } });
+// === Authority: ensure default server-owned docs exist ===
+var onShelfScanJobCreate_1 = require("./shelfScan/onShelfScanJobCreate");
+Object.defineProperty(exports, "onShelfScanJobCreate", { enumerable: true, get: function () { return onShelfScanJobCreate_1.onShelfScanJobCreate; } });
+var uploadShelfScanPhotoCallable_1 = require("./shelfScan/uploadShelfScanPhotoCallable");
+Object.defineProperty(exports, "uploadShelfScanPhotoCallable", { enumerable: true, get: function () { return uploadShelfScanPhotoCallable_1.uploadShelfScanPhotoCallable; } });
 //# sourceMappingURL=index.js.map

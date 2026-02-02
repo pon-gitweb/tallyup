@@ -47,7 +47,7 @@ function extractPo(text) {
     ];
     for (const rx of patterns) {
         const m = text.match(rx);
-        if (m === null || m === void 0 ? void 0 : m[1])
+        if (m?.[1])
             return m[1].toUpperCase().slice(0, 64);
     }
     return null;
@@ -87,13 +87,12 @@ function extractLines(text) {
 exports.ocrInvoicePhoto = functions
     .region("us-central1")
     .https.onCall(async (data, context) => {
-    var _a, _b, _c;
     if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
     }
     const uid = String(context.auth.uid || "");
-    const venueId = String((data === null || data === void 0 ? void 0 : data.venueId) || "");
-    const imageBase64 = String((data === null || data === void 0 ? void 0 : data.imageBase64) || "");
+    const venueId = String(data?.venueId || "");
+    const imageBase64 = String(data?.imageBase64 || "");
     if (!venueId) {
         throw new functions.https.HttpsError("invalid-argument", "venueId is required.");
     }
@@ -112,12 +111,12 @@ exports.ocrInvoicePhoto = functions
         buf = Buffer.from(imageBase64, "base64");
     }
     catch (e) {
-        console.error("[ocrInvoicePhoto] invalid base64", (e === null || e === void 0 ? void 0 : e.message) || e);
+        console.error("[ocrInvoicePhoto] invalid base64", e?.message || e);
         throw new functions.https.HttpsError("invalid-argument", "Invalid imageBase64.");
     }
     const [result] = await vision.textDetection({ image: { content: buf } });
-    const text = ((_a = result === null || result === void 0 ? void 0 : result.fullTextAnnotation) === null || _a === void 0 ? void 0 : _a.text) ||
-        ((_c = (_b = result === null || result === void 0 ? void 0 : result.textAnnotations) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.description) ||
+    const text = result?.fullTextAnnotation?.text ||
+        result?.textAnnotations?.[0]?.description ||
         "";
     if (!text.trim()) {
         console.log("[ocrInvoicePhoto] OCR returned no text");

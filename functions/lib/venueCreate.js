@@ -54,9 +54,8 @@ exports.createVenueOwnedByUser = functions.https.onCall(async (data, context) =>
     const memberRef = venueRef.collection("members").doc(uid);
     const userRef = db.doc(`users/${uid}`);
     await db.runTransaction(async (tx) => {
-        var _a;
         const userSnap = await tx.get(userRef);
-        const currentVenueId = userSnap.exists ? ((_a = userSnap.data().venueId) !== null && _a !== void 0 ? _a : null) : null;
+        const currentVenueId = userSnap.exists ? (userSnap.data().venueId ?? null) : null;
         if (currentVenueId) {
             throw new functions.https.HttpsError("failed-precondition", "This user is already attached to a venue.");
         }
