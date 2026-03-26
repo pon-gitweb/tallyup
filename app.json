@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "tallyup",
+    "name": "Hosti-Stock",
     "slug": "tallyup",
     "version": "1.0.5",
     "orientation": "portrait",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.tallyup"
+      "bundleIdentifier": "com.hostistock.tallyup"
     },
     "android": {
       "adaptiveIcon": {
