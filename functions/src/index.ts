@@ -27,3 +27,6 @@ export { createVenueOwnedByUser } from "./createVenueOwnedByUser";
 
 // === NEW: Sales PDF normaliser (used by SalesImportPanel) ===
 export { processSalesPdf } from "./processSalesPdf";
+
+// === HTTP API (upload-file, health) ===
+export { api } from "./api";
