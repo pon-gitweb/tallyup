@@ -1,0 +1,4 @@
+lib/
+*.js.map
+.env
+node_modules/
