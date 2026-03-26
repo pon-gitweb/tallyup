@@ -6,25 +6,30 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "environment": "production"
     },
     "play-aab": {
       "android": {
         "buildType": "app-bundle"
       },
-      "distribution": "store"
+      "distribution": "store",
+      "environment": "production"
     },
     "tester-apk": {
       "android": {
         "buildType": "apk"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development"
     }
   },
   "submit": {
