@@ -1,135 +1,752 @@
-// Firestore Rules — TallyUp (full, with Invoices + Budgets + future-proof subs)
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() { return request.auth != null; }
-    function uid() { return request.auth.uid; }
+    // ========= Helpers =========
+    function isSignedIn() {
+      return request.auth != null;
+    }
 
-    function userDoc() {
-      return get(/databases/$(database)/documents/users/$(uid()));
-    }
-    function userDocExists() {
-      return exists(/databases/$(database)/documents/users/$(uid()));
-    }
-    function userVenueId() {
-      return userDocExists() && userDoc().data.keys().hasAny(['venueId'])
-        ? userDoc().data.venueId
+    function supplierId() {
+      return isSignedIn()
+        && request.auth.token != null
+        && request.auth.token.supplierId != null
+        ? request.auth.token.supplierId
         : null;
     }
-    function hasVenueAccess(venueId) {
+    function isSupplierUser() {
+      return supplierId() != null;
+    }
+
+    function isVenueMember(venueId) {
       return isSignedIn() && (
-        (userDocExists() && userVenueId() == venueId)
-        || exists(/databases/$(database)/documents/venues/$(venueId)/members/$(uid()))
-      );
-    }
-    function canCreateFirstVenue() {
-      return isSignedIn() && (!userDocExists() || userVenueId() == null);
-    }
-    function isOwnerOfVenue(venueId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/venues/$(venueId))
-        && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == uid();
-    }
-
-    match /users/{userId} {
-      allow read: if isSignedIn() && userId == uid();
-      allow create: if isSignedIn() && userId == uid();
-      allow update: if isSignedIn() && userId == uid() && (
-        !(request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId'])) ||
-        (
-          request.resource.data.diff(resource.data).changedKeys().hasOnly(['venueId']) &&
-          (!resource.data.keys().hasAny(['venueId']) || resource.data.venueId == null)
-        )
+        (request.auth.token.venues[venueId] == true) ||
+        exists(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid))
       );
     }
 
-    match /venues/{venueId} {
-      allow create: if canCreateFirstVenue()
-        && request.resource.data.keys().hasAll(['name','ownerUid'])
-        && request.resource.data.ownerUid == uid();
+    function hasVenueRole(venueId, allowed) {
+      return isVenueMember(venueId) && (
+        allowed.hasAny([request.auth.token.venue_roles[venueId]]) ||
+        allowed.hasAny([
+          get(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid)).data.role
+        ])
+      );
+    }
 
-      allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-      allow update: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+    function hasOnlyFields(data, allowedKeys) {
+      return data.keys().hasOnly(allowedKeys);
+    }
 
-      match /sessions/{sessionId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+    function supplierMatchesOrderData(orderData) {
+      return isSupplierUser()
+        && orderData != null
+        && orderData.keys().hasAny(['supplierId'])
+        && orderData.supplierId == supplierId();
+    }
+
+    function supplierAllowedOrderUpdate() {
+      return supplierMatchesOrderData(resource.data)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'supplierStatus',
+          'supplierStatusUpdatedAt',
+          'acceptedAt',
+          'shippedAt',
+          'deliveredAt',
+          'invoice'
+        ])
+        && request.resource.data.supplierId == resource.data.supplierId
+        && (
+          !request.resource.data.keys().hasAny(['invoice']) ||
+          request.resource.data.invoice == null ||
+          request.resource.data.invoice.keys().hasOnly(['storagePath','source','invoiceNumber'])
+        );
+    }
+
+    // ========= Root collections =========
+    match /global_suppliers/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      match /items/{itemId} {
+        allow read: if isSignedIn();
+        allow write: if false;
       }
+    }
 
-      match /members/{memberId} {
-        allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        allow write: if (memberId == uid()) && (hasVenueAccess(venueId) || isOwnerOfVenue(venueId));
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['venueId','createdAt','email','touchedAt']);
+      allow delete: if false;
+    }
+
+    // ========= Venue-scoped =========
+    match /venues/{venueId} {
+
+      allow read: if isVenueMember(venueId);
+
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
+        && (request.resource.data.cycleResetAt is timestamp)
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
+
+      match /members/{uid} {
+        allow read: if isVenueMember(venueId);
+        allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
       }
 
       match /departments/{departmentId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-
-        match /session/{docId} {
-          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        }
+        allow read: if isVenueMember(venueId);
+        allow create, update: if hasVenueRole(venueId, ['manager','owner']);
+        allow delete: if hasVenueRole(venueId, ['owner']);
 
         match /areas/{areaId} {
-          allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+          allow read: if isVenueMember(venueId);
 
+          allow update: if isVenueMember(venueId)
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['currentLock'])
+            && (
+              request.resource.data.currentLock is map ||
+              request.resource.data.currentLock == null
+            );
+
+          function areaOpen() {
+            return !(
+              resource.data.keys().hasAny(['completedAt']) &&
+              resource.data.completedAt is timestamp
+            );
+          }
+          function areaIsFresh() {
+            return !(
+              resource.data.keys().hasAny(['startedAt']) &&
+              resource.data.startedAt is timestamp
+            );
+          }
           function isCycleReset() {
-            return request.resource.data.keys().hasAll(['cycleResetAt'])
-              && request.resource.data.startedAt == null
-              && request.resource.data.completedAt == null;
+            return request.resource.data.keys().hasAny(['cycleResetAt']);
           }
 
-          allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId)) && (
-            !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) ||
+          allow create: if hasVenueRole(venueId, ['manager','owner'])
+            && request.resource.data.keys().hasAny(['name', 'createdAt', 'updatedAt']);
+
+          allow update: if hasVenueRole(venueId, ['manager','owner']) && (
+            request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
+            request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt']) ||
             (
-              exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)) &&
-              get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+              isCycleReset() && (
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+              )
             ) ||
-            isCycleReset()
+            (
+              (areaOpen() || areaIsFresh()) &&
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['name','cycleResetAt','updatedAt']) &&
+              request.resource.data.updatedAt is timestamp
+            )
           );
 
+          allow update: if hasVenueRole(venueId, ['manager','owner'])
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt'])
+            && (request.resource.data.cycleResetAt is timestamp);
+
+          allow update: if hasVenueRole(venueId, ['manager','owner'])
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt','updatedAt'])
+            && (request.resource.data.cycleResetAt is timestamp)
+            && (request.resource.data.updatedAt is timestamp);
+
+          allow update: if isVenueMember(venueId)
+            && !(
+              resource.data.keys().hasAny(['startedAt']) &&
+              resource.data.startedAt is timestamp
+            )
+            && request.resource.data.startedAt is timestamp
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt']);
+
+          allow update: if isVenueMember(venueId)
+            && (
+              resource.data.keys().hasAny(['startedAt']) &&
+              resource.data.startedAt is timestamp
+            )
+            && !(
+              resource.data.keys().hasAny(['completedAt']) &&
+              resource.data.completedAt is timestamp
+            )
+            && request.resource.data.completedAt is timestamp
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']);
+
+          allow delete: if hasVenueRole(venueId, ['manager','owner']) && areaOpen();
+
           match /items/{itemId} {
-            allow read: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+            allow read: if isVenueMember(venueId);
+
             function isCountUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
                 || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
             }
-            allow write: if (hasVenueAccess(venueId) || isOwnerOfVenue(venueId))
-              && isCountUpdate()
-              && (
-                !exists(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId))
-                || get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.completedAt == null
+            function isLinkUpdate() {
+              let keys = request.resource.data.diff(resource.data).changedKeys();
+              return keys.hasOnly([
+                'productLinkId','productId','productRef','productName',
+                'supplierId','supplierName','packSize','price','cost','updatedAt'
+              ]);
+            }
+            function isNameOnlyCreate() {
+              return (
+                (request.resource.data.keys().hasOnly(['name']) && request.resource.data.name is string) ||
+                (request.resource.data.keys().hasOnly(['name','createdAt','updatedAt']) &&
+                  request.resource.data.name is string &&
+                  request.resource.data.createdAt is timestamp &&
+                  request.resource.data.updatedAt is timestamp)
               );
+            }
+            function isMetaCreateFull() {
+              return (
+                (
+                  request.resource.data.keys().hasOnly([
+                    'name','unit','supplierId','costPrice','salePrice','parLevel',
+                    'lastCount','lastCountAt','createdAt','updatedAt'
+                  ]) &&
+                  request.resource.data.name is string &&
+                  request.resource.data.createdAt is timestamp &&
+                  request.resource.data.updatedAt is timestamp
+                ) ||
+                (
+                  request.resource.data.keys().hasOnly([
+                    'name','unit','supplierId','costPrice','salePrice','parLevel',
+                    'lastCount','lastCountAt'
+                  ]) &&
+                  request.resource.data.name is string
+                )
+              );
+            }
+            function isMetaUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+                'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+              ]) && request.resource.data.updatedAt is timestamp;
+            }
+            function isInductedCreate() {
+              return hasOnlyFields(request.resource.data, [
+                'name','unit','supplierName',
+                'productId','productName',
+                'inductionStatus','inductionSource',
+                'lastCount','lastCountAt',
+                'createdAt','updatedAt'
+              ])
+              && request.resource.data.name is string
+              && request.resource.data.createdAt is timestamp
+              && request.resource.data.updatedAt is timestamp
+              && request.resource.data.inductionStatus in ['pending','complete']
+              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']
+              && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
+              && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
+              && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
+              && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string);
+            }
+            function isInductionUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+                'supplierName','productId','productName','inductionStatus','inductionSource','updatedAt'
+              ])
+              && request.resource.data.updatedAt is timestamp
+              && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
+              && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
+              && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
+              && (!('inductionStatus' in request.resource.data) || request.resource.data.inductionStatus in ['pending','complete'])
+              && (!('inductionSource' in request.resource.data) || request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']);
+            }
+
+            allow create: if hasVenueRole(venueId, ['manager','owner'])
+              && (
+                (
+                  hasOnlyFields(request.resource.data, [
+                    'name','unit','supplierName',
+                    'productId','productName',
+                    'inductionStatus','inductionSource',
+                    'lastCount','lastCountAt',
+                    'createdAt','updatedAt'
+                  ])
+                  && request.resource.data.name is string
+                  && request.resource.data.createdAt is timestamp
+                  && request.resource.data.updatedAt is timestamp
+                ) ||
+                (
+                  hasOnlyFields(request.resource.data, ['name'])
+                  && request.resource.data.name is string
+                )
+              );
+
+            allow create: if isVenueMember(venueId)
+              && (areaOpen() || areaIsFresh())
+              && (isNameOnlyCreate() || isMetaCreateFull() || isInductedCreate());
+
+            allow update: if isVenueMember(venueId) && areaOpen()
+              && (isCountUpdate() || isLinkUpdate() || isMetaUpdate() || isInductionUpdate());
+
+            allow delete: if isVenueMember(venueId) && areaOpen();
+          }
+        }
+
+        match /reports/{docId} {
+          allow read, write: if isVenueMember(venueId);
+          match /{sub=**} {
+            allow read, write: if isVenueMember(venueId);
           }
         }
       }
 
+      // ------- Areas + Items (venue-level legacy) -------
+      match /areas/{areaId} {
+        allow read: if isVenueMember(venueId);
+
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['currentLock'])
+          && (
+            request.resource.data.currentLock is map ||
+            request.resource.data.currentLock == null
+          );
+
+        function areaOpen() {
+          return !(
+            resource.data.keys().hasAny(['completedAt']) &&
+            resource.data.completedAt is timestamp
+          );
+        }
+        function areaIsFresh() {
+          return !(
+            resource.data.keys().hasAny(['startedAt']) &&
+            resource.data.startedAt is timestamp
+          );
+        }
+        function isCycleReset() { return request.resource.data.keys().hasAny(['cycleResetAt']); }
+
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.keys().hasAny(['name', 'createdAt', 'updatedAt']);
+
+        allow update: if hasVenueRole(venueId, ['manager','owner']) && (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt']) ||
+          (
+            isCycleReset() && (
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+            )
+          ) ||
+          (
+            (areaOpen() || areaIsFresh()) &&
+            request.resource.data.diff(resource.data).changedKeys().hasOnly(['name','cycleResetAt','updatedAt']) &&
+            request.resource.data.updatedAt is timestamp
+          )
+        );
+
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt'])
+          && (request.resource.data.cycleResetAt is timestamp);
+
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['cycleResetAt','updatedAt'])
+          && (request.resource.data.cycleResetAt is timestamp)
+          && (request.resource.data.updatedAt is timestamp);
+
+        allow delete: if hasVenueRole(venueId, ['manager','owner']) && areaOpen();
+
+        match /items/{itemId} {
+          allow read: if isVenueMember(venueId);
+
+          function isCountUpdate() {
+            return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+              || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+          }
+          function isLinkUpdate() {
+            let keys = request.resource.data.diff(resource.data).changedKeys();
+            return keys.hasOnly([
+              'productLinkId','productId','productRef','productName',
+              'supplierId','supplierName','packSize','price','cost','updatedAt'
+            ]);
+          }
+          function isNameOnlyCreate() {
+            return (
+              (request.resource.data.keys().hasOnly(['name']) && request.resource.data.name is string) ||
+              (request.resource.data.keys().hasOnly(['name','createdAt','updatedAt']) &&
+                request.resource.data.name is string &&
+                request.resource.data.createdAt is timestamp &&
+                request.resource.data.updatedAt is timestamp)
+            );
+          }
+          function isMetaCreateFull() {
+            return (
+              (
+                request.resource.data.keys().hasOnly([
+                  'name','unit','supplierId','costPrice','salePrice','parLevel',
+                  'lastCount','lastCountAt','createdAt','updatedAt'
+                ]) &&
+                request.resource.data.name is string
+                && request.resource.data.createdAt is timestamp
+                && request.resource.data.updatedAt is timestamp
+              ) ||
+              (
+                request.resource.data.keys().hasOnly([
+                  'name','unit','supplierId','costPrice','salePrice','parLevel',
+                  'lastCount','lastCountAt'
+                ]) &&
+                request.resource.data.name is string
+              )
+            );
+          }
+          function isMetaUpdate() {
+            return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+            ]) && request.resource.data.updatedAt is timestamp;
+          }
+          function isInductedCreate() {
+            return hasOnlyFields(request.resource.data, [
+              'name','unit','supplierName',
+              'productId','productName',
+              'inductionStatus','inductionSource',
+              'lastCount','lastCountAt',
+              'createdAt','updatedAt'
+            ])
+            && request.resource.data.name is string
+            && request.resource.data.createdAt is timestamp
+            && request.resource.data.updatedAt is timestamp
+            && request.resource.data.inductionStatus in ['pending','complete']
+            && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']
+            && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
+            && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
+            && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
+            && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string);
+          }
+          function isInductionUpdate() {
+            return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+              'supplierName','productId','productName','inductionStatus','inductionSource','updatedAt'
+            ])
+            && request.resource.data.updatedAt is timestamp
+            && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
+            && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
+            && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
+            && (!('inductionStatus' in request.resource.data) || request.resource.data.inductionStatus in ['pending','complete'])
+            && (!('inductionSource' in request.resource.data) || request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']);
+          }
+
+          allow create: if hasVenueRole(venueId, ['manager','owner'])
+            && (
+              (
+                hasOnlyFields(request.resource.data, [
+                  'name','unit','supplierName',
+                  'productId','productName',
+                  'inductionStatus','inductionSource',
+                  'lastCount','lastCountAt',
+                  'createdAt','updatedAt'
+                ])
+                && request.resource.data.name is string
+                && request.resource.data.createdAt is timestamp
+                && request.resource.data.updatedAt is timestamp
+              ) ||
+              (
+                hasOnlyFields(request.resource.data, ['name'])
+                && request.resource.data.name is string
+              )
+            );
+
+          allow create: if isVenueMember(venueId)
+            && (areaOpen() || areaIsFresh())
+            && (isNameOnlyCreate() || isMetaCreateFull() || isInductedCreate());
+
+          allow update: if isVenueMember(venueId) && areaOpen()
+            && (isCountUpdate() || isLinkUpdate() || isMetaUpdate() || isInductionUpdate());
+
+          allow delete: if isVenueMember(venueId) && areaOpen();
+        }
+      }
+
       match /suppliers/{supplierId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        allow read: if isVenueMember(venueId);
+        allow create, update, delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
       }
 
       match /products/{productId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+        allow read: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager','owner']) && (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['par','parLevel','supplierId','supplierName','updatedAt'])
+        );
         match /prices/{supplierId} {
-          allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
         }
-        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+      }
+
+      match /productNotes/{noteId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /recipes/{recipeId} {
+        allow read: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.status == 'draft'
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && resource.data.status == 'draft'
+          && request.resource.data.updatedAt is timestamp
+          && (request.resource.data.status in ['draft','confirmed']);
+        allow delete: if false;
       }
 
       match /orders/{orderId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
-        match /{sub=**}   { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        allow get, list: if isVenueMember(venueId) || supplierMatchesOrderData(resource.data);
+        allow create, update: if isVenueMember(venueId) || supplierAllowedOrderUpdate();
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /lines/{lineId} {
+          allow get, list: if isVenueMember(venueId) ||
+            supplierMatchesOrderData(get(/databases/$(database)/documents/venues/$(venueId)/orders/$(orderId)).data);
+          allow create, update: if isVenueMember(venueId);
+          allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        }
+        match /{sub=**} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
-      // NEW: invoices + lines
+      match /orderLocks/{supplierKey} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
       match /invoices/{invoiceId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        match /lines/{lineId} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /lines/{lineId} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
       match /budgets/{budgetId} {
-        allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId);
-        match /{sub=**} { allow read, write: if hasVenueAccess(venueId) || isOwnerOfVenue(venueId); }
+        allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read, write: if hasVenueRole(venueId, ['manager','owner']);
+        }
+      }
+
+      match /items/{itemId} {
+        allow read: if isVenueMember(venueId);
+      }
+
+      match /areas/{areaId}/items/{itemId} {
+        allow read: if isVenueMember(venueId);
+      }
+
+      match /sessions/{sessionId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, [
+            'type','status','venueId','departmentId','areaId',
+            'itemId','itemName','fromQty','proposedQty',
+            'reason','requestedBy','requestedAt','createdAt','updatedAt'
+          ])
+          && (request.resource.data.status is string)
+          && (request.resource.data.createdAt is timestamp);
+        allow delete: if false;
+      }
+
+      match /stockTakes/{stockTakeId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        match /{sub=**} {
+          allow read: if isVenueMember(venueId);
+        }
+      }
+
+      match /reports/{docId} {
+        allow read, write: if isVenueMember(venueId);
+        match /{sub=**} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      match /computed/{docId} {
+        allow read, write: if isVenueMember(venueId);
+        match /{sub=**} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      match /ocrJobs/{jobId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['status','createdAt','updatedAt','uploadedBy','file'])
+          && request.resource.data.status == 'uploaded'
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.file is map
+          && request.resource.data.file.path is string;
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status','updatedAt'])
+          && resource.data.status == 'uploaded'
+          && request.resource.data.status == 'queued'
+          && request.resource.data.updatedAt is timestamp;
+        allow delete: if hasVenueRole(venueId, ['owner','manager']);
+      }
+
+      match /shelfScanJobs/{scanId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, [
+            'status','venueId','departmentId','areaId','areaNameSnapshot',
+            'storagePath','createdBy','createdAt','updatedAt'
+          ])
+          && request.resource.data.status == 'uploaded'
+          && request.resource.data.venueId == venueId
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.storagePath is string
+          && (!('departmentId' in request.resource.data) || request.resource.data.departmentId == null || request.resource.data.departmentId is string)
+          && (!('areaId' in request.resource.data) || request.resource.data.areaId == null || request.resource.data.areaId is string)
+          && (!('areaNameSnapshot' in request.resource.data) || request.resource.data.areaNameSnapshot == null || request.resource.data.areaNameSnapshot is string);
+        allow update: if isVenueMember(venueId)
+          && resource.data.createdBy == request.auth.uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status','updatedAt'])
+          && request.resource.data.status in ['queued','processing']
+          && request.resource.data.updatedAt is timestamp;
+        allow update: if isVenueMember(venueId)
+          && resource.data.createdBy == request.auth.uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status','appliedAt','appliedBy','updatedAt'])
+          && request.resource.data.status == 'applied'
+          && request.resource.data.appliedBy == request.auth.uid
+          && request.resource.data.appliedAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+        allow delete: if hasVenueRole(venueId, ['owner','manager']);
+      }
+
+      match /deliveries/{deliveryId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, [
+            'status','orderId','supplierId','invoiceNumber','deliveryDate',
+            'taxTotals','subTotal','grandTotal',
+            'source','attachments','counts','priceVariance',
+            'createdAt','updatedAt','receivedAt','receivedBy'
+          ])
+          && request.resource.data.status == 'draft'
+          && request.resource.data.createdAt is timestamp
+          && !('receivedAt' in request.resource.data);
+        allow update: if isVenueMember(venueId)
+          && resource.data.status != 'received'
+          && request.resource.data.status in ['draft','receiving','exceptions']
+          && request.resource.data.orderId == resource.data.orderId
+          && request.resource.data.supplierId == resource.data.supplierId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && hasOnlyFields(request.resource.data, [
+            'status','orderId','supplierId','invoiceNumber','deliveryDate',
+            'taxTotals','subTotal','grandTotal',
+            'source','attachments','counts','priceVariance',
+            'createdAt','updatedAt','receivedAt','receivedBy'
+          ])
+          && request.resource.data.updatedAt is timestamp
+          && (!('counts' in request.resource.data) || (request.resource.data.counts is list));
+        allow update: if isVenueMember(venueId)
+          && resource.data.status != 'received'
+          && request.resource.data.status == 'received'
+          && request.resource.data.orderId == resource.data.orderId
+          && request.resource.data.supplierId == resource.data.supplierId
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.receivedAt is timestamp;
+        allow delete: if false;
+      }
+
+      match /orderCounters/{dateKey} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int)
+          && request.resource.data.seq == 1;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int && resource.data.seq is int)
+          && request.resource.data.seq == resource.data.seq + 1;
+        allow delete: if false;
+      }
+
+      match /counters_orders/{dateKey} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int)
+          && request.resource.data.seq == 1;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && hasOnlyFields(request.resource.data, ['seq','dateKey'])
+          && request.resource.data.dateKey == dateKey
+          && (request.resource.data.seq is int && resource.data.seq is int)
+          && request.resource.data.seq == resource.data.seq + 1;
+        allow delete: if false;
+      }
+
+      match /reconciliations/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.kind == 'invoice_reconcile'
+          && request.resource.data.createdAt is timestamp;
+        allow update, delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /fastReceives/{fastId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.kind == 'fast_receive_snapshot'
+          && request.resource.data.createdAt is timestamp;
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['pending','attached','reconciled'];
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /sales/{saleId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if hasVenueRole(venueId, ['manager','owner']);
+        allow delete: if hasVenueRole(venueId, ['owner']);
+      }
+
+      match /salesReports/{reportId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['source','report','createdAt'])
+          && request.resource.data.source in ['csv','pdf']
+          && request.resource.data.createdAt is timestamp;
+        allow update: if false;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /salesReportMatches/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['reportId','counts','matches','period','createdAt'])
+          && request.resource.data.createdAt is timestamp;
+        allow update: if false;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
+      match /salesReportUnknowns/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && hasOnlyFields(request.resource.data, ['reportId','line','createdAt','status'])
+          && request.resource.data.status == 'unmapped'
+          && request.resource.data.createdAt is timestamp;
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['unmapped','mapped'];
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
     }
   }
