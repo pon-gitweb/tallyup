@@ -4,20 +4,27 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "base": {
+      "node": "22.19.0"
+    },
     "development": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development"
     },
     "preview": {
+      "extends": "base",
       "distribution": "internal",
       "environment": "development"
     },
     "production": {
+      "extends": "base",
       "autoIncrement": true,
       "environment": "production"
     },
     "play-aab": {
+      "extends": "base",
       "android": {
         "buildType": "app-bundle"
       },
@@ -25,6 +32,7 @@
       "environment": "production"
     },
     "tester-apk": {
+      "extends": "base",
       "android": {
         "buildType": "apk"
       },
