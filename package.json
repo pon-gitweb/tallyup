@@ -42,7 +42,6 @@
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
-    "@expo/metro-config": "^54.0.12",
     "@google-cloud/firestore": "^8.0.0",
     "@jest/globals": "^30.2.0",
     "@testing-library/jest-native": "^5.4.3",
