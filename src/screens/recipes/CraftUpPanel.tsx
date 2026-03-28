@@ -267,52 +267,123 @@ function RecipesListTab() {
 }
 
 /* ---------------- Read-only Recipe Card ---------------- */
-function RecipeCardView({ recipe, onClose }:{ recipe:any; onClose:()=>void }) {
+function RecipeCardView({ recipe, onClose }) {
   const cost = Number(recipe?.cogs ?? 0);
-  const rrp  = Number(recipe?.rrp ?? 0);
-  const gp   = (rrp > 0 ? ((rrp - cost) / rrp) * 100 : 0);
+  const rrp = Number(recipe?.rrp ?? 0);
+  const gp = rrp > 0 ? ((rrp - cost) / rrp) * 100 : 0;
+  const yieldQty = recipe?.yield ?? null;
+  const yieldUnit = recipe?.unit ?? 'serves';
+  const category = recipe?.category ?? null;
+  const mode = recipe?.mode ?? null;
+
+  const methodSteps = (recipe?.method ?? '')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const formatIngredient = (it) => {
+    const qty = it?.qty != null ? String(it.qty) : '';
+    const unit = it?.unit ?? '';
+    const name = it?.name ?? it?.productName ?? '—';
+    return [qty, unit, name].filter(Boolean).join(' ');
+  };
+
+  const gpColor = gp >= 65 ? '#16A34A' : gp >= 55 ? '#D97706' : '#DC2626';
 
   return (
-    <ScrollView contentContainerStyle={{ padding:16 }}>
-      <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-        <TouchableOpacity onPress={onClose}><Text style={{ color:'#2563EB', fontSize:16 }}>‹ Back</Text></TouchableOpacity>
-        <Text style={{ fontSize:18, fontWeight:'900' }}>Recipe</Text>
-        <View style={{ width:60 }} />
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={{ color: '#2563EB', fontSize: 16 }}>‹ Back</Text>
+        </TouchableOpacity>
+        <Text style={{ fontSize: 14, fontWeight: '900', color: '#6B7280', letterSpacing: 1 }}>RECIPE</Text>
+        <View style={{ width: 60 }} />
       </View>
 
-      <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-        <Text style={{ fontSize:20, fontWeight:'900' }}>{recipe?.name || 'Untitled'}</Text>
-        <View style={[styles.chip, styles.chipConfirmed]}>
-          <Text style={styles.chipText}>Confirmed</Text>
+      {/* Title + badges */}
+      <View style={{ marginBottom: 20 }}>
+        <Text style={{ fontSize: 26, fontWeight: '900', color: '#111' }}>{recipe?.name || 'Untitled'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          {category && (
+            <View style={{ paddingVertical: 3, paddingHorizontal: 10, borderRadius: 999, backgroundColor: '#EFF6FF' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1D4ED8', textTransform: 'capitalize' }}>{category}</Text>
+            </View>
+          )}
+          {mode && (
+            <View style={{ paddingVertical: 3, paddingHorizontal: 10, borderRadius: 999, backgroundColor: '#F3F4F6' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textTransform: 'capitalize' }}>{mode}</Text>
+            </View>
+          )}
+          {yieldQty != null && (
+            <View style={{ paddingVertical: 3, paddingHorizontal: 10, borderRadius: 999, backgroundColor: '#F0FDF4' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>Makes {yieldQty} {yieldUnit}</Text>
+            </View>
+          )}
+          <View style={[styles.chip, styles.chipConfirmed]}>
+            <Text style={styles.chipText}>Confirmed</Text>
+          </View>
         </View>
       </View>
-      <Text style={{ color:'#6B7280', marginTop:2 }}>{(recipe?.category||'—')} · confirmed</Text>
 
-      <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12, backgroundColor:'#F9FAFB' }}>
-        <Text style={{ fontWeight:'700' }}>Pricing</Text>
-        <Text style={{ color:'#111', marginTop:4 }}>COGS/serve: {Number.isFinite(cost) ? `$${cost.toFixed(2)}` : '—'}</Text>
-        <Text style={{ color:'#111', marginTop:4 }}>RRP: {Number.isFinite(rrp) ? `$${rrp.toFixed(2)}` : '—'}</Text>
-        <Text style={{ color:'#111', marginTop:4 }}>GP: {Number.isFinite(gp) ? `${gp.toFixed(1)}%` : '—'}</Text>
-      </View>
-
-      <View style={{ marginTop:12, padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:12 }}>
-        <Text style={{ fontWeight:'700' }}>Ingredients (snapshot)</Text>
+      {/* Ingredients */}
+      <View style={{ marginBottom: 20, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}>
+        <Text style={{ fontSize: 13, fontWeight: '900', color: '#374151', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+          Ingredients
+        </Text>
         {Array.isArray(recipe?.items) && recipe.items.length > 0 ? (
-          <View style={{ marginTop:8 }}>
-            {recipe.items.map((it:any, idx:number)=>(
-              <Text key={idx} style={{ color:'#111', marginTop:4 }}>
-                • {it?.name ?? it?.productName ?? '—'} {it?.qty ? `· ${it.qty}` : ''} {it?.unit ?? ''}
-              </Text>
-            ))}
-          </View>
-        ) : <Text style={{ color:'#6B7280', marginTop:8 }}>No items.</Text>}
+          recipe.items.map((it, idx) => (
+            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: idx < recipe.items.length - 1 ? 1 : 0, borderBottomColor: '#F0F0F0' }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#374151', marginRight: 12, marginTop: 1, flexShrink: 0 }} />
+              <Text style={{ fontSize: 15, color: '#111', flex: 1 }}>{formatIngredient(it)}</Text>
+            </View>
+          ))
+        ) : (
+          <Text style={{ color: '#9CA3AF' }}>No ingredients recorded.</Text>
+        )}
       </View>
 
-      <TouchableOpacity
-        onPress={onClose}
-        style={{ marginTop:16, padding:14, borderRadius:12, backgroundColor:'#F3F4F6' }}
-      >
-        <Text style={{ color:'#111', fontWeight:'800', textAlign:'center' }}>Close</Text>
+      {/* Method */}
+      {methodSteps.length > 0 && (
+        <View style={{ marginBottom: 20, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}>
+          <Text style={{ fontSize: 13, fontWeight: '900', color: '#374151', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+            Method
+          </Text>
+          {methodSteps.map((step, idx) => (
+            <View key={idx} style={{ flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' }}>
+              <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: '#111', alignItems: 'center', justifyContent: 'center', marginRight: 12, marginTop: 0, flexShrink: 0 }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>{idx + 1}</Text>
+              </View>
+              <Text style={{ fontSize: 15, color: '#111', flex: 1, lineHeight: 22, paddingTop: 3 }}>{step}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Pricing footer */}
+      <View style={{ padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB', marginBottom: 16 }}>
+        <Text style={{ fontSize: 13, fontWeight: '900', color: '#374151', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+          Pricing
+        </Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 }}>
+          <Text style={{ color: '#6B7280', fontSize: 14 }}>Cost per serve</Text>
+          <Text style={{ fontWeight: '800', color: '#111', fontSize: 14 }}>{Number.isFinite(cost) && cost > 0 ? '$' + cost.toFixed(2) : '—'}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 }}>
+          <Text style={{ color: '#6B7280', fontSize: 14 }}>RRP (incl. GST)</Text>
+          <Text style={{ fontWeight: '800', color: '#111', fontSize: 14 }}>{Number.isFinite(rrp) && rrp > 0 ? '$' + rrp.toFixed(2) : '—'}</Text>
+        </View>
+        <View style={{ height: 1, backgroundColor: '#E5E7EB', marginVertical: 8 }} />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={{ fontWeight: '800', color: '#111', fontSize: 15 }}>Gross Profit</Text>
+          <Text style={{ fontWeight: '900', fontSize: 20, color: gpColor }}>
+            {Number.isFinite(gp) && gp > 0 ? gp.toFixed(1) + '%' : '—'}
+          </Text>
+        </View>
+      </View>
+
+      <TouchableOpacity onPress={onClose} style={{ padding: 14, borderRadius: 12, backgroundColor: '#F3F4F6' }}>
+        <Text style={{ color: '#111', fontWeight: '800', textAlign: 'center' }}>Close</Text>
       </TouchableOpacity>
     </ScrollView>
   );
