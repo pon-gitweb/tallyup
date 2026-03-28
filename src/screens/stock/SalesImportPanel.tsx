@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 
 export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
@@ -48,6 +49,13 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         source: 'csv',
       });
       if (!saved?.ok) throw new Error(saved?.error || 'Could not save sales report');
+
+      // Non-blocking: match sales lines to recipes and write theoretical consumption
+      if (parsed?.lines?.length > 0 && saved?.id) {
+        matchAndPersist(venueId, parsed.lines, saved.id).catch(e => {
+          if (__DEV__) console.log('[SalesImport] recipe match failed (non-fatal)', e?.message);
+        });
+      }
 
       Alert.alert(
         'Sales report saved',

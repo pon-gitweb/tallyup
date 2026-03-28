@@ -748,6 +748,17 @@ service cloud.firestore {
           && request.resource.data.status in ['unmapped','mapped'];
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
+      match /recipeSalesAttribution/{id} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.createdAt is timestamp;
+        allow update: if false;
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+      match /reports/theoreticalConsumption {
+        allow get: if isVenueMember(venueId);
+        allow write: if isVenueMember(venueId);
+      }
     }
   }
 }
