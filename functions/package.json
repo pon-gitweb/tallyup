@@ -3,7 +3,7 @@
   "private": true,
   "main": "lib/index.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.4",
@@ -20,7 +20,7 @@
     "deploy": "firebase deploy --only functions"
   },
   "devDependencies": {
-    "@types/node": "^20.19.25",
+    "@types/node": "^22.19.15",
     "typescript": "^5.9.3"
   }
 }
