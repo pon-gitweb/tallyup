@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
 import { listSuppliers, Supplier } from '../../services/suppliers';
@@ -15,6 +15,7 @@ export default function BudgetsScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
 
   // new budget form
   const [amount, setAmount] = useState<string>('');
@@ -112,7 +113,18 @@ export default function BudgetsScreen() {
       <Text style={styles.title}>Budgets</Text>
 
       {/* create form toggle */}
-      <TouchableOpacity style={styles.toggle} onPress={() => setIsCreating(v => !v)}>
+      <TouchableOpacity style={styles.toggle} onPress={() => {
+          if (!isCreating) {
+            // Smart defaults: current month
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+            if (!startIso) setStartIso(y + '-' + m + '-01');
+            if (!endIso) setEndIso(y + '-' + m + '-' + String(lastDay).padStart(2, '0'));
+          }
+          setIsCreating(v => !v);
+        }}>
         <Text style={styles.toggleText}>{isCreating ? 'Cancel' : 'New Budget'}</Text>
       </TouchableOpacity>
 
@@ -130,14 +142,15 @@ export default function BudgetsScreen() {
               />
             </View>
             <View style={[styles.col, {flex:1}]}>
-              <Text style={styles.label}>Supplier (optional, id)</Text>
-              <TextInput
-                placeholder="supplier id (or leave blank)"
-                value={supplierId}
-                onChangeText={setSupplierId}
-                style={styles.input}
-              />
-              <Text style={styles.hint}>Known: {suppliers.map(s => s.name).join(', ') || '—'}</Text>
+              <Text style={styles.label}>Supplier (optional)</Text>
+              <TouchableOpacity
+                onPress={() => setSupplierPickerOpen(true)}
+                style={[styles.input, { justifyContent: 'center' }]}
+              >
+                <Text style={{ color: supplierId ? '#111' : '#9CA3AF' }}>
+                  {supplierId ? (supplierMap.get(supplierId)?.name || supplierId) : 'All suppliers'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -178,7 +191,7 @@ export default function BudgetsScreen() {
               <Text style={styles.btitle}>{name}</Text>
               <Text style={styles.sub}>{start} → {end}</Text>
               <View style={styles.barWrap}>
-                <View style={[styles.barFill, { width: `${pct}%` }]} />
+                <View style={[styles.barFill, { width: pct + '%', backgroundColor: pct >= 100 ? '#DC2626' : pct >= 80 ? '#D97706' : '#16A34A' }]} />
               </View>
               <Text style={styles.sub}>
                 Spent {prog ? prog.spent.toFixed(2) : '—'} / {Number(b.amount || 0).toFixed(2)} ({pct}%)
@@ -189,6 +202,34 @@ export default function BudgetsScreen() {
         }}
         ListEmptyComponent={<Text>No budgets yet.</Text>}
       />
+
+      {/* Supplier picker modal */}
+      <Modal visible={supplierPickerOpen} transparent animationType="fade" onRequestClose={() => setSupplierPickerOpen(false)}>
+        <Pressable style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'center', alignItems:'center' }} onPress={() => setSupplierPickerOpen(false)}>
+          <Pressable style={{ backgroundColor:'#fff', borderRadius:16, padding:16, width:'85%', maxHeight:'70%' }}>
+            <Text style={{ fontWeight:'900', fontSize:16, marginBottom:12 }}>Select Supplier</Text>
+            <ScrollView>
+              <TouchableOpacity
+                onPress={() => { setSupplierId(''); setSupplierPickerOpen(false); }}
+                style={{ padding:12, borderBottomWidth:1, borderColor:'#F3F4F6' }}
+              >
+                <Text style={{ fontWeight:'700', color: !supplierId ? '#0A84FF' : '#111' }}>All suppliers</Text>
+                <Text style={{ color:'#6B7280', fontSize:12 }}>No supplier filter</Text>
+              </TouchableOpacity>
+              {suppliers.map(s => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => { setSupplierId(s.id || ''); setSupplierPickerOpen(false); }}
+                  style={{ padding:12, borderBottomWidth:1, borderColor:'#F3F4F6' }}
+                >
+                  <Text style={{ fontWeight:'700', color: supplierId === s.id ? '#0A84FF' : '#111' }}>{s.name}</Text>
+                  {s.email ? <Text style={{ color:'#6B7280', fontSize:12 }}>{s.email}</Text> : null}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {rows.length > 0 && (
         <TouchableOpacity style={styles.exportButton} onPress={onExportPdf}>
