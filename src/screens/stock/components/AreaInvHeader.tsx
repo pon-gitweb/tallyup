@@ -41,6 +41,7 @@ type Props = {
   setAddingQty: (s: string) => void;
 
   onAddQuickItem: () => void;
+  onOpenBatchModal?: () => void;
 
   stats: Stats;
   onOpenMore: () => void;
@@ -75,6 +76,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   addingQty,
   setAddingQty,
   onAddQuickItem,
+  onOpenBatchModal,
   stats,
   onOpenMore,
   nameInputRef,
@@ -297,6 +299,17 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               }}
             >
               <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onOpenBatchModal}
+              style={{
+                backgroundColor: '#7C3AED',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>Batch</Text>
             </TouchableOpacity>
           </View>
 

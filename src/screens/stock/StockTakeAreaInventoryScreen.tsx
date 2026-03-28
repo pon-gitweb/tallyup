@@ -575,6 +575,7 @@ function StockTakeAreaInventoryScreen() {
 
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
@@ -940,7 +941,18 @@ const qty = parseFloat(typed);
     payload.lastCountAt = nowTs;
   }
 
-  console.log('[Area quick add] Attempting to create with data:', payload);
+
+  const addBatchRecipeItem = async (batchPayload) => {
+    try {
+      await ensureAreaStarted();
+      const nowTs = serverTimestamp ? serverTimestamp() : new Date();
+      const colRef = collection(db, "venues", venueId, "departments", departmentId, "areas", areaId, "items");
+      await addDoc(colRef, Object.assign({}, batchPayload, { createdAt: nowTs, updatedAt: nowTs, lastCountAt: nowTs }));
+      Alert.alert("Added", batchPayload.name + " added to this area.");
+    } catch (e) { Alert.alert("Add failed", e && e.message ? e.message : String(e)); }
+  };
+
+    console.log('[Area quick add] Attempting to create with data:', payload);
 
   try {
     // Ensure this area has a startedAt for this stocktake window
@@ -1464,6 +1476,7 @@ try {
             addingQty={addingQty}                 
             setAddingQty={setAddingQty}           
             onAddQuickItem={addQuickItem}
+            onOpenBatchModal={() => setBatchModalOpen(true)}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}
             nameInputRef={nameInputRef}
@@ -1482,7 +1495,15 @@ try {
         }}
       />
 
-      {/* Request Adjustment Modal */}
+      {/* Batch Recipe Count Modal */}
+      <BatchRecipeModal
+        visible={batchModalOpen}
+        onClose={() => setBatchModalOpen(false)}
+        venueId={venueId}
+        onAdd={addBatchRecipeItem}
+      />
+
+            {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
@@ -2110,6 +2131,146 @@ try {
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
+
+
+// Batch Recipe Count Modal
+function BatchRecipeModal({ visible, onClose, venueId, onAdd }) {
+  const [search, setSearch] = React.useState("");
+  const [recipes, setRecipes] = React.useState([]);
+  const [selected, setSelected] = React.useState(null);
+  const [volume, setVolume] = React.useState("");
+  const [unit, setUnit] = React.useState("ml");
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!visible || !venueId) return;
+    setSearch(""); setSelected(null); setVolume(""); setUnit("ml");
+    (async () => {
+      try {
+        const { collection: col, getDocs, query: qry, where } = await import("firebase/firestore");
+        const { db: fdb } = await import("../../services/firebase");
+        const snap = await getDocs(qry(col(fdb, "venues", venueId, "recipes"), where("status", "==", "confirmed")));
+        const rows = [];
+        snap.forEach(d => rows.push(Object.assign({ id: d.id }, d.data())));
+        setRecipes(rows);
+      } catch { setRecipes([]); }
+    })();
+  }, [visible, venueId]);
+
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return !q ? recipes : recipes.filter(r => (r.name || "").toLowerCase().includes(q));
+  }, [recipes, search]);
+
+  const cycleUnit = () => setUnit(u => u === "ml" ? "L" : u === "L" ? "each" : "ml");
+
+  const confirmAdd = async () => {
+    if (!selected) { Alert.alert("Select a recipe first"); return; }
+    const vol = parseFloat(volume);
+    if (!volume || isNaN(vol) || vol <= 0) { Alert.alert("Enter a valid volume"); return; }
+    try {
+      setBusy(true);
+      const cogs = typeof selected.cogs === "number" ? selected.cogs : 0;
+      const yieldQty = typeof selected.yield === "number" && selected.yield > 0 ? selected.yield : 1;
+      const costPrice = cogs * (vol / yieldQty);
+      await onAdd({
+        name: selected.name,
+        unit,
+        lastCount: vol,
+        costPrice: Number.isFinite(costPrice) ? parseFloat(costPrice.toFixed(4)) : null,
+        recipeId: selected.id,
+        inductionSource: "batch-recipe",
+        inductionStatus: "complete",
+      });
+      onClose();
+    } catch (e) { Alert.alert("Failed to add batch", e && e.message ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const vol = parseFloat(volume);
+  const estValue = selected && selected.cogs > 0 && volume && !isNaN(vol)
+    ? (selected.cogs * (vol / (selected.yield || 1))).toFixed(2)
+    : null;
+
+  const cogsLabel = (r) => typeof r.cogs === "number" ? " $" + r.cogs.toFixed(2) + "/serve" : "";
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
+      <View style={{ flex:1, backgroundColor:"rgba(0,0,0,0.4)", justifyContent:"flex-end" }}>
+        <View style={{ backgroundColor:"#fff", borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, maxHeight:"85%" }}>
+          <Text style={{ fontSize:18, fontWeight:"900", marginBottom:12 }}>Count Batch Recipe</Text>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search recipes..."
+            style={{ borderWidth:1, borderColor:"#E5E7EB", borderRadius:10, padding:10, marginBottom:10 }}
+          />
+          {!selected ? (
+            <ScrollView style={{ maxHeight:280 }} keyboardShouldPersistTaps="handled">
+              {filtered.length === 0
+                ? <Text style={{ color:"#9CA3AF", padding:10 }}>No confirmed recipes found.</Text>
+                : filtered.map(r => (
+                  <TouchableOpacity key={r.id} onPress={() => setSelected(r)}
+                    style={{ padding:12, borderBottomWidth:1, borderColor:"#F3F4F6" }}>
+                    <Text style={{ fontWeight:"700" }}>{r.name}</Text>
+                    <Text style={{ color:"#6B7280", fontSize:12 }}>
+                      {r.category} - {r.mode} - {r.yield} {r.unit}{cogsLabel(r)}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              }
+            </ScrollView>
+          ) : (
+            <View style={{ gap:10 }}>
+              <View style={{ padding:12, borderRadius:10, backgroundColor:"#F0FDF4", borderWidth:1, borderColor:"#BBF7D0" }}>
+                <Text style={{ fontWeight:"800", color:"#16A34A" }}>{selected.name}</Text>
+                <Text style={{ color:"#6B7280", fontSize:12, marginTop:2 }}>
+                  {selected.category} - {selected.yield} {selected.unit}{cogsLabel(selected)}
+                </Text>
+                <TouchableOpacity onPress={() => setSelected(null)} style={{ marginTop:6 }}>
+                  <Text style={{ color:"#DC2626", fontSize:12, fontWeight:"700" }}>Change recipe</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontWeight:"700", color:"#374151" }}>How much is on hand?</Text>
+              <View style={{ flexDirection:"row", gap:8 }}>
+                <TextInput
+                  value={volume}
+                  onChangeText={setVolume}
+                  placeholder="e.g. 1500"
+                  keyboardType="decimal-pad"
+                  style={{ flex:1, borderWidth:1, borderColor:"#E5E7EB", borderRadius:10, padding:10 }}
+                />
+                <TouchableOpacity onPress={cycleUnit}
+                  style={{ padding:10, borderWidth:1, borderColor:"#111", borderRadius:10, minWidth:60, alignItems:"center", justifyContent:"center" }}>
+                  <Text style={{ fontWeight:"800" }}>{unit}</Text>
+                </TouchableOpacity>
+              </View>
+              {estValue ? (
+                <View style={{ padding:10, borderRadius:10, backgroundColor:"#F9FAFB", borderWidth:1, borderColor:"#E5E7EB" }}>
+                  <Text style={{ color:"#6B7280", fontSize:13 }}>Est. value: ${estValue}</Text>
+                </View>
+              ) : null}
+            </View>
+          )}
+          <View style={{ flexDirection:"row", gap:10, marginTop:16 }}>
+            <TouchableOpacity onPress={onClose}
+              style={{ flex:1, padding:14, borderRadius:12, backgroundColor:"#F3F4F6" }}>
+              <Text style={{ textAlign:"center", fontWeight:"700" }}>Cancel</Text>
+            </TouchableOpacity>
+            {selected ? (
+              <TouchableOpacity disabled={busy} onPress={confirmAdd}
+                style={{ flex:1, padding:14, borderRadius:12, backgroundColor:"#111" }}>
+                <Text style={{ color:"#fff", textAlign:"center", fontWeight:"800" }}>
+                  {busy ? "Adding..." : "Add to Count"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
