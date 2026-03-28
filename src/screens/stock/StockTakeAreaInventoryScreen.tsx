@@ -1151,6 +1151,8 @@ try {
           { completedAt: serverTimestamp() }
         );
         await maybeFinalizeDepartment();
+        // Generate latest counts snapshot for variance reports (non-blocking)
+        try { await generateLatestCountsSnapshot(venueId); } catch (e) { if (__DEV__) console.log("[completeArea] snapshot failed", e && e.message); }
         nav.goBack();
       } catch (e: any) {
         Alert.alert('Could not complete area', e?.message ?? String(e));
