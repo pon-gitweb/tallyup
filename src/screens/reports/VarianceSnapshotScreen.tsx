@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableO
 import { useVenueId } from '../../context/VenueProvider';
 import { computeVarianceSnapshot, VarianceRow } from '../../services/reports/variance';
 import { explainVariance } from '../../services/aiVariance';
+import { attributeVarianceToRecipes } from '../../services/sales/matchSalesToRecipes';
 import { exportPdf } from '../../utils/exporters';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -220,6 +221,14 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
     ? `Cost $${formatMoney(baseCost)} → Real $${formatMoney(realCost)} (lost ${shrinkUnits}${unit ? ' ' + unit : ''})`
     : null;
 
+
+  const [attribution, setAttribution] = React.useState(null);
+  React.useEffect(() => {
+    if (!venueId || !productId || variance >= 0) return;
+    attributeVarianceToRecipes(venueId, productId,
+      onHand != null && par != null ? (onHand - par) : 0, 0, 0
+    ).then(r => { if (r && r.length > 0) setAttribution(r[0]); }).catch(() => {});
+  }, [venueId, productId, variance]);
   return (
     <View style={[styles.row, divider && styles.rowDivider]}>
       <View style={{ flex: 1 }}>
@@ -230,6 +239,11 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
         {costLine ? (
           <Text style={styles.subtle} numberOfLines={1}>
             {costLine}
+          </Text>
+        ) : null}
+        {attribution ? (
+          <Text style={[styles.subtle, { color: '#D97706', marginTop: 2 }]} numberOfLines={2}>
+            {'⚠️ '}{attribution.recipeName} ({attribution.qtySold} sold · {attribution.attributedPct}% of variance)
           </Text>
         ) : null}
       </View>

@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 
 const EXPECTED_HEADERS = [
   { col: 'name', desc: 'Product name', required: true },
@@ -70,6 +71,13 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       });
 
       if (!saved?.ok) throw new Error(saved?.error || 'storeSalesReport failed');
+
+      // Non-blocking: match sales lines to recipes and write theoretical consumption
+      if (parsed?.lines?.length > 0 && saved?.id) {
+        matchAndPersist(venueId, parsed.lines, saved.id).catch(e => {
+          if (__DEV__) console.log('[SalesUpload] recipe match failed (non-fatal)', e?.message);
+        });
+      }
 
       Alert.alert(
         'Sales report saved',
