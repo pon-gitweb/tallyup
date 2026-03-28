@@ -2,6 +2,7 @@
 import React from 'react';
 import { Alert, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
 import { explainVariance } from '../../../services/aiVariance';
+import { attributeVarianceToRecipes } from '../../../services/sales/matchSalesToRecipes';
 
 type Props = {
   venueId: string | null | undefined;
@@ -21,7 +22,11 @@ export default function VarianceExplainButton({ venueId, departmentId, row }: Pr
       const counted = typeof row?.onHand === 'number' ? row.onHand : 0;
       const expected = (typeof row?.onHand === 'number' && typeof row?.varianceQty === 'number') ? row.onHand - row.varianceQty : 0;
 
-      const ai = await explainVariance({
+      // Run attribution and AI explain in parallel
+      const productId = row?.productId || row?.id || String(row?.name || 'unknown');
+      const varianceQty = row?.varianceQty ?? row?.variance ?? 0;
+      const [ai, attributions] = await Promise.all([
+        explainVariance({
         itemName: row?.name,
         varianceQty: row?.varianceQty ?? row?.variance ?? 0,
         varianceValue: row?.varianceValue ?? row?.value ?? null,
@@ -44,13 +49,26 @@ export default function VarianceExplainButton({ venueId, departmentId, row }: Pr
           recentSoldQty: row?.recentSoldQty ?? null,
           recentReceivedQty: row?.recentReceivedQty ?? null,
         },
-      });
+      }),
+        venueId && productId ? attributeVarianceToRecipes(
+          String(venueId), productId,
+          varianceQty < 0 ? varianceQty : 0, 0, 0
+        ).catch(() => []) : Promise.resolve([]),
+      ]);
 
       const summary = (ai?.summary && String(ai.summary).trim()) || 'No specific insight.';
       const factors = Array.isArray(ai?.factors) ? ai.factors.filter(Boolean) : [];
       const missing = Array.isArray(ai?.missing) ? ai.missing.filter(Boolean) : [];
 
+      // Build attribution prefix
+      const topAttribution = Array.isArray(attributions) && attributions.length > 0 ? attributions[0] : null;
+      const attributionLine = topAttribution
+        ? 'Likely cause: ' + topAttribution.recipeName + ' (' + topAttribution.qtySold + ' sold, ' + topAttribution.attributedPct + '% of variance)'
+        : null;
+
       const lines = [
+        attributionLine ? '\u26a0\ufe0f ' + attributionLine : null,
+        attributionLine ? '' : null,
         summary,
         '',
         factors.length ? 'Key factors:' : null,
