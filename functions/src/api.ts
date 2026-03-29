@@ -78,6 +78,116 @@ app.post("/upload-file", async (req, res) => {
   }
 });
 
+// ── Anthropic helper ────────────────────────────────────────────
+async function callClaude(systemPrompt: string, userMessage: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => "");
+    throw new Error("Claude API error: " + err);
+  }
+  const data = await resp.json() as any;
+  return data?.content?.[0]?.text || "";
+}
+
+// ── POST /variance-explain ───────────────────────────────────────
+app.post("/variance-explain", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const ctx = req.body || {};
+    const productName = ctx.itemName || ctx.name || ctx.productId || "Product";
+    const onHand = Number(ctx.counted ?? ctx.onHand ?? 0);
+    const expected = Number(ctx.expected ?? ctx.par ?? 0);
+    const variance = onHand - expected;
+    const unit = ctx.unit || "units";
+    const salesQty = ctx.salesQty ?? ctx.recentSoldQty ?? null;
+    const invoiceQty = ctx.invoiceQty ?? ctx.recentReceivedQty ?? null;
+    const shrinkUnits = ctx.shrinkUnits ?? 0;
+    const costPerUnit = ctx.costPerUnit ?? ctx.realCostPerUnit ?? null;
+    const attributionRecipe = ctx.attributionRecipe ?? null;
+    const attributionPct = ctx.attributionPct ?? null;
+    const systemPrompt = [
+      "You are an AI assistant for Hosti-Stock, a hospitality inventory management app for NZ bars, restaurants and cafes.",
+      "Explain stock variances in plain English a bar manager or chef would understand. Be concise and practical.",
+      "If data is limited say so. Respond ONLY with valid JSON:",
+      '{ "summary": "1-2 sentence explanation", "factors": ["factor 1"], "confidence": 0.0-1.0, "missing": ["helpful data"] }'
+    ].join("\n");
+    const varStr = (variance >= 0 ? "+" : "") + variance + " " + unit;
+    const costStr = costPerUnit != null ? "$" + Number(costPerUnit).toFixed(2) : null;
+    const contextLines = [
+      "Product: " + productName,
+      "On hand: " + onHand + " " + unit,
+      "Expected: " + expected + " " + unit,
+      "Variance: " + varStr,
+      salesQty != null ? "Recent sales: " + salesQty + " " + unit : null,
+      invoiceQty != null ? "Recently received: " + invoiceQty + " " + unit : null,
+      shrinkUnits > 0 ? "Shrinkage recorded: " + shrinkUnits + " " + unit : null,
+      costStr ? "Cost per unit: " + costStr : null,
+      attributionRecipe ? "Recipe attribution: " + attributionRecipe + " accounts for " + attributionPct + "% of variance" : null,
+    ].filter(Boolean).join("\n");
+    const raw = await callClaude(systemPrompt, "Explain this stock variance:\n\n" + contextLines);
+    let parsed: any = {};
+    try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = { summary: raw.slice(0, 300) }; }
+    console.log("[api/variance-explain] OK", { uid, productName, variance });
+    res.json({
+      summary: parsed.summary || "No explanation available.",
+      factors: Array.isArray(parsed.factors) ? parsed.factors : [],
+      confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0.5,
+      missing: Array.isArray(parsed.missing) ? parsed.missing : [],
+    });
+  } catch (e: any) {
+    console.error("[api/variance-explain] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Explanation failed" });
+  }
+});
+
+// ── POST /suggest-orders ───────────────────────────────────────────
+app.post("/suggest-orders", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, baseline, context: ctx } = req.body || {};
+    if (!venueId || !baseline) { res.status(400).json({ ok: false, error: "Missing venueId or baseline" }); return; }
+    const buckets = baseline.buckets || {};
+    const supplierSummaries = Object.entries(buckets).map(([sid, b]: any) => {
+      const lines = Array.isArray(b?.lines) ? b.lines : [];
+      const total = lines.reduce((a: number, l: any) => a + (Number(l.qty||0) * Number(l.unitCost||l.cost||0)), 0);
+      return sid + ": " + lines.length + " lines, est $" + total.toFixed(2);
+    }).join("\n");
+    const systemPrompt = [
+      "You are an AI ordering assistant for Hosti-Stock, a hospitality inventory app for NZ bars and restaurants.",
+      "Review suggested order baselines and add intelligent insights about quantities, timing and patterns.",
+      "Consider: day of week patterns, seasonal demand, upcoming weekends, typical NZ hospitality trade flows.",
+      'Respond ONLY with valid JSON: { "insights": [{ "type": "warning|tip|seasonal|pattern", "message": "insight", "supplierId": "optional" }], "adjustments": [{ "productId": "id", "suggestedQty": 12, "reason": "why" }] }'
+    ].join("\n");
+    const today = new Date().toLocaleDateString("en-NZ", { weekday: "long", month: "long", day: "numeric" });
+    const userMsg = ["Venue: " + venueId, "Today: " + today, "Order summary:", supplierSummaries || "No lines", ctx ? "Context: " + JSON.stringify(ctx) : null, "Provide insights and flag quantity adjustments."].filter(Boolean).join("\n\n");
+    const raw = await callClaude(systemPrompt, userMsg);
+    let parsed: any = {};
+    try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = {}; }
+    console.log("[api/suggest-orders] OK", { uid, venueId });
+    res.json({ ...baseline, insights: Array.isArray(parsed.insights) ? parsed.insights : [], adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [] });
+  } catch (e: any) {
+    console.error("[api/suggest-orders] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Suggestion failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
@@ -85,7 +195,7 @@ app.get("/health", (_req, res) => {
 
 export const api = functions
   .region("us-central1")
-  .runWith({ memory: "512MB", timeoutSeconds: 120 })
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
   .https.onRequest(app);
 
 // ── Shared invoice parsing helpers ───────────────────────────────────────────
