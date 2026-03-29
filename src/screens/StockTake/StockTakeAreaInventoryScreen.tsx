@@ -327,8 +327,13 @@ export default function StockTakeAreaInventoryScreen() {
 
   // ——————————— Weight / Photo stubs (preserved) ———————————
   async function onScale(item: ItemRow) {
-    const mockGrams = 499;
-    onChange(item, String(mockGrams));
+    Alert.alert(
+      'Bluetooth Scale 📶',
+      'Hosti-Stock is built for Bluetooth scale integration and the feature is ready to connect.\n\n' +
+      'We are currently finalising our hardware partnership — once confirmed, your scale will sync counts automatically.\n\n' +
+      'In the meantime, weigh ' + item.name + ' on your scale and enter the reading manually. When the partnership is live, this step disappears.',
+      [{ text: 'Got it', style: 'default' }]
+    );
   }
   async function onPhotoAI(item: ItemRow) {
     const estimate = 12;
