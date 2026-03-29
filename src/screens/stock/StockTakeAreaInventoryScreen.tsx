@@ -22,6 +22,7 @@ import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
 import { refreshAIContext } from '../../services/aiContext';
 import BarcodeScannerModal from './components/BarcodeScannerModal';
+import PhotoCountModal from './components/PhotoCountModal';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -174,6 +175,7 @@ const Row = React.memo(function Row({
       <TouchableOpacity
         activeOpacity={0.9}
         onLongPress={() => setMenuFor(item)}
+      onPress={() => setMenuFor(item)}
         style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
       >
         <View style={{ flexDirection:'row', alignItems:'center' }}>
@@ -579,6 +581,7 @@ function StockTakeAreaInventoryScreen() {
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
+  const [photoCountFor, setPhotoCountFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 

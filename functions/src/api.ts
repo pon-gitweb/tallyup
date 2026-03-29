@@ -315,6 +315,69 @@ async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: st
   }));
 }
 
+
+// ── POST /photo-count ─────────────────────────────────────────────────
+// Body: { venueId, imageBase64, productHint?, unit? }
+// Returns: { estimatedCount, confidence, reasoning, productName?, suggestions }
+app.post("/photo-count", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, imageBase64, productHint, unit } = req.body || {};
+    if (!venueId || !imageBase64) { res.status(400).json({ ok: false, error: "Missing venueId or imageBase64" }); return; }
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+    const systemPrompt = [
+      "You are an expert hospitality inventory counter for NZ bars and restaurants.",
+      "Analyse the photo and count the visible stock items.",
+      "Be specific about what you see. Count individual units, not cases unless asked.",
+      "Consider: bottles behind bar, cans in fridge, kegs, dry goods, produce.",
+      productHint ? "The user is counting: " + productHint : "Identify the main product visible.",
+      unit ? "Count in units of: " + unit : "Count individual units.",
+      "Respond ONLY with valid JSON:",
+      '{ "estimatedCount": 12, "confidence": 0.85, "productName": "what you see", "reasoning": "I can see X rows of Y bottles", "suggestions": ["tip 1", "tip 2"] }'
+    ].filter(Boolean).join("\n");
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-opus-4-6",
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: [{
+          role: "user",
+          content: [{
+            type: "image",
+            source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
+          }, {
+            type: "text",
+            text: productHint ? "Count the " + productHint + " visible in this image." : "Count the stock items visible in this image.",
+          }],
+        }],
+      }),
+    });
+    if (!resp.ok) { const e = await resp.text().catch(() => ""); throw new Error("Claude error: " + e); }
+    const data = await resp.json() as any;
+    const text = data?.content?.[0]?.text || "{}";
+    const match = text.match(/\{[\s\S]*\}/);
+    let parsed: any = {};
+    try { parsed = match ? JSON.parse(match[0]) : {}; } catch { parsed = {}; }
+    // Log correction data for learning (venueId + hint + result)
+    console.log("[api/photo-count] OK", { uid, venueId, productHint, estimatedCount: parsed.estimatedCount, confidence: parsed.confidence });
+    res.json({
+      ok: true,
+      estimatedCount: Number.isFinite(parsed.estimatedCount) ? Math.round(parsed.estimatedCount) : 0,
+      confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0,
+      productName: parsed.productName || productHint || null,
+      reasoning: parsed.reasoning || null,
+      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+    });
+  } catch (e: any) {
+    console.error("[api/photo-count] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Photo count failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
