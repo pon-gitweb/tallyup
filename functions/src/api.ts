@@ -188,6 +188,77 @@ app.post("/suggest-orders", async (req, res) => {
   }
 });
 
+
+// ── POST /budget-suggest ───────────────────────────────────────────
+// Body: { venueId, aiContext }
+// Returns: { suggestions: [{ supplierId, supplierName, suggestedAmount, period, reasoning, confidence }] }
+app.post("/budget-suggest", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, aiContext } = req.body || {};
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    const ctx = aiContext || {};
+    const supplierSpend = Array.isArray(ctx.supplierSpend) ? ctx.supplierSpend : [];
+    const dataQuality = ctx.dataQuality || "low";
+    const stockCycles = ctx.stockCycleCount || 0;
+    const orderCycles = ctx.orderCycleCount || 0;
+    const frequentShortages = Array.isArray(ctx.frequentShortages) ? ctx.frequentShortages : [];
+    const topRecipes = Array.isArray(ctx.topSellingRecipes) ? ctx.topSellingRecipes : [];
+    const systemPrompt = [
+      "You are an AI budget advisor for Hosti-Stock, a hospitality inventory app for NZ bars and restaurants.",
+      "Analyse the venue spending patterns and suggest appropriate monthly budgets per supplier.",
+      "Be practical and specific. Base suggestions on actual spend data when available.",
+      "Consider NZ hospitality patterns: busy weekends, seasonal trade, typical GP margins.",
+      "If data quality is low, be conservative and say so.",
+      "Respond ONLY with valid JSON:",
+      '{ "suggestions": [{ "supplierId": "id", "supplierName": "name", "suggestedAmount": 1200, "periodDays": 30, "reasoning": "plain English reason", "confidence": 0.0-1.0 }], "overallNote": "general advice" }'
+    ].join("\n");
+    const spendSummary = supplierSpend.length > 0
+      ? supplierSpend.map((s) => {
+          const avgMonthly = s.orderCount > 0 ? (s.totalSpend / Math.max(1, orderCycles)) * 4 : 0;
+          return s.name + ": total $" + s.totalSpend.toFixed(2) + " across " + s.orderCount + " orders, est monthly $" + avgMonthly.toFixed(2);
+        }).join("\n")
+      : "No supplier spend data yet";
+    const shortagesSummary = frequentShortages.length > 0
+      ? "Frequent shortages: " + frequentShortages.map((s) => s.name).join(", ")
+      : "No frequent shortages recorded";
+    const recipesSummary = topRecipes.length > 0
+      ? "Top selling recipes: " + topRecipes.map((r) => r.name + " (" + r.totalSold + " sold)").join(", ")
+      : "No recipe sales data yet";
+    const userMsg = [
+      "Venue ID: " + venueId,
+      "Data quality: " + dataQuality,
+      "Completed stocktakes: " + stockCycles,
+      "Submitted orders: " + orderCycles,
+      "",
+      "Supplier spend history:",
+      spendSummary,
+      "",
+      shortagesSummary,
+      recipesSummary,
+      "",
+      "Suggest monthly budgets for each supplier. If data is low quality, suggest conservative amounts and explain why.",
+    ].join("\n");
+    const raw = await callClaude(systemPrompt, userMsg);
+    let parsed: any = {};
+    try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = {}; }
+    const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions.map((s: any) => ({
+      supplierId: String(s.supplierId || ""),
+      supplierName: String(s.supplierName || "Supplier"),
+      suggestedAmount: Number.isFinite(s.suggestedAmount) ? Math.round(s.suggestedAmount) : 500,
+      periodDays: Number.isFinite(s.periodDays) ? s.periodDays : 30,
+      reasoning: String(s.reasoning || ""),
+      confidence: Number.isFinite(s.confidence) ? s.confidence : 0.5,
+    })) : [];
+    console.log("[api/budget-suggest] OK", { uid, venueId, suggestions: suggestions.length });
+    res.json({ ok: true, suggestions, overallNote: parsed.overallNote || null, dataQuality });
+  } catch (e: any) {
+    console.error("[api/budget-suggest] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Budget suggestion failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });

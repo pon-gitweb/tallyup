@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
+import { getAIContext } from '../../services/aiContext';
+import { AI_BASE_URL } from '../../config/ai';
+import { getAuth } from 'firebase/auth';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { exportPdf } from '../../utils/exporters';
 import { doc, getDoc } from 'firebase/firestore';
@@ -15,6 +18,10 @@ export default function BudgetsScreen() {
   const [rows, setRows] = useState<Row[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiNote, setAiNote] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
 
   // new budget form
@@ -57,7 +64,38 @@ export default function BudgetsScreen() {
 
   useEffect(() => { load(); }, [venueId]);
 
-  async function onCreate() {
+  async function getAiSuggestions() {
+    if (!venueId) return;
+    try {
+      setAiLoading(true); setShowSuggestions(true);
+      const ctx = await getAIContext(venueId);
+      const token = await getAuth().currentUser?.getIdToken();
+      const resp = await fetch(AI_BASE_URL + '/api/budget-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ venueId, aiContext: ctx }),
+      });
+      const data = await resp.json();
+      setAiSuggestions(data.suggestions || []);
+      setAiNote(data.overallNote || null);
+    } catch (e) { Alert.alert('AI Error', e && e.message ? e.message : 'Could not get suggestions'); }
+    finally { setAiLoading(false); }
+  }
+
+  function acceptSuggestion(s) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+    setAmount(String(s.suggestedAmount));
+    setSupplierId(s.supplierId || '');
+    setStartIso(y + '-' + m + '-01');
+    setEndIso(y + '-' + m + '-' + String(lastDay).padStart(2, '0'));
+    setNotes(s.reasoning || '');
+    setShowSuggestions(false); setIsCreating(true);
+  }
+
+    async function onCreate() {
     if (!venueId) return;
     const amt = Number(amount);
     if (!amt || !startIso || !endIso) {
@@ -127,6 +165,41 @@ export default function BudgetsScreen() {
         }}>
         <Text style={styles.toggleText}>{isCreating ? 'Cancel' : 'New Budget'}</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={[styles.toggle, { backgroundColor: '#F3E8FF', marginLeft: 8 }]} onPress={getAiSuggestions} disabled={aiLoading}>
+        <Text style={[styles.toggleText, { color: '#7C3AED' }]}>{aiLoading ? 'Thinking...' : '✨ AI Suggest'}</Text>
+      </TouchableOpacity>
+
+      {showSuggestions && (
+        <View style={{ backgroundColor: "#F5F3FF", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "#DDD6FE", marginBottom: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Text style={{ fontWeight: "900", fontSize: 16, color: "#5B21B6" }}>AI Budget Suggestions</Text>
+            <TouchableOpacity onPress={() => setShowSuggestions(false)}>
+              <Text style={{ color: "#7C3AED", fontWeight: "700" }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {aiNote ? <Text style={{ color: "#6B7280", marginBottom: 10, fontSize: 13 }}>{aiNote}</Text> : null}
+          {aiLoading ? (
+            <ActivityIndicator color="#7C3AED" />
+          ) : aiSuggestions.length === 0 ? (
+            <Text style={{ color: "#6B7280" }}>No suggestions yet. Complete more stocktakes and upload sales reports to improve AI suggestions.</Text>
+          ) : aiSuggestions.map((s, i) => (
+            <View key={i} style={{ backgroundColor: "#fff", borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: "#EDE9FE" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontWeight: "800", color: "#111", flex: 1 }}>{s.supplierName}</Text>
+                <Text style={{ fontWeight: "900", fontSize: 18, color: "#5B21B6" }}>${"$"}{s.suggestedAmount}</Text>
+              </View>
+              <Text style={{ color: "#6B7280", fontSize: 12, marginTop: 4 }}>{s.reasoning}</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <Text style={{ fontSize: 11, color: "#9CA3AF" }}>Confidence: {Math.round((s.confidence || 0) * 100)}%</Text>
+                <TouchableOpacity onPress={() => acceptSuggestion(s)}
+                  style={{ backgroundColor: "#7C3AED", paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Use this</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
 
       {isCreating && (
         <View style={styles.card}>
