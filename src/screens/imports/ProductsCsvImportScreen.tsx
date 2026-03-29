@@ -1,11 +1,14 @@
 // @ts-nocheck
-import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc, setDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { parseCsv, toObjects, autoHeaderMap, remapObjects } from '../../services/imports/csv';
 import { uploadText } from '../../services/firebase/storage';
+import { listSuppliers } from '../../services/suppliers';
 
 const WANTED = ['name','unit','supplierId','supplierName','parLevel','costPrice','packSize'];
 
@@ -28,6 +31,9 @@ export default function ProductsCsvImportScreen(){
   const [stage,setStage] = useState<'paste'|'map'|'preview'|'done'>('paste');
   const [busy,setBusy] = useState(false);
   const [filename,setFilename] = useState('products.csv');
+  const [suppliers, setSuppliers] = useState([]);
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
+  const [selectedSupplier, setSelectedSupplier] = useState(null);
 
   const parsedRows = useMemo(()=>{
     if(!headers.length || !rowsObj.length) return [];
@@ -48,6 +54,44 @@ export default function ProductsCsvImportScreen(){
       Alert.alert('Parse failed', e?.message || 'Could not parse CSV.');
     }
   },[csvText]);
+
+  // Load suppliers for picker
+  useEffect(() => {
+    if (!venueId) return;
+    listSuppliers(venueId).then(setSuppliers).catch(() => {});
+  }, [venueId]);
+
+  // Pick CSV file instead of pasting
+  const onPickFile = useCallback(async () => {
+    try {
+      const pick = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      const canceled = pick.canceled ?? pick.type === 'cancel';
+      if (canceled) return;
+      const asset = pick.assets ? pick.assets[0] : pick;
+      const name = String(asset?.name || 'products.csv');
+      const uri = String(asset?.uri || '');
+      const content = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+      setFilename(name);
+      setCsvText(content);
+      // Auto-parse
+      try {
+        const { parseCsv: pc, toObjects: to, autoHeaderMap: ahm } = require('../../services/imports/csv');
+        const parsed = pc(content);
+        const objs = to(parsed);
+        const m = ahm(parsed.headers, WANTED);
+        setHeaders(parsed.headers);
+        setRowsObj(objs);
+        setMap(m);
+        setStage('map');
+      } catch { /* will parse manually */ }
+    } catch (e) {
+      Alert.alert('File pick failed', e && e.message ? e.message : 'Could not read file');
+    }
+  }, []);
 
   const cycleHeader = useCallback((key:string)=>{
     // Cycle through headers + (none) sentinel
@@ -178,6 +222,19 @@ export default function ProductsCsvImportScreen(){
       {stage==='map' && (
         <ScrollView contentContainerStyle={{padding:16}}>
           <Text style={S.sectionTitle}>Map Columns</Text>
+          {suppliers.length > 0 && (
+            <View style={{ marginBottom: 12, padding: 12, backgroundColor: '#F0FDF4', borderRadius: 10, borderWidth: 1, borderColor: '#BBF7D0' }}>
+              <Text style={{ fontWeight: '700', marginBottom: 6 }}>Assign to supplier (optional)</Text>
+              <TouchableOpacity
+                onPress={() => setSupplierPickerOpen(true)}
+                style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
+              >
+                <Text style={{ color: selectedSupplier ? '#111' : '#9CA3AF' }}>
+                  {selectedSupplier ? selectedSupplier.name : 'No supplier (assign later)'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
           <Text style={S.help}>Tap each field to cycle through headers (or set to none).</Text>
 
           {WANTED.map((k)=>(
@@ -232,6 +289,27 @@ export default function ProductsCsvImportScreen(){
         </View>
       )}
     </View>
+
+    {/* Supplier picker modal */}
+    <Modal visible={supplierPickerOpen} transparent animationType="fade" onRequestClose={() => setSupplierPickerOpen(false)}>
+      <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setSupplierPickerOpen(false)}>
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16, width: '85%', maxHeight: '70%' }}>
+          <Text style={{ fontWeight: '900', fontSize: 16, marginBottom: 12 }}>Select Supplier</Text>
+          <TouchableOpacity onPress={() => { setSelectedSupplier(null); setSupplierPickerOpen(false); }}
+            style={{ padding: 12, borderBottomWidth: 1, borderColor: '#F3F4F6' }}>
+            <Text style={{ fontWeight: '700', color: !selectedSupplier ? '#0A84FF' : '#111' }}>No supplier</Text>
+          </TouchableOpacity>
+          <ScrollView>
+            {suppliers.map(s => (
+              <TouchableOpacity key={s.id} onPress={() => { setSelectedSupplier(s); setSupplierPickerOpen(false); }}
+                style={{ padding: 12, borderBottomWidth: 1, borderColor: '#F3F4F6' }}>
+                <Text style={{ fontWeight: '700', color: selectedSupplier && selectedSupplier.id === s.id ? '#0A84FF' : '#111' }}>{s.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
   );
 }
 
