@@ -129,32 +129,8 @@ export default function ProductsScreen() {
     ]);
   }
 
-  // Best-effort navigation to the Products CSV import screen without changing nav config
   function goToProductsCsvImport() {
-    try {
-      const state: any = nav.getState?.();
-      const names: string[] = (state?.routeNames ?? []) as any;
-
-      const target =
-        names?.find((n) => n === 'ProductsCsvImportScreen') ||
-        names?.find((n) => n === 'ProductsCsvImport') ||
-        names?.find((n) => typeof n === 'string' && n.toLowerCase().includes('productscsv'));
-
-      if (target) {
-        nav.navigate(target as never);
-        return;
-      }
-
-      Alert.alert(
-        'CSV import not wired',
-        'The Products CSV import screen is not wired in this build yet. Once it is added to navigation, this button will open it.',
-      );
-    } catch (e: any) {
-      Alert.alert(
-        'CSV import not available',
-        e?.message || 'The Products CSV import screen is not available in this build.',
-      );
-    }
+    nav.navigate('ProductsCsvImport' as never);
   }
 
   const filtered = useMemo(() => {

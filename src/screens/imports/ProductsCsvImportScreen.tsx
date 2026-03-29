@@ -187,6 +187,7 @@ export default function ProductsCsvImportScreen(){
   },[db, venueId, filename, csvText, parsedRows, canUpload]);
 
   return (
+    <>
     <View style={S.wrap}>
       <View style={S.top}>
         <Text style={S.title}>Import Products (CSV)</Text>
@@ -310,6 +311,7 @@ export default function ProductsCsvImportScreen(){
         </View>
       </TouchableOpacity>
     </Modal>
+    </>
   );
 }
 

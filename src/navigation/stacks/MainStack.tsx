@@ -33,6 +33,7 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
 // Products (setup area)
 import ProductsScreen from '../../screens/setup/ProductsScreen';
+import ProductsCsvImportScreen from '../../screens/setup/ProductsCsvImportScreen';
 import EditProductScreen from '../../screens/setup/EditProductScreen';
 
 const Stack = createNativeStackNavigator();
@@ -66,6 +67,7 @@ export default function MainStack() {
 
       {/* Products */}
       <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
+      <Stack.Screen name="ProductsCsvImport" component={ProductsCsvImportScreen} options={{ title: 'Import Products (CSV)' }} />
       <Stack.Screen
         name="EditProductScreen"
         component={EditProductScreen}
