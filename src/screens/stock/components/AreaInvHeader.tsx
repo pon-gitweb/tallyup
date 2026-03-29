@@ -2,6 +2,7 @@
 import React from 'react';
 import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import SearchBarDebounced from '../../../components/SearchBarDebounced';
+import ProductSearchAdd from './ProductSearchAdd';
 
 type Stats = {
   countedCount: number;
@@ -41,6 +42,9 @@ type Props = {
   setAddingQty: (s: string) => void;
 
   onAddQuickItem: () => void;
+  onSelectProduct?: (product: any) => void;
+  onAddNewProduct?: (name: string) => void;
+  venueId?: string | null;
   onOpenBatchModal?: () => void;
 
   stats: Stats;
@@ -76,6 +80,9 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   addingQty,
   setAddingQty,
   onAddQuickItem,
+  onSelectProduct,
+  onAddNewProduct,
+  venueId,
   onOpenBatchModal,
   stats,
   onOpenMore,

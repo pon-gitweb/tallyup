@@ -895,7 +895,42 @@ const qty = parseFloat(typed);
     } else { await doApprove(); }
   };
 
-  const addQuickItem = async () => {
+  // Handle product selected from search dropdown
+  const onSelectProduct = useCallback(async (product: any) => {
+    if (!venueId || !orderId && !areaId) return;
+    try {
+      await ensureAreaStarted();
+      const nowTs = serverTimestamp();
+      const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
+      await addDoc(colRef, {
+        name: product.name,
+        unit: product.unit || '',
+        supplierName: product.supplierName || '',
+        supplierId: product.supplierId || null,
+        costPrice: product.costPrice ?? null,
+        par: product.parLevel ?? null,
+        lastCount: 0,
+        inductionSource: 'product-search',
+        inductionStatus: 'complete',
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        lastCountAt: nowTs,
+      });
+      setAddingName('');
+      savedToast('Added from products');
+    } catch (e: any) {
+      Alert.alert('Add failed', e?.message || 'Could not add product');
+    }
+  }, [venueId, departmentId, areaId, db]);
+
+  // Handle new product typed in search
+  const onAddNewProduct = useCallback((name: string) => {
+    setAddingName(name);
+    // Trigger quick add with just the name
+    setTimeout(() => addQuickItem(), 50);
+  }, [addQuickItem]);
+
+    const addQuickItem = async () => {
   const nm = (addingName || '').trim();
   const unit = (addingUnit || '').trim();
   const supplier = (addingSupplier || '').trim();
@@ -1479,6 +1514,9 @@ try {
             addingQty={addingQty}                 
             setAddingQty={setAddingQty}           
             onAddQuickItem={addQuickItem}
+            onSelectProduct={onSelectProduct}
+            onAddNewProduct={onAddNewProduct}
+            venueId={venueId}
             onOpenBatchModal={() => setBatchModalOpen(true)}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}
