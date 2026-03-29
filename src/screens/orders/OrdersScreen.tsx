@@ -20,6 +20,7 @@ function normalizeDisplayStatus(o:any){
   if (s === "received") return { ...o, displayStatus: "received" };
   if (s === "submitted") return { ...o, displayStatus: "submitted" };
   if (s === "pending_merge") return { ...o, displayStatus: "Pending merge" };
+  if (s === "pending-approval") return { ...o, displayStatus: "Awaiting approval" };
   return { ...o, displayStatus: s };
 }
 
@@ -74,6 +75,8 @@ const S = StyleSheet.create({
 const CANON = {
   draft: 'draft',
   pending: 'pending',
+  'pending-approval': 'pending-approval',
+  'pending_approval': 'pending-approval',
   'pending_merge': 'pending_merge',
   submitted: 'submitted',
   sent: 'submitted',
@@ -106,7 +109,7 @@ const STATUS_GROUPS = {
   drafts: (r:OrderRow)=>{
     const s = (r.status||'').toLowerCase().trim();
     if (s === 'cancelled') return false;
-    return s === 'draft' || s === 'pending' || s === 'pending_merge';
+    return s === 'draft' || s === 'pending' || s === 'pending_merge' || s === 'pending-approval';
   },
   submitted: (r:OrderRow)=>{
     const s = (r.status||'').toLowerCase().trim();
@@ -232,6 +235,7 @@ export default function OrdersScreen(){
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
     const statusText = (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
+    const isPendingApproval = (item.status || '').toLowerCase().includes('pending-approval');
 
     const isSubmitted=STATUS_GROUPS.submitted(item);
     const isDraft = STATUS_GROUPS.drafts(item);
@@ -306,7 +310,7 @@ export default function OrdersScreen(){
           const staleAll = snapAll.docs.filter(d=>{
             const v:any = d.data()||{};
             const canon = canonicalizeStatus(v.status, v.displayStatus);
-            if(canon!=='draft' && canon!=='pending' && canon!=='pending_merge') return false;
+            if(canon!=='draft' && canon!=='pending' && canon!=='pending_merge' && canon!=='pending-approval') return false;
             const clientMs = Number(v.createdAtClientMs||0);
             const serverMs = v.createdAt?.toMillis?.() ?? 0;
             const ts = clientMs || serverMs || 0;

@@ -609,6 +609,15 @@ export default function OrderDetailScreen() {
 
   return (
     <View style={S.wrap}>
+      {(orderMeta?.status || '').toLowerCase().includes('pending-approval') && (
+        <View style={{ backgroundColor: '#FEF3C7', padding: 14, borderBottomWidth: 1, borderColor: '#FDE68A', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text style={{ fontSize: 16 }}>⏳</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '800', color: '#92400E' }}>Awaiting manager approval</Text>
+            <Text style={{ fontSize: 12, color: '#92400E', marginTop: 2 }}>This order exceeded the budget and needs a manager to approve before it is submitted.</Text>
+          </View>
+        </View>
+      )}
       <View style={S.top}>
         <View>
           <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
