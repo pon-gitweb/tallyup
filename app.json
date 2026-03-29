@@ -14,7 +14,13 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hostistock.tallyup"
+      "bundleIdentifier": "com.hostistock.tallyup",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Hosti-Stock uses your camera to scan shelf items and invoices.",
+        "NSPhotoLibraryUsageDescription": "Hosti-Stock needs access to your photos to upload invoices and shelf scans.",
+        "NSLocationWhenInUseUsageDescription": "Hosti-Stock may use your location for delivery and venue features."
+      }
     },
     "android": {
       "adaptiveIcon": {

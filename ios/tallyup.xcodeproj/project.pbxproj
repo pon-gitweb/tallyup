@@ -352,7 +352,7 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.tallyup;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hostistock.tallyup;
 				PRODUCT_NAME = tallyup;
 				SWIFT_OBJC_BRIDGING_HEADER = "tallyup/tallyup-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -383,7 +383,7 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.tallyup;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hostistock.tallyup;
 				PRODUCT_NAME = tallyup;
 				SWIFT_OBJC_BRIDGING_HEADER = "tallyup/tallyup-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

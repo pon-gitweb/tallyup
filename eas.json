@@ -38,9 +38,40 @@
       },
       "distribution": "internal",
       "environment": "development"
+    },
+    "ios-simulator": {
+      "extends": "base",
+      "ios": {
+        "simulator": true
+      },
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "ios-preview": {
+      "extends": "base",
+      "ios": {
+        "buildType": "simulator"
+      },
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "ios-store": {
+      "extends": "base",
+      "ios": {
+        "buildType": "archive"
+      },
+      "distribution": "store",
+      "environment": "production",
+      "autoIncrement": true
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleId": "",
+        "ascAppId": "",
+        "appleTeamId": ""
+      }
+    }
   }
 }
