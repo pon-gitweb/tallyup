@@ -129,6 +129,18 @@ app.post("/variance-explain", async (req, res) => {
     ].join("\n");
     const varStr = (variance >= 0 ? "+" : "") + variance + " " + unit;
     const costStr = costPerUnit != null ? "$" + Number(costPerUnit).toFixed(2) : null;
+    // Extract AI context if provided
+    const aiCtx = req.body?.aiContext || null;
+    const topVariance = Array.isArray(aiCtx?.topVarianceItems) ? aiCtx.topVarianceItems.slice(0,5) : [];
+    const topRecipes = Array.isArray(aiCtx?.topSellingRecipes) ? aiCtx.topSellingRecipes.slice(0,3) : [];
+    const dataQuality = aiCtx?.dataQuality || 'low';
+    const venuePatterns = topVariance.length > 0
+      ? 'Known variance patterns: ' + topVariance.map((v) => v.name + ' (' + v.avgVariancePct + '% avg variance)').join(', ')
+      : null;
+    const recipeContext = topRecipes.length > 0
+      ? 'Top selling recipes: ' + topRecipes.map((r) => r.name + ' (' + r.totalSold + ' sold)').join(', ')
+      : null;
+
     const contextLines = [
       "Product: " + productName,
       "On hand: " + onHand + " " + unit,
@@ -139,6 +151,9 @@ app.post("/variance-explain", async (req, res) => {
       shrinkUnits > 0 ? "Shrinkage recorded: " + shrinkUnits + " " + unit : null,
       costStr ? "Cost per unit: " + costStr : null,
       attributionRecipe ? "Recipe attribution: " + attributionRecipe + " accounts for " + attributionPct + "% of variance" : null,
+      venuePatterns,
+      recipeContext,
+      dataQuality !== 'low' ? 'Venue data quality: ' + dataQuality + ' (' + (aiCtx?.stockCycleCount || 0) + ' stocktakes, ' + (aiCtx?.salesCycleCount || 0) + ' sales reports)' : null,
     ].filter(Boolean).join("\n");
     const raw = await callClaude(systemPrompt, "Explain this stock variance:\n\n" + contextLines);
     let parsed: any = {};
@@ -173,6 +188,8 @@ app.post("/suggest-orders", async (req, res) => {
       "You are an AI ordering assistant for Hosti-Stock, a hospitality inventory app for NZ bars and restaurants.",
       "Review suggested order baselines and add intelligent insights about quantities, timing and patterns.",
       "Consider: day of week patterns, seasonal demand, upcoming weekends, typical NZ hospitality trade flows.",
+      req.body?.aiContext?.topSellingRecipes ? "Known top recipes: " + req.body.aiContext.topSellingRecipes.slice(0,3).map((r) => r.name).join(', ') : null,
+      req.body?.aiContext?.frequentShortages?.length ? "Frequent shortages: " + req.body.aiContext.frequentShortages.slice(0,3).map((s) => s.name).join(', ') : null,
       'Respond ONLY with valid JSON: { "insights": [{ "type": "warning|tip|seasonal|pattern", "message": "insight", "supplierId": "optional" }], "adjustments": [{ "productId": "id", "suggestedQty": 12, "reason": "why" }] }'
     ].join("\n");
     const today = new Date().toLocaleDateString("en-NZ", { weekday: "long", month: "long", day: "numeric" });

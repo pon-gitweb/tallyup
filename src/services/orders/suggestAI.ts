@@ -1,3 +1,4 @@
+import { getAIContext } from '../aiContext';
 // @ts-nocheck
 /**
  * runAISuggest(venueId, opts, mode)
@@ -110,7 +111,7 @@ export async function runAISuggest(
     const resp = await fetch(AI_SUGGEST_ORDERS_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ venueId, baseline, opts }),
+      body: JSON.stringify({ venueId, baseline, opts, aiContext: await getAIContext(venueId).catch(() => null) }),
     });
 
     const headersObj: Record<string, string> = {};

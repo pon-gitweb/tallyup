@@ -1,3 +1,4 @@
+import { getAIContext } from './aiContext';
 /**
  * Variance explainer client: Expo-safe fetch to local/remote server.
  * Returns: { summary, factors?: string[], missing?: string[], confidence?: number }
@@ -11,11 +12,20 @@ const base =
 const URL_EXPLAIN = `${String(base).replace(/\/+$/,'')}/api/variance-explain`;
 
 export async function explainVariance(input: ExplainInput): Promise<ExplainOut> {
+  // Enrich with venue AI context if venueId is present
+  let enrichedInput = input ?? {};
+  try {
+    const vid = (input as any)?.venueId || (input as any)?.context?.venueId;
+    if (vid) {
+      const aiCtx = await getAIContext(vid);
+      if (aiCtx) enrichedInput = { ...enrichedInput, aiContext: aiCtx };
+    }
+  } catch { /* non-fatal */ }
   const resp = await fetch(URL_EXPLAIN, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input ?? {}),
-  }).catch((e) => { throw new Error(`Network error: ${String(e?.message || e)}`); });
+    body: JSON.stringify(enrichedInput),
+  }).catch((e) => { throw new Error('Network error: ' + String(e && e.message ? e.message : e)); });
 
   if (!resp.ok) {
     const msg = await resp.text().catch(() => '');
