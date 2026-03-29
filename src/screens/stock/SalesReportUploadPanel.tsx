@@ -6,6 +6,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
+import { refreshAIContext } from '../../services/aiContext';
 
 const EXPECTED_HEADERS = [
   { col: 'name', desc: 'Product name', required: true },
@@ -77,6 +78,8 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         matchAndPersist(venueId, parsed.lines, saved.id).catch(e => {
           if (__DEV__) console.log('[SalesUpload] recipe match failed (non-fatal)', e?.message);
         });
+        // Non-blocking: refresh AI learning context
+        refreshAIContext(venueId).catch(() => {});
       }
 
       Alert.alert(

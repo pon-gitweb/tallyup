@@ -20,6 +20,7 @@ import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
+import { refreshAIContext } from '../../services/aiContext';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -1165,6 +1166,8 @@ try {
         await maybeFinalizeDepartment();
         // Generate latest counts snapshot for variance reports (non-blocking)
         try { await generateLatestCountsSnapshot(venueId); } catch (e) { if (__DEV__) console.log("[completeArea] snapshot failed", e && e.message); }
+        // Non-blocking: refresh AI learning context
+        refreshAIContext(venueId).catch(() => {});
         nav.goBack();
       } catch (e: any) {
         Alert.alert('Could not complete area', e?.message ?? String(e));

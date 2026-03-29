@@ -748,6 +748,10 @@ service cloud.firestore {
           && request.resource.data.status in ['unmapped','mapped'];
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
+      match /aiContext/{docId} {
+        allow get: if isVenueMember(venueId);
+        allow write: if isVenueMember(venueId);
+      }
       match /recipeSalesAttribution/{id} {
         allow get, list: if isVenueMember(venueId);
         allow create: if isVenueMember(venueId)

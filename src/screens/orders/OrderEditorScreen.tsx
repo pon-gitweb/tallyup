@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { listBudgets, computeBudgetProgress } from '../../services/budgets';
 import { requestBudgetOverride } from '../../services/budgetApprovals';
+import { refreshAIContext } from '../../services/aiContext';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
 import { savedToast } from '../../utils/toast';
