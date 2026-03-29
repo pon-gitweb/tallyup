@@ -8,6 +8,7 @@ import {
   getFirestore, doc, getDoc, collection, setDoc, getDocs,
   serverTimestamp, writeBatch, updateDoc, onSnapshot, orderBy, query
 } from 'firebase/firestore';
+import { listBudgets, computeBudgetProgress } from '../../services/budgets';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
 import { savedToast } from '../../utils/toast';
@@ -246,7 +247,51 @@ export default function OrderEditorScreen() {
       Alert.alert('No lines', 'Add at least one line before submitting.');
       return;
     }
-        await OrdersService.submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
+        // Budget guardrail
+    try {
+      const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
+      const linesSnap = await getDocs(collection(orderRef, 'lines'));
+      let orderTotal = 0;
+      linesSnap.forEach(d => {
+        const data = d.data();
+        const qty = Number(data.qty || 0);
+        const unitCost = Number(data.unitCost || 0);
+        if (qty > 0 && unitCost > 0) orderTotal += qty * unitCost;
+      });
+      if (orderTotal > 0 && supplierId) {
+        const budgets = await listBudgets(venueId);
+        const now = new Date();
+        const activeBudgets = budgets.filter(b => {
+          const start = b.periodStart && b.periodStart.toDate ? b.periodStart.toDate() : new Date(0);
+          const end = b.periodEnd && b.periodEnd.toDate ? b.periodEnd.toDate() : new Date(0);
+          return (!b.supplierId || b.supplierId === supplierId) && now >= start && now <= end;
+        });
+        for (const budget of activeBudgets) {
+          const progress = await computeBudgetProgress(venueId, budget);
+          const projected = progress.spent + orderTotal;
+          const cap = Number(budget.amount || 0);
+          if (projected > cap) {
+            const over = (projected - cap).toFixed(2);
+            const label = budget.supplierId ? 'supplier' : 'venue-wide';
+            await new Promise((resolve, reject) => {
+              Alert.alert(
+                'Budget warning',
+                'This order will exceed your ' + label + ' budget by ' + over + '. Projected: ' + projected.toFixed(2) + ' / ' + cap.toFixed(2),
+                [
+                  { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
+                  { text: 'Submit anyway', style: 'destructive', onPress: resolve },
+                ]
+              );
+            });
+            break;
+          }
+        }
+      }
+    } catch (guardErr) {
+      if (guardErr && guardErr.message === 'cancelled') return;
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[budget guardrail] non-fatal', guardErr && guardErr.message);
+    }
+    await OrdersService.submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
     Alert.alert('Submitted', 'Order submitted (or queued to merge before cutoff).');
     nav.navigate('Orders');
   } catch (e:any) {
