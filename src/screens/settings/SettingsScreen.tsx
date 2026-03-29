@@ -155,6 +155,15 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Bluetooth Scale button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#065F46' }]}
+            onPress={() => nav.navigate('ScaleSettings')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>⚖️ Bluetooth Scale</Text>
+          </TouchableOpacity>
+        </View>
         {/* Budget Approvals button */}
         <View style={styles.row}>
           <TouchableOpacity
