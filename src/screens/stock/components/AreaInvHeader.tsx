@@ -3,6 +3,7 @@ import React from 'react';
 import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import SearchBarDebounced from '../../../components/SearchBarDebounced';
 import ProductSearchAdd from './ProductSearchAdd';
+import BarcodeScannerModal from './BarcodeScannerModal';
 
 type Stats = {
   countedCount: number;
@@ -46,6 +47,7 @@ type Props = {
   onAddNewProduct?: (name: string) => void;
   venueId?: string | null;
   onOpenBatchModal?: () => void;
+  onOpenBarcodeScanner?: () => void;
 
   stats: Stats;
   onOpenMore: () => void;
@@ -84,6 +86,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   onAddNewProduct,
   venueId,
   onOpenBatchModal,
+  onOpenBarcodeScanner,
   stats,
   onOpenMore,
   nameInputRef,
@@ -317,6 +320,17 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               }}
             >
               <Text style={{ color: '#fff', fontWeight: '800' }}>Batch</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onOpenBarcodeScanner}
+              style={{
+                backgroundColor: '#065F46',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>📷</Text>
             </TouchableOpacity>
           </View>
 

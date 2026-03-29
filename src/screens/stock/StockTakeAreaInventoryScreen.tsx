@@ -21,6 +21,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
 import { refreshAIContext } from '../../services/aiContext';
+import BarcodeScannerModal from './components/BarcodeScannerModal';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -577,6 +578,7 @@ function StockTakeAreaInventoryScreen() {
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
@@ -1518,6 +1520,7 @@ try {
             onAddNewProduct={onAddNewProduct}
             venueId={venueId}
             onOpenBatchModal={() => setBatchModalOpen(true)}
+            onOpenBarcodeScanner={() => setBarcodeModalOpen(true)}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}
             nameInputRef={nameInputRef}
@@ -1533,6 +1536,18 @@ try {
           if (cur && inputRefs.current[cur]) {
             inputRefs.current[cur].blur?.();
           }
+        }}
+      />
+
+      {/* Barcode Scanner Modal */}
+      <BarcodeScannerModal
+        visible={barcodeModalOpen}
+        onClose={() => setBarcodeModalOpen(false)}
+        venueId={venueId}
+        onFound={onSelectProduct}
+        onNotFound={(barcode) => {
+          setBarcodeModalOpen(false);
+          setAddingName(barcode);
         }}
       />
 
