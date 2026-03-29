@@ -9,6 +9,7 @@ import {
   serverTimestamp, writeBatch, updateDoc, onSnapshot, orderBy, query
 } from 'firebase/firestore';
 import { listBudgets, computeBudgetProgress } from '../../services/budgets';
+import { requestBudgetOverride } from '../../services/budgetApprovals';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
 import { savedToast } from '../../utils/toast';
@@ -279,7 +280,7 @@ export default function OrderEditorScreen() {
                 'This order will exceed your ' + label + ' budget by ' + over + '. Projected: ' + projected.toFixed(2) + ' / ' + cap.toFixed(2),
                 [
                   { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
-                  { text: 'Submit anyway', style: 'destructive', onPress: resolve },
+                  { text: 'Submit anyway', style: 'destructive', onPress: async () => { try { await requestBudgetOverride(venueId, orderId, supplierId, null, orderTotal, budget.id || '', cap, over); Alert.alert('Sent for approval', 'Your order has been sent to a manager for approval.'); nav.navigate('Orders'); } catch(e) { resolve(); } } },
                 ]
               );
             });

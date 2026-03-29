@@ -19,6 +19,7 @@ import LegalFooter from '../../components/LegalFooter';
 import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
+import { usePendingBudgetApprovalsCount } from '../../hooks/usePendingBudgetApprovals';
 import { useVenueId } from '../../context/VenueProvider';
 
 type MemberDoc = { role?: string };
@@ -31,6 +32,7 @@ export default function SettingsScreen() {
 
   const [isManager, setIsManager] = useState(false);
   const { count: pendingCount } = usePendingAdjustmentsCount(venueId);
+  const { count: budgetPendingCount } = usePendingBudgetApprovalsCount(venueId);
 
   const { name: venueName } = useVenueInfo(venueId);
   const friendly = useMemo(() => {
@@ -153,6 +155,20 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Budget Approvals button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#B91C1C' }]}
+            onPress={() => nav.navigate('BudgetApprovalInbox')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Budget Approvals</Text>
+            {isManager && budgetPendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{budgetPendingCount > 99 ? '99+' : budgetPendingCount}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        </View>
         {/* About / BETA overview */}
         <View style={styles.row}>
           <TouchableOpacity

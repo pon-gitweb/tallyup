@@ -22,6 +22,7 @@ import ReconciliationsScreen from '../../screens/reports/ReconciliationsScreen';
 import VarianceSnapshotScreen from '../../screens/reports/VarianceSnapshotScreen';
 import LastCycleSummaryScreen from '../../screens/reports/LastCycleSummaryScreen';
 import BudgetsScreen from '../../screens/reports/BudgetsScreen';
+import BudgetApprovalInboxScreen from '../../screens/orders/BudgetApprovalInboxScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -93,6 +94,7 @@ export default function MainStack() {
         component={BudgetsScreen}
         options={{ title: 'Budgets' }}
       />
+      <Stack.Screen name="BudgetApprovalInbox" component={BudgetApprovalInboxScreen} options={{ title: 'Budget Approvals' }} />
       <Stack.Screen
         name="DepartmentVariance"
         component={DepartmentVarianceScreen}
