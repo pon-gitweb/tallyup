@@ -1,4 +1,6 @@
 // @ts-nocheck
+import PhotoCountModal from './components/PhotoCountModal';
+import { ScaleService } from '../../services/scale/ScaleService';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, Pressable, SafeAreaView,
@@ -172,8 +174,35 @@ export default function StockTakeAreaInventoryScreen() {
   };
 
   // ---------- stubs ----------
-  const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
-  const usePhotoFor     = (item: Item) => Alert.alert('Photo Count',     `Would take photo and OCR for "${item.name}" (stub).`);
+  const useBluetoothFor = (item) => {
+    if (ScaleService.isConnected()) {
+      const unsub = ScaleService.onWeight(reading => {
+        if (reading.stable) {
+          unsub();
+          const qty = parseFloat((reading.weightGrams / 1000).toFixed(3));
+          Alert.alert(
+            'Scale reading',
+            item.name + ': ' + reading.weightGrams + 'g (' + qty + 'kg) — use this weight?',
+            [
+              { text: 'Yes', onPress: () => setQtyFor(item, String(qty)) },
+              { text: 'No', style: 'cancel' },
+            ]
+          );
+        }
+      });
+      Alert.alert('Place on scale', 'Put ' + item.name + ' on the scale and wait for a stable reading.');
+    } else {
+      Alert.alert(
+        'Scale not connected',
+        'Connect a Bluetooth scale first to use weight-based counting.',
+        [
+          { text: 'Connect scale', onPress: () => nav.navigate('ScaleSettings') },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    }
+  };
+  const usePhotoFor = (item) => setPhotoCountItem(item);
 
   // ---------- Row ----------
   const Row = ({ item }: { item: Item }) => {

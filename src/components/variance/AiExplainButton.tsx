@@ -36,6 +36,7 @@ export default function AiExplainButton({
 
   const [loading, setLoading] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  // BETA: bypass paywall — all venues have full access
   const [modalOpen, setModalOpen] = useState(false);
   const [result, setResult] = useState<{ explanation: string; bullets: string[] }>({
     explanation: '',
@@ -52,7 +53,8 @@ export default function AiExplainButton({
     // but we keep this call so the gate is ready for paid rollout later.
     const ok = await isEntitled(venueId, uid);
     if (!ok) {
-      setPaywallOpen(true);
+      console.log('[AiExplainButton] beta mode — paywall bypassed');
+      // setPaywallOpen(true); // disabled for beta
       return;
     }
 

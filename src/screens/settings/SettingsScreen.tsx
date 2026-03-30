@@ -119,15 +119,6 @@ export default function SettingsScreen() {
 
         {/* Primary actions */}
         <View style={styles.row}>
-          <TouchableOpacity style={styles.btn} onPress={doSetupWizardStub}>
-            <Text style={styles.btnText}>Open Setup Wizard (BETA)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.btn, styles.stubBtn]}
-            onPress={doFullResetStub}
-          >
-            <Text style={styles.stubBtnText}>Full Reset of All Stock Takes (stub)</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Single, unambiguous entry point to stock flows */}
