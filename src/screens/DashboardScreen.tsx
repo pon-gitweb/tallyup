@@ -1,3 +1,4 @@
+import SetupGuideBanner from '../components/guide/SetupGuideBanner';
 // @ts-nocheck
 import React, { useMemo, useState } from 'react';
 import {
@@ -76,6 +77,7 @@ export default function DashboardScreen() {
           </View>
           <IdentityBadge />
         </View>
+        <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
 
         {/* Stocktake focus */}
         <View style={styles.card}>
