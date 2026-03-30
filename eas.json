@@ -49,16 +49,13 @@
     },
     "ios-preview": {
       "extends": "base",
-      "ios": {
-        "buildType": "simulator"
-      },
       "distribution": "internal",
       "environment": "development"
     },
     "ios-store": {
       "extends": "base",
       "ios": {
-        "buildType": "archive"
+        "enterpriseProvisioning": "adhoc"
       },
       "distribution": "store",
       "environment": "production",
@@ -66,12 +63,6 @@
     }
   },
   "submit": {
-    "production": {
-      "ios": {
-        "appleId": "",
-        "ascAppId": "",
-        "appleTeamId": ""
-      }
-    }
+    "production": {}
   }
 }
