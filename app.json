@@ -2,7 +2,7 @@
   "expo": {
     "name": "Hosti-Stock",
     "slug": "tallyup",
-    "version": "1.0.5",
+    "version": "1.0.11",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -32,7 +32,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.tallyup",
-      "versionCode": 5,
+      "versionCode": 11,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.BLUETOOTH",
