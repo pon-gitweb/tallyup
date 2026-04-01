@@ -1,4 +1,5 @@
 // @ts-nocheck
+import OrderDispatchModal from './OrderDispatchModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { OrdersService } from 'src/domain/orders';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet } from 'react-native';
@@ -294,8 +295,8 @@ export default function OrderEditorScreen() {
       if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[budget guardrail] non-fatal', guardErr && guardErr.message);
     }
     await OrdersService.submitOrHoldDraftOrder(venueId, orderId, supplierId, { defaultWindowHours: 8 });
-    Alert.alert('Submitted', 'Order submitted (or queued to merge before cutoff).');
-    nav.navigate('Orders');
+    setSubmittedOrderId(orderId);
+    setDispatchVisible(true);
   } catch (e:any) {
     Alert.alert('Error', e?.message ?? 'Failed to submit order.');
   }
@@ -405,6 +406,20 @@ export default function OrderEditorScreen() {
           </View>
         </>
       )}
+    <OrderDispatchModal
+      visible={dispatchVisible}
+      onClose={() => setDispatchVisible(false)}
+      onPlaced={() => { setDispatchVisible(false); nav.navigate('Orders'); }}
+      orderId={submittedOrderId || orderId || ''}
+      venueId={venueId || ''}
+      poNumber={order?.poNumber || orderId || 'N/A'}
+      supplierName={order?.supplierName || 'Supplier'}
+      supplierEmail={order?.supplierEmail || null}
+      supplierPortalUrl={order?.supplierPortalUrl || null}
+      orderingMethod={order?.orderingMethod || 'email'}
+      lines={lines.map(l => ({ name: l.productName || l.name || 'Item', qty: l.qty || 0, unit: l.unit, unitCost: l.unitCost }))}
+      totalCost={lines.reduce((sum, l) => sum + ((l.qty || 0) * (l.unitCost || 0)), 0)}
+    />
     </View>
   );
 }
