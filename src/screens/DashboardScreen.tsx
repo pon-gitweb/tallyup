@@ -1,4 +1,6 @@
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
+import { useTheme } from '../context/ThemeContext';
+import { Image } from 'react-native';
 // @ts-nocheck
 import React, { useMemo, useState } from 'react';
 import {
@@ -32,6 +34,7 @@ export default function DashboardScreen() {
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   const [busy, setBusy] = useState(false);
+  const { theme } = useTheme();
 
   const onOpenStockTake = async () => {
     if (busy) return;
@@ -75,6 +78,7 @@ export default function DashboardScreen() {
               This is your BETA home base. Start a stocktake, manage orders, and check reports from here.
             </Text>
           </View>
+{theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
           <IdentityBadge />
         </View>
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />

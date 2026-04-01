@@ -146,6 +146,15 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Appearance button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#0F172A' }]}
+            onPress={() => nav.navigate('Appearance')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>🎨 Appearance</Text>
+          </TouchableOpacity>
+        </View>
         {/* Setup Guide button */}
         <View style={styles.row}>
           <TouchableOpacity
