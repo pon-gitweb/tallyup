@@ -28,6 +28,7 @@ import SetupGuideScreen from '../../screens/settings/SetupGuideScreen';
 import AppearanceScreen from '../../screens/settings/AppearanceScreen';
 import XeroScreen from '../../screens/settings/XeroScreen';
 import ReportPreferencesScreen from '../../screens/settings/ReportPreferencesScreen';
+import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -107,6 +108,7 @@ export default function MainStack() {
       <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />
       <Stack.Screen name="Xero" component={XeroScreen} options={{ title: 'Xero Integration' }} />
       <Stack.Screen name="ReportPreferences" component={ReportPreferencesScreen} options={{ title: 'Report Preferences' }} />
+      <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
       <Stack.Screen
         name="DepartmentVariance"
         component={DepartmentVarianceScreen}

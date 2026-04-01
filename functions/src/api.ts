@@ -20,6 +20,101 @@ async function verifyToken(req: express.Request): Promise<string | null> {
   }
 }
 
+
+// ── AI Usage Meter ────────────────────────────────────────────────────────────
+// Tracks AI calls per venue per month in Firestore.
+// Returns meter state to client on every AI response.
+// Prepares for future billing tier enforcement.
+
+type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr';
+
+interface MeterState {
+  aiUsed: number;
+  aiRemaining: number;
+  aiLimit: number;
+  resetAt: string;
+  plan: 'beta' | 'core' | 'core_plus';
+}
+
+const AI_LIMITS: Record<string, number> = {
+  beta: 999999,   // Unlimited during beta
+  core: 200,      // 200 calls/month on core plan
+  core_plus: 999999, // Unlimited on core plus
+};
+
+async function trackAiCall(venueId: string, callType: AiCallType): Promise<MeterState> {
+  const db = admin.firestore();
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const resetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+
+  // Get venue plan
+  let plan: string = 'beta';
+  try {
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    plan = venueSnap.data()?.billingPlan || 'beta';
+  } catch {}
+
+  const limit = AI_LIMITS[plan] ?? AI_LIMITS.beta;
+  const usageRef = db.doc(`venues/${venueId}/aiUsage/${monthKey}`);
+
+  let aiUsed = 0;
+  try {
+    const snap = await usageRef.get();
+    const data = snap.data() || {};
+    aiUsed = (data.totalCalls || 0) + 1;
+
+    await usageRef.set({
+      totalCalls: aiUsed,
+      lastCallAt: admin.firestore.FieldValue.serverTimestamp(),
+      resetAt,
+      plan,
+      breakdown: {
+        ...data.breakdown,
+        [callType]: ((data.breakdown?.[callType] || 0) + 1),
+      },
+    }, { merge: true });
+  } catch (e) {
+    console.log('[meter] tracking error', e);
+    aiUsed = 1;
+  }
+
+  return {
+    aiUsed,
+    aiRemaining: Math.max(0, limit - aiUsed),
+    aiLimit: limit,
+    resetAt,
+    plan: plan as MeterState['plan'],
+  };
+}
+
+async function checkAiLimit(venueId: string): Promise<{ allowed: boolean; meter: MeterState }> {
+  const db = admin.firestore();
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const resetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+
+  let plan: string = 'beta';
+  try {
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    plan = venueSnap.data()?.billingPlan || 'beta';
+  } catch {}
+
+  const limit = AI_LIMITS[plan] ?? AI_LIMITS.beta;
+
+  let aiUsed = 0;
+  try {
+    const snap = await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).get();
+    aiUsed = snap.data()?.totalCalls || 0;
+  } catch {}
+
+  const allowed = plan === 'beta' || plan === 'core_plus' || aiUsed < limit;
+  return {
+    allowed,
+    meter: { aiUsed, aiRemaining: Math.max(0, limit - aiUsed), aiLimit: limit, resetAt, plan: plan as MeterState['plan'] },
+  };
+}
+
 // ── POST /upload-file ────────────────────────────────────────────────────────
 // Body: { destPath: string, dataUrl: string, cacheControl?: string }
 // Returns: { ok: true, fullPath: string, downloadURL: string }
@@ -197,7 +292,8 @@ app.post("/suggest-orders", async (req, res) => {
     const raw = await callClaude(systemPrompt, userMsg);
     let parsed: any = {};
     try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = {}; }
-    console.log("[api/suggest-orders] OK", { uid, venueId });
+    const meter = await trackAiCall(venueId, 'suggest-orders');
+    console.log("[api/suggest-orders] OK", { uid, venueId, meter });
     res.json({ ...baseline, insights: Array.isArray(parsed.insights) ? parsed.insights : [], adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [] });
   } catch (e: any) {
     console.error("[api/suggest-orders] ERROR", e?.message || e);
@@ -268,8 +364,9 @@ app.post("/budget-suggest", async (req, res) => {
       reasoning: String(s.reasoning || ""),
       confidence: Number.isFinite(s.confidence) ? s.confidence : 0.5,
     })) : [];
-    console.log("[api/budget-suggest] OK", { uid, venueId, suggestions: suggestions.length });
-    res.json({ ok: true, suggestions, overallNote: parsed.overallNote || null, dataQuality });
+    const meter = await trackAiCall(venueId, 'budget-suggest');
+    console.log("[api/budget-suggest] OK", { uid, venueId, meter });
+    res.json({ ok: true, meter, suggestions, overallNote: parsed.overallNote || null, dataQuality });
   } catch (e: any) {
     console.error("[api/budget-suggest] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Budget suggestion failed" });

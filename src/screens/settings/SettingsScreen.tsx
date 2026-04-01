@@ -146,6 +146,15 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* AI Usage button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#6D28D9' }]}
+            onPress={() => nav.navigate('AiUsage')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>AI Usage</Text>
+          </TouchableOpacity>
+        </View>
         {/* Report Preferences button */}
         <View style={styles.row}>
           <TouchableOpacity
