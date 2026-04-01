@@ -121,11 +121,32 @@ export default function StockTakeAreaInventoryScreen() {
     const raw = (effectiveRaw ?? '').trim();
     if (!/^\d+(\.\d+)?$/.test(raw)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5).');
     const qty = parseFloat(raw);
-    try {
-      await ensureAreaStarted();
-      await updateDoc(doc(itemsCol(), itemId), { lastCount: qty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      setLocalQty((m) => ({ ...m, [itemId]: '' }));
-    } catch (e: any) { console.log('[CountSave:error]', e); Alert.alert('Could not save count', e?.message ?? String(e)); }
+    // Check if item already has a count — offer to add or replace
+    const existing = items.find(i => i.id === itemId);
+    const existingCount = existing?.lastCount ?? null;
+    const doSave = async (finalQty: number) => {
+      try {
+        await ensureAreaStarted();
+        await updateDoc(doc(itemsCol(), itemId), { lastCount: finalQty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        setLocalQty((m) => ({ ...m, [itemId]: '' }));
+      } catch (e: any) { console.log('[CountSave:error]', e); Alert.alert('Could not save count', e?.message ?? String(e)); }
+    };
+    if (existingCount !== null && existingCount > 0 && qty > 0) {
+      const total = existingCount + qty;
+      Alert.alert(
+        'Add or replace?',
+        `${existing?.name || 'This item'} already has a count of ${existingCount}.
+
+Add ${qty} to get ${total}, or replace with ${qty}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: `Replace with ${qty}`, onPress: () => doSave(qty) },
+          { text: `Add → ${total}`, style: 'default', onPress: () => doSave(total) },
+        ]
+      );
+    } else {
+      await doSave(qty);
+    }
   };
 
   // ---------- UPDATE: rename ----------
