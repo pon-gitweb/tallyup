@@ -182,6 +182,15 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>Setup Guide</Text>
           </TouchableOpacity>
         </View>
+        {/* Reset Tips button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#F59E0B' }]}
+            onPress={() => { HintService.resetAll(); Alert.alert('Tips reset', 'All tips and hints will show again.'); }}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Reset Tips & Hints</Text>
+          </TouchableOpacity>
+        </View>
         {/* Bluetooth Scale button */}
         <View style={styles.row}>
           <TouchableOpacity

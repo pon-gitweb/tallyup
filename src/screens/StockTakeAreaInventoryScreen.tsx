@@ -174,6 +174,7 @@ export default function StockTakeAreaInventoryScreen() {
   };
 
   // ---------- stubs ----------
+  // Hint shown once above item list
   const useBluetoothFor = (item) => {
     if (ScaleService.isConnected()) {
       const unsub = ScaleService.onWeight(reading => {

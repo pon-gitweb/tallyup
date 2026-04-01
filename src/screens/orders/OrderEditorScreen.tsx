@@ -1,4 +1,5 @@
 // @ts-nocheck
+import HintBubble from '../../components/hints/HintBubble';
 import OrderDispatchModal from './OrderDispatchModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { OrdersService } from 'src/domain/orders';
@@ -331,6 +332,7 @@ export default function OrderEditorScreen() {
           />
 
           {/* Existing lines */}
+          <HintBubble id="orders_longpress" />
           <Text style={[styles.label, { marginTop: 12 }]}>Lines</Text>
           <FlatList
             data={lines}
