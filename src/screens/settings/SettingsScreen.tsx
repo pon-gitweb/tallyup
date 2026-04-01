@@ -146,6 +146,15 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Report Preferences button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            onPress={() => nav.navigate('ReportPreferences')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Report Preferences</Text>
+          </TouchableOpacity>
+        </View>
         {/* Xero button */}
         <View style={styles.row}>
           <TouchableOpacity
