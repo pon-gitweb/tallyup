@@ -26,6 +26,7 @@ import BudgetApprovalInboxScreen from '../../screens/orders/BudgetApprovalInboxS
 import ScaleSettingsScreen from '../../screens/settings/ScaleSettingsScreen';
 import SetupGuideScreen from '../../screens/settings/SetupGuideScreen';
 import AppearanceScreen from '../../screens/settings/AppearanceScreen';
+import XeroScreen from '../../screens/settings/XeroScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -103,6 +104,7 @@ export default function MainStack() {
       <Stack.Screen name="ScaleSettings" component={ScaleSettingsScreen} options={{ title: 'Bluetooth Scale' }} />
       <Stack.Screen name="SetupGuide" component={SetupGuideScreen} options={{ title: 'Setup Guide' }} />
       <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />
+      <Stack.Screen name="Xero" component={XeroScreen} options={{ title: 'Xero Integration' }} />
       <Stack.Screen
         name="DepartmentVariance"
         component={DepartmentVarianceScreen}

@@ -146,6 +146,15 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Xero button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#13B5EA' }]}
+            onPress={() => nav.navigate('Xero')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Xero Integration</Text>
+          </TouchableOpacity>
+        </View>
         {/* Appearance button */}
         <View style={styles.row}>
           <TouchableOpacity
