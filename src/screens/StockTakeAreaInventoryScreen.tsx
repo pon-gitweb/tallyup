@@ -117,36 +117,36 @@ export default function StockTakeAreaInventoryScreen() {
   };
 
   // ---------- UPDATE: counts ----------
-  const saveCount = async (itemId: string, effectiveRaw: string) => {
+  const saveCount = async (itemId: string, effectiveRaw: string, mode: 'replace' | 'add' = 'replace') => {
     const raw = (effectiveRaw ?? '').trim();
     if (!/^\d+(\.\d+)?$/.test(raw)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5).');
     const qty = parseFloat(raw);
-    // Check if item already has a count — offer to add or replace
     const existing = items.find(i => i.id === itemId);
     const existingCount = existing?.lastCount ?? null;
-    const doSave = async (finalQty: number) => {
-      try {
-        await ensureAreaStarted();
-        await updateDoc(doc(itemsCol(), itemId), { lastCount: finalQty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        setLocalQty((m) => ({ ...m, [itemId]: '' }));
-      } catch (e: any) { console.log('[CountSave:error]', e); Alert.alert('Could not save count', e?.message ?? String(e)); }
-    };
-    if (existingCount !== null && existingCount > 0 && qty > 0) {
-      const total = existingCount + qty;
-      Alert.alert(
-        'Add or replace?',
-        `${existing?.name || 'This item'} already has a count of ${existingCount}.
+    const finalQty = mode === 'add' && existingCount !== null ? existingCount + qty : qty;
+    try {
+      await ensureAreaStarted();
+      await updateDoc(doc(itemsCol(), itemId), { lastCount: finalQty, lastCountAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      setLocalQty((m) => ({ ...m, [itemId]: '' }));
+    } catch (e: any) { console.log('[CountSave:error]', e); Alert.alert('Could not save count', e?.message ?? String(e)); }
+  };
 
-Add ${qty} to get ${total}, or replace with ${qty}?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: `Replace with ${qty}`, onPress: () => doSave(qty) },
-          { text: `Add → ${total}`, style: 'default', onPress: () => doSave(total) },
-        ]
-      );
-    } else {
-      await doSave(qty);
-    }
+  // Add-to count — shows dialog to add on top of existing
+  const addToCount = async (itemId: string, effectiveRaw: string) => {
+    const raw = (effectiveRaw ?? '').trim();
+    if (!/^\d+(\.\d+)?$/.test(raw)) return Alert.alert('Invalid number', 'Enter a numeric quantity (e.g. 20 or 20.5).');
+    const qty = parseFloat(raw);
+    const existing = items.find(i => i.id === itemId);
+    const existingCount = existing?.lastCount ?? 0;
+    const total = existingCount + qty;
+    Alert.alert(
+      'Add to count?',
+      `${existing?.name || 'This item'} is currently counted at ${existingCount}.\n\nAdd ${qty} to get ${total}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: `Add → ${total}`, onPress: () => saveCount(itemId, String(total), 'replace') },
+      ]
+    );
   };
 
   // ---------- UPDATE: rename ----------
@@ -284,8 +284,16 @@ Add ${qty} to get ${total}, or replace with ${qty}?`,
             onPress={() => saveCount(item.id, displayed)}
             style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 }}
           >
-            <Text style={{ color: '#fff', fontWeight: '800' }}>Save</Text>
+            <Text style={{ color: '#fff', fontWeight: '800' }}>{item.lastCountAt ? 'Update' : 'Save'}</Text>
           </TouchableOpacity>
+          {item.lastCountAt && displayed.trim().length > 0 && (
+            <TouchableOpacity
+              onPress={() => addToCount(item.id, displayed)}
+              style={{ backgroundColor: '#E8F5E9', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#4CAF50' }}
+            >
+              <Text style={{ color: '#2E7D32', fontWeight: '800' }}>+Add</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity onPress={() => useBluetoothFor(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#E3F2FD' }}>
             <Text style={{ color: '#0A84FF', fontWeight: '700' }}>BT</Text>
