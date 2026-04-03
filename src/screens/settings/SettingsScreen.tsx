@@ -192,6 +192,17 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>Setup Guide</Text>
           </TouchableOpacity>
         </View>
+        {/* Supplier Portal — only visible when feature flag is on */}
+        {FEATURES.SUPPLIER_PORTAL && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: '#065F46' }]}
+              onPress={() => nav.navigate('SupplierDashboard', { supplierId: 'demo' })}
+            >
+              <Text style={{ color: 'white', fontWeight: '800' }}>Supplier Portal</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {/* Reset Tips button */}
         <View style={styles.row}>
           <TouchableOpacity

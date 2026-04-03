@@ -31,6 +31,11 @@ import ReportPreferencesScreen from '../../screens/settings/ReportPreferencesScr
 import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
 import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImportPreviewScreen';
+import { FEATURES } from '../../config/features';
+import SupplierDashboardScreen from '../../screens/supplier/SupplierDashboardScreen';
+import SupplierCatalogueScreen from '../../screens/supplier/SupplierCatalogueScreen';
+import SupplierOrdersScreen from '../../screens/supplier/SupplierOrdersScreen';
+import SupplierSpecialsScreen from '../../screens/supplier/SupplierSpecialsScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -113,6 +118,15 @@ export default function MainStack() {
       <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
       <Stack.Screen name="InventoryImport" component={InventoryImportScreen} options={{ title: 'Import Inventory' }} />
       <Stack.Screen name="InventoryImportPreview" component={InventoryImportPreviewScreen} options={{ title: 'Review Import' }} />
+      {/* SUPPLIER PORTAL — unlocked when FEATURES.SUPPLIER_PORTAL = true */}
+      {FEATURES.SUPPLIER_PORTAL && (
+        <>
+          <Stack.Screen name="SupplierDashboard" component={SupplierDashboardScreen} options={{ title: 'Supplier Portal' }} />
+          <Stack.Screen name="SupplierCatalogue" component={SupplierCatalogueScreen} options={{ title: 'Catalogue & Pricing' }} />
+          <Stack.Screen name="SupplierOrders" component={SupplierOrdersScreen} options={{ title: 'Orders' }} />
+          <Stack.Screen name="SupplierSpecials" component={SupplierSpecialsScreen} options={{ title: 'Specials & Promotions' }} />
+        </>
+      )}
       <Stack.Screen
         name="DepartmentVariance"
         component={DepartmentVarianceScreen}
