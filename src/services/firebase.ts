@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, initializeAuth } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -32,7 +32,19 @@ try {
 }
 
 export const auth = authInstance;
-export const db = getFirestore(app);
+// Enable offline persistence — all Firestore reads/writes work offline
+// Data syncs automatically when connection is restored
+export const db = (() => {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache(),
+    });
+  } catch {
+    // Already initialised — return existing instance
+    const { getFirestore } = require('firebase/firestore');
+    return getFirestore(app);
+  }
+})();
 export const storage = getStorage(app);
 
 if (__DEV__) {
