@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useColours } from '../context/ThemeContext';
 import React from 'react';
 import {
   View,

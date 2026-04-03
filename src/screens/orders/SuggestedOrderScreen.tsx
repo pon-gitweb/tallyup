@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useColours } from '../../context/ThemeContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, ScrollView, TouchableOpacity,
@@ -68,6 +69,7 @@ export default function SuggestedOrderScreen(){
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
   const [supplierOpen,setSupplierOpen]=useState(false);
 
+  const C = useColours();
   const [entitled,setEntitled]=useState(true); // BETA: force entitled — all venues have full access
   const [payOpen,setPayOpen]=useState(false);
   const [mode,setMode]=useState<'math'|'ai'>('math');

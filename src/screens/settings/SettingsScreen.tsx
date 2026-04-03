@@ -25,6 +25,7 @@ import { useVenueId } from '../../context/VenueProvider';
 type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
+  const C = useColours();
   const nav = useNavigation<any>();
   const auth = getAuth();
   const user = auth.currentUser;
@@ -176,7 +177,7 @@ export default function SettingsScreen() {
         {/* Appearance button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#0F172A' }]}
+            style={[styles.btn, { backgroundColor: C.primary }]}
             onPress={() => nav.navigate('Appearance')}
           >
             <Text style={{ color: 'white', fontWeight: '800' }}>🎨 Appearance</Text>

@@ -1,5 +1,5 @@
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
-import { useTheme } from '../context/ThemeContext';
+import { useTheme, useColours } from '../context/ThemeContext';
 import { Image } from 'react-native';
 // @ts-nocheck
 import React, { useMemo, useState } from 'react';
@@ -35,6 +35,7 @@ export default function DashboardScreen() {
 
   const [busy, setBusy] = useState(false);
   const { theme } = useTheme();
+  const C = useColours();
 
   const onOpenStockTake = async () => {
     if (busy) return;
@@ -193,7 +194,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: C.background,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -234,7 +235,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dark: {
-    backgroundColor: '#111827',
+    backgroundColor: C.primary,
   },
   muted: {
     backgroundColor: 'white',

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useColours } from '../../context/ThemeContext';
 import HintBubble from '../../components/hints/HintBubble';
 import OrderDispatchModal from './OrderDispatchModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
@@ -401,7 +402,7 @@ export default function OrderEditorScreen() {
           <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
             <TouchableOpacity
               onPress={submitOrder}
-              style={{ backgroundColor: '#111827', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+              style={{ backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
             >
               <Text style={{ color: 'white', fontWeight: '800' }}>Submit Order</Text>
             </TouchableOpacity>
