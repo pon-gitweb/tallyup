@@ -29,6 +29,8 @@ import AppearanceScreen from '../../screens/settings/AppearanceScreen';
 import XeroScreen from '../../screens/settings/XeroScreen';
 import ReportPreferencesScreen from '../../screens/settings/ReportPreferencesScreen';
 import AiUsageScreen from '../../screens/settings/AiUsageScreen';
+import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
+import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImportPreviewScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -109,6 +111,8 @@ export default function MainStack() {
       <Stack.Screen name="Xero" component={XeroScreen} options={{ title: 'Xero Integration' }} />
       <Stack.Screen name="ReportPreferences" component={ReportPreferencesScreen} options={{ title: 'Report Preferences' }} />
       <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
+      <Stack.Screen name="InventoryImport" component={InventoryImportScreen} options={{ title: 'Import Inventory' }} />
+      <Stack.Screen name="InventoryImportPreview" component={InventoryImportPreviewScreen} options={{ title: 'Review Import' }} />
       <Stack.Screen
         name="DepartmentVariance"
         component={DepartmentVarianceScreen}
