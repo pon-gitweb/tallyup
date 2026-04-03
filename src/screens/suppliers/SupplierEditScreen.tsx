@@ -84,8 +84,18 @@ export default function SupplierEditScreen() {
       <Text style={styles.lbl}>Phone</Text>
       <TextInput style={styles.inp} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
 
-      <Text style={styles.lbl}>Ordering Method (email | portal | phone)</Text>
-      <TextInput style={styles.inp} value={orderingMethod} onChangeText={(t)=>setOrderingMethod((t as any) || 'email')} />
+      <Text style={styles.lbl}>Ordering Method</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+        {(['email', 'portal', 'phone'] as const).map(m => (
+          <TouchableOpacity key={m} onPress={() => setOrderingMethod(m)}
+            style={{ flex: 1, padding: 10, borderRadius: 10, alignItems: 'center',
+              backgroundColor: orderingMethod === m ? '#0F172A' : '#F1F5F9',
+              borderWidth: 1, borderColor: orderingMethod === m ? '#0F172A' : '#E2E8F0' }}>
+            <Text style={{ fontWeight: '800', fontSize: 13, textTransform: 'capitalize',
+              color: orderingMethod === m ? '#fff' : '#64748B' }}>{m}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <Text style={styles.lbl}>Portal URL</Text>
       <TextInput style={styles.inp} value={portalUrl} onChangeText={setPortalUrl} autoCapitalize="none" />

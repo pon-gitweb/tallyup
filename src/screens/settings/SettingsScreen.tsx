@@ -26,6 +26,14 @@ type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
   const C = useColours();
+  const onShare = React.useCallback(async () => {
+    try {
+      await Share.share({
+        message: 'I use Hosti-Stock to manage inventory at my venue — it saves me hours every week. Check it out: https://www.hosti.co.nz',
+        title: 'Hosti-Stock — Inventory for hospitality',
+      });
+    } catch {}
+  }, []);
   const nav = useNavigation<any>();
   const auth = getAuth();
   const user = auth.currentUser;
@@ -156,6 +164,7 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>AI Usage</Text>
           </TouchableOpacity>
         </View>
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Operations</Text></View>
         {/* Report Preferences button */}
         <View style={styles.row}>
           <TouchableOpacity
@@ -165,6 +174,7 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>Report Preferences</Text>
           </TouchableOpacity>
         </View>
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Integrations</Text></View>
         {/* Xero button */}
         <View style={styles.row}>
           <TouchableOpacity
@@ -174,6 +184,7 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>Xero Integration</Text>
           </TouchableOpacity>
         </View>
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
         {/* Appearance button */}
         <View style={styles.row}>
           <TouchableOpacity
@@ -203,6 +214,16 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
         )}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Support</Text></View>
+        {/* Share button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            onPress={onShare}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Share Hosti-Stock</Text>
+          </TouchableOpacity>
+        </View>
         {/* Reset Tips button */}
         <View style={styles.row}>
           <TouchableOpacity
@@ -349,6 +370,8 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#111827', padding: 12, borderRadius: 12, gap: 6 },
   heading: { color: 'white', fontWeight: '800', marginBottom: 4 },
   bold: { fontWeight: '800', color: 'white' },
+  sectionHeader: { paddingHorizontal: 4, paddingTop: 16, paddingBottom: 6 },
+  sectionHeaderText: { fontSize: 11, fontWeight: '900', color: '#94A3B8', letterSpacing: 1, textTransform: 'uppercase' },
   row: { flexDirection: 'row', gap: 10 },
   btn: {
     flex: 1,

@@ -32,6 +32,7 @@ import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
 import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImportPreviewScreen';
 import { FEATURES } from '../../config/features';
+import StocktakeSummaryScreen from '../../screens/stock/StocktakeSummaryScreen';
 import SupplierDashboardScreen from '../../screens/supplier/SupplierDashboardScreen';
 import SupplierCatalogueScreen from '../../screens/supplier/SupplierCatalogueScreen';
 import SupplierOrdersScreen from '../../screens/supplier/SupplierOrdersScreen';
@@ -118,6 +119,7 @@ export default function MainStack() {
       <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
       <Stack.Screen name="InventoryImport" component={InventoryImportScreen} options={{ title: 'Import Inventory' }} />
       <Stack.Screen name="InventoryImportPreview" component={InventoryImportPreviewScreen} options={{ title: 'Review Import' }} />
+      <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       {/* SUPPLIER PORTAL — unlocked when FEATURES.SUPPLIER_PORTAL = true */}
       {FEATURES.SUPPLIER_PORTAL && (
         <>

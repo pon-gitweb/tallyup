@@ -1096,10 +1096,28 @@ try {
 
 
       const submittedAt = new Date();
-      Alert.alert(
-        'Full stock take submitted',
-        `Saved at ${submittedAt.toLocaleString()}.`,
-      );
+      // Calculate total value
+      let totalValue = 0;
+      try {
+        const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
+        itemsSnap.forEach(d => {
+          const data = d.data();
+          const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
+          const cost = typeof data.costPrice === 'number' ? data.costPrice : 0;
+          totalValue += count * cost;
+        });
+      } catch {}
+      const counted = items.filter(i => i.lastCountAt);
+      const missed = items.filter(i => !i.lastCountAt);
+      nav.navigate('StocktakeSummary' as never, {
+        departmentName: areaId || 'Department',
+        submittedAt: submittedAt.toISOString(),
+        itemsCounted: counted.length,
+        itemsMissed: missed.length,
+        totalValue,
+        windowHours: roundedHours,
+        items: counted.slice(0, 20).map(i => ({ name: i.name, counted: i.lastCount || 0, unit: i.unit, costPrice: i.costPrice })),
+      } as never);
     } catch (e: any) {
       if (__DEV__) {
         console.log('[StockTake] maybeFinalizeDepartment error', e?.message || e);

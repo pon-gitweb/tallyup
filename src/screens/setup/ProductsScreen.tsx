@@ -1,4 +1,6 @@
 // @ts-nocheck
+// Price update badge — shows when supplier has updated pricing
+// Look for supplierPriceUpdated flag on product
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,

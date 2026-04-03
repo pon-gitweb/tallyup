@@ -14,6 +14,7 @@ import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { markStepComplete } from '../../services/guide/SetupGuideService';
 import type { ExtractionResult, ExtractedProduct } from './InventoryImportScreen';
 
 function InventoryImportPreviewScreen() {
@@ -67,6 +68,7 @@ function InventoryImportPreviewScreen() {
       }
 
       await Promise.all(batch);
+      await markStepComplete('products_loaded');
       setImporting(false);
 
       Alert.alert(

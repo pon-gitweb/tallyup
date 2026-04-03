@@ -1,4 +1,5 @@
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
+import OfflineBanner from '../components/OfflineBanner';
 import { useTheme, useColours } from '../context/ThemeContext';
 import { Image } from 'react-native';
 // @ts-nocheck
@@ -14,6 +15,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
@@ -34,6 +36,17 @@ export default function DashboardScreen() {
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   const [busy, setBusy] = useState(false);
+  const [stocktakeCount, setStocktakeCount] = React.useState(0);
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDoc(doc(db, 'venues', venueId)).then(snap => {
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        setStocktakeCount(data?.totalStocktakesCompleted || 0);
+      }
+    }).catch(() => {});
+  }, [venueId]);
   const { theme } = useTheme();
   const C = useColours();
 
@@ -82,7 +95,16 @@ export default function DashboardScreen() {
 {theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
           <IdentityBadge />
         </View>
+        <OfflineBanner />
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
+        {stocktakeCount > 0 && (
+          <View style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#BBF7D0' }}>
+            <Text style={{ fontSize: 16 }}>🧠</Text>
+            <Text style={{ color: '#166534', fontSize: 12, flex: 1, fontWeight: '600' }}>
+              Your AI has learned from {stocktakeCount} stocktake{stocktakeCount > 1 ? 's' : ''} — suggestions improve over time
+            </Text>
+          </View>
+        )}
 
         {/* Stocktake focus */}
         <View style={styles.card}>

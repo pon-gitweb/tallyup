@@ -96,6 +96,26 @@ const CANON = {
   cancelled: 'cancelled',
 };
 
+const STATUS_BADGE_COLOURS: Record<string, { bg: string; text: string; label: string }> = {
+  draft:            { bg: '#F1F5F9', text: '#475569', label: 'Draft' },
+  pending:          { bg: '#FEF3C7', text: '#92400E', label: 'Pending' },
+  'pending-approval': { bg: '#FEF3C7', text: '#92400E', label: 'Awaiting approval' },
+  pending_merge:    { bg: '#EFF6FF', text: '#1D4ED8', label: 'Merging' },
+  submitted:        { bg: '#DBEAFE', text: '#1E40AF', label: 'Placed' },
+  placed:           { bg: '#DBEAFE', text: '#1E40AF', label: 'Placed' },
+  received:         { bg: '#DCFCE7', text: '#166534', label: 'Received' },
+  cancelled:        { bg: '#FEE2E2', text: '#991B1B', label: 'Cancelled' },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const cfg = STATUS_BADGE_COLOURS[status] || STATUS_BADGE_COLOURS.draft;
+  return (
+    <View style={{ backgroundColor: cfg.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, alignSelf: 'flex-start' }}>
+      <Text style={{ fontSize: 11, fontWeight: '800', color: cfg.text }}>{cfg.label}</Text>
+    </View>
+  );
+}
+
 function canonicalizeStatus(statusRaw: any, displayRaw: any): string {
   const s = String(statusRaw ?? '').toLowerCase().trim();
   if (s && CANON[s as keyof typeof CANON]) return CANON[s as keyof typeof CANON];

@@ -17,6 +17,8 @@ export default function VarianceSnapshotScreen() {
   const [shortageValue, setShortageValue] = useState(0);
   const [excessValue, setExcessValue] = useState(0);
   const [q, setQ] = useState('');
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   async function load() {
     try {
@@ -27,6 +29,31 @@ export default function VarianceSnapshotScreen() {
       setRowsExcess(res.excesses || []);
       setShortageValue(res.totalShortageValue || 0);
       setExcessValue(res.totalExcessValue || 0);
+      // Auto-generate AI summary
+      if ((res.shortages?.length || 0) + (res.excesses?.length || 0) > 0) {
+        setAiLoading(true);
+        try {
+          const topItems = [...(res.shortages || []).slice(0, 3), ...(res.excesses || []).slice(0, 2)];
+          const ctx = {
+            venueId,
+            areaId: null,
+            productId: 'overall',
+            expected: 0,
+            counted: 0,
+            unit: null,
+            lastDeliveryAt: null,
+            lastSalesLookbackDays: 7,
+            auditTrail: [],
+            shortages: res.shortages?.slice(0, 5),
+            excesses: res.excesses?.slice(0, 5),
+            totalShortageValue: res.totalShortageValue,
+            totalExcessValue: res.totalExcessValue,
+          };
+          const explained = await explainVariance(ctx);
+          setAiSummary(explained.summary || null);
+        } catch {}
+        setAiLoading(false);
+      }
     } catch (e: any) {
       Alert.alert('Failed to load variance', e?.message ?? String(e));
     } finally {
@@ -83,6 +110,19 @@ export default function VarianceSnapshotScreen() {
         <Text style={styles.h1}>Variance Snapshot</Text>
         <Text style={styles.sub}>Compares current on-hand (from last counts) against guidance (“expected”).</Text>
 
+        {/* AI Summary */}
+        {aiLoading && (
+          <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <ActivityIndicator size="small" color="#1D4ED8" />
+            <Text style={{ color: '#1D4ED8', fontWeight: '700' }}>AI is analysing your variance...</Text>
+          </View>
+        )}
+        {aiSummary && !aiLoading && (
+          <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#BFDBFE' }}>
+            <Text style={{ fontWeight: '900', color: '#1D4ED8', marginBottom: 6 }}>🤖 AI Summary</Text>
+            <Text style={{ color: '#1E3A5F', fontSize: 14, lineHeight: 20 }}>{aiSummary}</Text>
+          </View>
+        )}
         <TextInput
           value={q}
           onChangeText={setQ}
