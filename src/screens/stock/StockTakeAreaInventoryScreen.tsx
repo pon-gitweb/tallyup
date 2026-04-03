@@ -4,6 +4,13 @@ import {
   orderBy, query, serverTimestamp, updateDoc, runTransaction
 } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
+import PhotoCountModal from "./components/PhotoCountModal";
+import SmartShelfModal from "./components/SmartShelfModal";
+import ShelfPhotoModal from "./components/ShelfPhotoModal";
+import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPhoto";
+import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
+import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
+import { createStockTakePhotoDoc } from "../../services/stocktake/stockTakePhotos";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, Modal, SafeAreaView,
@@ -20,9 +27,7 @@ import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
-import { refreshAIContext } from '../../services/aiContext';
-import BarcodeScannerModal from './components/BarcodeScannerModal';
-import PhotoCountModal from './components/PhotoCountModal';
+import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 let Haptics: any = null;
 try { Haptics = require('expo-haptics'); } catch {}
 let AS: any = null;
@@ -175,7 +180,6 @@ const Row = React.memo(function Row({
       <TouchableOpacity
         activeOpacity={0.9}
         onLongPress={() => setMenuFor(item)}
-      onPress={() => setMenuFor(item)}
         style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
       >
         <View style={{ flexDirection:'row', alignItems:'center' }}>
@@ -550,6 +554,13 @@ function StockTakeAreaInventoryScreen() {
   // More menu
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // Smart Shelf Count
+  const [shelfOpen, setShelfOpen] = useState(false);
+  const [shelfPhotoOpen, setShelfPhotoOpen] = useState(false);
+  const [shelfLoading, setShelfLoading] = useState(false);
+  const [shelfJobId, setShelfJobId] = useState(null);
+  const [shelfProposals, setShelfProposals] = useState([]);
+
   // Persist/restore view prefs
   useEffect(() => { (async () => {
     if (!AS) return;
@@ -579,9 +590,6 @@ function StockTakeAreaInventoryScreen() {
 
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
-  const [batchModalOpen, setBatchModalOpen] = useState(false);
-  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
-  const [photoCountFor, setPhotoCountFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
@@ -613,6 +621,8 @@ function StockTakeAreaInventoryScreen() {
   const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
 
   const [offline, setOffline] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [photoFor, setPhotoFor] = useState<Item | null>(null);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
     return () => unsub && unsub();
@@ -809,47 +819,28 @@ function StockTakeAreaInventoryScreen() {
     } catch (e:any) { Alert.alert('Undo failed', e?.message ?? String(e)); }
   };
 
-  const saveCount = async (item: Item) => {
-    const typed = (localQty[item.id] ?? '').trim();
-    const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
-    const prevAt = item.lastCountAt ?? null;
-
-    const doWrite = async (qty: number) => {
+  const saveCount = async (item: Item, overrideQty?: number, forceReplace?: boolean) => {
+    const qty = overrideQty ?? parseFloat(String(localInputs?.[item.id] ?? '0'));
+    const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
+    const doSave = async (finalQty: number) => {
       try {
-        await ensureAreaStarted();
-        if (offline) addPending(item.id);
-        await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',item.id),
-          { lastCount: qty, lastCountAt: serverTimestamp() });
-        if (!offline) removePending(item.id);
-        setLocalQty((m) => ({ ...m, [item.id]: '' }));
-        hapticSuccess();
-        showUndo(item.id, prevQty, prevAt);
-        focusNext(item.id);
-      } catch (e:any){ Alert.alert('Could not save count', e?.message ?? String(e)); }
+        const iRef = doc(db, 'venues', venueId!, 'stocktakeAreas', areaId!, 'items', item.id);
+        await setDoc(iRef, { lastCount: finalQty, lastCountAt: serverTimestamp() }, { merge: true });
+      } catch (e: any) { Alert.alert('Save failed', e?.message ?? String(e)); }
     };
-
-    const proceedWith = async (qty: number) => {
-      const mustConfirm = needsDeltaConfirm(item.lastCount ?? null, qty);
-      if (!mustConfirm) return doWrite(qty);
-      Alert.alert('Large change', `Change “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Confirm', style: 'destructive', onPress: () => doWrite(qty) }
-      ]);
-    };
-
-    if (typed === '') {
-  return Alert.alert('No quantity', `Save “${item.name}” as 0?`, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Save as 0', onPress: () => proceedWith(0) },
-  ]);
-}
-
-// If NOT a valid number, show error
-if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
-  return Alert.alert('Invalid', 'Enter number');
-}
-
-await proceedWith(parseFloat(typed));
+    if (!forceReplace && existingCount !== null && existingCount > 0 && qty > 0) {
+      const total = existingCount + qty;
+      Alert.alert('Update count?',
+        item.name + ' is currently counted at ' + existingCount + '.\n\nReplace with ' + qty + ', or add to get ' + total + '?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Replace with ' + qty, onPress: () => doSave(qty) },
+          { text: 'Add → ' + total, onPress: () => doSave(total) },
+        ]
+      );
+    } else {
+      await doSave(qty);
+    }
   };
 
   const approveNow = async (item: Item) => {
@@ -900,42 +891,7 @@ const qty = parseFloat(typed);
     } else { await doApprove(); }
   };
 
-  // Handle product selected from search dropdown
-  const onSelectProduct = useCallback(async (product: any) => {
-    if (!venueId || !orderId && !areaId) return;
-    try {
-      await ensureAreaStarted();
-      const nowTs = serverTimestamp();
-      const colRef = collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items');
-      await addDoc(colRef, {
-        name: product.name,
-        unit: product.unit || '',
-        supplierName: product.supplierName || '',
-        supplierId: product.supplierId || null,
-        costPrice: product.costPrice ?? null,
-        par: product.parLevel ?? null,
-        lastCount: 0,
-        inductionSource: 'product-search',
-        inductionStatus: 'complete',
-        createdAt: nowTs,
-        updatedAt: nowTs,
-        lastCountAt: nowTs,
-      });
-      setAddingName('');
-      savedToast('Added from products');
-    } catch (e: any) {
-      Alert.alert('Add failed', e?.message || 'Could not add product');
-    }
-  }, [venueId, departmentId, areaId, db]);
-
-  // Handle new product typed in search
-  const onAddNewProduct = useCallback((name: string) => {
-    setAddingName(name);
-    // Trigger quick add with just the name
-    setTimeout(() => addQuickItem(), 50);
-  }, [addQuickItem]);
-
-    const addQuickItem = async () => {
+  const addQuickItem = async () => {
   const nm = (addingName || '').trim();
   const unit = (addingUnit || '').trim();
   const supplier = (addingSupplier || '').trim();
@@ -982,18 +938,7 @@ const qty = parseFloat(typed);
     payload.lastCountAt = nowTs;
   }
 
-
-  const addBatchRecipeItem = async (batchPayload) => {
-    try {
-      await ensureAreaStarted();
-      const nowTs = serverTimestamp ? serverTimestamp() : new Date();
-      const colRef = collection(db, "venues", venueId, "departments", departmentId, "areas", areaId, "items");
-      await addDoc(colRef, Object.assign({}, batchPayload, { createdAt: nowTs, updatedAt: nowTs, lastCountAt: nowTs }));
-      Alert.alert("Added", batchPayload.name + " added to this area.");
-    } catch (e) { Alert.alert("Add failed", e && e.message ? e.message : String(e)); }
-  };
-
-    console.log('[Area quick add] Attempting to create with data:', payload);
+  console.log('[Area quick add] Attempting to create with data:', payload);
 
   try {
     // Ensure this area has a startedAt for this stocktake window
@@ -1145,6 +1090,11 @@ try {
         lastStockTakeWindowHours: roundedHours,
       });
 
+      // Trial decrement (TEMP local-only): count a FULL stocktake submission
+      // NOTE: this is increment-on-submit, not on start.
+      try { await incrementFullStocktakeCompleted(); } catch {}
+
+
       const submittedAt = new Date();
       Alert.alert(
         'Full stock take submitted',
@@ -1204,10 +1154,6 @@ try {
           { completedAt: serverTimestamp() }
         );
         await maybeFinalizeDepartment();
-        // Generate latest counts snapshot for variance reports (non-blocking)
-        try { await generateLatestCountsSnapshot(venueId); } catch (e) { if (__DEV__) console.log("[completeArea] snapshot failed", e && e.message); }
-        // Non-blocking: refresh AI learning context
-        refreshAIContext(venueId).catch(() => {});
         nav.goBack();
       } catch (e: any) {
         Alert.alert('Could not complete area', e?.message ?? String(e));
@@ -1258,10 +1204,31 @@ try {
 );
   };
 
-  const useBluetoothFor = (item: Item) => Alert.alert('Bluetooth Count', `Would read from paired scale for "${item.name}" (stub).`);
-  const usePhotoFor     = (item: Item) => Alert.alert('Photo Count', `Would take photo and OCR for "${item.name}" (stub).`);
-
-  const openHistory = throttleAction(async (item: Item) => {
+  const useBluetoothFor = (item: Item) => {
+    if (ScaleService.isConnected()) {
+      const unsub = ScaleService.onWeight((reading: any) => {
+        if (reading.stable) {
+          unsub();
+          const qty = parseFloat((reading.weightGrams / 1000).toFixed(3));
+          Alert.alert('Scale reading', item.name + ': ' + reading.weightGrams + 'g — use this weight?', [
+            { text: 'Yes', onPress: () => { setMenuFor(null); } },
+            { text: 'No', style: 'cancel' },
+          ]);
+        }
+      });
+      Alert.alert('Place on scale', 'Put ' + item.name + ' on the scale and wait for a stable reading.');
+    } else {
+      Alert.alert('Scale not connected', 'Connect a Bluetooth scale first.',
+        [{ text: 'Connect scale', onPress: () => { setMenuFor(null); nav.navigate('ScaleSettings' as never); } },
+         { text: 'Cancel', style: 'cancel' }]
+      );
+    }
+  };
+  const usePhotoFor = (item: Item) => {
+    setPhotoFor(item);
+    setPhotoOpen(true);
+  };
+const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
     setHistFor(item); setHistLoading(true);
     try { const rows = await fetchRecentItemAudits(venueId, item.id, 10); setHistRows(rows); }
@@ -1519,11 +1486,6 @@ try {
             addingQty={addingQty}                 
             setAddingQty={setAddingQty}           
             onAddQuickItem={addQuickItem}
-            onSelectProduct={onSelectProduct}
-            onAddNewProduct={onAddNewProduct}
-            venueId={venueId}
-            onOpenBatchModal={() => setBatchModalOpen(true)}
-            onOpenBarcodeScanner={() => setBarcodeModalOpen(true)}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}
             nameInputRef={nameInputRef}
@@ -1542,27 +1504,7 @@ try {
         }}
       />
 
-      {/* Barcode Scanner Modal */}
-      <BarcodeScannerModal
-        visible={barcodeModalOpen}
-        onClose={() => setBarcodeModalOpen(false)}
-        venueId={venueId}
-        onFound={onSelectProduct}
-        onNotFound={(barcode) => {
-          setBarcodeModalOpen(false);
-          setAddingName(barcode);
-        }}
-      />
-
-      {/* Batch Recipe Count Modal */}
-      <BatchRecipeModal
-        visible={batchModalOpen}
-        onClose={() => setBatchModalOpen(false)}
-        venueId={venueId}
-        onAdd={addBatchRecipeItem}
-      />
-
-            {/* Request Adjustment Modal */}
+      {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
@@ -2189,147 +2131,133 @@ try {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
-  );
-}
+    
+      <ShelfPhotoModal
+        visible={shelfPhotoOpen}
+        onClose={() => setShelfPhotoOpen(false)}
+        onCaptured={async ({ fileUri }) => {
+          if (!venueId) throw new Error("Missing venueId");
+          if (!uid) throw new Error("Missing user");
+          if (offline) return Alert.alert("Offline", "You are offline. Smart Shelf needs internet to upload.");
 
+          const scanId = String(Date.now());
+          setShelfLoading(true);
+          setShelfOpen(true);
 
-// Batch Recipe Count Modal
-function BatchRecipeModal({ visible, onClose, venueId, onAdd }) {
-  const [search, setSearch] = React.useState("");
-  const [recipes, setRecipes] = React.useState([]);
-  const [selected, setSelected] = React.useState(null);
-  const [volume, setVolume] = React.useState("");
-  const [unit, setUnit] = React.useState("ml");
-  const [busy, setBusy] = React.useState(false);
+          const up = await uploadShelfScanPhoto({ venueId: venueId!, uid, scanId, fileUri });
+          if (!up?.fullPath) throw new Error("Upload returned no fullPath");
 
-  React.useEffect(() => {
-    if (!visible || !venueId) return;
-    setSearch(""); setSelected(null); setVolume(""); setUnit("ml");
-    (async () => {
-      try {
-        const { collection: col, getDocs, query: qry, where } = await import("firebase/firestore");
-        const { db: fdb } = await import("../../services/firebase");
-        const snap = await getDocs(qry(col(fdb, "venues", venueId, "recipes"), where("status", "==", "confirmed")));
-        const rows = [];
-        snap.forEach(d => rows.push(Object.assign({ id: d.id }, d.data())));
-        setRecipes(rows);
-      } catch { setRecipes([]); }
-    })();
-  }, [visible, venueId]);
+          const job = await createShelfScanJob({
+            venueId: venueId!,
+            departmentId,
+            areaId,
+            areaNameSnapshot: areaName || null,
+            storagePath: up.fullPath,
+            createdBy: uid,
+          });
 
-  const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return !q ? recipes : recipes.filter(r => (r.name || "").toLowerCase().includes(q));
-  }, [recipes, search]);
+          setShelfJobId(job.id);
+          setShelfPhotoOpen(false);
 
-  const cycleUnit = () => setUnit(u => u === "ml" ? "L" : u === "L" ? "each" : "ml");
+          // TEMP (until backend exists): show placeholder proposal so UX is testable
+          setShelfProposals([
+            { key: "tmp1", name: "Example item (edit me)", itemId: null, count: 1, confidence: 0.5, isNew: true },
+          ]);
+          setShelfLoading(false);
+        }}
+      />
 
-  const confirmAdd = async () => {
-    if (!selected) { Alert.alert("Select a recipe first"); return; }
-    const vol = parseFloat(volume);
-    if (!volume || isNaN(vol) || vol <= 0) { Alert.alert("Enter a valid volume"); return; }
-    try {
-      setBusy(true);
-      const cogs = typeof selected.cogs === "number" ? selected.cogs : 0;
-      const yieldQty = typeof selected.yield === "number" && selected.yield > 0 ? selected.yield : 1;
-      const costPrice = cogs * (vol / yieldQty);
-      await onAdd({
-        name: selected.name,
-        unit,
-        lastCount: vol,
-        costPrice: Number.isFinite(costPrice) ? parseFloat(costPrice.toFixed(4)) : null,
-        recipeId: selected.id,
-        inductionSource: "batch-recipe",
-        inductionStatus: "complete",
-      });
-      onClose();
-    } catch (e) { Alert.alert("Failed to add batch", e && e.message ? e.message : String(e)); }
-    finally { setBusy(false); }
-  };
+      <SmartShelfModal
+        visible={shelfOpen}
+        onClose={() => { setShelfOpen(false); setShelfJobId(null); setShelfProposals([]); setShelfLoading(false); }}
+        jobId={shelfJobId}
+        proposals={shelfProposals}
+        loading={shelfLoading}
+        onSubmit={async (rows) => {
+          // Apply counts + add new items if needed
+          if (!venueId) throw new Error("Missing venueId");
+          await ensureAreaStarted();
 
-  const vol = parseFloat(volume);
-  const estValue = selected && selected.cogs > 0 && volume && !isNaN(vol)
-    ? (selected.cogs * (vol / (selected.yield || 1))).toFixed(2)
-    : null;
+          for (const r of rows) {
+            // If matched to existing item: just save count
+            if (r.itemId) {
+              await updateDoc(doc(db,venues,venueId!,departments,departmentId,areas,areaId,items,r.itemId), { lastCount: Number(r.count), lastCountAt: serverTimestamp() });
+              continue;
+            }
 
-  const cogsLabel = (r) => typeof r.cogs === "number" ? " $" + r.cogs.toFixed(2) + "/serve" : "";
+            // New item: add to area, then save count
+            const payload:any = {
+              name: (r.name || ''
+              ).trim(),
+              inductionStatus: pending,
+              inductionSource: 'smart-shelf-scan',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              lastCount: Number(r.count),
+              lastCountAt: serverTimestamp(),
+            };
+            const colRef = collection(db,venues,venueId!,departments,departmentId,areas,areaId,items);
+            await addDoc(colRef, payload);
+          }
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
-      <View style={{ flex:1, backgroundColor:"rgba(0,0,0,0.4)", justifyContent:"flex-end" }}>
-        <View style={{ backgroundColor:"#fff", borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, maxHeight:"85%" }}>
-          <Text style={{ fontSize:18, fontWeight:"900", marginBottom:12 }}>Count Batch Recipe</Text>
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search recipes..."
-            style={{ borderWidth:1, borderColor:"#E5E7EB", borderRadius:10, padding:10, marginBottom:10 }}
-          />
-          {!selected ? (
-            <ScrollView style={{ maxHeight:280 }} keyboardShouldPersistTaps="handled">
-              {filtered.length === 0
-                ? <Text style={{ color:"#9CA3AF", padding:10 }}>No confirmed recipes found.</Text>
-                : filtered.map(r => (
-                  <TouchableOpacity key={r.id} onPress={() => setSelected(r)}
-                    style={{ padding:12, borderBottomWidth:1, borderColor:"#F3F4F6" }}>
-                    <Text style={{ fontWeight:"700" }}>{r.name}</Text>
-                    <Text style={{ color:"#6B7280", fontSize:12 }}>
-                      {r.category} - {r.mode} - {r.yield} {r.unit}{cogsLabel(r)}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              }
-            </ScrollView>
-          ) : (
-            <View style={{ gap:10 }}>
-              <View style={{ padding:12, borderRadius:10, backgroundColor:"#F0FDF4", borderWidth:1, borderColor:"#BBF7D0" }}>
-                <Text style={{ fontWeight:"800", color:"#16A34A" }}>{selected.name}</Text>
-                <Text style={{ color:"#6B7280", fontSize:12, marginTop:2 }}>
-                  {selected.category} - {selected.yield} {selected.unit}{cogsLabel(selected)}
-                </Text>
-                <TouchableOpacity onPress={() => setSelected(null)} style={{ marginTop:6 }}>
-                  <Text style={{ color:"#DC2626", fontSize:12, fontWeight:"700" }}>Change recipe</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={{ fontWeight:"700", color:"#374151" }}>How much is on hand?</Text>
-              <View style={{ flexDirection:"row", gap:8 }}>
-                <TextInput
-                  value={volume}
-                  onChangeText={setVolume}
-                  placeholder="e.g. 1500"
-                  keyboardType="decimal-pad"
-                  style={{ flex:1, borderWidth:1, borderColor:"#E5E7EB", borderRadius:10, padding:10 }}
-                />
-                <TouchableOpacity onPress={cycleUnit}
-                  style={{ padding:10, borderWidth:1, borderColor:"#111", borderRadius:10, minWidth:60, alignItems:"center", justifyContent:"center" }}>
-                  <Text style={{ fontWeight:"800" }}>{unit}</Text>
-                </TouchableOpacity>
-              </View>
-              {estValue ? (
-                <View style={{ padding:10, borderRadius:10, backgroundColor:"#F9FAFB", borderWidth:1, borderColor:"#E5E7EB" }}>
-                  <Text style={{ color:"#6B7280", fontSize:13 }}>Est. value: ${estValue}</Text>
-                </View>
-              ) : null}
-            </View>
-          )}
-          <View style={{ flexDirection:"row", gap:10, marginTop:16 }}>
-            <TouchableOpacity onPress={onClose}
-              style={{ flex:1, padding:14, borderRadius:12, backgroundColor:"#F3F4F6" }}>
-              <Text style={{ textAlign:"center", fontWeight:"700" }}>Cancel</Text>
-            </TouchableOpacity>
-            {selected ? (
-              <TouchableOpacity disabled={busy} onPress={confirmAdd}
-                style={{ flex:1, padding:14, borderRadius:12, backgroundColor:"#111" }}>
-                <Text style={{ color:"#fff", textAlign:"center", fontWeight:"800" }}>
-                  {busy ? "Adding..." : "Add to Count"}
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </View>
-      </View>
-    </Modal>
+          Alert.alert(Saved, `Applied  shelf count(s).`);
+        }}
+      />
+
+      <PhotoCountModal
+        visible={photoOpen}
+        onClose={() => { setPhotoOpen(false); setPhotoFor(null); }}
+        item={photoFor}
+        areaName={areaName || null}
+        defaultCount={photoFor ? (typeof photoFor.lastCount === "number" ? photoFor.lastCount : null) : null}
+        onCaptured={async ({ fileUri, count, note }) => {
+          if (!photoFor) throw new Error('No item selected');
+          if (!venueId) throw new Error('Missing venueId');
+
+          if (offline) {
+            Alert.alert(
+              'Offline',
+              'You are offline. You can still save the count normally, but photo evidence needs internet to upload.'
+            );
+            return;
+          }
+
+          const up = await uploadStockTakePhoto({
+            venueId: venueId!,
+            areaId,
+            itemId: photoFor.id,
+            fileUri,
+          });
+
+          const storagePath = up?.fullPath || '';
+          if (!storagePath) throw new Error('Photo upload returned no fullPath');
+
+          const uid = (getAuth()?.currentUser && getAuth().currentUser.uid) ? getAuth().currentUser.uid : null;
+
+          await createStockTakePhotoDoc({
+            venueId: venueId!,
+            departmentId: departmentId || null,
+            areaId,
+            areaNameSnapshot: ((route?.params && (route.params as any).areaName) ? (route.params as any).areaName : null),
+            areaStartedAtMs: null,
+
+            itemId: photoFor.id,
+            itemNameSnapshot: photoFor?.name || null,
+            unitSnapshot: photoFor?.unit || null,
+
+            count: Number(count),
+            note: (note || '').trim() ? (note || '').trim() : null,
+
+            storagePath,
+            createdBy: uid,
+          });
+
+          setLocalQty((m) => ({ ...m, [photoFor.id]: String(count) }));
+          await saveCount(photoFor, Number(count));
+}}
+      />
+
+</SafeAreaView>
   );
 }
 

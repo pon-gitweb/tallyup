@@ -68,7 +68,7 @@ export default function SuggestedOrderScreen(){
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
   const [supplierOpen,setSupplierOpen]=useState(false);
 
-  const [entitled,setEntitled]=useState(false);
+  const [entitled,setEntitled]=useState(true); // BETA: force entitled — all venues have full access
   const [payOpen,setPayOpen]=useState(false);
   const [mode,setMode]=useState<'math'|'ai'>('math');
   const [aiMeter,setAiMeter]=useState<{aiRemaining?:number;retryAfterSeconds?:number}|null>(null);
@@ -264,7 +264,7 @@ export default function SuggestedOrderScreen(){
       try{
         await loadSuppliers();
         await loadDepartments();
-        try{ const ent=await checkEntitlement(venueId); setEntitled(!!ent.entitled); }catch{}
+        setEntitled(true); // BETA: bypass entitlement check
         await doRefreshRaw();
       } finally { setRefreshing(false); }
     })();
