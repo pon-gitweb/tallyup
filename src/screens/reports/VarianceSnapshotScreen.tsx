@@ -373,119 +373,92 @@ function buildVarianceHtml(
   shortageValue: number,
   excessValue: number,
 ) {
-  const shortRows = (shortages || []).map((r: any) => {
-    const name = r.name || r.id || '—';
-    const unit = r.unit || '';
-    const sup = r.supplierName || '';
-    const par = r.par ?? '—';
-    const onHand = r.onHand ?? '—';
-    const variance = r.variance ?? '—';
-    const value = typeof r.value === 'number' ? '$' + Number(r.value).toFixed(2) : '—';
-    return `
-      <tr>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(name)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(unit)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(sup)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(par)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(onHand)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(variance)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${value}</td>
-      </tr>
-    `;
-  }).join('') || `
-    <tr>
-      <td colspan="7" style="padding:8px;text-align:center;color:#6B7280;">
-        No shortages recorded in this snapshot.
-      </td>
-    </tr>
-  `;
+  const now = new Date().toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' });
+  const netVariance = shortageValue - excessValue;
+  const netColour = netVariance > 0 ? '#DC2626' : '#16A34A';
 
-  const excessRows = (excesses || []).map((r: any) => {
-    const name = r.name || r.id || '—';
-    const unit = r.unit || '';
-    const sup = r.supplierName || '';
-    const par = r.par ?? '—';
-    const onHand = r.onHand ?? '—';
-    const variance = r.variance ?? '—';
-    const value = typeof r.value === 'number' ? '$' + Number(r.value).toFixed(2) : '—';
-    return `
-      <tr>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(name)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(unit)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;">${escapeHtml(sup)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(par)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(onHand)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${escapeHtml(variance)}</td>
-        <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">${value}</td>
-      </tr>
-    `;
-  }).join('') || `
-    <tr>
-      <td colspan="7" style="padding:8px;text-align:center;color:#6B7280;">
-        No excess recorded in this snapshot.
-      </td>
-    </tr>
-  `;
+  const buildRows = (rows: VarianceRow[]) => rows.map((r: any) => `
+    <tr style="border-bottom:1px solid #F1F5F9;">
+      <td style="padding:8px 6px;font-weight:600;">${escapeHtml(r.name || '—')}</td>
+      <td style="padding:8px 6px;color:#6B7280;">${escapeHtml(r.unit || '')}</td>
+      <td style="padding:8px 6px;color:#6B7280;">${escapeHtml(r.supplierName || '—')}</td>
+      <td style="padding:8px 6px;text-align:right;">${r.par ?? '—'}</td>
+      <td style="padding:8px 6px;text-align:right;">${r.onHand ?? '—'}</td>
+      <td style="padding:8px 6px;text-align:right;font-weight:700;color:${(r.variance||0)<0?'#DC2626':'#16A34A'};">${r.variance ?? '—'}</td>
+      <td style="padding:8px 6px;text-align:right;font-weight:700;">${typeof r.value==='number'?'$'+Number(r.value).toFixed(2):'—'}</td>
+    </tr>`).join('') || '<tr><td colspan="7" style="padding:12px;text-align:center;color:#9CA3AF;">None recorded</td></tr>';
 
-  return `
-    <html>
-      <body style="font-family:-apple-system,Roboto,sans-serif;padding:16px;">
-        <h2>${escapeHtml(venueName)} — Variance Snapshot</h2>
-        <p style="color:#4B5563;margin:0 0 12px 0;">
-          On-hand vs expected, showing where you are short or overstocked.
-        </p>
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,Roboto,sans-serif; color:#111827; background:#fff; }
+  .header { background:#0F172A; color:#fff; padding:24px 20px; }
+  .header h1 { font-size:22px; font-weight:900; margin-bottom:4px; }
+  .header p { opacity:0.7; font-size:13px; }
+  .summary { display:flex; gap:12px; padding:16px 20px; background:#F8FAFC; border-bottom:1px solid #E2E8F0; }
+  .stat { flex:1; background:#fff; border-radius:10px; padding:12px; border:1px solid #E2E8F0; }
+  .stat-label { font-size:11px; color:#6B7280; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+  .stat-value { font-size:22px; font-weight:900; margin-top:4px; }
+  .section { padding:16px 20px; }
+  .section h2 { font-size:14px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px; color:#6B7280; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  thead tr { background:#F8FAFC; }
+  th { padding:8px 6px; text-align:left; font-size:11px; font-weight:700; color:#6B7280; text-transform:uppercase; letter-spacing:0.3px; border-bottom:2px solid #E2E8F0; }
+  th:last-child, th:nth-child(4), th:nth-child(5), th:nth-child(6) { text-align:right; }
+  .footer { padding:16px 20px; border-top:1px solid #E2E8F0; color:#9CA3AF; font-size:11px; text-align:center; margin-top:20px; }
+</style></head>
+<body>
+  <div class="header">
+    <h1>${escapeHtml(venueName)}</h1>
+    <p>Variance Report &nbsp;·&nbsp; ${now}</p>
+    <p style="margin-top:4px;opacity:0.5;font-size:11px;">Generated by Hosti-Stock</p>
+  </div>
 
-        <h3>Headline numbers</h3>
-        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
-          <tr>
-            <td style="padding:6px;border-bottom:1px solid #E5E7EB;">Shortage value</td>
-            <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">$${Number(shortageValue || 0).toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td style="padding:6px;border-bottom:1px solid #E5E7EB;">Excess value</td>
-            <td style="padding:6px;border-bottom:1px solid #E5E7EB;text-align:right;">$${Number(excessValue || 0).toFixed(2)}</td>
-          </tr>
-        </table>
+  <div class="summary">
+    <div class="stat">
+      <div class="stat-label">Shortage value</div>
+      <div class="stat-value" style="color:#DC2626;">$${Number(shortageValue||0).toFixed(2)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Excess value</div>
+      <div class="stat-value" style="color:#16A34A;">$${Number(excessValue||0).toFixed(2)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Net variance</div>
+      <div class="stat-value" style="color:${netColour};">$${Math.abs(netVariance).toFixed(2)}</div>
+    </div>
+  </div>
 
-        <h3>Shortages</h3>
-        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;">
-          <thead>
-            <tr>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Product</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Unit</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Supplier</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Par</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">On-hand</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Variance</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${shortRows}
-          </tbody>
-        </table>
+  <div class="section">
+    <h2>Shortages</h2>
+    <table>
+      <thead><tr>
+        <th>Product</th><th>Unit</th><th>Supplier</th>
+        <th>PAR</th><th>On-hand</th><th>Variance</th><th>Value</th>
+      </tr></thead>
+      <tbody>${buildRows(shortages)}</tbody>
+    </table>
+  </div>
 
-        <h3>Excess</h3>
-        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;">
-          <thead>
-            <tr>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Product</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Unit</th>
-              <th style="text-align:left;padding:6px;border-bottom:1px solid #CBD5E1;">Supplier</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Par</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">On-hand</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Variance</th>
-              <th style="text-align:right;padding:6px;border-bottom:1px solid #CBD5E1;">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${excessRows}
-          </tbody>
-        </table>
-      </body>
-    </html>
-  `;
+  <div class="section">
+    <h2>Excess</h2>
+    <table>
+      <thead><tr>
+        <th>Product</th><th>Unit</th><th>Supplier</th>
+        <th>PAR</th><th>On-hand</th><th>Variance</th><th>Value</th>
+      </tr></thead>
+      <tbody>${buildRows(excesses)}</tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    Hosti-Stock &nbsp;·&nbsp; hosti.co.nz &nbsp;·&nbsp; Printed ${now}
+  </div>
+</body></html>`;
 }
+
+
 
 function escapeHtml(str: any) {
   const s = String(str ?? '');

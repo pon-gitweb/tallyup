@@ -36,6 +36,33 @@ export default function DashboardScreen() {
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   const [busy, setBusy] = useState(false);
+  const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string} | null>(null);
+
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    // Find the most recently started area that isn't completed
+    import('firebase/firestore').then(({ collection, getDocs, query, orderBy, limit, where }) => {
+      getDocs(collection(db, 'venues', venueId, 'departments')).then(async deptSnap => {
+        let best: any = null;
+        for (const deptDoc of deptSnap.docs) {
+          const areasSnap = await getDocs(
+            query(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+              orderBy('startedAt', 'desc'), limit(3))
+          );
+          for (const areaDoc of areasSnap.docs) {
+            const data = areaDoc.data();
+            if (data.startedAt && !data.completedAt) {
+              if (!best || data.startedAt.toMillis() > best.startedAt) {
+                best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis() };
+              }
+            }
+          }
+        }
+        if (best) setLastArea(best);
+      }).catch(() => {});
+    });
+  }, [venueId]);
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
   React.useEffect(() => {
     if (!venueId) return;
@@ -96,6 +123,18 @@ export default function DashboardScreen() {
           <IdentityBadge />
         </View>
         <OfflineBanner />
+        {lastArea && (
+          <TouchableOpacity
+            onPress={() => nav.navigate('StockTakeAreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+            style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#0F172A', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Text style={{ fontSize: 20 }}>▶️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>Continue stocktake</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{lastArea.deptName} → {lastArea.areaName}</Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
+          </TouchableOpacity>
+        )}
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
         {stocktakeCount > 0 && (
           <View style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#BBF7D0' }}>
