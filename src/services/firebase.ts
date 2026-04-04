@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, initializeAuth } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -40,8 +40,7 @@ export const db = (() => {
       localCache: persistentLocalCache(),
     });
   } catch {
-    // Already initialised — return existing instance
-    const { getFirestore } = require('firebase/firestore');
+    // Already initialised (hot reload) — return existing instance
     return getFirestore(app);
   }
 })();
