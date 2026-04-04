@@ -14,6 +14,7 @@ import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { inferDefaultPAR, getPARDescription } from '../../services/parDefaults';
 import { markStepComplete } from '../../services/guide/SetupGuideService';
 import type { ExtractionResult, ExtractedProduct } from './InventoryImportScreen';
 
@@ -61,7 +62,7 @@ function InventoryImportPreviewScreen() {
           area: product.area || null,
           department: product.department || null,
           costPrice: product.costPrice ?? null,
-          parLevel: product.parLevel ?? null,
+          parLevel: product.parLevel ?? inferDefaultPAR(product.name, product.unit),
           importedAt: serverTimestamp(),
           importSource: 'inventory-import',
         }));
@@ -157,9 +158,9 @@ function InventoryImportPreviewScreen() {
                   {product.costPrice != null && (
                     <Text style={{ color: C.success, fontSize: 11, fontWeight: '700' }}>${product.costPrice.toFixed(2)}</Text>
                   )}
-                  {product.parLevel != null && (
-                    <Text style={{ color: C.textSecondary, fontSize: 11 }}>PAR: {product.parLevel}</Text>
-                  )}
+                  <Text style={{ color: C.textSecondary, fontSize: 11 }}>
+                    PAR: {product.parLevel ?? inferDefaultPAR(product.name, product.unit)} (suggested)
+                  </Text>
                   <View style={{
                     backgroundColor: product.confidence === 'high' ? '#F0FDF4' : product.confidence === 'medium' ? '#FEF3C7' : '#FEF2F2',
                     paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999,
