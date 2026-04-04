@@ -42,8 +42,8 @@ export default function DashboardScreen() {
     if (!venueId) return;
     const db = getFirestore();
     // Find the most recently started area that isn't completed
-    import('firebase/firestore').then(({ collection, getDocs, query, orderBy, limit, where }) => {
-      getDocs(collection(db, 'venues', venueId, 'departments')).then(async deptSnap => {
+    const db2 = getFirestore();
+    getDocs(collection(db2, 'venues', venueId, 'departments')).then(async deptSnap => {
         let best: any = null;
         for (const deptDoc of deptSnap.docs) {
           const areasSnap = await getDocs(
@@ -60,8 +60,7 @@ export default function DashboardScreen() {
           }
         }
         if (best) setLastArea(best);
-      }).catch(() => {});
-    });
+    }).catch(() => {});
   }, [venueId]);
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
   React.useEffect(() => {
