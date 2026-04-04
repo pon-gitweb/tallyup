@@ -31,7 +31,7 @@
         "monochromeImage": "./assets/adaptive-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.tallyup",
+      "package": "com.hostistock.tallyup",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.BLUETOOTH",

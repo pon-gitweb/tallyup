@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.tallyup'
+    namespace 'com.hostistock.tallyup'
     defaultConfig {
-        applicationId 'com.anonymous.tallyup'
+        applicationId 'com.hostistock.tallyup'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 12
