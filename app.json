@@ -32,7 +32,6 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.tallyup",
-      "versionCode": 11,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.BLUETOOTH",

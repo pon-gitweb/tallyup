@@ -215,6 +215,24 @@ export default function SettingsScreen() {
           </View>
         )}
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Support</Text></View>
+        {/* Pricing button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            onPress={() => nav.navigate('Pricing')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Pricing & Plans</Text>
+          </TouchableOpacity>
+        </View>
+        {/* Terms button */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: '#334155' }]}
+            onPress={() => nav.navigate('Terms')}
+          >
+            <Text style={{ color: 'white', fontWeight: '800' }}>Terms of Service</Text>
+          </TouchableOpacity>
+        </View>
         {/* Share button */}
         <View style={styles.row}>
           <TouchableOpacity

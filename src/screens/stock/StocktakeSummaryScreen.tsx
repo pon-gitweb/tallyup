@@ -60,8 +60,15 @@ function StocktakeSummaryScreen() {
       {/* Hero */}
       <View style={{ backgroundColor: C.primary, borderRadius: 16, padding: 24, alignItems: 'center', gap: 8 }}>
         <Text style={{ fontSize: 48 }}>✅</Text>
-        <Text style={{ fontSize: 24, fontWeight: '900', color: '#fff' }}>Stocktake submitted!</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
+        <Text style={{ fontSize: 24, fontWeight: '900', color: '#fff' }}>Stocktake complete!</Text>
+        {windowHours > 0 && (
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999, marginTop: 4 }}>
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 18 }}>
+              ⏱ Done in {formatDuration(windowHours)}
+            </Text>
+          </View>
+        )}
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, marginTop: 4 }}>
           {departmentName} · {new Date(submittedAt).toLocaleString('en-NZ')}
         </Text>
       </View>
