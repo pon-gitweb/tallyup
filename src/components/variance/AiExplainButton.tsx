@@ -54,6 +54,7 @@ export default function AiExplainButton({
     const ok = await isEntitled(venueId, uid);
     if (!ok) {
       console.log('[AiExplainButton] beta mode — paywall bypassed');
+      // Progress framing — never show failure to user
       // setPaywallOpen(true); // disabled for beta
       return;
     }

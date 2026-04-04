@@ -247,7 +247,7 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
         res.summary || 'No explanation available.',
         res.confidence != null ? `\nConfidence: ${(res.confidence * 100).toFixed(0)}%` : '',
         (res.factors && res.factors.length) ? `\nFactors:\n• ${res.factors.join('\n• ')}` : '',
-        notMuchData ? `\n\nLimited data. Add ${suggestions} for better insights.` : '',
+        notMuchData ? '\n\nYour AI is still learning your venue — insights improve after each stocktake. Adding delivery dates and sales data will speed this up.' : '',
         res.cachedAt ? `\n\nCached: ${new Date(res.cachedAt).toLocaleString()}` : '',
       ].filter(Boolean);
 
