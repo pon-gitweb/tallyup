@@ -47,6 +47,11 @@ export const db = (() => {
 })();
 export const storage = getStorage(app);
 
+// Log any Firebase init issues
+try {
+  if (!app) logError('firebase_init', new Error('Firebase app not initialized'));
+} catch {}
+
 if (__DEV__) {
   try {
     console.log(

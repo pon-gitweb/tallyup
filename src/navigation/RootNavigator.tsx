@@ -61,6 +61,15 @@ function AuthedStack() {
   );
 }
 
+// Global unhandled error handler
+if (typeof ErrorUtils !== 'undefined') {
+  const originalHandler = ErrorUtils.getGlobalHandler();
+  ErrorUtils.setGlobalHandler((error, isFatal) => {
+    logError('unhandled_global', error, { isFatal });
+    originalHandler?.(error, isFatal);
+  });
+}
+
 export default function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
