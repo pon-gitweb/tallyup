@@ -67,3 +67,4 @@ ui-debug.log
 
 # Archived/quarantined code (kept out of builds/tooling)
 _archive/
+# Unignore archive folder
