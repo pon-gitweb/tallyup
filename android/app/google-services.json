@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "596901666549",
+    "project_id": "tallyup-f1463",
+    "storage_bucket": "tallyup-f1463.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:596901666549:android:06ce71ac2b55abc065efbc",
+        "android_client_info": {
+          "package_name": "com.hostistock.tallyup"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqFPVxDm3B-W4Z79RliM1W65F36GiS1Kg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:596901666549:android:e3b39743f10bdc3c65efbc",
+        "android_client_info": {
+          "package_name": "com.stackmosaic.tallyup"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqFPVxDm3B-W4Z79RliM1W65F36GiS1Kg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
