@@ -1,4 +1,4 @@
-import type { ActiveSession } from 'src/services/activeTake';
+import type { ActiveSession } from './activeTake';
 
 export function primaryCtaLabel(session: ActiveSession | null) {
   if (!session) return 'Start Stock Take';

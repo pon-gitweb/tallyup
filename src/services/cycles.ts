@@ -1,6 +1,6 @@
 import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
-import { ensureDeptSessionActive } from 'src/services/activeDeptTake';
+import { db } from './firebase';
+import { ensureDeptSessionActive } from './activeDeptTake';
 
 /**
  * Start a new stock-take cycle for a department.

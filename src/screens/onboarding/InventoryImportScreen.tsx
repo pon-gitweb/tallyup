@@ -40,15 +40,15 @@ export type ExtractionResult = {
   warnings: string[];
 };
 
-function FileTypeButton({ icon, label, sublabel, onPress, C }: any) {
+function FileTypeButton({ icon, label, sublabel, onPress, colours }: any) {
   return (
     <TouchableOpacity onPress={onPress} style={{
-      flex: 1, backgroundColor: C.surface, borderRadius: 14, padding: 16,
-      borderWidth: 1, borderColor: C.border, alignItems: 'center', gap: 6,
+      flex: 1, backgroundColor: colours.surface, borderRadius: 14, padding: 16,
+      borderWidth: 1, borderColor: colours.border, alignItems: 'center', gap: 6,
     }}>
       <Text style={{ fontSize: 32 }}>{icon}</Text>
-      <Text style={{ fontWeight: '800', color: C.text, fontSize: 13 }}>{label}</Text>
-      <Text style={{ color: C.textSecondary, fontSize: 11, textAlign: 'center' }}>{sublabel}</Text>
+      <Text style={{ fontWeight: '800', color: colours.text, fontSize: 13 }}>{label}</Text>
+      <Text style={{ color: colours.textSecondary, fontSize: 11, textAlign: 'center' }}>{sublabel}</Text>
     </TouchableOpacity>
   );
 }
@@ -151,8 +151,8 @@ function InventoryImportScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: C.background, justifyContent: 'center', alignItems: 'center', gap: 20, padding: 40 }}>
         <ActivityIndicator size="large" color={C.accent} />
-        <Text style={{ fontSize: 18, fontWeight: '900', color: C.text, textAlign: 'center' }}>{loadingMsg}</Text>
-        <Text style={{ color: C.textSecondary, textAlign: 'center', fontSize: 14 }}>
+        <Text style={{ fontSize: 18, fontWeight: '900', color: colours.text, textAlign: 'center' }}>{loadingMsg}</Text>
+        <Text style={{ color: colours.textSecondary, textAlign: 'center', fontSize: 14 }}>
           Claude is reading your inventory and organising it for you. This usually takes 10–30 seconds.
         </Text>
       </View>
@@ -171,8 +171,8 @@ function InventoryImportScreen() {
       </View>
 
       {/* What you can upload */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-        <Text style={{ fontWeight: '900', color: C.text, marginBottom: 12, fontSize: 16 }}>What to upload</Text>
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 12, fontSize: 16 }}>What to upload</Text>
         {[
           { icon: '📊', label: 'Excel or CSV', desc: 'Your existing stocktake spreadsheet' },
           { icon: '📄', label: 'PDF', desc: 'A printed stocktake form or report' },
@@ -182,19 +182,19 @@ function InventoryImportScreen() {
           <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: i < 3 ? 10 : 0 }}>
             <Text style={{ fontSize: 20 }}>{item.icon}</Text>
             <View>
-              <Text style={{ fontWeight: '700', color: C.text }}>{item.label}</Text>
-              <Text style={{ color: C.textSecondary, fontSize: 12 }}>{item.desc}</Text>
+              <Text style={{ fontWeight: '700', color: colours.text }}>{item.label}</Text>
+              <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{item.desc}</Text>
             </View>
           </View>
         ))}
       </View>
 
       {/* Upload options */}
-      <Text style={{ fontWeight: '900', color: C.text, fontSize: 16 }}>Choose your file</Text>
+      <Text style={{ fontWeight: '900', color: colours.text, fontSize: 16 }}>Choose your file</Text>
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} C={C} />
-        <FileTypeButton icon="🖼️" label="Photo library" sublabel="Screenshot or photo" onPress={onPickPhoto} C={C} />
-        <FileTypeButton icon="📷" label="Camera" sublabel="Take a photo now" onPress={onCamera} C={C} />
+        <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} colours={C} />
+        <FileTypeButton icon="🖼️" label="Photo library" sublabel="Screenshot or photo" onPress={onPickPhoto} colours={C} />
+        <FileTypeButton icon="📷" label="Camera" sublabel="Take a photo now" onPress={onCamera} colours={C} />
       </View>
 
       {/* What happens next */}
@@ -226,7 +226,7 @@ function InventoryImportScreen() {
       {/* Skip option */}
       <TouchableOpacity onPress={() => nav.navigate('ProductsCsvImport')}
         style={{ alignItems: 'center', padding: 12 }}>
-        <Text style={{ color: C.textSecondary, fontSize: 13 }}>I'd rather enter products manually →</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>I'd rather enter products manually →</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

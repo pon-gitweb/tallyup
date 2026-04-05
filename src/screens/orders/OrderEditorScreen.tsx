@@ -3,7 +3,7 @@ import { useColours } from '../../context/ThemeContext';
 import HintBubble from '../../components/hints/HintBubble';
 import OrderDispatchModal from './OrderDispatchModal';
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../domain/orders';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, StyleSheet } from 'react-native';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { getApp } from 'firebase/app';

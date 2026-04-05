@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 
 /**
  * Ensure the user has a member record in the given venue. If the venue is configured

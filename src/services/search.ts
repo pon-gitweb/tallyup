@@ -1,5 +1,5 @@
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 
 export type FoundItem = {
   id: string;

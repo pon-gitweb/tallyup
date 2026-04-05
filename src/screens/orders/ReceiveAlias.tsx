@@ -7,7 +7,7 @@ import {
   getFirestore, doc, getDoc, onSnapshot,
   collection, getDocs, writeBatch, serverTimestamp, setDoc
 } from 'firebase/firestore';
-import { useVenueId } from 'src/context/VenueProvider';
+import { useVenueId } from '../../context/VenueProvider';
 
 type Line = {
   productId: string;

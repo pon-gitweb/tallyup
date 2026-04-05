@@ -9,7 +9,7 @@ jest.mock('../suggest', () => ({
 // Jest-only RN shim to avoid ReferenceError in Node
 ;(global as any).__DEV__ = false
 
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../../domain/orders';
 
 describe('runAISuggest', () => {
   const venueId = 'v_demo';

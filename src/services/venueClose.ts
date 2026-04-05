@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
-import { listIncompleteAreasAcrossActive, finalizeVenueIfAllActiveComplete } from 'src/services/completion';
-import { setLastLocation } from 'src/services/activeTake';
+import { db } from './firebase';
+import { listIncompleteAreasAcrossActive, finalizeVenueIfAllActiveComplete } from './completion';
+import { setLastLocation } from './activeTake';
 
 /**
  * Strictly finalizes the venue stock take (ACTIVE departments only),

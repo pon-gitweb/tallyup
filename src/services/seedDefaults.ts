@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, setDoc } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 import { path } from './firestorePaths';
 
 export async function seedVenueIfEmpty(venueId: string) {

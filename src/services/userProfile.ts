@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 
 export async function getUserVenueId(uid: string): Promise<string | null> {
   if (!uid) return null;

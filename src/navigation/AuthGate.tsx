@@ -2,7 +2,7 @@
 import React from 'react';
 import { View, ActivityIndicator, Text } from 'react-native';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth } from 'src/services/firebase';
+import { auth } from '../services/firebase';
 
 type Props = { renderAuthed: () => JSX.Element; renderUnauthed: () => JSX.Element; };
 

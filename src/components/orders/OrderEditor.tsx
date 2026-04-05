@@ -15,8 +15,8 @@ import {
   setDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { useVenueId } from 'src/context/VenueProvider';
-import SupplierBadge from 'src/components/SupplierBadge';
+import { useVenueId } from '../../context/VenueProvider';
+import SupplierBadge from '../SupplierBadge';
 import { savedToast } from '../../utils/toast';
 
 type Line = { productId: string; name?: string | null; qty: number };

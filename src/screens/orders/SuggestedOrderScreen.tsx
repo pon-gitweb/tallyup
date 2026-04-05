@@ -13,7 +13,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../domain/orders';
 import { showToast } from './_toast';
 import { checkEntitlement } from '../../services/entitlement';
 import PaymentSheet from '../../components/paywall/PaymentSheet';

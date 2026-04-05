@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from 'src/services/firebase';
+import { auth } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
-import { DEV_DEFAULT_EMAIL, DEV_DEFAULT_PASSWORD } from 'src/config/devAuth';
+import { DEV_DEFAULT_EMAIL, DEV_DEFAULT_PASSWORD } from '../../config/devAuth';
 
 function mapAuthError(e: any): string {
   const code = e?.code || '';

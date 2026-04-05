@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useCallback, useLayoutEffect, useState, useEffect } from 'react';
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../domain/orders';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import OriginalOrderDetailScreen from './OrderDetailScreen';

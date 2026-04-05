@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../domain/orders';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput } from 'react-native';
 import { collection, getDocs, orderBy, query, limit, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';

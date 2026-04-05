@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { OrdersService } from 'src/domain/orders';
+import { OrdersService } from '../../domain/orders';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {

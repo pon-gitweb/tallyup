@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from 'src/services/firebase';
+import { db, auth } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 
 export default function CreateVenueDashboard() {

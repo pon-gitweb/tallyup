@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Image, Text, View } from 'react-native';
 import { getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
-import { useVenueId } from 'src/context/VenueProvider';
+import { useVenueId } from '../context/VenueProvider';
 
 function abbr3(name?: string | null, fallback?: string) {
   const s = (name || '').trim();

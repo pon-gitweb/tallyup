@@ -10,9 +10,9 @@ import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
   orderBy, query, serverTimestamp, updateDoc
 } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from '../services/firebase';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from 'src/context/VenueProvider';
+import { useVenueId } from '../context/VenueProvider';
 
 type Item = {
   id: string;

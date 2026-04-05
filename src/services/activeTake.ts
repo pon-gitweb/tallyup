@@ -1,5 +1,5 @@
 import { doc, getDoc, onSnapshot, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db, auth } from 'src/services/firebase';
+import { db, auth } from './firebase';
 
 export type ActiveSession = {
   status?: 'active'|'completed';

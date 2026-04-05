@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 
 export async function seedVenueDefaults(venueId: string) {
   if (!venueId) throw new Error('Missing venueId');

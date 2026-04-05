@@ -6,7 +6,7 @@ import {
   setDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db } from 'src/services/firebase';
+import { db } from './firebase';
 
 /** Departments marked active=false are ignored for venue completion. */
 export async function getActiveDepartmentIds(venueId: string): Promise<string[]> {

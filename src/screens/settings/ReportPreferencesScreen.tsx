@@ -23,14 +23,14 @@ type ToggleRowProps = {
   C: any;
 };
 
-function ToggleRow({ label, description, value, onToggle, C }: ToggleRowProps) {
+function ToggleRow({ label, description, value, onToggle, colours }: ToggleRowProps) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colours.border }}>
       <View style={{ flex: 1, paddingRight: 12 }}>
-        <Text style={{ fontWeight: '700', color: C.text }}>{label}</Text>
-        {description && <Text style={{ color: C.textSecondary, fontSize: 12, marginTop: 2 }}>{description}</Text>}
+        <Text style={{ fontWeight: '700', color: colours.text }}>{label}</Text>
+        {description && <Text style={{ color: colours.textSecondary, fontSize: 12, marginTop: 2 }}>{description}</Text>}
       </View>
-      <Switch value={value} onValueChange={onToggle} trackColor={{ true: C.accent }} thumbColor="#fff" />
+      <Switch value={value} onValueChange={onToggle} trackColor={{ true: colours.accent }} thumbColor="#fff" />
     </View>
   );
 }
@@ -43,19 +43,19 @@ type PickerRowProps = {
   C: any;
 };
 
-function PickerRow({ label, options, value, onPick, C }: PickerRowProps) {
+function PickerRow({ label, options, value, onPick, colours }: PickerRowProps) {
   return (
-    <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border }}>
-      <Text style={{ fontWeight: '700', color: C.text, marginBottom: 8 }}>{label}</Text>
+    <View style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colours.border }}>
+      <Text style={{ fontWeight: '700', color: colours.text, marginBottom: 8 }}>{label}</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
         {options.map(opt => (
           <TouchableOpacity key={opt.value} onPress={() => onPick(opt.value)}
             style={{
               paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
-              backgroundColor: value === opt.value ? C.primary : '#F1F5F9',
-              borderWidth: 1, borderColor: value === opt.value ? C.primary : C.border,
+              backgroundColor: value === opt.value ? colours.primary : '#F1F5F9',
+              borderWidth: 1, borderColor: value === opt.value ? colours.primary : colours.border,
             }}>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: value === opt.value ? '#fff' : C.textSecondary }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: value === opt.value ? '#fff' : colours.textSecondary }}>
               {opt.label}
             </Text>
           </TouchableOpacity>
@@ -65,10 +65,10 @@ function PickerRow({ label, options, value, onPick, C }: PickerRowProps) {
   );
 }
 
-function SectionHeader({ title, C }: { title: string; C: any }) {
+function SectionHeader({ title, colours }: { title: string; C: any }) {
   return (
     <View style={{ backgroundColor: C.primaryLight, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginTop: 8 }}>
-      <Text style={{ fontWeight: '900', color: C.accent, fontSize: 13 }}>{title}</Text>
+      <Text style={{ fontWeight: '900', color: colours.accent, fontSize: 13 }}>{title}</Text>
     </View>
   );
 }
@@ -113,30 +113,30 @@ function ReportPreferencesScreen() {
   const O = prefs.order;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.background }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 12 }}>
 
       <View>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: C.text }}>Report Preferences</Text>
-        <Text style={{ color: C.textSecondary, marginTop: 4, fontSize: 14 }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text }}>Report Preferences</Text>
+        <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 14 }}>
           Choose what appears on your stocktake and order reports.
         </Text>
       </View>
 
       {/* Stocktake report */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.border }}>
-        <SectionHeader title="STOCKTAKE REPORTS" C={C} />
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
+        <SectionHeader title="STOCKTAKE REPORTS" colours={C} />
 
-        <ToggleRow label="Show zero variance items" description="Items where counted = expected" value={S.showZeroVariance} onToggle={v => updateStocktake({ showZeroVariance: v })} C={C} />
-        <ToggleRow label="Show expected quantity" description="Expected vs actual count" value={S.showExpectedQty} onToggle={v => updateStocktake({ showExpectedQty: v })} C={C} />
-        <ToggleRow label="Show cost per item" value={S.showCostValue} onToggle={v => updateStocktake({ showCostValue: v })} C={C} />
-        <ToggleRow label="Show total stock value" value={S.showTotalValue} onToggle={v => updateStocktake({ showTotalValue: v })} C={C} />
-        <ToggleRow label="Show supplier" value={S.showSupplier} onToggle={v => updateStocktake({ showSupplier: v })} C={C} />
-        <ToggleRow label="Show category / department" value={S.showCategory} onToggle={v => updateStocktake({ showCategory: v })} C={C} />
-        <ToggleRow label="Show venue logo" value={S.showLogo} onToggle={v => updateStocktake({ showLogo: v })} C={C} />
-        <ToggleRow label="Show date and time" value={S.showDate} onToggle={v => updateStocktake({ showDate: v })} C={C} />
-        <ToggleRow label="Include signature line" description="For manager sign-off" value={S.showSignatureLine} onToggle={v => updateStocktake({ showSignatureLine: v })} C={C} />
+        <ToggleRow label="Show zero variance items" description="Items where counted = expected" value={S.showZeroVariance} onToggle={v => updateStocktake({ showZeroVariance: v })} colours={C} />
+        <ToggleRow label="Show expected quantity" description="Expected vs actual count" value={S.showExpectedQty} onToggle={v => updateStocktake({ showExpectedQty: v })} colours={C} />
+        <ToggleRow label="Show cost per item" value={S.showCostValue} onToggle={v => updateStocktake({ showCostValue: v })} colours={C} />
+        <ToggleRow label="Show total stock value" value={S.showTotalValue} onToggle={v => updateStocktake({ showTotalValue: v })} colours={C} />
+        <ToggleRow label="Show supplier" value={S.showSupplier} onToggle={v => updateStocktake({ showSupplier: v })} colours={C} />
+        <ToggleRow label="Show category / department" value={S.showCategory} onToggle={v => updateStocktake({ showCategory: v })} colours={C} />
+        <ToggleRow label="Show venue logo" value={S.showLogo} onToggle={v => updateStocktake({ showLogo: v })} colours={C} />
+        <ToggleRow label="Show date and time" value={S.showDate} onToggle={v => updateStocktake({ showDate: v })} colours={C} />
+        <ToggleRow label="Include signature line" description="For manager sign-off" value={S.showSignatureLine} onToggle={v => updateStocktake({ showSignatureLine: v })} colours={C} />
 
-        <PickerRow label="Variance format" value={S.varianceFormat} onPick={v => updateStocktake({ varianceFormat: v as any })} C={C}
+        <PickerRow label="Variance format" value={S.varianceFormat} onPick={v => updateStocktake({ varianceFormat: v as any })} colours={C}
           options={[
             { value: 'units', label: 'Units' },
             { value: 'percentage', label: '%' },
@@ -144,7 +144,7 @@ function ReportPreferencesScreen() {
             { value: 'all', label: 'All' },
           ]} />
 
-        <PickerRow label="Group items by" value={S.groupBy} onPick={v => updateStocktake({ groupBy: v as any })} C={C}
+        <PickerRow label="Group items by" value={S.groupBy} onPick={v => updateStocktake({ groupBy: v as any })} colours={C}
           options={[
             { value: 'area', label: 'Area' },
             { value: 'supplier', label: 'Supplier' },
@@ -152,7 +152,7 @@ function ReportPreferencesScreen() {
             { value: 'none', label: 'None' },
           ]} />
 
-        <PickerRow label="Sort items by" value={S.sortBy} onPick={v => updateStocktake({ sortBy: v as any })} C={C}
+        <PickerRow label="Sort items by" value={S.sortBy} onPick={v => updateStocktake({ sortBy: v as any })} colours={C}
           options={[
             { value: 'name', label: 'Name' },
             { value: 'variance', label: 'Variance' },
@@ -161,28 +161,28 @@ function ReportPreferencesScreen() {
       </View>
 
       {/* Order report */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.border }}>
-        <SectionHeader title="ORDER REPORTS" C={C} />
-        <ToggleRow label="Show unit cost" value={O.showUnitCost} onToggle={v => updateOrder({ showUnitCost: v })} C={C} />
-        <ToggleRow label="Show line total" value={O.showLineTotal} onToggle={v => updateOrder({ showLineTotal: v })} C={C} />
-        <ToggleRow label="Show order total" value={O.showOrderTotal} onToggle={v => updateOrder({ showOrderTotal: v })} C={C} />
-        <ToggleRow label="Show supplier details" value={O.showSupplierDetails} onToggle={v => updateOrder({ showSupplierDetails: v })} C={C} />
-        <ToggleRow label="Show delivery notes" value={O.showDeliveryNotes} onToggle={v => updateOrder({ showDeliveryNotes: v })} C={C} />
-        <ToggleRow label="Show venue logo" value={O.showLogo} onToggle={v => updateOrder({ showLogo: v })} C={C} />
-        <ToggleRow label="Show date" value={O.showDate} onToggle={v => updateOrder({ showDate: v })} C={C} />
-        <ToggleRow label="Include signature line" value={O.showSignatureLine} onToggle={v => updateOrder({ showSignatureLine: v })} C={C} />
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
+        <SectionHeader title="ORDER REPORTS" colours={C} />
+        <ToggleRow label="Show unit cost" value={O.showUnitCost} onToggle={v => updateOrder({ showUnitCost: v })} colours={C} />
+        <ToggleRow label="Show line total" value={O.showLineTotal} onToggle={v => updateOrder({ showLineTotal: v })} colours={C} />
+        <ToggleRow label="Show order total" value={O.showOrderTotal} onToggle={v => updateOrder({ showOrderTotal: v })} colours={C} />
+        <ToggleRow label="Show supplier details" value={O.showSupplierDetails} onToggle={v => updateOrder({ showSupplierDetails: v })} colours={C} />
+        <ToggleRow label="Show delivery notes" value={O.showDeliveryNotes} onToggle={v => updateOrder({ showDeliveryNotes: v })} colours={C} />
+        <ToggleRow label="Show venue logo" value={O.showLogo} onToggle={v => updateOrder({ showLogo: v })} colours={C} />
+        <ToggleRow label="Show date" value={O.showDate} onToggle={v => updateOrder({ showDate: v })} colours={C} />
+        <ToggleRow label="Include signature line" value={O.showSignatureLine} onToggle={v => updateOrder({ showSignatureLine: v })} colours={C} />
       </View>
 
       {/* Save */}
       <TouchableOpacity onPress={onSave} disabled={saving}
-        style={{ backgroundColor: C.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
+        style={{ backgroundColor: colours.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
         <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
           {saving ? 'Saving...' : 'Save preferences'}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onReset} style={{ alignItems: 'center', padding: 8 }}>
-        <Text style={{ color: C.textSecondary, fontSize: 13 }}>Reset to defaults</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Reset to defaults</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -46,8 +47,7 @@ function AuthedStack() {
   }, []);
 
   if (initialRoute == null) {
-    // Lightweight placeholder while we decide the initial route.
-    // You could render a tiny loading indicator if you want.
+    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}><ActivityIndicator size='large' color='#0F172A' /></View>;
     return null;
   }
 
@@ -59,15 +59,6 @@ function AuthedStack() {
       <Stack.Screen name="Main" component={MainStack} />
     </Stack.Navigator>
   );
-}
-
-// Global unhandled error handler
-if (typeof ErrorUtils !== 'undefined') {
-  const originalHandler = ErrorUtils.getGlobalHandler();
-  ErrorUtils.setGlobalHandler((error, isFatal) => {
-    logError('unhandled_global', error, { isFatal });
-    originalHandler?.(error, isFatal);
-  });
 }
 
 export default function RootNavigator() {
