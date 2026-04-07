@@ -55,6 +55,10 @@
       "expo-font",
       "expo-camera",
       "react-native-ble-plx"
-    ]
+    ],
+    "updates": {
+      "enabled": false,
+      "fallbackToCacheTimeout": 0
+    }
   }
 }
