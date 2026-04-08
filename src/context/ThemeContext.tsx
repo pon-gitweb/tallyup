@@ -152,5 +152,6 @@ export function useTheme(): ThemeContextValue {
 
 // Convenience hook — just the colours
 export function useColours(): ThemeColours {
-  return useContext(ThemeContext).theme.colours;
+  const ctx = useContext(ThemeContext);
+  return ctx?.theme?.colours ?? DEFAULT_COLOURS;
 }
