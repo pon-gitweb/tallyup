@@ -14,7 +14,7 @@ const STATUS_COLOURS: Record<SupplierOrderStatus, string> = {
 function SupplierOrdersScreen() {
   const route = useRoute<any>();
   const { supplierId } = route.params;
-  const C = useColours();
+  const colours = useColours();
   const [orders, setOrders] = useState<SupplierOrderView[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,27 +36,27 @@ function SupplierOrdersScreen() {
   }, [supplierId, load]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.background }}>
-      {loading ? <ActivityIndicator style={{ flex: 1 }} color={C.accent} /> : (
+    <View style={{ flex: 1, backgroundColor: colours.background }}>
+      {loading ? <ActivityIndicator style={{ flex: 1 }} color={colours.accent} /> : (
         <FlatList data={orders} keyExtractor={o => o.id}
           renderItem={({ item }) => (
             <TouchableOpacity onPress={() => onUpdateStatus(item)}
-              style={{ backgroundColor: C.surface, margin: 8, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.border }}>
+              style={{ backgroundColor: colours.surface, margin: 8, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text style={{ fontWeight: '900', color: C.text }}>{item.venueName || item.venueId}</Text>
+                <Text style={{ fontWeight: '900', color: colours.text }}>{item.venueName || item.venueId}</Text>
                 <View style={{ backgroundColor: STATUS_COLOURS[item.status] + '20', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 }}>
                   <Text style={{ fontSize: 12, fontWeight: '800', color: STATUS_COLOURS[item.status], textTransform: 'capitalize' }}>{item.status}</Text>
                 </View>
               </View>
-              <Text style={{ color: C.textSecondary, fontSize: 13 }}>PO: {item.poNumber || item.id.slice(0, 8)}</Text>
-              <Text style={{ color: C.textSecondary, fontSize: 12, marginTop: 2 }}>{item.lines?.length || 0} items</Text>
+              <Text style={{ color: colours.textSecondary, fontSize: 13 }}>PO: {item.poNumber || item.id.slice(0, 8)}</Text>
+              <Text style={{ color: colours.textSecondary, fontSize: 12, marginTop: 2 }}>{item.lines?.length || 0} items</Text>
               {item.lines?.slice(0, 3).map((l, i) => (
-                <Text key={i} style={{ color: C.text, fontSize: 13, marginTop: 2 }}>• {l.name}: {l.qty} {l.unit || 'units'}</Text>
+                <Text key={i} style={{ color: colours.text, fontSize: 13, marginTop: 2 }}>• {l.name}: {l.qty} {l.unit || 'units'}</Text>
               ))}
-              {(item.lines?.length || 0) > 3 && <Text style={{ color: C.textSecondary, fontSize: 12 }}>+{item.lines.length - 3} more</Text>}
+              {(item.lines?.length || 0) > 3 && <Text style={{ color: colours.textSecondary, fontSize: 12 }}>+{item.lines.length - 3} more</Text>}
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={{ textAlign: 'center', color: C.textSecondary, marginTop: 60 }}>No orders yet</Text>}
+          ListEmptyComponent={<Text style={{ textAlign: 'center', color: colours.textSecondary, marginTop: 60 }}>No orders yet</Text>}
         />
       )}
     </View>
