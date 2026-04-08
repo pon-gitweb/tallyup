@@ -6,20 +6,20 @@ import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 function TermsScreen() {
-  const C = useColours();
+  const colours = useColours();
   const nav = useNavigation<any>();
 
   const Section = ({ title, children }: any) => (
     <View style={{ marginBottom: 16 }}>
-      <Text style={{ fontWeight: '900', color: C.text, fontSize: 15, marginBottom: 6 }}>{title}</Text>
-      <Text style={{ color: C.textSecondary, fontSize: 13, lineHeight: 20 }}>{children}</Text>
+      <Text style={{ fontWeight: '900', color: colours.text, fontSize: 15, marginBottom: 6 }}>{title}</Text>
+      <Text style={{ color: colours.textSecondary, fontSize: 13, lineHeight: 20 }}>{children}</Text>
     </View>
   );
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.background }} contentContainerStyle={{ padding: 16, gap: 4 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 4 }}>
 
-      <View style={{ backgroundColor: C.primary, borderRadius: 16, padding: 20, marginBottom: 16 }}>
+      <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 20, marginBottom: 16 }}>
         <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff' }}>Terms of Service</Text>
         <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4, fontSize: 12 }}>
           Last updated: April 2026

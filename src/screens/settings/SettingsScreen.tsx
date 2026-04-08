@@ -25,7 +25,7 @@ import { useVenueId } from '../../context/VenueProvider';
 type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
-  const C = useColours();
+  const colours = useColours();
   const onShare = React.useCallback(async () => {
     try {
       await Share.share({
@@ -188,7 +188,7 @@ export default function SettingsScreen() {
         {/* Appearance button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: C.primary }]}
+            style={[styles.btn, { backgroundColor: colours.primary }]}
             onPress={() => nav.navigate('Appearance')}
           >
             <Text style={{ color: 'white', fontWeight: '800' }}>🎨 Appearance</Text>

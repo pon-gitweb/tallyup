@@ -79,22 +79,22 @@ function AppearanceScreen() {
     ]);
   }, [resetTheme]);
 
-  const C = colours;
+  // colours already declared
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
 
       {/* Header */}
       <View>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: C.text }}>Appearance</Text>
-        <Text style={{ color: C.textSecondary, marginTop: 4, fontSize: 14 }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text }}>Appearance</Text>
+        <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 14 }}>
           Customise how Hosti-Stock looks for your venue. Changes apply instantly.
         </Text>
       </View>
 
       {/* Logo */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-        <Text style={{ fontWeight: '900', color: C.text, marginBottom: 12 }}>Venue Logo</Text>
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 12 }}>Venue Logo</Text>
         {theme.logoUri ? (
           <View style={{ alignItems: 'center', gap: 12 }}>
             <Image
@@ -103,23 +103,23 @@ function AppearanceScreen() {
             />
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity onPress={onPickLogo}
-                style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: C.primaryLight, alignItems: 'center' }}>
-                <Text style={{ fontWeight: '800', color: C.accent }}>Change logo</Text>
+                style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: colours.primaryLight, alignItems: 'center' }}>
+                <Text style={{ fontWeight: '800', color: colours.accent }}>Change logo</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={onRemoveLogo}
                 style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#FEF2F2', alignItems: 'center' }}>
-                <Text style={{ fontWeight: '800', color: C.error }}>Remove</Text>
+                <Text style={{ fontWeight: '800', color: colours.error }}>Remove</Text>
               </TouchableOpacity>
             </View>
           </View>
         ) : (
           <TouchableOpacity onPress={onPickLogo} disabled={busy}
-            style={{ borderWidth: 2, borderColor: C.border, borderStyle: 'dashed', borderRadius: 12, padding: 24, alignItems: 'center', gap: 8 }}>
-            {busy ? <ActivityIndicator color={C.accent} /> : (
+            style={{ borderWidth: 2, borderColor: colours.border, borderStyle: 'dashed', borderRadius: 12, padding: 24, alignItems: 'center', gap: 8 }}>
+            {busy ? <ActivityIndicator color={colours.accent} /> : (
               <>
                 <Text style={{ fontSize: 32 }}>🖼️</Text>
-                <Text style={{ fontWeight: '800', color: C.accent }}>Upload venue logo</Text>
-                <Text style={{ color: C.textSecondary, fontSize: 12, textAlign: 'center' }}>
+                <Text style={{ fontWeight: '800', color: colours.accent }}>Upload venue logo</Text>
+                <Text style={{ color: colours.textSecondary, fontSize: 12, textAlign: 'center' }}>
                   PNG or JPG — appears on dashboard, reports and order emails
                 </Text>
               </>
@@ -129,25 +129,25 @@ function AppearanceScreen() {
       </View>
 
       {/* Preset themes */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-        <Text style={{ fontWeight: '900', color: C.text, marginBottom: 4 }}>Theme Presets</Text>
-        <Text style={{ color: C.textSecondary, fontSize: 13, marginBottom: 12 }}>Pick a colour theme or customise below.</Text>
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 4 }}>Theme Presets</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13, marginBottom: 12 }}>Pick a colour theme or customise below.</Text>
         <View style={{ gap: 8 }}>
           {PRESET_THEMES.map(preset => (
             <TouchableOpacity key={preset.name} onPress={() => onPreset(preset)}
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 12,
                 padding: 12, borderRadius: 12,
-                backgroundColor: colours.primary === preset.colours.primary ? C.primaryLight : '#F9FAFB',
+                backgroundColor: colours.primary === preset.colours.primary ? colours.primaryLight : '#F9FAFB',
                 borderWidth: 1,
-                borderColor: colours.primary === preset.colours.primary ? C.accent : C.border,
+                borderColor: colours.primary === preset.colours.primary ? colours.accent : colours.border,
               }}>
               <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: preset.colours.primary }} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '800', color: C.text }}>{preset.name}</Text>
+                <Text style={{ fontWeight: '800', color: colours.text }}>{preset.name}</Text>
               </View>
               {colours.primary === preset.colours.primary && (
-                <Text style={{ color: C.accent, fontWeight: '900' }}>✓</Text>
+                <Text style={{ color: colours.accent, fontWeight: '900' }}>✓</Text>
               )}
             </TouchableOpacity>
           ))}
@@ -155,9 +155,9 @@ function AppearanceScreen() {
       </View>
 
       {/* Primary colour picker */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-        <Text style={{ fontWeight: '900', color: C.text, marginBottom: 4 }}>Primary Colour</Text>
-        <Text style={{ color: C.textSecondary, fontSize: 13, marginBottom: 12 }}>Used for buttons, headers and key actions.</Text>
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 4 }}>Primary Colour</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13, marginBottom: 12 }}>Used for buttons, headers and key actions.</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
           {COLOUR_SWATCHES.map(colour => (
             <ColourSwatch
@@ -169,24 +169,24 @@ function AppearanceScreen() {
           ))}
         </View>
         {/* Current colour preview */}
-        <View style={{ marginTop: 16, backgroundColor: C.primary, borderRadius: 10, padding: 14, alignItems: 'center' }}>
-          <Text style={{ color: C.primaryText, fontWeight: '900' }}>Preview — this is your primary colour</Text>
+        <View style={{ marginTop: 16, backgroundColor: colours.primary, borderRadius: 10, padding: 14, alignItems: 'center' }}>
+          <Text style={{ color: colours.primaryText, fontWeight: '900' }}>Preview — this is your primary colour</Text>
         </View>
       </View>
 
       {/* Density */}
-      <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-        <Text style={{ fontWeight: '900', color: C.text, marginBottom: 4 }}>Display Density</Text>
-        <Text style={{ color: C.textSecondary, fontSize: 13, marginBottom: 12 }}>How compact or spacious the interface feels.</Text>
+      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 4 }}>Display Density</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13, marginBottom: 12 }}>How compact or spacious the interface feels.</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {(['compact', 'comfortable', 'spacious'] as const).map(d => (
             <TouchableOpacity key={d} onPress={() => updateTheme({ density: d })}
               style={{
                 flex: 1, padding: 10, borderRadius: 10, alignItems: 'center',
-                backgroundColor: theme.density === d ? C.primary : '#F9FAFB',
-                borderWidth: 1, borderColor: theme.density === d ? C.primary : C.border,
+                backgroundColor: theme.density === d ? colours.primary : '#F9FAFB',
+                borderWidth: 1, borderColor: theme.density === d ? colours.primary : colours.border,
               }}>
-              <Text style={{ fontWeight: '800', color: theme.density === d ? C.primaryText : C.textSecondary, fontSize: 12, textTransform: 'capitalize' }}>
+              <Text style={{ fontWeight: '800', color: theme.density === d ? colours.primaryText : colours.textSecondary, fontSize: 12, textTransform: 'capitalize' }}>
                 {d}
               </Text>
             </TouchableOpacity>
@@ -196,7 +196,7 @@ function AppearanceScreen() {
 
       {/* Reset */}
       <TouchableOpacity onPress={onReset} style={{ alignItems: 'center', padding: 12 }}>
-        <Text style={{ color: C.textSecondary, fontSize: 13 }}>Reset to default appearance</Text>
+        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Reset to default appearance</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

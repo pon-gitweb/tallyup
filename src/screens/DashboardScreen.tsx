@@ -74,7 +74,7 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [venueId]);
   const { theme } = useTheme();
-  const C = useColours();
+  const colours = useColours();
 
   const onOpenStockTake = async () => {
     if (busy) return;
@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: C.background,
+    backgroundColor: colours.background,
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dark: {
-    backgroundColor: C.primary,
+    backgroundColor: colours.primary,
   },
   muted: {
     backgroundColor: 'white',

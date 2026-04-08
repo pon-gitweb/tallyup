@@ -56,7 +56,7 @@ function FileTypeButton({ icon, label, sublabel, onPress, colours }: any) {
 function InventoryImportScreen() {
   const venueId = useVenueId();
   const nav = useNavigation<any>();
-  const C = useColours();
+  const colours = useColours();
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
 
@@ -149,8 +149,8 @@ function InventoryImportScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: C.background, justifyContent: 'center', alignItems: 'center', gap: 20, padding: 40 }}>
-        <ActivityIndicator size="large" color={C.accent} />
+      <View style={{ flex: 1, backgroundColor: colours.background, justifyContent: 'center', alignItems: 'center', gap: 20, padding: 40 }}>
+        <ActivityIndicator size="large" color={colours.accent} />
         <Text style={{ fontSize: 18, fontWeight: '900', color: colours.text, textAlign: 'center' }}>{loadingMsg}</Text>
         <Text style={{ color: colours.textSecondary, textAlign: 'center', fontSize: 14 }}>
           Claude is reading your inventory and organising it for you. This usually takes 10–30 seconds.
@@ -160,10 +160,10 @@ function InventoryImportScreen() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
 
       {/* Hero */}
-      <View style={{ backgroundColor: C.primary, borderRadius: 16, padding: 24, gap: 8 }}>
+      <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
         <Text style={{ fontSize: 26, fontWeight: '900', color: '#fff' }}>Import your inventory</Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 15 }}>
           Upload your existing stocktake sheet and we'll set everything up for you — products, areas, and categories.

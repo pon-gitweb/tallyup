@@ -41,7 +41,7 @@ const PLAN_LABELS: Record<string, string> = {
 
 function AiUsageScreen() {
   const venueId = useVenueId();
-  const C = useColours();
+  const colours = useColours();
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -74,65 +74,65 @@ function AiUsageScreen() {
   const pct = limit === 999999 ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const resetDate = usage?.resetAt ? new Date(usage.resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long' }) : '1st of next month';
 
-  const barColour = pct > 80 ? C.error : pct > 60 ? C.warning : C.success;
+  const barColour = pct > 80 ? colours.error : pct > 60 ? colours.warning : colours.success;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       <View>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: C.text }}>AI Usage</Text>
-        <Text style={{ color: C.textSecondary, marginTop: 4, fontSize: 14 }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text }}>AI Usage</Text>
+        <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 14 }}>
           Your AI call usage for this month. Resets on {resetDate}.
         </Text>
       </View>
 
       {loading ? (
-        <ActivityIndicator color={C.accent} style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colours.accent} style={{ marginTop: 40 }} />
       ) : (
         <>
           {/* Plan badge */}
-          <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
+          <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontWeight: '900', color: C.text, fontSize: 16 }}>This month</Text>
-              <View style={{ backgroundColor: C.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-                <Text style={{ fontSize: 12, fontWeight: '800', color: C.accent }}>{PLAN_LABELS[plan] || plan}</Text>
+              <Text style={{ fontWeight: '900', color: colours.text, fontSize: 16 }}>This month</Text>
+              <View style={{ backgroundColor: colours.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: colours.accent }}>{PLAN_LABELS[plan] || plan}</Text>
               </View>
             </View>
 
             {/* Usage numbers */}
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
-              <View style={{ flex: 1, backgroundColor: C.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                <Text style={{ fontSize: 36, fontWeight: '900', color: C.text }}>{used}</Text>
-                <Text style={{ color: C.textSecondary, fontSize: 12, fontWeight: '700' }}>AI calls used</Text>
+              <View style={{ flex: 1, backgroundColor: colours.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                <Text style={{ fontSize: 36, fontWeight: '900', color: colours.text }}>{used}</Text>
+                <Text style={{ color: colours.textSecondary, fontSize: 12, fontWeight: '700' }}>AI calls used</Text>
               </View>
-              <View style={{ flex: 1, backgroundColor: C.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                <Text style={{ fontSize: 36, fontWeight: '900', color: limit === 999999 ? C.success : barColour }}>
+              <View style={{ flex: 1, backgroundColor: colours.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+                <Text style={{ fontSize: 36, fontWeight: '900', color: limit === 999999 ? colours.success : barColour }}>
                   {limit === 999999 ? '∞' : remaining}
                 </Text>
-                <Text style={{ color: C.textSecondary, fontSize: 12, fontWeight: '700' }}>remaining</Text>
+                <Text style={{ color: colours.textSecondary, fontSize: 12, fontWeight: '700' }}>remaining</Text>
               </View>
             </View>
 
             {/* Progress bar — only shown for limited plans */}
             {limit !== 999999 && (
               <View>
-                <View style={{ height: 8, backgroundColor: C.border, borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+                <View style={{ height: 8, backgroundColor: colours.border, borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
                   <View style={{ height: 8, width: pct + '%', backgroundColor: barColour, borderRadius: 4 }} />
                 </View>
-                <Text style={{ color: C.textSecondary, fontSize: 12 }}>{pct}% of {limit} monthly calls used</Text>
+                <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{pct}% of {limit} monthly calls used</Text>
               </View>
             )}
           </View>
 
           {/* Breakdown */}
           {usage?.breakdown && Object.keys(usage.breakdown).length > 0 && (
-            <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ fontWeight: '900', color: C.text, marginBottom: 12 }}>Breakdown by feature</Text>
+            <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
+              <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 12 }}>Breakdown by feature</Text>
               {Object.entries(usage.breakdown).map(([key, count]) => (
-                <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border }}>
-                  <Text style={{ color: C.text, fontWeight: '600' }}>{CALL_LABELS[key] || key}</Text>
-                  <View style={{ backgroundColor: C.primaryLight, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 }}>
-                    <Text style={{ fontWeight: '800', color: C.accent, fontSize: 13 }}>{count}</Text>
+                <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colours.border }}>
+                  <Text style={{ color: colours.text, fontWeight: '600' }}>{CALL_LABELS[key] || key}</Text>
+                  <View style={{ backgroundColor: colours.primaryLight, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 }}>
+                    <Text style={{ fontWeight: '800', color: colours.accent, fontSize: 13 }}>{count}</Text>
                   </View>
                 </View>
               ))}
@@ -160,7 +160,7 @@ function AiUsageScreen() {
           )}
 
           <TouchableOpacity onPress={load} style={{ alignItems: 'center', padding: 12 }}>
-            <Text style={{ color: C.textSecondary, fontSize: 13 }}>Refresh usage data</Text>
+            <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Refresh usage data</Text>
           </TouchableOpacity>
         </>
       )}

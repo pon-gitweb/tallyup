@@ -67,7 +67,7 @@ function PickerRow({ label, options, value, onPick, colours }: PickerRowProps) {
 
 function SectionHeader({ title, colours }: { title: string; C: any }) {
   return (
-    <View style={{ backgroundColor: C.primaryLight, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginTop: 8 }}>
+    <View style={{ backgroundColor: colours.primaryLight, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginTop: 8 }}>
       <Text style={{ fontWeight: '900', color: colours.accent, fontSize: 13 }}>{title}</Text>
     </View>
   );
@@ -75,7 +75,7 @@ function SectionHeader({ title, colours }: { title: string; C: any }) {
 
 function ReportPreferencesScreen() {
   const venueId = useVenueId();
-  const C = useColours();
+  const colours = useColours();
   const [prefs, setPrefs] = useState<ReportPreferences>(DEFAULT_REPORT_PREFS);
   const [saving, setSaving] = useState(false);
 
