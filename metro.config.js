@@ -1,8 +1,15 @@
 const { getDefaultConfig } = require('expo/metro-config');
-
 const config = getDefaultConfig(__dirname);
 
-// Keep this file minimal; avoid absolute paths or deep node_modules imports.
-// Add customizations only when you have a concrete Metro issue to fix.
+// Disable inlineRequires — causes Property 'X' doesn't exist with Hermes on RN 0.79
+config.transformer = {
+  ...config.transformer,
+  getTransformOptions: async () => ({
+    transform: {
+      experimentalImportSupport: false,
+      inlineRequires: false,
+    },
+  }),
+};
 
 module.exports = config;
