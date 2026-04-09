@@ -40,15 +40,15 @@ export type ExtractionResult = {
   warnings: string[];
 };
 
-function FileTypeButton({ icon, label, sublabel, onPress, colours }: any) {
+function FileTypeButton({ icon, label, sublabel, onPress, themeColours }: any) {
   return (
     <TouchableOpacity onPress={onPress} style={{
-      flex: 1, backgroundColor: colours.surface, borderRadius: 14, padding: 16,
-      borderWidth: 1, borderColor: colours.border, alignItems: 'center', gap: 6,
+      flex: 1, backgroundColor: themeColours.surface, borderRadius: 14, padding: 16,
+      borderWidth: 1, borderColor: themeColours.border, alignItems: 'center', gap: 6,
     }}>
       <Text style={{ fontSize: 32 }}>{icon}</Text>
-      <Text style={{ fontWeight: '800', color: colours.text, fontSize: 13 }}>{label}</Text>
-      <Text style={{ color: colours.textSecondary, fontSize: 11, textAlign: 'center' }}>{sublabel}</Text>
+      <Text style={{ fontWeight: '800', color: themeColours.text, fontSize: 13 }}>{label}</Text>
+      <Text style={{ color: themeColours.textSecondary, fontSize: 11, textAlign: 'center' }}>{sublabel}</Text>
     </TouchableOpacity>
   );
 }
@@ -56,7 +56,7 @@ function FileTypeButton({ icon, label, sublabel, onPress, colours }: any) {
 function InventoryImportScreen() {
   const venueId = useVenueId();
   const nav = useNavigation<any>();
-  const colours = useColours();
+  const themeColours = useColours();
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
 
@@ -149,10 +149,10 @@ function InventoryImportScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colours.background, justifyContent: 'center', alignItems: 'center', gap: 20, padding: 40 }}>
-        <ActivityIndicator size="large" color={colours.accent} />
-        <Text style={{ fontSize: 18, fontWeight: '900', color: colours.text, textAlign: 'center' }}>{loadingMsg}</Text>
-        <Text style={{ color: colours.textSecondary, textAlign: 'center', fontSize: 14 }}>
+      <View style={{ flex: 1, backgroundColor: themeColours.background, justifyContent: 'center', alignItems: 'center', gap: 20, padding: 40 }}>
+        <ActivityIndicator size="large" color={themeColours.accent} />
+        <Text style={{ fontSize: 18, fontWeight: '900', color: themeColours.text, textAlign: 'center' }}>{loadingMsg}</Text>
+        <Text style={{ color: themeColours.textSecondary, textAlign: 'center', fontSize: 14 }}>
           Claude is reading your inventory and organising it for you. This usually takes 10–30 seconds.
         </Text>
       </View>
@@ -160,10 +160,10 @@ function InventoryImportScreen() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
 
       {/* Hero */}
-      <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
+      <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
         <Text style={{ fontSize: 26, fontWeight: '900', color: '#fff' }}>Import your inventory</Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 15 }}>
           Upload your existing stocktake sheet and we'll set everything up for you — products, areas, and categories.
@@ -171,8 +171,8 @@ function InventoryImportScreen() {
       </View>
 
       {/* What you can upload */}
-      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
-        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 12, fontSize: 16 }}>What to upload</Text>
+      <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
+        <Text style={{ fontWeight: '900', color: themeColours.text, marginBottom: 12, fontSize: 16 }}>What to upload</Text>
         {[
           { icon: '📊', label: 'Excel or CSV', desc: 'Your existing stocktake spreadsheet' },
           { icon: '📄', label: 'PDF', desc: 'A printed stocktake form or report' },
@@ -182,15 +182,15 @@ function InventoryImportScreen() {
           <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: i < 3 ? 10 : 0 }}>
             <Text style={{ fontSize: 20 }}>{item.icon}</Text>
             <View>
-              <Text style={{ fontWeight: '700', color: colours.text }}>{item.label}</Text>
-              <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{item.desc}</Text>
+              <Text style={{ fontWeight: '700', color: themeColours.text }}>{item.label}</Text>
+              <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{item.desc}</Text>
             </View>
           </View>
         ))}
       </View>
 
       {/* Upload options */}
-      <Text style={{ fontWeight: '900', color: colours.text, fontSize: 16 }}>Choose your file</Text>
+      <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>Choose your file</Text>
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} colours={C} />
         <FileTypeButton icon="🖼️" label="Photo library" sublabel="Screenshot or photo" onPress={onPickPhoto} colours={C} />
@@ -226,7 +226,7 @@ function InventoryImportScreen() {
       {/* Skip option */}
       <TouchableOpacity onPress={() => nav.navigate('ProductsCsvImport')}
         style={{ alignItems: 'center', padding: 12 }}>
-        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>I'd rather enter products manually →</Text>
+        <Text style={{ color: themeColours.textSecondary, fontSize: 13 }}>I'd rather enter products manually →</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

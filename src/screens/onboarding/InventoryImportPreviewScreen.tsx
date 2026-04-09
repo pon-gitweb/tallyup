@@ -21,7 +21,7 @@ import type { ExtractionResult, ExtractedProduct } from './InventoryImportScreen
 function InventoryImportPreviewScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
-  const colours = useColours();
+  const themeColours = useColours();
   const db = getFirestore();
 
   const { result, venueId } = route.params as { result: ExtractionResult; venueId: string };
@@ -89,10 +89,10 @@ function InventoryImportPreviewScreen() {
   }, [products, venueId, db, nav, result.hasPricing]);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Header */}
-      <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 20, gap: 6 }}>
+      <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 20, gap: 6 }}>
         <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff' }}>
           We found {products.length} products
         </Text>
@@ -132,33 +132,33 @@ function InventoryImportPreviewScreen() {
       )}
 
       {/* Product groups */}
-      <Text style={{ fontWeight: '900', color: colours.text, fontSize: 16 }}>
+      <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>
         Review your products — remove anything that doesn't look right
       </Text>
 
       {Object.entries(grouped).map(([area, items]) => (
-        <View key={area} style={{ backgroundColor: colours.surface, borderRadius: 14, borderWidth: 1, borderColor: colours.border, overflow: 'hidden' }}>
+        <View key={area} style={{ backgroundColor: themeColours.surface, borderRadius: 14, borderWidth: 1, borderColor: themeColours.border, overflow: 'hidden' }}>
           {/* Area header */}
-          <View style={{ backgroundColor: colours.primaryLight, padding: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontWeight: '900', color: colours.accent }}>{area}</Text>
-            <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{items.length} items</Text>
+          <View style={{ backgroundColor: themeColours.primaryLight, padding: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontWeight: '900', color: themeColours.accent }}>{area}</Text>
+            <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{items.length} items</Text>
           </View>
           {/* Items */}
           {items.map((product, i) => (
             <View key={product.name + i} style={{
               flexDirection: 'row', alignItems: 'center', padding: 12,
-              borderTopWidth: i > 0 ? 1 : 0, borderTopColor: colours.border,
+              borderTopWidth: i > 0 ? 1 : 0, borderTopColor: themeColours.border,
             }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '700', color: colours.text }}>{product.name}</Text>
+                <Text style={{ fontWeight: '700', color: themeColours.text }}>{product.name}</Text>
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
                   {product.unit && (
-                    <Text style={{ color: colours.textSecondary, fontSize: 11 }}>{product.unit}</Text>
+                    <Text style={{ color: themeColours.textSecondary, fontSize: 11 }}>{product.unit}</Text>
                   )}
                   {product.costPrice != null && (
-                    <Text style={{ color: colours.success, fontSize: 11, fontWeight: '700' }}>${product.costPrice.toFixed(2)}</Text>
+                    <Text style={{ color: themeColours.success, fontSize: 11, fontWeight: '700' }}>${product.costPrice.toFixed(2)}</Text>
                   )}
-                  <Text style={{ color: colours.textSecondary, fontSize: 11 }}>
+                  <Text style={{ color: themeColours.textSecondary, fontSize: 11 }}>
                     PAR: {product.parLevel ?? inferDefaultPAR(product.name, product.unit)} (suggested)
                   </Text>
                   <View style={{
@@ -176,7 +176,7 @@ function InventoryImportPreviewScreen() {
               </View>
               <TouchableOpacity onPress={() => onRemove(product.name)}
                 style={{ padding: 8 }}>
-                <Text style={{ color: colours.error, fontWeight: '800', fontSize: 16 }}>✕</Text>
+                <Text style={{ color: themeColours.error, fontWeight: '800', fontSize: 16 }}>✕</Text>
               </TouchableOpacity>
             </View>
           ))}
@@ -185,7 +185,7 @@ function InventoryImportPreviewScreen() {
 
       {/* Import button */}
       <TouchableOpacity onPress={onConfirm} disabled={importing}
-        style={{ backgroundColor: colours.primary, borderRadius: 12, padding: 18, alignItems: 'center' }}>
+        style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 18, alignItems: 'center' }}>
         {importing
           ? <ActivityIndicator color="#fff" />
           : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
@@ -195,7 +195,7 @@ function InventoryImportPreviewScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => nav.goBack()} style={{ alignItems: 'center', padding: 8 }}>
-        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Start over with a different file</Text>
+        <Text style={{ color: themeColours.textSecondary, fontSize: 13 }}>Start over with a different file</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

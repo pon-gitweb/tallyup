@@ -75,7 +75,7 @@ function SectionHeader({ title, colours }: { title: string; C: any }) {
 
 function ReportPreferencesScreen() {
   const venueId = useVenueId();
-  const colours = useColours();
+  const themeColours = useColours();
   const [prefs, setPrefs] = useState<ReportPreferences>(DEFAULT_REPORT_PREFS);
   const [saving, setSaving] = useState(false);
 
@@ -113,17 +113,17 @@ function ReportPreferencesScreen() {
   const O = prefs.order;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 12 }}>
 
       <View>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text }}>Report Preferences</Text>
-        <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 14 }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: themeColours.text }}>Report Preferences</Text>
+        <Text style={{ color: themeColours.textSecondary, marginTop: 4, fontSize: 14 }}>
           Choose what appears on your stocktake and order reports.
         </Text>
       </View>
 
       {/* Stocktake report */}
-      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
+      <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
         <SectionHeader title="STOCKTAKE REPORTS" colours={C} />
 
         <ToggleRow label="Show zero variance items" description="Items where counted = expected" value={S.showZeroVariance} onToggle={v => updateStocktake({ showZeroVariance: v })} colours={C} />
@@ -161,7 +161,7 @@ function ReportPreferencesScreen() {
       </View>
 
       {/* Order report */}
-      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
+      <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
         <SectionHeader title="ORDER REPORTS" colours={C} />
         <ToggleRow label="Show unit cost" value={O.showUnitCost} onToggle={v => updateOrder({ showUnitCost: v })} colours={C} />
         <ToggleRow label="Show line total" value={O.showLineTotal} onToggle={v => updateOrder({ showLineTotal: v })} colours={C} />
@@ -175,14 +175,14 @@ function ReportPreferencesScreen() {
 
       {/* Save */}
       <TouchableOpacity onPress={onSave} disabled={saving}
-        style={{ backgroundColor: colours.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
+        style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
         <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
           {saving ? 'Saving...' : 'Save preferences'}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onReset} style={{ alignItems: 'center', padding: 8 }}>
-        <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Reset to defaults</Text>
+        <Text style={{ color: themeColours.textSecondary, fontSize: 13 }}>Reset to defaults</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

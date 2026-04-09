@@ -12,7 +12,7 @@ import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 function SupplierLoginScreen({ onLogin }: { onLogin: (supplierId: string) => void }) {
-  const colours = useColours();
+  const themeColours = useColours();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,18 +44,18 @@ function SupplierLoginScreen({ onLogin }: { onLogin: (supplierId: string) => voi
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: colours.background }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: themeColours.background }}>
       <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 16 }}>
-        <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 8 }}>
+        <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 8 }}>
           <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>Supplier Portal</Text>
           <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 4 }}>Powered by Hosti-Stock</Text>
         </View>
         <TextInput value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address"
-          autoCapitalize="none" style={{ backgroundColor: colours.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colours.border, color: colours.text }} />
+          autoCapitalize="none" style={{ backgroundColor: themeColours.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: themeColours.border, color: themeColours.text }} />
         <TextInput value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry
-          style={{ backgroundColor: colours.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: colours.border, color: colours.text }} />
+          style={{ backgroundColor: themeColours.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: themeColours.border, color: themeColours.text }} />
         <TouchableOpacity onPress={onSubmit} disabled={busy}
-          style={{ backgroundColor: colours.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
+          style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 16, alignItems: 'center' }}>
           <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{busy ? 'Signing in...' : 'Sign in as Supplier'}</Text>
         </TouchableOpacity>
       </View>

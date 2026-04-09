@@ -69,7 +69,7 @@ export default function SuggestedOrderScreen(){
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
   const [supplierOpen,setSupplierOpen]=useState(false);
 
-  const colours = useColours();
+  const themeColours = useColours();
   const [entitled,setEntitled]=useState(true); // BETA: force entitled — all venues have full access
   const [payOpen,setPayOpen]=useState(false);
   const [mode,setMode]=useState<'math'|'ai'>('math');

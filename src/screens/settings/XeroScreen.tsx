@@ -14,7 +14,7 @@ import { useColours } from '../../context/ThemeContext';
 
 function XeroScreen() {
   const venueId = useVenueId();
-  const colours = useColours();
+  const themeColours = useColours();
   const [connection, setConnection] = useState<XeroConnection>({ status: 'not_connected' });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -69,7 +69,7 @@ function XeroScreen() {
   const isConnected = connection.status === 'connected';
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Header */}
       <View style={{ backgroundColor: '#13B5EA', borderRadius: 16, padding: 20 }}>
@@ -81,28 +81,28 @@ function XeroScreen() {
 
       {/* Status */}
       {loading ? (
-        <ActivityIndicator color={colours.accent} />
+        <ActivityIndicator color={themeColours.accent} />
       ) : (
         <View style={{
-          backgroundColor: colours.surface, borderRadius: 14, padding: 16,
-          borderWidth: 1, borderColor: isConnected ? '#BBF7D0' : colours.border,
+          backgroundColor: themeColours.surface, borderRadius: 14, padding: 16,
+          borderWidth: 1, borderColor: isConnected ? '#BBF7D0' : themeColours.border,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={{
               width: 12, height: 12, borderRadius: 6,
               backgroundColor: isConnected ? '#16A34A' : '#9CA3AF',
             }} />
-            <Text style={{ fontWeight: '900', color: colours.text, fontSize: 16 }}>
+            <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>
               {isConnected ? 'Connected' : 'Not connected'}
             </Text>
           </View>
           {isConnected && connection.tenantName && (
-            <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 13 }}>
+            <Text style={{ color: themeColours.textSecondary, marginTop: 4, fontSize: 13 }}>
               Organisation: {connection.tenantName}
             </Text>
           )}
           {isConnected && connection.connectedAt && (
-            <Text style={{ color: colours.textSecondary, fontSize: 12, marginTop: 2 }}>
+            <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
               Connected: {new Date(connection.connectedAt).toLocaleDateString('en-NZ')}
             </Text>
           )}
@@ -110,8 +110,8 @@ function XeroScreen() {
       )}
 
       {/* What syncs */}
-      <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border }}>
-        <Text style={{ fontWeight: '900', color: colours.text, marginBottom: 12 }}>What syncs with Xero</Text>
+      <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
+        <Text style={{ fontWeight: '900', color: themeColours.text, marginBottom: 12 }}>What syncs with Xero</Text>
         {[
           { icon: '📋', title: 'Purchase Orders', desc: 'Orders placed in Hosti-Stock appear as Draft Bills in Xero' },
           { icon: '🧾', title: 'Received Invoices', desc: 'Approved invoices are pushed to Xero as Approved Bills' },
@@ -120,8 +120,8 @@ function XeroScreen() {
           <View key={i} style={{ flexDirection: 'row', gap: 12, marginBottom: i < 2 ? 14 : 0 }}>
             <Text style={{ fontSize: 20 }}>{item.icon}</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: '800', color: colours.text }}>{item.title}</Text>
-              <Text style={{ color: colours.textSecondary, fontSize: 13, marginTop: 2 }}>{item.desc}</Text>
+              <Text style={{ fontWeight: '800', color: themeColours.text }}>{item.title}</Text>
+              <Text style={{ color: themeColours.textSecondary, fontSize: 13, marginTop: 2 }}>{item.desc}</Text>
             </View>
             <View style={{
               backgroundColor: isConnected ? '#F0FDF4' : '#F9FAFB',
@@ -151,8 +151,8 @@ function XeroScreen() {
         isConnected ? (
           <TouchableOpacity onPress={onDisconnect} disabled={busy}
             style={{ backgroundColor: '#FEF2F2', borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}>
-            {busy ? <ActivityIndicator color={colours.error} /> :
-              <Text style={{ fontWeight: '900', color: colours.error }}>Disconnect Xero</Text>}
+            {busy ? <ActivityIndicator color={themeColours.error} /> :
+              <Text style={{ fontWeight: '900', color: themeColours.error }}>Disconnect Xero</Text>}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity onPress={onConnect} disabled={busy}
@@ -166,7 +166,7 @@ function XeroScreen() {
       {/* Learn more */}
       <TouchableOpacity onPress={() => Linking.openURL('https://developer.xero.com')}
         style={{ alignItems: 'center', padding: 8 }}>
-        <Text style={{ color: colours.textSecondary, fontSize: 12 }}>Learn about Xero API → developer.xero.com</Text>
+        <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>Learn about Xero API → developer.xero.com</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

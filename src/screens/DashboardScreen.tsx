@@ -1,9 +1,9 @@
+import React, { useMemo, useState } from 'react';
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
 import OfflineBanner from '../components/OfflineBanner';
 import { useTheme, useColours } from '../context/ThemeContext';
 import { Image } from 'react-native';
 // @ts-nocheck
-import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -74,7 +74,7 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [venueId]);
   const { theme } = useTheme();
-  const colours = useColours();
+  const themeColours = useColours();
 
   const onOpenStockTake = async () => {
     if (busy) return;
@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: colours.background,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dark: {
-    backgroundColor: colours.primary,
+    backgroundColor: '#0F172A',
   },
   muted: {
     backgroundColor: 'white',

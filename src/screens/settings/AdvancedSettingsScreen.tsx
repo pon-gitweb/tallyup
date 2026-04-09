@@ -7,17 +7,17 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 function AdvancedSettingsScreen() {
   const nav = useNavigation<any>();
-  const colours = useColours();
+  const themeColours = useColours();
   const btn = (label: string, route: string, colour?: string) => (
     <TouchableOpacity
-      style={[{ backgroundColor: colour || colours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }]}
+      style={[{ backgroundColor: colour || themeColours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }]}
       onPress={() => nav.navigate(route as never)}>
       <Text style={{ color: '#fff', fontWeight: '800' }}>{label}</Text>
     </TouchableOpacity>
   );
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16 }}>
-      <Text style={{ fontSize: 20, fontWeight: '900', color: colours.text, marginBottom: 16 }}>Advanced Settings</Text>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16 }}>
+      <Text style={{ fontSize: 20, fontWeight: '900', color: themeColours.text, marginBottom: 16 }}>Advanced Settings</Text>
       <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, letterSpacing: 1 }}>INTEGRATIONS</Text>
       {btn('Xero Integration', 'Xero', '#13B5EA')}
       {btn('⚖️ Bluetooth Scale', 'ScaleSettings', '#065F46')}

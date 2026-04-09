@@ -8,7 +8,7 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 
 function SupplierDashboardScreen({ supplierId }: { supplierId: string }) {
   const nav = useNavigation<any>();
-  const colours = useColours();
+  const themeColours = useColours();
   const [account, setAccount] = useState<SupplierAccount | null>(null);
   const [orders, setOrders] = useState<SupplierOrderView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,12 +29,12 @@ function SupplierDashboardScreen({ supplierId }: { supplierId: string }) {
   const pending = orders.filter(o => o.status === 'pending');
   const recent = orders.filter(o => o.status !== 'pending').slice(0, 5);
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={colours.accent} />;
+  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={themeColours.accent} />;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       {/* Header */}
-      <View style={{ backgroundColor: colours.primary, borderRadius: 16, padding: 20 }}>
+      <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 20 }}>
         <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff' }}>{account?.name || 'Supplier Portal'}</Text>
         <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 4 }}>{account?.connectedVenues?.length || 0} connected venues</Text>
       </View>
@@ -42,13 +42,13 @@ function SupplierDashboardScreen({ supplierId }: { supplierId: string }) {
       {/* Quick stats */}
       <View style={{ flexDirection: 'row', gap: 10 }}>
         {[
-          { label: 'Pending orders', value: pending.length, colour: colours.warning },
-          { label: 'Total orders', value: orders.length, colour: colours.accent },
-          { label: 'Venues', value: account?.connectedVenues?.length || 0, colour: colours.success },
+          { label: 'Pending orders', value: pending.length, colour: themeColours.warning },
+          { label: 'Total orders', value: orders.length, colour: themeColours.accent },
+          { label: 'Venues', value: account?.connectedVenues?.length || 0, colour: themeColours.success },
         ].map((stat, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: colours.surface, borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: colours.border }}>
+          <View key={i} style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}>
             <Text style={{ fontSize: 28, fontWeight: '900', color: stat.colour }}>{stat.value}</Text>
-            <Text style={{ color: colours.textSecondary, fontSize: 11, textAlign: 'center', marginTop: 2 }}>{stat.label}</Text>
+            <Text style={{ color: themeColours.textSecondary, fontSize: 11, textAlign: 'center', marginTop: 2 }}>{stat.label}</Text>
           </View>
         ))}
       </View>
@@ -60,10 +60,10 @@ function SupplierDashboardScreen({ supplierId }: { supplierId: string }) {
         { icon: '🏷️', label: 'Specials & Promotions', route: 'SupplierSpecials' },
       ].map((item, i) => (
         <TouchableOpacity key={i} onPress={() => nav.navigate(item.route, { supplierId })}
-          style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: colours.border }}>
+          style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: themeColours.border }}>
           <Text style={{ fontSize: 24 }}>{item.icon}</Text>
-          <Text style={{ fontWeight: '800', color: colours.text, fontSize: 16 }}>{item.label}</Text>
-          <Text style={{ marginLeft: 'auto', color: colours.textSecondary, fontSize: 18 }}>›</Text>
+          <Text style={{ fontWeight: '800', color: themeColours.text, fontSize: 16 }}>{item.label}</Text>
+          <Text style={{ marginLeft: 'auto', color: themeColours.textSecondary, fontSize: 18 }}>›</Text>
         </TouchableOpacity>
       ))}
 

@@ -11,7 +11,7 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 function SupplierCatalogueScreen() {
   const route = useRoute<any>();
   const { supplierId } = route.params;
-  const colours = useColours();
+  const themeColours = useColours();
   const [products, setProducts] = useState<CatalogueProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -79,34 +79,34 @@ function SupplierCatalogueScreen() {
   const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colours.background }}>
+    <View style={{ flex: 1, backgroundColor: themeColours.background }}>
       <View style={{ padding: 16, gap: 10 }}>
         <TouchableOpacity onPress={onUploadCatalogue} disabled={uploading}
-          style={{ backgroundColor: colours.primary, borderRadius: 12, padding: 14, alignItems: 'center' }}>
+          style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 14, alignItems: 'center' }}>
           {uploading ? <ActivityIndicator color="#fff" /> :
             <Text style={{ color: '#fff', fontWeight: '900' }}>📤 Upload price list (PDF, CSV, Excel)</Text>}
         </TouchableOpacity>
         <TextInput value={search} onChangeText={setSearch} placeholder="Search products..."
-          style={{ backgroundColor: colours.surface, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: colours.border, color: colours.text }} />
+          style={{ backgroundColor: themeColours.surface, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: themeColours.border, color: themeColours.text }} />
       </View>
-      {loading ? <ActivityIndicator color={colours.accent} /> : (
+      {loading ? <ActivityIndicator color={themeColours.accent} /> : (
         <FlatList data={filtered} keyExtractor={i => i.id}
           renderItem={({ item }) => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: colours.border, backgroundColor: colours.surface }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: themeColours.border, backgroundColor: themeColours.surface }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: '700', color: colours.text }}>{item.name}</Text>
-                <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{item.unit} {item.category ? `· ${item.category}` : ''}</Text>
+                <Text style={{ fontWeight: '700', color: themeColours.text }}>{item.name}</Text>
+                <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{item.unit} {item.category ? `· ${item.category}` : ''}</Text>
               </View>
-              <TouchableOpacity onPress={() => onUpdatePrice(item)} style={{ backgroundColor: colours.primaryLight, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
-                <Text style={{ fontWeight: '800', color: colours.accent }}>${item.price.toFixed(2)}</Text>
+              <TouchableOpacity onPress={() => onUpdatePrice(item)} style={{ backgroundColor: themeColours.primaryLight, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
+                <Text style={{ fontWeight: '800', color: themeColours.accent }}>${item.price.toFixed(2)}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => SupplierPortalService.markOutOfStock(supplierId, item.id, !item.available).then(load)}
                 style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: item.available ? '#F0FDF4' : '#FEF2F2' }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: item.available ? colours.success : colours.error }}>{item.available ? 'In stock' : 'OOS'}</Text>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: item.available ? themeColours.success : themeColours.error }}>{item.available ? 'In stock' : 'OOS'}</Text>
               </TouchableOpacity>
             </View>
           )}
-          ListEmptyComponent={<Text style={{ textAlign: 'center', color: colours.textSecondary, marginTop: 40 }}>No products yet — upload a price list</Text>}
+          ListEmptyComponent={<Text style={{ textAlign: 'center', color: themeColours.textSecondary, marginTop: 40 }}>No products yet — upload a price list</Text>}
         />
       )}
     </View>
