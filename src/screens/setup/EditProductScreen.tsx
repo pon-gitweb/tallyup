@@ -19,11 +19,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
 
-// ---- Optional services (best effort). We gracefully fall back to raw Firestore if absent.
-let svc:any = {};
-try {
-  svc = require('../../services/products');
-} catch {}
+import * as svc from '../../services/products';
 const hasCreate = typeof svc.createProduct === 'function';
 const hasUpdate = typeof svc.updateProduct === 'function';
 const hasUpsert = typeof svc.upsertProduct === 'function';

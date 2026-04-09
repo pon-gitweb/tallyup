@@ -25,15 +25,11 @@ import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
 import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
-let Haptics: any = null;
-try { Haptics = require('expo-haptics'); } catch {}
-let AS: any = null;
-try { AS = require('@react-native-async-storage/async-storage').default; } catch {}
-let Clipboard: any = null;
-try { Clipboard = require('expo-clipboard'); } catch {}
-let FS: any = null, Sharing: any = null;
-try { FS = require('expo-file-system'); } catch {}
-try { Sharing = require('expo-sharing'); } catch {}
+import * as Haptics from 'expo-haptics';
+import AS from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
+import * as FS from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
