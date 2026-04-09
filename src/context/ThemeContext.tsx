@@ -112,6 +112,7 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
       console.log('[ThemeContext] load error', e);
     } finally {
       setIsLoading(false);
+      loadingRef.current = false;
     }
   }, [venueId]);
 
