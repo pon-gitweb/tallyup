@@ -18,15 +18,9 @@ export const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfi
 
 let authInstance: any;
 try {
-  const authMod = require('firebase/auth');
-  const getReactNativePersistence = authMod?.getReactNativePersistence;
-  if (typeof getReactNativePersistence === 'function') {
-    authInstance = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage),
-    });
-  } else {
-    authInstance = getAuth(app);
-  }
+  authInstance = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
 } catch {
   authInstance = getAuth(app);
 }
