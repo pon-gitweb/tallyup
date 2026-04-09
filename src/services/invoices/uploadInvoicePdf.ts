@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Alert } from 'react-native';
 import { uploadUriViaApi } from '../imports/uploadViaApi';
 import { ensureDevMembership } from '../devBootstrap';

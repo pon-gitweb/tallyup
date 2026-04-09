@@ -1,5 +1,6 @@
 // @ts-nocheck
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 
 export type StocktakeReportPrefs = {
   showZeroVariance: boolean;

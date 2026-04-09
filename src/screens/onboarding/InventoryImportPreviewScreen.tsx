@@ -5,6 +5,7 @@
  * User can rename areas, move products, delete items before confirming.
  */
 import React, { useCallback, useMemo, useState } from 'react';
+import { getFirestore, setDoc, collection, doc, serverTimestamp } from 'firebase/firestore';
 import {
   ActivityIndicator, Alert, ScrollView,
   Text, TouchableOpacity, View,

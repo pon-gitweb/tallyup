@@ -6,6 +6,7 @@
  * All paths record dispatchMethod + confirm "placed" in Firestore.
  */
 import React, { useCallback, useState } from 'react';
+import { getFirestore, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import {
   ActivityIndicator, Alert, Linking, Modal,
   ScrollView, Text, TouchableOpacity, View,

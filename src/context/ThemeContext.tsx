@@ -7,6 +7,7 @@
  */
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 
 export type ThemeColours = {
   primary: string;        // Main brand colour — buttons, active states

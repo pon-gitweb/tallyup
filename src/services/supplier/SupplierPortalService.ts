@@ -22,6 +22,7 @@
  */
 
 import { getAuth } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
 
 export type SupplierAccount = {
   id: string;

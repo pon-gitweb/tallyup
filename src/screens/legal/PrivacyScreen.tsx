@@ -1,3 +1,4 @@
+import { collection } from 'firebase/firestore';
 import React from 'react';
 import { SafeAreaView, ScrollView } from 'react-native';
 import LocalThemeGate from '../../theme/LocalThemeGate';

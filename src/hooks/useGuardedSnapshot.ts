@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useEffect, useRef } from 'react';
+import { onSnapshot } from 'firebase/firestore';
 import NetInfo from '@react-native-community/netinfo';
 
 /**
