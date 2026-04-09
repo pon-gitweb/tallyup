@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';

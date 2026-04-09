@@ -1,6 +1,4 @@
 // @ts-nocheck
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type StocktakeReportPrefs = {

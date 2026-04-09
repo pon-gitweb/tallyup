@@ -12,8 +12,6 @@
  * Scopes needed: accounting.transactions, accounting.contacts, offline_access
  */
 
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 import { Linking } from 'react-native';
 import { AI_BASE_URL } from '../../../config/ai';
 

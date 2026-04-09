@@ -1,6 +1,5 @@
-import { doc, getDoc, collection, query, where, getDocs, writeBatch, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { Timestamp, collection, doc, getDoc, getDocs, getFirestore, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 const db = getFirestore(getApp());
 
 export type OrderLine = {

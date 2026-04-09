@@ -1,8 +1,5 @@
 // @ts-nocheck
-import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, serverTimestamp, updateDoc, runTransaction
-} from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
 import SmartShelfModal from "./components/SmartShelfModal";

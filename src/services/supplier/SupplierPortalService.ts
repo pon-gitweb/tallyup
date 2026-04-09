@@ -21,11 +21,6 @@
  *     venueId, fileUrl, validFrom, validTo, notes (encrypted at rest)
  */
 
-import {
-  collection, doc, getDoc, getDocs, setDoc,
-  updateDoc, deleteDoc, serverTimestamp, query, where,
-} from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 export type SupplierAccount = {

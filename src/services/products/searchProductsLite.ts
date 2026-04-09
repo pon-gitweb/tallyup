@@ -1,13 +1,6 @@
 // src/services/products/searchProductsLite.ts
 
-import {
-  getFirestore,
-  collection,
-  query,
-  orderBy,
-  limit,
-  getDocs,
-} from 'firebase/firestore';
+import { collection, getDocs, getFirestore, limit, orderBy, query, where } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 
 export type ProductLite = {

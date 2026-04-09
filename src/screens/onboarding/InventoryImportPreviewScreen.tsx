@@ -10,8 +10,6 @@ import {
   Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { inferDefaultPAR, getPARDescription } from '../../services/parDefaults';

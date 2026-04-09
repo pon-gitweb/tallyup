@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { getAuth, signOut } from 'firebase/auth';
 import { db } from '../services/firebase';
-import {
-  doc, setDoc, getDoc, serverTimestamp, collection,
-} from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 
 export default function CreateVenueScreen() {
   const [name, setName] = useState('');

@@ -1,6 +1,4 @@
-import {
-  doc, getDoc, setDoc, serverTimestamp,
-} from 'firebase/firestore';
+import { collectionGroup, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 
 /**

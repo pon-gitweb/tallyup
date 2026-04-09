@@ -10,8 +10,6 @@ import {
   ActivityIndicator, Alert, Linking, Modal,
   ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 
 type OrderLine = { name: string; qty: number; unit?: string; unitCost?: number };
 
