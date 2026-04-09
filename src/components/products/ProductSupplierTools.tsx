@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useState, useEffect } from 'react';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import {
   View,
   Text,
@@ -30,7 +31,6 @@ type GlobalSupplier = {
 const MAX_H = Math.floor(Dimensions.get('window').height * 0.65);
 
 // Best-effort dynamic import to avoid bundler issues if firestore isn't present
-let getFirestore: any, collection: any, getDocs: any;
 try {
   ({ getFirestore, collection, getDocs } = require('firebase/firestore'));
 } catch (e) {

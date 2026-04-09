@@ -1,5 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
+import { getFirestore, doc, setDoc, addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { getApp } from 'firebase/app';
 import {
   View,
   Text,
@@ -26,12 +28,7 @@ const hasCreate = typeof svc.createProduct === 'function';
 const hasUpdate = typeof svc.updateProduct === 'function';
 const hasUpsert = typeof svc.upsertProduct === 'function';
 
-// ---- Firestore fallback (only used if services missing)
-let getApp:any, getFirestore:any, doc:any, setDoc:any, addDoc:any, collection:any, serverTimestamp:any, updateDoc:any;
-try {
-  ({ getApp } = require('firebase/app'));
-  ({ getFirestore, doc, setDoc, addDoc, collection, serverTimestamp, updateDoc } = require('firebase/firestore'));
-} catch { /* noop */ }
+
 
 type NavParams = { productId?: string | null; product?: any | null };
 

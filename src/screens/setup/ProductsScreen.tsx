@@ -16,15 +16,9 @@ import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById } from '../../services/products';
 import ProductSupplierTools from '../../components/products/ProductSupplierTools';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 
-// Optional, best-effort read of global catalogs (won't throw if firebase/firestore isn't present)
-let getFirestore: any, collection: any, getDocs: any;
-try {
-  // Modular SDK (already used elsewhere in the app)
-  ({ getFirestore, collection, getDocs } = require('firebase/firestore'));
-} catch (e) {
-  // If the module isn't available in this build target, we just won't show the count.
-}
+
 
 export default function ProductsScreen() {
   const nav = useNavigation<any>();
