@@ -1,4 +1,5 @@
 import { getAIContext } from '../aiContext';
+import { getAuth } from 'firebase/auth';
 // @ts-nocheck
 /**
  * runAISuggest(venueId, opts, mode)
@@ -108,9 +109,13 @@ export async function runAISuggest(
   try {
     console.log('[AISuggest] mode=ai → POST', { url: AI_SUGGEST_ORDERS_URL });
 
+    const idToken = await getAuth().currentUser?.getIdToken().catch(() => null);
     const resp = await fetch(AI_SUGGEST_ORDERS_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify({ venueId, baseline, opts, aiContext: await getAIContext(venueId).catch(() => null) }),
     });
 
