@@ -89,9 +89,12 @@ const ThemeContext = createContext<ThemeContextValue>({
 export function ThemeProvider({ venueId, children }: { venueId: string | null; children: React.ReactNode }) {
   const [theme, setTheme] = useState<ThemeConfig>(DEFAULT_THEME);
   const [isLoading, setIsLoading] = useState(true);
+  const loadingRef = React.useRef(false);
   const db = getFirestore();
 
   const load = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     try {
       // Load from cache first for instant render
       const cached = await AsyncStorage.getItem(CACHE_KEY);
