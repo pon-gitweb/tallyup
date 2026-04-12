@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useColours } from '../../context/ThemeContext';
+import { FEATURES } from '../../config/features';
 import {
   View,
   Text,
