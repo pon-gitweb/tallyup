@@ -192,9 +192,9 @@ function InventoryImportScreen() {
       {/* Upload options */}
       <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>Choose your file</Text>
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} colours={C} />
-        <FileTypeButton icon="🖼️" label="Photo library" sublabel="Screenshot or photo" onPress={onPickPhoto} colours={C} />
-        <FileTypeButton icon="📷" label="Camera" sublabel="Take a photo now" onPress={onCamera} colours={C} />
+        <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} colours={themeColours} />
+        <FileTypeButton icon="🖼️" label="Photo library" sublabel="Screenshot or photo" onPress={onPickPhoto} colours={themeColours} />
+        <FileTypeButton icon="📷" label="Camera" sublabel="Take a photo now" onPress={onCamera} colours={themeColours} />
       </View>
 
       {/* What happens next */}
