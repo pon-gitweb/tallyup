@@ -20,7 +20,6 @@ type ToggleRowProps = {
   description?: string;
   value: boolean;
   onToggle: (v: boolean) => void;
-  C: any;
 };
 
 function ToggleRow({ label, description, value, onToggle, colours }: ToggleRowProps) {
@@ -40,7 +39,6 @@ type PickerRowProps = {
   options: { value: string; label: string }[];
   value: string;
   onPick: (v: string) => void;
-  C: any;
 };
 
 function PickerRow({ label, options, value, onPick, colours }: PickerRowProps) {
@@ -65,7 +63,7 @@ function PickerRow({ label, options, value, onPick, colours }: PickerRowProps) {
   );
 }
 
-function SectionHeader({ title, colours }: { title: string; C: any }) {
+function SectionHeader({ title, colours }: { title: string; colours: any }) {
   return (
     <View style={{ backgroundColor: colours.primaryLight, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, marginTop: 8 }}>
       <Text style={{ fontWeight: '900', color: colours.accent, fontSize: 13 }}>{title}</Text>
@@ -124,19 +122,19 @@ function ReportPreferencesScreen() {
 
       {/* Stocktake report */}
       <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
-        <SectionHeader title="STOCKTAKE REPORTS" colours={C} />
+        <SectionHeader title="STOCKTAKE REPORTS" colours={themeColours} />
 
-        <ToggleRow label="Show zero variance items" description="Items where counted = expected" value={S.showZeroVariance} onToggle={v => updateStocktake({ showZeroVariance: v })} colours={C} />
-        <ToggleRow label="Show expected quantity" description="Expected vs actual count" value={S.showExpectedQty} onToggle={v => updateStocktake({ showExpectedQty: v })} colours={C} />
-        <ToggleRow label="Show cost per item" value={S.showCostValue} onToggle={v => updateStocktake({ showCostValue: v })} colours={C} />
-        <ToggleRow label="Show total stock value" value={S.showTotalValue} onToggle={v => updateStocktake({ showTotalValue: v })} colours={C} />
-        <ToggleRow label="Show supplier" value={S.showSupplier} onToggle={v => updateStocktake({ showSupplier: v })} colours={C} />
-        <ToggleRow label="Show category / department" value={S.showCategory} onToggle={v => updateStocktake({ showCategory: v })} colours={C} />
-        <ToggleRow label="Show venue logo" value={S.showLogo} onToggle={v => updateStocktake({ showLogo: v })} colours={C} />
-        <ToggleRow label="Show date and time" value={S.showDate} onToggle={v => updateStocktake({ showDate: v })} colours={C} />
-        <ToggleRow label="Include signature line" description="For manager sign-off" value={S.showSignatureLine} onToggle={v => updateStocktake({ showSignatureLine: v })} colours={C} />
+        <ToggleRow label="Show zero variance items" description="Items where counted = expected" value={S.showZeroVariance} onToggle={v => updateStocktake({ showZeroVariance: v })} colours={themeColours} />
+        <ToggleRow label="Show expected quantity" description="Expected vs actual count" value={S.showExpectedQty} onToggle={v => updateStocktake({ showExpectedQty: v })} colours={themeColours} />
+        <ToggleRow label="Show cost per item" value={S.showCostValue} onToggle={v => updateStocktake({ showCostValue: v })} colours={themeColours} />
+        <ToggleRow label="Show total stock value" value={S.showTotalValue} onToggle={v => updateStocktake({ showTotalValue: v })} colours={themeColours} />
+        <ToggleRow label="Show supplier" value={S.showSupplier} onToggle={v => updateStocktake({ showSupplier: v })} colours={themeColours} />
+        <ToggleRow label="Show category / department" value={S.showCategory} onToggle={v => updateStocktake({ showCategory: v })} colours={themeColours} />
+        <ToggleRow label="Show venue logo" value={S.showLogo} onToggle={v => updateStocktake({ showLogo: v })} colours={themeColours} />
+        <ToggleRow label="Show date and time" value={S.showDate} onToggle={v => updateStocktake({ showDate: v })} colours={themeColours} />
+        <ToggleRow label="Include signature line" description="For manager sign-off" value={S.showSignatureLine} onToggle={v => updateStocktake({ showSignatureLine: v })} colours={themeColours} />
 
-        <PickerRow label="Variance format" value={S.varianceFormat} onPick={v => updateStocktake({ varianceFormat: v as any })} colours={C}
+        <PickerRow label="Variance format" value={S.varianceFormat} onPick={v => updateStocktake({ varianceFormat: v as any })} colours={themeColours}
           options={[
             { value: 'units', label: 'Units' },
             { value: 'percentage', label: '%' },
@@ -144,7 +142,7 @@ function ReportPreferencesScreen() {
             { value: 'all', label: 'All' },
           ]} />
 
-        <PickerRow label="Group items by" value={S.groupBy} onPick={v => updateStocktake({ groupBy: v as any })} colours={C}
+        <PickerRow label="Group items by" value={S.groupBy} onPick={v => updateStocktake({ groupBy: v as any })} colours={themeColours}
           options={[
             { value: 'area', label: 'Area' },
             { value: 'supplier', label: 'Supplier' },
@@ -152,7 +150,7 @@ function ReportPreferencesScreen() {
             { value: 'none', label: 'None' },
           ]} />
 
-        <PickerRow label="Sort items by" value={S.sortBy} onPick={v => updateStocktake({ sortBy: v as any })} colours={C}
+        <PickerRow label="Sort items by" value={S.sortBy} onPick={v => updateStocktake({ sortBy: v as any })} colours={themeColours}
           options={[
             { value: 'name', label: 'Name' },
             { value: 'variance', label: 'Variance' },
@@ -162,15 +160,15 @@ function ReportPreferencesScreen() {
 
       {/* Order report */}
       <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
-        <SectionHeader title="ORDER REPORTS" colours={C} />
-        <ToggleRow label="Show unit cost" value={O.showUnitCost} onToggle={v => updateOrder({ showUnitCost: v })} colours={C} />
-        <ToggleRow label="Show line total" value={O.showLineTotal} onToggle={v => updateOrder({ showLineTotal: v })} colours={C} />
-        <ToggleRow label="Show order total" value={O.showOrderTotal} onToggle={v => updateOrder({ showOrderTotal: v })} colours={C} />
-        <ToggleRow label="Show supplier details" value={O.showSupplierDetails} onToggle={v => updateOrder({ showSupplierDetails: v })} colours={C} />
-        <ToggleRow label="Show delivery notes" value={O.showDeliveryNotes} onToggle={v => updateOrder({ showDeliveryNotes: v })} colours={C} />
-        <ToggleRow label="Show venue logo" value={O.showLogo} onToggle={v => updateOrder({ showLogo: v })} colours={C} />
-        <ToggleRow label="Show date" value={O.showDate} onToggle={v => updateOrder({ showDate: v })} colours={C} />
-        <ToggleRow label="Include signature line" value={O.showSignatureLine} onToggle={v => updateOrder({ showSignatureLine: v })} colours={C} />
+        <SectionHeader title="ORDER REPORTS" colours={themeColours} />
+        <ToggleRow label="Show unit cost" value={O.showUnitCost} onToggle={v => updateOrder({ showUnitCost: v })} colours={themeColours} />
+        <ToggleRow label="Show line total" value={O.showLineTotal} onToggle={v => updateOrder({ showLineTotal: v })} colours={themeColours} />
+        <ToggleRow label="Show order total" value={O.showOrderTotal} onToggle={v => updateOrder({ showOrderTotal: v })} colours={themeColours} />
+        <ToggleRow label="Show supplier details" value={O.showSupplierDetails} onToggle={v => updateOrder({ showSupplierDetails: v })} colours={themeColours} />
+        <ToggleRow label="Show delivery notes" value={O.showDeliveryNotes} onToggle={v => updateOrder({ showDeliveryNotes: v })} colours={themeColours} />
+        <ToggleRow label="Show venue logo" value={O.showLogo} onToggle={v => updateOrder({ showLogo: v })} colours={themeColours} />
+        <ToggleRow label="Show date" value={O.showDate} onToggle={v => updateOrder({ showDate: v })} colours={themeColours} />
+        <ToggleRow label="Include signature line" value={O.showSignatureLine} onToggle={v => updateOrder({ showSignatureLine: v })} colours={themeColours} />
       </View>
 
       {/* Save */}
