@@ -27,6 +27,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [nonce, setNonce] = useState(0);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
+  const lastVenueIdRef = useRef<string | null>(undefined as any);
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
 
   useEffect(() => {
@@ -65,7 +66,10 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       unsubUserDocRef.current = onSnapshot(uref, async (snap) => {
         const currentVenue = snap.exists() ? (snap.data() as any)?.venueId ?? null : null;
         console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null }));
-        setVenueId(currentVenue ?? null);
+        if (lastVenueIdRef.current !== currentVenue) {
+          lastVenueIdRef.current = currentVenue;
+          setVenueId(currentVenue ?? null);
+        }
         setLoading(false);
 
         if ((currentVenue === null || currentVenue === undefined) && triedAutoAttachForUid.current !== u.uid) {
