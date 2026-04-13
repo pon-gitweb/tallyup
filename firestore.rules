@@ -767,6 +767,11 @@ service cloud.firestore {
         allow get: if isVenueMember(venueId);
         allow write: if isVenueMember(venueId);
       }
+
+      match /aiUsage/{monthKey} {
+        allow get, list: if isVenueMember(venueId);
+        allow create, update: if isVenueMember(venueId);
+      }
     }
   }
 }
