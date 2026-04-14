@@ -17,6 +17,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
+import { resetAllDepartmentsStockTake } from '../services/reset';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
 
@@ -25,6 +26,7 @@ export default function DashboardScreen() {
 
   // identity (friendly + badge)
   const auth = getAuth();
+  const currentUid = auth.currentUser?.uid ?? null;
   const user = auth.currentUser;
   const venueId = useVenueId();
   const { name: venueName } = useVenueInfo(venueId);
@@ -36,7 +38,9 @@ export default function DashboardScreen() {
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   const [busy, setBusy] = useState(false);
-  const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string} | null>(null);
+  const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string;startedAt?:number;lockedBy?:string|null} | null>(null);
+  const [allComplete, setAllComplete] = React.useState(false);
+  const [resettingCycle, setResettingCycle] = React.useState(false);
 
   React.useEffect(() => {
     if (!venueId) return;
@@ -54,12 +58,22 @@ export default function DashboardScreen() {
             const data = areaDoc.data();
             if (data.startedAt && !data.completedAt) {
               if (!best || data.startedAt.toMillis() > best.startedAt) {
-                best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis() };
+                best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis(), lockedBy: data.currentLock?.uid || null };
               }
             }
           }
         }
-        if (best) setLastArea(best);
+        if (best) {
+          setLastArea(best);
+          setAllComplete(false);
+        } else if (deptSnap.docs.length > 0) {
+          let hasAny = false;
+          for (const deptDoc2 of deptSnap.docs) {
+            const a2 = await getDocs(query(collection(db, 'venues', venueId, 'departments', deptDoc2.id, 'areas'), limit(1)));
+            if (!a2.empty) { hasAny = true; break; }
+          }
+          setAllComplete(hasAny);
+        }
     }).catch(() => {});
   }, [venueId]);
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
@@ -128,8 +142,33 @@ export default function DashboardScreen() {
             style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#0F172A', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <Text style={{ fontSize: 20 }}>▶️</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>Continue stocktake</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{lastArea.deptName} → {lastArea.areaName}</Text>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>
+                {lastArea.lockedBy && lastArea.lockedBy !== currentUid ? 'Stocktake in progress' : 'Continue stocktake'}
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{lastArea.lockedBy && lastArea.lockedBy !== currentUid ? 'Another user is counting — ' : ''}{lastArea.deptName} → {lastArea.areaName}{lastArea.startedAt ? ' · Started ' + new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
+          </TouchableOpacity>)
+        }
+        {allComplete && !lastArea && (
+          <TouchableOpacity
+            onPress={async () => {
+              const { Alert } = require('react-native');
+              Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count. Completed data is saved.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Start new cycle', onPress: async () => {
+                  setResettingCycle(true);
+                  try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
+                  catch { Alert.alert('Error', 'Could not reset. Try again.'); }
+                  finally { setResettingCycle(false); }
+                }},
+              ]);
+            }}
+            style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#065F46', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10, opacity: resettingCycle ? 0.5 : 1 }}>
+            <Text style={{ fontSize: 20 }}>🔄</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>{resettingCycle ? 'Resetting...' : 'Start new stocktake cycle'}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>All areas complete — begin a fresh count</Text>
             </View>
             <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
           </TouchableOpacity>
