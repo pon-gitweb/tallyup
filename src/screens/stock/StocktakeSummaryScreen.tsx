@@ -5,10 +5,12 @@
  * Shows counts, value, variance summary and AI insight.
  */
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { resetAllDepartmentsStockTake } from '../../services/reset';
+import { useVenueId } from '../../context/VenueProvider';
 import { markStepComplete } from '../../services/guide/SetupGuideService';
 
 type SummaryItem = {
@@ -32,6 +34,26 @@ function StocktakeSummaryScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const themeColours = useColours();
+  const venueId = useVenueId();
+  const [resetting, setResetting] = React.useState(false);
+  const handleNewCycle = () => {
+    Alert.alert(
+      'Start new stocktake?',
+      'This will reset all areas so you can begin a fresh count. Your completed data is saved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Start new cycle', onPress: async () => {
+          setResetting(true);
+          try {
+            await resetAllDepartmentsStockTake(venueId);
+            nav.navigate('Dashboard' as never);
+          } catch (e) {
+            Alert.alert('Error', 'Could not reset stocktake. Please try again.');
+          } finally { setResetting(false); }
+        }},
+      ]
+    );
+  };
   const {
     departmentName, submittedAt, itemsCounted,
     itemsMissed, totalValue, windowHours, items = [],
