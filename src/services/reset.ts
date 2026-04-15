@@ -69,16 +69,15 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
     }
   }
 
-  // C) Update venue root
+  // C) Update venue root cycleResetAt for UI cache busting (best effort — don't fail if denied)
   try {
-    await writeBatch(db).update ? null : null; // dummy
     const venueBatch = writeBatch(db);
     venueBatch.update(doc(db, 'venues', venueId), { cycleResetAt: now, updatedAt: now });
     await venueBatch.commit();
     console.log('[Reset] venue root ok');
   } catch(e: any) {
-    console.error('[Reset] venue root FAILED:', e?.code, e?.message);
-    throw e;
+    console.warn('[Reset] venue root update skipped (non-fatal):', e?.code);
+    // Non-fatal — area resets already succeeded
   }
 
   // Step 2: Restore lastCount from confirmedCount on all items (separate batches per area)
