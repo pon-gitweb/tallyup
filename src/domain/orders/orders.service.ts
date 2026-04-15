@@ -12,16 +12,16 @@ import {
 } from '../../services/orders/createFromSuggestions';
 
 export const OrdersService = {
-  finalizeReceiveFromPdf: OrdersRepo.finalizeReceiveFromPdf,
-  finalizeReceiveFromCsv: OrdersRepo.finalizeReceiveFromCsv,
-  submitOrHoldDraftOrder: OrdersRepo.submitOrHoldDraftOrder,
-  submitDraftOrder: OrdersRepo.submitDraftOrder,
-  deleteDraft: OrdersRepo.deleteDraft,
+  finalizeReceiveFromPdf: (...args: Parameters<typeof OrdersRepo.finalizeReceiveFromPdf>) => OrdersRepo.finalizeReceiveFromPdf(...args),
+  finalizeReceiveFromCsv: (...args: Parameters<typeof OrdersRepo.finalizeReceiveFromCsv>) => OrdersRepo.finalizeReceiveFromCsv(...args),
+  submitOrHoldDraftOrder: (...args: Parameters<typeof OrdersRepo.submitOrHoldDraftOrder>) => OrdersRepo.submitOrHoldDraftOrder(...args),
+  submitDraftOrder: (...args: Parameters<typeof OrdersRepo.submitDraftOrder>) => OrdersRepo.submitDraftOrder(...args),
+  deleteDraft: (...args: Parameters<typeof OrdersRepo.deleteDraft>) => OrdersRepo.deleteDraft(...args),
   runAISuggest: runAISuggestLegacy,
   buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
 
   createDraftsFromSuggestions: createDraftsFromSuggestionsLegacy,
   computeSuggestionKey: computeSuggestionKeyLegacy,
 
-  listSubmittedOrders: OrdersRepo.listSubmittedOrders,
+  listSubmittedOrders: (...args: Parameters<typeof OrdersRepo.listSubmittedOrders>) => OrdersRepo.listSubmittedOrders(...args),
 };
