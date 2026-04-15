@@ -178,7 +178,7 @@ export default function DashboardScreen() {
                   { text: inProgressUser ? 'Reset anyway' : 'Start new cycle', style: inProgressUser ? 'destructive' : 'default', onPress: async () => {
                     setResettingCycle(true);
                     try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
-                    catch { Alert.alert('Error', 'Could not reset. Try again.'); }
+                    catch (e: any) { console.error('[Reset] failed:', e?.code, e?.message); Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown')); }
                     finally { setResettingCycle(false); }
                   }},
                 ]);
@@ -188,7 +188,7 @@ export default function DashboardScreen() {
                   { text: 'Start new cycle', onPress: async () => {
                     setResettingCycle(true);
                     try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
-                    catch { Alert.alert('Error', 'Could not reset. Try again.'); }
+                    catch (e: any) { console.error('[Reset] failed:', e?.code, e?.message); Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown')); }
                     finally { setResettingCycle(false); }
                   }},
                 ]);
