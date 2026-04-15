@@ -130,6 +130,10 @@ service cloud.firestore {
           allow create: if hasVenueRole(venueId, ['manager','owner'])
             && request.resource.data.keys().hasAny(['name', 'createdAt', 'updatedAt']);
 
+          allow update: if isVenueMember(venueId) && isCycleReset() && (
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+            );
           allow update: if hasVenueRole(venueId, ['manager','owner']) && (
             request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
             request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt']) ||

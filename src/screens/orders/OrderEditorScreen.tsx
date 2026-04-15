@@ -31,6 +31,7 @@ export default function OrderEditorScreen() {
   const db = getFirestore(getApp());
 
   const [orderOk, setOrderOk] = useState(false);
+  const [dispatchVisible, setDispatchVisible] = useState(false);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [defaultQty, setDefaultQty] = useState('1');
