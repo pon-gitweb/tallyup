@@ -32,6 +32,7 @@ export default function OrderEditorScreen() {
 
   const [orderOk, setOrderOk] = useState(false);
   const [dispatchVisible, setDispatchVisible] = useState(false);
+  const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [defaultQty, setDefaultQty] = useState('1');
