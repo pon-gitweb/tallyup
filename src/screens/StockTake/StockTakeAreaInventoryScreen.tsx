@@ -231,9 +231,11 @@ export default function StockTakeAreaInventoryScreen() {
     if (blanks.length) {
       let proceed = false;
       await new Promise<void>((resolve) => {
+        const itemList = blanks.slice(0, 8).map(b => `• ${b.name || 'Unnamed'}`).join('\n');
+        const overflow = blanks.length > 8 ? `\n...and ${blanks.length - 8} more` : '';
         Alert.alert(
           'Missing counts',
-          `You have ${blanks.length} blank items. Save these as 0?`,
+          `These ${blanks.length} item${blanks.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`,
           [
             { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
             { text: 'Save as 0', onPress: () => { proceed = true; resolve(); } },
@@ -264,8 +266,13 @@ export default function StockTakeAreaInventoryScreen() {
         });
         await confirmBatch.commit();
         await updateDoc(aRef, { completedAt: serverTimestamp() });
-        Alert.alert('Area complete', `${areaName || areaId} is completed.`);
-        nav.goBack();
+        if (!blanks.length) {
+          Alert.alert('Area complete', `${areaName || areaId} is completed.`, [
+            { text: 'OK', onPress: () => nav.goBack() }
+          ]);
+        } else {
+          nav.goBack();
+        }
       } catch (e: any) {
         Alert.alert('Complete Failed', e?.message || 'Unknown error.');
       }
