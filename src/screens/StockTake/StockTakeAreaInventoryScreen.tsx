@@ -6,7 +6,7 @@ import {
 import { useRoute, useNavigation } from '@react-navigation/native';
 import {
   doc, setDoc, updateDoc, serverTimestamp,
-  collection, getDocs, query, orderBy, limit, addDoc, deleteDoc, Timestamp
+  collection, getDocs, query, orderBy, limit, addDoc, deleteDoc, Timestamp, writeBatch
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -253,6 +253,16 @@ export default function StockTakeAreaInventoryScreen() {
     if (venueId) {
       try {
         const aRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId);
+        // Stamp confirmedCount on all items — preserves last known good count for safe reset
+        const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items'));
+        const confirmBatch = writeBatch(db);
+        itemsSnap.forEach(itemDoc => {
+          const itemData = itemDoc.data();
+          if (typeof itemData.lastCount === 'number') {
+            confirmBatch.update(itemDoc.ref, { confirmedCount: itemData.lastCount, confirmedCountAt: serverTimestamp() });
+          }
+        });
+        await confirmBatch.commit();
         await updateDoc(aRef, { completedAt: serverTimestamp() });
         Alert.alert('Area complete', `${areaName || areaId} is completed.`);
         nav.goBack();

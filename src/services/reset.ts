@@ -74,6 +74,24 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
     });
   }
 
+  // A2) Restore lastCount from confirmedCount on all items (prevents partial counts corrupting next cycle)
+  for (const dep of depsSnap.docs) {
+    const depId = dep.id;
+    const areasSnap2 = await getDocs(collection(db, 'venues', venueId, 'departments', depId, 'areas'));
+    for (const a of areasSnap2.docs) {
+      const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', depId, 'areas', a.id, 'items'));
+      const restoreBatch = writeBatch(db);
+      let hasRestores = false;
+      itemsSnap.forEach(itemDoc => {
+        const data = itemDoc.data();
+        if (typeof data.confirmedCount === 'number') {
+          restoreBatch.update(itemDoc.ref, { lastCount: data.confirmedCount, lastCountAt: data.confirmedCountAt ?? null });
+          hasRestores = true;
+        }
+      });
+      if (hasRestores) await restoreBatch.commit();
+    }
+  }
   // B) Sweep legacy venue-level areas (if still present)
   const venueAreasSnap = await getDocs(collection(db, 'venues', venueId, 'areas'));
   venueAreasSnap.forEach((a) => {

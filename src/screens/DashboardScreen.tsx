@@ -154,15 +154,45 @@ export default function DashboardScreen() {
           <TouchableOpacity
             onPress={async () => {
               const { Alert } = require('react-native');
-              Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count. Completed data is saved.', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Start new cycle', onPress: async () => {
-                  setResettingCycle(true);
-                  try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
-                  catch { Alert.alert('Error', 'Could not reset. Try again.'); }
-                  finally { setResettingCycle(false); }
-                }},
-              ]);
+              // Check if any area is currently in progress
+              try {
+                const db2 = getFirestore();
+                const depsSnap2 = await getDocs(collection(db2, 'venues', venueId, 'departments'));
+                let inProgressUser = null;
+                for (const dep2 of depsSnap2.docs) {
+                  const areas2 = await getDocs(collection(db2, 'venues', venueId, 'departments', dep2.id, 'areas'));
+                  for (const area2 of areas2.docs) {
+                    const d = area2.data();
+                    if (d.startedAt && !d.completedAt && d.currentLock?.uid && d.currentLock.uid !== currentUid) {
+                      inProgressUser = d.currentLock.displayName || 'Another user';
+                      break;
+                    }
+                  }
+                  if (inProgressUser) break;
+                }
+                const message = inProgressUser
+                  ? `${inProgressUser} is currently counting. Resetting now will discard their in-progress count. Are you sure?`
+                  : 'This resets all areas for a fresh count. Completed data is saved.';
+                Alert.alert('Start new stocktake?', message, [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: inProgressUser ? 'Reset anyway' : 'Start new cycle', style: inProgressUser ? 'destructive' : 'default', onPress: async () => {
+                    setResettingCycle(true);
+                    try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
+                    catch { Alert.alert('Error', 'Could not reset. Try again.'); }
+                    finally { setResettingCycle(false); }
+                  }},
+                ]);
+              } catch {
+                Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Start new cycle', onPress: async () => {
+                    setResettingCycle(true);
+                    try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
+                    catch { Alert.alert('Error', 'Could not reset. Try again.'); }
+                    finally { setResettingCycle(false); }
+                  }},
+                ]);
+              }
             }}
             style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: '#065F46', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10, opacity: resettingCycle ? 0.5 : 1 }}>
             <Text style={{ fontSize: 20 }}>🔄</Text>

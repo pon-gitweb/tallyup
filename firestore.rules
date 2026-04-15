@@ -27,7 +27,7 @@ service cloud.firestore {
 
     function hasVenueRole(venueId, allowed) {
       return isVenueMember(venueId) && (
-        allowed.hasAny([request.auth.token.venue_roles[venueId]]) ||
+        (request.auth.token.keys().hasAny(['venue_roles']) && allowed.hasAny([request.auth.token.venue_roles[venueId]])) ||
         allowed.hasAny([
           get(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid)).data.role
         ])
