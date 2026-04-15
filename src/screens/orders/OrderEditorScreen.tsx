@@ -23,6 +23,7 @@ type RouteParams = { orderId: string; supplierName?: string };
 
 export default function OrderEditorScreen() {
   const venueId = useVenueId();
+  const themeColours = useColours();
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, RouteParams>, string>>();
   const orderId = route.params?.orderId;
@@ -33,6 +34,7 @@ export default function OrderEditorScreen() {
   const [orderOk, setOrderOk] = useState(false);
   const [dispatchVisible, setDispatchVisible] = useState(false);
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
+  const [order, setOrder] = useState<any>(null);
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [defaultQty, setDefaultQty] = useState('1');
@@ -404,7 +406,7 @@ export default function OrderEditorScreen() {
           <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
             <TouchableOpacity
               onPress={submitOrder}
-              style={{ backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+              style={{ backgroundColor: themeColours.primary, paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
             >
               <Text style={{ color: 'white', fontWeight: '800' }}>Submit Order</Text>
             </TouchableOpacity>
