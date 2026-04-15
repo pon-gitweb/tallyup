@@ -20,7 +20,7 @@ service cloud.firestore {
 
     function isVenueMember(venueId) {
       return isSignedIn() && (
-        (request.auth.token.venues[venueId] == true) ||
+        (request.auth.token.keys().hasAny(['venues']) && request.auth.token.venues[venueId] == true) ||
         exists(/databases/$(database)/documents/venues/$(venueId)/members/$(request.auth.uid))
       );
     }
@@ -87,6 +87,10 @@ service cloud.firestore {
       allow read: if isVenueMember(venueId);
 
       allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
+        && (request.resource.data.cycleResetAt is timestamp)
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
+      allow update: if isVenueMember(venueId)
         && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
         && (request.resource.data.cycleResetAt is timestamp)
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
