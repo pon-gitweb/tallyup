@@ -817,6 +817,7 @@ function StockTakeAreaInventoryScreen() {
 
   const saveCount = async (item: Item, overrideQty?: number, forceReplace?: boolean) => {
     const qty = overrideQty ?? parseFloat(String(localQtyRef.current[item.id] ?? '0'));
+    console.log('[SaveCount] called item:', item.id, 'qty:', qty, 'localQtyRef:', localQtyRef.current[item.id], 'localQty:', localQty[item.id]);
     const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
     const doSave = async (finalQty: number) => {
       try {
