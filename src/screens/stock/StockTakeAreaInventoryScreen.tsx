@@ -319,7 +319,7 @@ const Row = React.memo(function Row({
           onFocus={()=>setFocusedInputId(item.id)}
           onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
           onSubmitEditing={() => {
-            throttleAction(() => saveCount(item))();
+            saveCount(item);
             inputRefs.current[item.id]?.blur?.();
           }}
           style={{
@@ -344,7 +344,7 @@ const Row = React.memo(function Row({
         ) : null}
 
         <TouchableOpacity
-          onPress={ throttleAction(()=>saveCount(item)) }
+          onPress={ ()=>saveCount(item) }
           disabled={locked}
           style={{
             flexDirection: 'row',
@@ -583,6 +583,8 @@ function StockTakeAreaInventoryScreen() {
   useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyFlagged'), onlyFlagged ? '1' : '0').catch(()=>{}); }, [onlyFlagged, venueId, areaId]);
 
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
+  const localQtyRef = React.useRef<Record<string, string>>({});
+  React.useEffect(() => { localQtyRef.current = localQty; }, [localQty]);
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
@@ -814,7 +816,7 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const saveCount = async (item: Item, overrideQty?: number, forceReplace?: boolean) => {
-    const qty = overrideQty ?? parseFloat(String(localInputs?.[item.id] ?? '0'));
+    const qty = overrideQty ?? parseFloat(String(localQtyRef.current[item.id] ?? '0'));
     const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
     const doSave = async (finalQty: number) => {
       try {
