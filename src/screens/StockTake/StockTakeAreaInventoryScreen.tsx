@@ -42,6 +42,9 @@ export default function StockTakeAreaInventoryScreen() {
   const [mode, setMode] = useState<Mode>('COUNT');
   const [q, setQ] = useState('');
   const [counts, setCounts] = useState<Record<string, string>>({});
+  const [savedItems, setSavedItems] = useState<Record<string, boolean>>({});
+  const countsRef = React.useRef<Record<string, string>>({});
+  const countsRef = React.useRef<Record<string, string>>({});
 
   const [liveItems, setLiveItems] = useState<ItemRow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,10 +223,15 @@ export default function StockTakeAreaInventoryScreen() {
     }
   }
   function onChange(item: ItemRow, txt: string) {
-    setCounts(prev => ({ ...prev, [item.id]: txt }));
+    setCounts(prev => {
+      const next = { ...prev, [item.id]: txt };
+      countsRef.current = next;
+      return next;
+    });
   }
 
   async function onSubmit() {
+    const counts = countsRef.current;
     const invalid = Object.entries(counts).some(([_, v]) => v !== '' && isNaN(Number(v)));
     if (invalid) { Alert.alert('Check Counts', 'Some counts are not valid numbers.'); return; }
 
@@ -461,6 +469,13 @@ export default function StockTakeAreaInventoryScreen() {
                     keyboardType="numeric"
                     style={styles.qtyInput}
                   />
+                  <TouchableOpacity
+                    style={[styles.smallBtn, { backgroundColor: savedItems[item.id] ? '#34C759' : counts[item.id] ? '#0A84FF' : '#ccc' }]}
+                    onPress={() => saveItemCountWithFeedback(item)}
+                    disabled={!counts[item.id]}
+                  >
+                    <Text style={styles.smallText}>{savedItems[item.id] ? '✓' : 'Save'}</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.smallBtn} onPress={() => openEditMeta(item)}>
                     <Text style={styles.smallText}>Edit</Text>
                   </TouchableOpacity>
