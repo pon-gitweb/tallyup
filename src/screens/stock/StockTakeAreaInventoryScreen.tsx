@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
+import HintBubble from '../../components/hints/HintBubble';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
@@ -1160,6 +1161,19 @@ try {
             )
           ));
         }
+        // Stamp confirmedCount on all items for safe cycle reset
+        try {
+          const { getDocs: _getDocs, writeBatch: _writeBatch } = await import('firebase/firestore');
+          const itemsSnap = await _getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'));
+          const confirmBatch = _writeBatch(db);
+          itemsSnap.forEach(itemDoc => {
+            const d = itemDoc.data();
+            if (typeof d.lastCount === 'number') {
+              confirmBatch.update(itemDoc.ref, { confirmedCount: d.lastCount, confirmedCountAt: serverTimestamp() });
+            }
+          });
+          await confirmBatch.commit();
+        } catch {}
         await updateDoc(
           doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
           { completedAt: serverTimestamp() }
@@ -1174,9 +1188,11 @@ try {
     };
 
     if (missing.length > 0) {
+      const itemList = missing.slice(0, 8).map((it) => `• ${it.name || 'Unnamed'}`).join('\n');
+      const overflow = missing.length > 8 ? `\n...and ${missing.length - 8} more` : '';
       const msg = missing.length === items.length
-        ? 'No items have been counted yet this cycle. Continue and save all as 0?'
-        : `Not all items have a count for this cycle. ${missing.length.toLocaleString()} will be saved as 0. Continue?`;
+        ? `No items have been counted yet this cycle. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
+        : `These ${missing.length.toLocaleString()} item${missing.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`;
       Alert.alert('Incomplete counts', msg, [
         { text: 'Go back', style: 'cancel' },
         { text: 'Continue', onPress: perform }
@@ -1445,6 +1461,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
+      <HintBubble id="stocktake_save_indicator" style={{ marginHorizontal: 12, marginTop: 8 }} />
       <FlatList
         ref={listRef}
         data={filtered}
