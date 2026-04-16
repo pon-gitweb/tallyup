@@ -818,7 +818,7 @@ function StockTakeAreaInventoryScreen() {
     const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
     const doSave = async (finalQty: number) => {
       try {
-        const iRef = doc(db, 'venues', venueId!, 'stocktakeAreas', areaId!, 'items', item.id);
+        const iRef = doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId!, 'items', item.id);
         await setDoc(iRef, { lastCount: finalQty, lastCountAt: serverTimestamp() }, { merge: true });
       } catch (e: any) { Alert.alert('Save failed', e?.message ?? String(e)); }
     };
