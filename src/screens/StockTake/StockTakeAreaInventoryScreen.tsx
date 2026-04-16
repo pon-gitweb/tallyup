@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import HintBubble from '../../components/hints/HintBubble';
 
 type RouteParams = { departmentId: string; areaId: string; areaName?: string };
 type ItemRow = {

@@ -13,7 +13,8 @@ export type HintId =
   | 'products_longpress'
   | 'orders_longpress'
   | 'scale_connect'
-  | 'barcode_scan';
+  | 'barcode_scan'
+  | 'stocktake_save_indicator';
 
 export const HINT_CONTENT: Record<HintId, { icon: string; text: string }> = {
   stocktake_longpress: {
@@ -35,6 +36,10 @@ export const HINT_CONTENT: Record<HintId, { icon: string; text: string }> = {
   barcode_scan: {
     icon: '📷',
     text: 'Tap the scan button to find products by barcode instantly',
+  },
+  stocktake_save_indicator: {
+    icon: '💚',
+    text: 'The green indicator means your count is saved. Tap a count again to update it or add to it.',
   },
 };
 
