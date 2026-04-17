@@ -705,7 +705,8 @@ function StockTakeAreaInventoryScreen() {
     return () => unsub && unsub();
   }, [venueId, uid]);
 
-  const startedAtMs = areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null);
+  const [localStartedAtMs, setLocalStartedAtMs] = React.useState<number|null>(null);
+  const startedAtMs = localStartedAtMs ?? (areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null));
   const areaStarted = !!startedAtMs;
 
   const countedInThisCycle = (it: Item): boolean => {
@@ -784,7 +785,14 @@ function StockTakeAreaInventoryScreen() {
     try {
       const a = await getDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId));
       const data = a.data() as AreaDoc | undefined;
-      if (!data?.startedAt) await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { startedAt: serverTimestamp() });
+      if (!data?.startedAt) {
+        const now = Date.now();
+        setLocalStartedAtMs(now);
+        await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { startedAt: serverTimestamp() });
+      } else {
+        const ms = data.startedAt?.toMillis ? data.startedAt.toMillis() : (data.startedAt?._seconds ? data.startedAt._seconds * 1000 : null);
+        if (ms) setLocalStartedAtMs(ms);
+      }
     } catch {}
   };
 
@@ -821,9 +829,10 @@ function StockTakeAreaInventoryScreen() {
     const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
     const doSave = async (finalQty: number) => {
       try {
+        await ensureAreaStarted();
         const iRef = doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId!, 'items', item.id);
         await setDoc(iRef, { lastCount: finalQty, lastCountAt: serverTimestamp() }, { merge: true });
-      } catch (e: any) { Alert.alert('Save failed', e?.message ?? String(e)); }
+      } catch (e: any) { console.error('[SaveCount] FAILED:', e?.code, e?.message); Alert.alert('Save failed', e?.message ?? String(e)); }
     };
     if (!forceReplace && existingCount !== null && existingCount > 0 && qty > 0) {
       const total = existingCount + qty;
