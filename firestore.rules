@@ -95,10 +95,10 @@ service cloud.firestore {
         && (request.resource.data.cycleResetAt is timestamp)
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
 
-      // Weekly summary email opt-in preference (managers/owners only)
+      // Venue-level preferences (managers/owners only)
       allow update: if hasVenueRole(venueId, ['manager','owner'])
         && request.resource.data.diff(resource.data).changedKeys()
-             .hasOnly(['weeklySummaryEmail', 'timezone']);
+             .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
 
       match /members/{uid} {
         allow read: if isVenueMember(venueId);

@@ -47,14 +47,16 @@ export default function SettingsScreen() {
 
   const [weeklySummaryOn, setWeeklySummaryOn] = useState(false);
   const [venueTimezone, setVenueTimezone] = useState('Pacific/Auckland');
+  const [autoSuggestPar, setAutoSuggestPar] = useState(false);
 
-  // Subscribe to venue doc for weekly summary preferences
+  // Subscribe to venue doc for preferences
   useEffect(() => {
     if (!venueId) return;
     const unsub = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       const d = snap.data() as any;
       setWeeklySummaryOn(d?.weeklySummaryEmail === true);
       setVenueTimezone(d?.timezone || 'Pacific/Auckland');
+      setAutoSuggestPar(d?.autoSuggestPar === true);
     });
     return () => unsub();
   }, [venueId]);
@@ -96,6 +98,18 @@ export default function SettingsScreen() {
         { text: 'Cancel', style: 'cancel' },
       ]
     );
+  };
+
+  const handleToggleAutoSuggestPar = async (value: boolean) => {
+    if (!venueId || !isManager) {
+      Alert.alert('Manager only', 'Only managers and owners can change this setting.');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { autoSuggestPar: value });
+    } catch (e: any) {
+      Alert.alert('Could not update preference', e?.message ?? String(e));
+    }
   };
 
   const { count: pendingCount } = usePendingAdjustmentsCount(venueId);
@@ -263,6 +277,37 @@ export default function SettingsScreen() {
               <Switch
                 value={weeklySummaryOn}
                 onValueChange={handleToggleWeeklySummary}
+                trackColor={{ false: themeColours.border, true: themeColours.primary }}
+                thumbColor="white"
+                ios_backgroundColor={themeColours.border}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* Auto-suggest PAR toggle — managers/owners only */}
+        {isManager && (
+          <View style={styles.row}>
+            <View style={[styles.btn, {
+              backgroundColor: themeColours.surface,
+              borderWidth: 1,
+              borderColor: themeColours.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 10,
+            }]}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Auto-suggest PAR after each cycle</Text>
+                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {autoSuggestPar
+                    ? 'Enabled — PAR review shown after each stocktake'
+                    : 'Disabled — turn on to review PAR levels post-cycle'}
+                </Text>
+              </View>
+              <Switch
+                value={autoSuggestPar}
+                onValueChange={handleToggleAutoSuggestPar}
                 trackColor={{ false: themeColours.border, true: themeColours.primary }}
                 thumbColor="white"
                 ios_backgroundColor={themeColours.border}
