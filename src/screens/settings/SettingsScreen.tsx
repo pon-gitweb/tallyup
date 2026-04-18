@@ -29,6 +29,7 @@ type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
   const themeColours = useColours();
+  const styles = makeStyles(themeColours);
   const onShare = React.useCallback(async () => {
     try {
       await Share.share({
@@ -200,10 +201,10 @@ export default function SettingsScreen() {
         {/* Adjustments button (badge if manager/owner and count>0) */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#6A1B9A' }]}
+            style={[styles.btn, { backgroundColor: themeColours.primary }]}
             onPress={() => nav.navigate('Adjustments')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Adjustments</Text>
+            <Text style={styles.btnText}>Adjustments</Text>
             {isManager && pendingCount > 0 ? (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{pendingCount > 99 ? '99+' : pendingCount}</Text>
@@ -215,20 +216,20 @@ export default function SettingsScreen() {
         {/* AI Usage button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#6D28D9' }]}
+            style={[styles.btn, { backgroundColor: themeColours.primary }]}
             onPress={() => nav.navigate('AiUsage')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>AI Usage</Text>
+            <Text style={styles.btnText}>AI Usage</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Operations</Text></View>
         {/* Report Preferences button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            style={styles.btn}
             onPress={() => nav.navigate('ReportPreferences')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Report Preferences</Text>
+            <Text style={styles.btnText}>Report Preferences</Text>
           </TouchableOpacity>
         </View>
 
@@ -236,22 +237,24 @@ export default function SettingsScreen() {
         {isManager && (
           <View style={styles.row}>
             <View style={[styles.btn, {
-              backgroundColor: '#111827',
+              backgroundColor: themeColours.surface,
+              borderWidth: 1,
+              borderColor: themeColours.border,
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
               paddingVertical: 10,
             }]}>
               <View style={{ flex: 1, marginRight: 12 }}>
-                <Text style={{ color: 'white', fontWeight: '800' }}>Weekly Summary Email</Text>
-                <Text style={{ color: '#94A3B8', fontSize: 12, marginTop: 2 }}>
+                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Weekly Summary Email</Text>
+                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
                   {weeklySummaryOn
                     ? `Mondays 8am · ${venueTimezone}`
                     : 'Disabled — sends to all managers'}
                 </Text>
                 {weeklySummaryOn && (
                   <TouchableOpacity onPress={handleChangeTimezone} style={{ marginTop: 4 }}>
-                    <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700' }}>
+                    <Text style={{ color: themeColours.primary, fontSize: 12, fontWeight: '700' }}>
                       Change timezone
                     </Text>
                   </TouchableOpacity>
@@ -260,9 +263,9 @@ export default function SettingsScreen() {
               <Switch
                 value={weeklySummaryOn}
                 onValueChange={handleToggleWeeklySummary}
-                trackColor={{ false: '#374151', true: '#0A84FF' }}
+                trackColor={{ false: themeColours.border, true: themeColours.primary }}
                 thumbColor="white"
-                ios_backgroundColor="#374151"
+                ios_backgroundColor={themeColours.border}
               />
             </View>
           </View>
@@ -272,39 +275,39 @@ export default function SettingsScreen() {
         {/* Xero button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#13B5EA' }]}
+            style={styles.btn}
             onPress={() => nav.navigate('Xero')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Xero Integration</Text>
+            <Text style={styles.btnText}>Xero Integration</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
         {/* Appearance button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: themeColours.primary }]}
+            style={styles.btn}
             onPress={() => nav.navigate('Appearance')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>🎨 Appearance</Text>
+            <Text style={styles.btnText}>🎨 Appearance</Text>
           </TouchableOpacity>
         </View>
         {/* Setup Guide button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#1D4ED8' }]}
+            style={styles.btn}
             onPress={() => nav.navigate('SetupGuide')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Setup Guide</Text>
+            <Text style={styles.btnText}>Setup Guide</Text>
           </TouchableOpacity>
         </View>
         {/* Supplier Portal — only visible when feature flag is on */}
         {FEATURES.SUPPLIER_PORTAL && (
           <View style={styles.row}>
             <TouchableOpacity
-              style={[styles.btn, { backgroundColor: '#065F46' }]}
+              style={[styles.btn, { backgroundColor: themeColours.success }]}
               onPress={() => nav.navigate('SupplierDashboard', { supplierId: 'demo' })}
             >
-              <Text style={{ color: 'white', fontWeight: '800' }}>Supplier Portal</Text>
+              <Text style={styles.btnText}>Supplier Portal</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -312,55 +315,55 @@ export default function SettingsScreen() {
         {/* Pricing button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            style={styles.btn}
             onPress={() => nav.navigate('Pricing')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Pricing & Plans</Text>
+            <Text style={styles.btnText}>Pricing & Plans</Text>
           </TouchableOpacity>
         </View>
         {/* Terms button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#334155' }]}
+            style={[styles.btn, { backgroundColor: themeColours.navy }]}
             onPress={() => nav.navigate('Terms')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Terms of Service</Text>
+            <Text style={styles.btnText}>Terms of Service</Text>
           </TouchableOpacity>
         </View>
         {/* Share button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#0369A1' }]}
+            style={styles.btn}
             onPress={onShare}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Share Hosti-Stock</Text>
+            <Text style={styles.btnText}>Share Hosti-Stock</Text>
           </TouchableOpacity>
         </View>
         {/* Reset Tips button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#F59E0B' }]}
+            style={[styles.btn, { backgroundColor: themeColours.amber }]}
             onPress={() => { HintService.resetAll(); Alert.alert('Tips reset', 'All tips and hints will show again.'); }}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Reset Tips & Hints</Text>
+            <Text style={styles.btnText}>Reset Tips & Hints</Text>
           </TouchableOpacity>
         </View>
         {/* Bluetooth Scale button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#065F46' }]}
+            style={styles.btn}
             onPress={() => nav.navigate('ScaleSettings')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>⚖️ Bluetooth Scale</Text>
+            <Text style={styles.btnText}>⚖️ Bluetooth Scale</Text>
           </TouchableOpacity>
         </View>
         {/* Budget Approvals button */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: '#B91C1C' }]}
+            style={[styles.btn, { backgroundColor: themeColours.danger }]}
             onPress={() => nav.navigate('BudgetApprovalInbox')}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Budget Approvals</Text>
+            <Text style={styles.btnText}>Budget Approvals</Text>
             {isManager && budgetPendingCount > 0 ? (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{budgetPendingCount > 99 ? '99+' : budgetPendingCount}</Text>
@@ -475,101 +478,102 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: '#0F1115' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 },
-  card: { backgroundColor: '#111827', padding: 12, borderRadius: 12, gap: 6 },
-  heading: { color: 'white', fontWeight: '800', marginBottom: 4 },
-  bold: { fontWeight: '800', color: 'white' },
-  sectionHeader: { paddingHorizontal: 4, paddingTop: 16, paddingBottom: 6 },
-  sectionHeaderText: { fontSize: 11, fontWeight: '900', color: '#94A3B8', letterSpacing: 1, textTransform: 'uppercase' },
-  row: { flexDirection: 'row', gap: 10 },
-  btn: {
-    flex: 1,
-    backgroundColor: '#0A84FF',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    position: 'relative',
-  },
-  btnText: { color: 'white', fontWeight: '700', textAlign: 'center' },
-  stubBtn: { backgroundColor: '#E5E7EB' },
-  stubBtnText: { fontWeight: '800', color: '#111827', textAlign: 'center' },
-  aboutBtn: { backgroundColor: '#334155' },
-  signOut: {
-    marginTop: 'auto',
-    backgroundColor: '#FF3B30',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  signOutText: { color: 'white', fontWeight: '800' },
-  badge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#EF4444',
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 6,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'white',
-  },
-  badgeText: { color: 'white', fontSize: 12, fontWeight: '800' },
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: c.background },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    title: { color: c.text, fontSize: 22, fontWeight: '800', marginBottom: 4 },
+    card: { backgroundColor: c.surface, padding: 12, borderRadius: 12, gap: 6, borderWidth: 1, borderColor: c.border },
+    heading: { color: c.text, fontWeight: '800', marginBottom: 4 },
+    bold: { fontWeight: '800', color: c.text },
+    sectionHeader: { paddingHorizontal: 4, paddingTop: 16, paddingBottom: 6 },
+    sectionHeaderText: { fontSize: 11, fontWeight: '900', color: c.textSecondary, letterSpacing: 1, textTransform: 'uppercase' },
+    row: { flexDirection: 'row', gap: 10 },
+    btn: {
+      flex: 1,
+      backgroundColor: c.primary,
+      paddingVertical: 12,
+      borderRadius: 12,
+      alignItems: 'center',
+      position: 'relative',
+    },
+    btnText: { color: c.primaryText, fontWeight: '700', textAlign: 'center' },
+    stubBtn: { backgroundColor: c.border },
+    stubBtnText: { fontWeight: '800', color: c.text, textAlign: 'center' },
+    aboutBtn: { backgroundColor: c.navy },
+    signOut: {
+      marginTop: 'auto',
+      backgroundColor: c.danger,
+      paddingVertical: 14,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
+    signOutText: { color: c.primaryText, fontWeight: '800' },
+    badge: {
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      backgroundColor: c.danger,
+      minWidth: 20,
+      height: 20,
+      paddingHorizontal: 6,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: c.surface,
+    },
+    badgeText: { color: c.primaryText, fontSize: 12, fontWeight: '800' },
 
-  // About modal styles
-  aboutWrap: { flex: 1, backgroundColor: '#020617' },
-  aboutHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1F2937',
-  },
-  aboutBack: { color: '#38BDF8', fontSize: 16, fontWeight: '700' },
-  aboutTitle: { color: 'white', fontSize: 18, fontWeight: '800' },
-  aboutContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24,
-    gap: 12,
-  },
-  aboutCard: {
-    backgroundColor: '#020617',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 12,
-  },
-  aboutLabel: {
-    color: '#9CA3AF',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  aboutValue: { color: '#E5E7EB', fontSize: 14, fontWeight: '800', marginBottom: 4 },
-  aboutSub: { color: '#9CA3AF', fontSize: 12, lineHeight: 18 },
-  aboutHeading: { color: '#E5E7EB', fontSize: 14, fontWeight: '800', marginBottom: 4 },
-  aboutBullet: { color: '#CBD5F5', fontSize: 12, lineHeight: 18, marginTop: 2 },
-  aboutBody: { color: '#CBD5F5', fontSize: 12, lineHeight: 18, marginTop: 2 },
-  aboutFooter: {
-    padding: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#1F2937',
-  },
-  aboutCloseBtn: {
-    backgroundColor: '#0A84FF',
-    borderRadius: 999,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  aboutCloseText: { color: 'white', fontWeight: '800' },
-});
+    aboutWrap: { flex: 1, backgroundColor: c.navy },
+    aboutHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.border,
+    },
+    aboutBack: { color: c.primaryText, fontSize: 16, fontWeight: '700' },
+    aboutTitle: { color: c.primaryText, fontSize: 18, fontWeight: '800' },
+    aboutContent: {
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 24,
+      gap: 12,
+    },
+    aboutCard: {
+      backgroundColor: 'rgba(255,255,255,0.07)',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+      padding: 12,
+    },
+    aboutLabel: {
+      color: 'rgba(255,255,255,0.5)',
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginBottom: 4,
+    },
+    aboutValue: { color: c.primaryText, fontSize: 14, fontWeight: '800', marginBottom: 4 },
+    aboutSub: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
+    aboutHeading: { color: c.primaryText, fontSize: 14, fontWeight: '800', marginBottom: 4 },
+    aboutBullet: { color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 18, marginTop: 2 },
+    aboutBody: { color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 18, marginTop: 2 },
+    aboutFooter: {
+      padding: 16,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: 'rgba(255,255,255,0.12)',
+    },
+    aboutCloseBtn: {
+      backgroundColor: c.primary,
+      borderRadius: 999,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    aboutCloseText: { color: c.primaryText, fontWeight: '800' },
+  });
+}

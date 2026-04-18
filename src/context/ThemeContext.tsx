@@ -81,6 +81,8 @@ export const DEFAULT_THEME: ThemeConfig = {
   fontScale: 1.0,
   cardRadius: 14,
   density: 'comfortable',
+  fontTitle: 'System',  // → 'PlayfairDisplay_700Bold' once @expo-google-fonts/playfair-display is installed
+  fontBody: 'System',   // → 'Inter_400Regular' once @expo-google-fonts/inter is installed
 };
 
 const CACHE_KEY = '@hosti_theme';

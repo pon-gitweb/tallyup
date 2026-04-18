@@ -127,12 +127,12 @@ function StocktakeSummaryScreen() {
 
       {/* Total stock value */}
       {totalValue > 0 && (
-        <View style={{ backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
-          <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>Total stock value counted</Text>
-          <Text style={{ fontSize: 32, fontWeight: '900', color: '#166534' }}>
+        <View style={{ backgroundColor: themeColours.primaryLight, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
+          <Text style={{ color: themeColours.success, fontWeight: '700', marginBottom: 4 }}>Total stock value counted</Text>
+          <Text style={{ fontSize: 32, fontWeight: '900', color: themeColours.success }}>
             ${totalValue.toFixed(2)}
           </Text>
-          <Text style={{ color: '#166534', fontSize: 12, marginTop: 4 }}>Based on cost prices in your product list</Text>
+          <Text style={{ color: themeColours.success, fontSize: 12, marginTop: 4 }}>Based on cost prices in your product list</Text>
         </View>
       )}
 

@@ -27,29 +27,26 @@ export type BrandPalette = {
 };
 
 export const colors: BrandPalette = {
-  // From MVP: navy splash background #0B132B
-  primary: '#0B132B',
+  primary: '#0B132B',        // Navy — headings, nav, body text
   primaryTextOn: '#FFFFFF',
 
-  // Accent: iOS blue-ish used in screens
-  accent: '#0A84FF',
+  accent: '#1b4f72',         // Teal — single action colour (buttons, links)
   accentTextOn: '#FFFFFF',
 
-  success: '#2E7D32',
+  success: '#16A34A',
   successTextOn: '#FFFFFF',
 
-  warning: '#FF6F00',
-  warningTextOn: '#000000',
+  warning: '#c47b2b',        // Amber — required fields and AI nudges only
+  warningTextOn: '#FFFFFF',
 
-  danger: '#D32F2F',
+  danger: '#DC2626',
   dangerTextOn: '#FFFFFF',
 
-  // Neutrals aligned with current screens
-  bg: '#FFFFFF',
-  surface: '#F7F7FA',
-  border: '#E5E7EB',
-  text: '#111827',
-  textMuted: '#6B7280',
+  bg: '#f5f3ee',             // Cream — app background
+  surface: '#faf9f6',        // Warm white — cards and sheets
+  border: '#dcd9d2',         // Warm grey border
+  text: '#0B132B',           // Navy — headings and body
+  textMuted: '#5c6b7a',      // Muted navy-grey
 };
 
 export const spacing = {

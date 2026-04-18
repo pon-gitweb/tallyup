@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { createVenueOwnedByCurrentUser } from '../../services/venues';
+import { useColours } from '../../context/ThemeContext';
 
 export default function RegisterScreen() {
   const auth = getAuth();
+  const colours = useColours();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
@@ -27,20 +29,24 @@ export default function RegisterScreen() {
 
     setBusy(true);
     try {
-      // 1) Create the user
       await createUserWithEmailAndPassword(auth, em, pw);
-
-      // 2) Immediately create & attach the venue (service returns the venueId as a string)
       const venueId = await createVenueOwnedByCurrentUser(vn);
-
-      // 3) Done. Providers will see users/{uid}.venueId and route to Dashboard.
-      Alert.alert('Welcome', `Your venue “${vn}” is ready (id: ${venueId}).`, [{ text: 'OK' }]);
-    } catch (e:any) {
+      Alert.alert('Welcome', `Your venue "${vn}" is ready (id: ${venueId}).`, [{ text: 'OK' }]);
+    } catch (e: any) {
       Alert.alert('Registration failed', e?.message ?? 'Unknown error');
     } finally {
       setBusy(false);
     }
   };
+
+  const S = StyleSheet.create({
+    container: { flex: 1, padding: 20, backgroundColor: colours.background, justifyContent: 'center' },
+    title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center', color: colours.text },
+    input: { borderWidth: 1, borderColor: colours.border, borderRadius: 10, padding: 12, marginBottom: 10, backgroundColor: colours.surface, color: colours.text },
+    primary: { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
+    primaryText: { color: colours.primaryText, fontWeight: '700' },
+    disabled: { opacity: 0.6 },
+  });
 
   return (
     <View style={S.container}>
@@ -49,6 +55,7 @@ export default function RegisterScreen() {
       <TextInput
         style={S.input}
         placeholder="Email"
+        placeholderTextColor={colours.textSecondary}
         autoCapitalize="none"
         keyboardType="email-address"
         value={email}
@@ -58,6 +65,7 @@ export default function RegisterScreen() {
       <TextInput
         style={S.input}
         placeholder="Password"
+        placeholderTextColor={colours.textSecondary}
         secureTextEntry
         value={pass}
         onChangeText={setPass}
@@ -66,22 +74,14 @@ export default function RegisterScreen() {
       <TextInput
         style={S.input}
         placeholder="Venue name (e.g., Riverside Hotel)"
+        placeholderTextColor={colours.textSecondary}
         value={venueName}
         onChangeText={setVenueName}
       />
 
       <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={onCreate} disabled={busy}>
-        {busy ? <ActivityIndicator /> : <Text style={S.primaryText}>Create Account & Venue</Text>}
+        {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Create Account & Venue</Text>}
       </TouchableOpacity>
     </View>
   );
 }
-
-const S = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 10, backgroundColor: '#fff' },
-  primary: { backgroundColor: '#0A84FF', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
-  primaryText: { color: '#fff', fontWeight: '700' },
-  disabled: { opacity: 0.6 },
-});

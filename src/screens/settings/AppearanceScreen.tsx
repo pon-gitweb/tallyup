@@ -107,7 +107,7 @@ function AppearanceScreen() {
                 <Text style={{ fontWeight: '800', color: colours.accent }}>Change logo</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={onRemoveLogo}
-                style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#FEF2F2', alignItems: 'center' }}>
+                style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: colours.surface, borderWidth: 1, borderColor: colours.error, alignItems: 'center' }}>
                 <Text style={{ fontWeight: '800', color: colours.error }}>Remove</Text>
               </TouchableOpacity>
             </View>
@@ -138,7 +138,7 @@ function AppearanceScreen() {
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 12,
                 padding: 12, borderRadius: 12,
-                backgroundColor: colours.primary === preset.colours.primary ? colours.primaryLight : '#F9FAFB',
+                backgroundColor: colours.primary === preset.colours.primary ? colours.primaryLight : colours.surface,
                 borderWidth: 1,
                 borderColor: colours.primary === preset.colours.primary ? colours.accent : colours.border,
               }}>
@@ -183,7 +183,7 @@ function AppearanceScreen() {
             <TouchableOpacity key={d} onPress={() => updateTheme({ density: d })}
               style={{
                 flex: 1, padding: 10, borderRadius: 10, alignItems: 'center',
-                backgroundColor: theme.density === d ? colours.primary : '#F9FAFB',
+                backgroundColor: theme.density === d ? colours.primary : colours.surface,
                 borderWidth: 1, borderColor: theme.density === d ? colours.primary : colours.border,
               }}>
               <Text style={{ fontWeight: '800', color: theme.density === d ? colours.primaryText : colours.textSecondary, fontSize: 12, textTransform: 'capitalize' }}>
