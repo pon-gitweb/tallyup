@@ -9,11 +9,12 @@ import {
   Alert,
   Modal,
   ScrollView,
+  Switch,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
@@ -42,6 +43,60 @@ export default function SettingsScreen() {
   const venueId = useVenueId();
 
   const [isManager, setIsManager] = useState(false);
+
+  const [weeklySummaryOn, setWeeklySummaryOn] = useState(false);
+  const [venueTimezone, setVenueTimezone] = useState('Pacific/Auckland');
+
+  // Subscribe to venue doc for weekly summary preferences
+  useEffect(() => {
+    if (!venueId) return;
+    const unsub = onSnapshot(doc(db, 'venues', venueId), (snap) => {
+      const d = snap.data() as any;
+      setWeeklySummaryOn(d?.weeklySummaryEmail === true);
+      setVenueTimezone(d?.timezone || 'Pacific/Auckland');
+    });
+    return () => unsub();
+  }, [venueId]);
+
+  const handleToggleWeeklySummary = async (value: boolean) => {
+    if (!venueId) return;
+    if (!isManager) {
+      Alert.alert('Manager only', 'Only managers and owners can change email preferences.');
+      return;
+    }
+    try {
+      const update: Record<string, any> = { weeklySummaryEmail: value };
+      // Ensure timezone is always set when enabling for the first time
+      if (value) update.timezone = venueTimezone || 'Pacific/Auckland';
+      await updateDoc(doc(db, 'venues', venueId), update);
+    } catch (e: any) {
+      Alert.alert('Could not update preference', e?.message ?? String(e));
+    }
+  };
+
+  const handleChangeTimezone = () => {
+    if (!venueId || !isManager) return;
+    const save = async (tz: string) => {
+      try {
+        await updateDoc(doc(db, 'venues', venueId), { timezone: tz });
+      } catch (e: any) {
+        Alert.alert('Could not save timezone', e?.message ?? String(e));
+      }
+    };
+    Alert.alert(
+      'Select Timezone',
+      'Choose your venue timezone for the Monday 8am email.',
+      [
+        { text: 'NZ — Auckland',            onPress: () => save('Pacific/Auckland') },
+        { text: 'NZ — Chatham Islands',     onPress: () => save('Pacific/Chatham') },
+        { text: 'AU — Sydney / Melbourne',  onPress: () => save('Australia/Sydney') },
+        { text: 'AU — Brisbane',            onPress: () => save('Australia/Brisbane') },
+        { text: 'AU — Perth',               onPress: () => save('Australia/Perth') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   const { count: pendingCount } = usePendingAdjustmentsCount(venueId);
   const { count: budgetPendingCount } = usePendingBudgetApprovalsCount(venueId);
 
@@ -176,6 +231,43 @@ export default function SettingsScreen() {
             <Text style={{ color: 'white', fontWeight: '800' }}>Report Preferences</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Weekly Summary Email toggle — managers/owners only */}
+        {isManager && (
+          <View style={styles.row}>
+            <View style={[styles.btn, {
+              backgroundColor: '#111827',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 10,
+            }]}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={{ color: 'white', fontWeight: '800' }}>Weekly Summary Email</Text>
+                <Text style={{ color: '#94A3B8', fontSize: 12, marginTop: 2 }}>
+                  {weeklySummaryOn
+                    ? `Mondays 8am · ${venueTimezone}`
+                    : 'Disabled — sends to all managers'}
+                </Text>
+                {weeklySummaryOn && (
+                  <TouchableOpacity onPress={handleChangeTimezone} style={{ marginTop: 4 }}>
+                    <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700' }}>
+                      Change timezone
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Switch
+                value={weeklySummaryOn}
+                onValueChange={handleToggleWeeklySummary}
+                trackColor={{ false: '#374151', true: '#0A84FF' }}
+                thumbColor="white"
+                ios_backgroundColor="#374151"
+              />
+            </View>
+          </View>
+        )}
+
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Integrations</Text></View>
         {/* Xero button */}
         <View style={styles.row}>
