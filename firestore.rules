@@ -230,7 +230,7 @@ service cloud.firestore {
             }
             function isMetaUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-                'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+                'name','unit','supplierId','costPrice','salePrice','parLevel','flagRecount','updatedAt'
               ]) && request.resource.data.updatedAt is timestamp;
             }
             function isInductedCreate() {
@@ -402,7 +402,7 @@ service cloud.firestore {
           }
           function isMetaUpdate() {
             return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-              'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+              'name','unit','supplierId','costPrice','salePrice','parLevel','flagRecount','updatedAt'
             ]) && request.resource.data.updatedAt is timestamp;
           }
           function isInductedCreate() {

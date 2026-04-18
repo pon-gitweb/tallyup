@@ -782,6 +782,7 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const ensureAreaStarted = async () => {
+    if (startedAtMs) return;
     try {
       const a = await getDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId));
       const data = a.data() as AreaDoc | undefined;
@@ -1105,13 +1106,15 @@ try {
       // Calculate total value
       let totalValue = 0;
       try {
-        const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
-        itemsSnap.forEach(d => {
-          const data = d.data();
-          const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
-          const cost = typeof data.costPrice === 'number' ? data.costPrice : 0;
-          totalValue += count * cost;
-        });
+        for (const areaDoc of snap.docs) {
+          const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaDoc.id, 'items'));
+          itemsSnap.forEach(d => {
+            const data = d.data();
+            const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
+            const cost = typeof data.costPrice === 'number' ? data.costPrice : 0;
+            totalValue += count * cost;
+          });
+        }
       } catch {}
       const counted = items.filter(i => i.lastCountAt);
       const missed = items.filter(i => !i.lastCountAt);
