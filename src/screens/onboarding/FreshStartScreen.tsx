@@ -58,7 +58,7 @@ export default function FreshStartScreen() {
           {[
             'What you actually have — not what you think you have',
             'Which areas are running hot (overstocked and tying up cash)',
-            'What's about to run out before your next order arrives',
+            "What's about to run out before your next order arrives",
             'Your baseline for every report, variance, and reorder from now on',
           ].map((item, i) => (
             <View key={i} style={S.revealRow}>

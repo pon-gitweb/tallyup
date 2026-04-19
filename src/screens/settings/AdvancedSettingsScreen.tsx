@@ -1,9 +1,10 @@
 // @ts-nocheck
 import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View, StyleSheet } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View, StyleSheet, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { Sentry } from '../../services/crashReporting';
 
 function AdvancedSettingsScreen() {
   const nav = useNavigation<any>();
@@ -26,6 +27,40 @@ function AdvancedSettingsScreen() {
       {btn('Report Preferences', 'ReportPreferences', '#0369A1')}
       <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 8, letterSpacing: 1 }}>TOOLS</Text>
       {btn('Budget Approvals', 'BudgetApprovalInbox', '#B45309')}
+      {__DEV__ && (
+        <>
+          <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 8, letterSpacing: 1 }}>DEV — SENTRY TEST</Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#DC2626', padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
+            onPress={() => {
+              Alert.alert(
+                'Send test error to Sentry?',
+                'This captures a test exception in the development environment.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Send',
+                    onPress: () => {
+                      Sentry.captureException(new Error('TallyUp dev test — Sentry is working'));
+                      Alert.alert('Sent', 'Check your Sentry dashboard under the development environment.');
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Test Sentry capture</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ backgroundColor: '#7F1D1D', padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
+            onPress={() => {
+              throw new Error('TallyUp dev test — forced crash via error boundary');
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Force crash (error boundary test)</Text>
+          </TouchableOpacity>
+        </>
+      )}
     </ScrollView>
   );
 }
