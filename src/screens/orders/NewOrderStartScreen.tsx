@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 
 type SupplierRow = {
   id: string;
@@ -14,6 +15,7 @@ type SupplierRow = {
 
 export default function NewOrderStartScreen() {
   const venueId = useVenueId();
+  const colours = useColours();
   const nav = useNavigation<any>();
   const [loading, setLoading] = useState(true);
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);

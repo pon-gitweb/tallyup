@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { db } from '../../services/firebase';
 import {
   doc, getDoc, getDocs, collection, addDoc, writeBatch, serverTimestamp, setDoc, updateDoc,
@@ -34,6 +35,7 @@ export default function InvoiceScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const venueId = useVenueId();
+  const colours = useColours();
   const orderId: string = route.params?.orderId;
 
   const [loading, setLoading] = useState(true);

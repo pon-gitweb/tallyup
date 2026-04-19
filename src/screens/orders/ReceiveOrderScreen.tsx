@@ -3,10 +3,12 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TextInput, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { getOrderWithLines, calcTotal, markOrderReceived } from '../../services/orders';
 
 export default function ReceiveOrderScreen() {
   const venueId = useVenueId();
+  const colours = useColours();
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const orderId: string = route.params?.orderId;

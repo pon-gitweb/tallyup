@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import { useColours } from '../../context/ThemeContext';
 
 type Tab = 'Manual' | 'CSV' | 'PDF' | 'Scan';
 
@@ -35,6 +36,7 @@ export default function ReceiveOptionsModal({
   onFileSelected,
   onManualSelected,
 }: Props) {
+  const colours = useColours();
   const [tab, setTab] = useState<Tab>('Manual');
   useEffect(() => {
     if (visible) setTab('Manual');

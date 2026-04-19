@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useColours } from '../../../context/ThemeContext';
 
 export default function ReceiveOptionsModal({
   visible,
@@ -21,6 +22,7 @@ export default function ReceiveOptionsModal({
   onPdfSelected?: () => void;
   onFileSelected?: () => void; // NEW
 }) {
+  const colours = useColours();
   const Item = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <TouchableOpacity style={styles.btn} onPress={onPress}>
       <Text style={styles.btnText}>{label}</Text>

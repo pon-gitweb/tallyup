@@ -14,6 +14,7 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 
 function normalizeDisplayStatus(o:any){
   const s = (o?.status || "draft");
@@ -147,6 +148,7 @@ const STATUS_GROUPS = {
 export default function OrdersScreen(){
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const colours = useColours();
   const db = getFirestore();
 
   const [tab,setTab]=useState<'drafts'|'submitted'|'received'>('drafts');
