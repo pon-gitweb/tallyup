@@ -100,6 +100,15 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
 
+      // Onboarding state (managers/owners complete roads; any member can dismiss)
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['onboardingRoad', 'onboardingCompletedAt',
+                       'onboardingLastStocktakeDate', 'onboardingHasInvoices']);
+      allow update: if isVenueMember(venueId)
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['onboardingDismissedAt']);
+
       match /members/{uid} {
         allow read: if isVenueMember(venueId);
         allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);

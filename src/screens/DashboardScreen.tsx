@@ -15,11 +15,12 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
 import { resetAllDepartmentsStockTake } from '../services/reset';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
+import { updateDoc } from 'firebase/firestore';
 
 export default function DashboardScreen() {
   const nav = useNavigation<any>();
@@ -78,6 +79,8 @@ export default function DashboardScreen() {
   }, [venueId]);
 
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
+  const [onboardingRoad, setOnboardingRoad] = React.useState<string | null | undefined>(undefined);
+  const [onboardingDismissed, setOnboardingDismissed] = React.useState(false);
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
@@ -85,9 +88,19 @@ export default function DashboardScreen() {
       if (snap.exists()) {
         const data = snap.data() as any;
         setStocktakeCount(data?.totalStocktakesCompleted || 0);
+        setOnboardingRoad(data?.onboardingRoad ?? null);
+        setOnboardingDismissed(!!(data?.onboardingDismissedAt));
       }
     }).catch(() => {});
   }, [venueId]);
+
+  async function dismissOnboarding() {
+    setOnboardingDismissed(true);
+    if (venueId) {
+      const db = getFirestore();
+      updateDoc(doc(db, 'venues', venueId), { onboardingDismissedAt: serverTimestamp() }).catch(() => {});
+    }
+  }
 
   const onOpenStockTake = async () => {
     if (busy) return;
@@ -208,6 +221,48 @@ export default function DashboardScreen() {
             </View>
             <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
           </TouchableOpacity>
+        )}
+        {onboardingRoad === null && !onboardingDismissed && (
+          <View style={{
+            marginHorizontal: 12, marginBottom: 12,
+            backgroundColor: '#FFF8F0', borderRadius: 14, padding: 14,
+            borderWidth: 1.5, borderColor: colours.amber,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
+                  Ready to set up your venue?
+                </Text>
+                <Text style={{ fontSize: 13, color: colours.textSecondary, lineHeight: 18, marginBottom: 12 }}>
+                  Two minutes now sets up your stock structure, PAR levels, and suppliers. Pick your path:
+                </Text>
+              </View>
+              <TouchableOpacity onPress={dismissOnboarding} style={{ padding: 4, marginLeft: 8 }}>
+                <Text style={{ fontSize: 18, color: colours.textSecondary }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1, backgroundColor: colours.primary, borderRadius: 999,
+                  paddingVertical: 10, alignItems: 'center',
+                }}
+                onPress={() => nav.navigate('OnboardingFreshStart')}
+              >
+                <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Fresh start</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1, backgroundColor: colours.surface, borderRadius: 999,
+                  paddingVertical: 10, alignItems: 'center',
+                  borderWidth: 1, borderColor: colours.border,
+                }}
+                onPress={() => nav.navigate('OnboardingBringData')}
+              >
+                <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 13 }}>Bring my data</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
         {stocktakeCount > 0 && (

@@ -34,6 +34,9 @@ import ReportPreferencesScreen from '../../screens/settings/ReportPreferencesScr
 import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
 import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImportPreviewScreen';
+import OnboardingRoadScreen from '../../screens/onboarding/OnboardingRoadScreen';
+import FreshStartScreen from '../../screens/onboarding/FreshStartScreen';
+import BringYourDataScreen from '../../screens/onboarding/BringYourDataScreen';
 import { FEATURES } from '../../config/features';
 import StocktakeSummaryScreen from '../../screens/stock/StocktakeSummaryScreen';
 import SupplierDashboardScreen from '../../screens/supplier/SupplierDashboardScreen';
@@ -125,6 +128,9 @@ export default function MainStack() {
       <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
       <Stack.Screen name="InventoryImport" component={InventoryImportScreen} options={{ title: 'Import Inventory' }} />
       <Stack.Screen name="InventoryImportPreview" component={InventoryImportPreviewScreen} options={{ title: 'Review Import' }} />
+      <Stack.Screen name="OnboardingRoad" component={OnboardingRoadScreen} options={{ title: 'Welcome', headerShown: false }} />
+      <Stack.Screen name="OnboardingFreshStart" component={FreshStartScreen} options={{ title: 'Fresh Start' }} />
+      <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       {/* SUPPLIER PORTAL — unlocked when FEATURES.SUPPLIER_PORTAL = true */}
       {FEATURES.SUPPLIER_PORTAL && (
