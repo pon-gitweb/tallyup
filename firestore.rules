@@ -794,6 +794,19 @@ service cloud.firestore {
         allow get, list: if isVenueMember(venueId);
         allow create, update: if isVenueMember(venueId);
       }
+
+      match /importJobs/{jobId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.createdAt is timestamp;
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys()
+               .hasOnly(['status','finishedAt','counts','errors'])
+          && request.resource.data.status in [
+               'processing','completed','completed_with_errors','queued','failed'
+             ];
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
     }
   }
 }

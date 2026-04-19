@@ -33,16 +33,9 @@ export default function CreateVenueScreen() {
       }
 
       // 3) Move them into the new venue dashboard
-      Alert.alert('Venue created', `Welcome to ${trimmed}!`, [
-        {
-          text: 'OK',
-          onPress: () =>
-            nav.reset({
-              index: 0,
-              routes: [{ name: 'ExistingVenueDashboard', params: { venueId } }],
-            }),
-        },
-      ]);
+      // VenueProvider's onSnapshot on users/{uid} picks up the new venueId
+      // and routes the user to the main app automatically.
+      Alert.alert('Venue created', `Welcome to ${trimmed}! Setting things up…`);
     } catch (e: any) {
       Alert.alert('Create failed', e?.message ?? 'Unknown error');
     } finally {

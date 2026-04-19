@@ -16,9 +16,8 @@ export default function CreateVenueDashboard() {
         createdAt: serverTimestamp(),
         config: { openSignup: true }
       });
-      Alert.alert('Venue created', 'You can now open the Existing Venue Dashboard and join it from other accounts.');
-      // Navigate to existing-dashboard flow next (you might save venueId into user profile later)
-      nav.reset({ index: 0, routes: [{ name: 'ExistingVenueDashboard' as never }] });
+      Alert.alert('Venue created', 'Venue is ready. Heading to the dashboard.');
+      nav.reset({ index: 0, routes: [{ name: 'Dashboard' as never }] });
     } catch (e: any) {
       console.warn('[CreateVenueDashboard] create error', e);
       Alert.alert('Failed to create venue', e?.message ?? 'Please try again.');
