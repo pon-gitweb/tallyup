@@ -73,7 +73,7 @@ function XeroScreen() {
 
       {/* Header */}
       <View style={{ backgroundColor: '#13B5EA', borderRadius: 16, padding: 20 }}>
-        <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>Xero</Text>
+        <Text style={{ fontSize: 28, fontWeight: '900', color: themeColours.primaryText }}>Xero</Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 4, fontSize: 14 }}>
           Connect your Xero account to automatically sync purchase orders and invoices.
         </Text>
@@ -157,8 +157,8 @@ function XeroScreen() {
         ) : (
           <TouchableOpacity onPress={onConnect} disabled={busy}
             style={{ backgroundColor: '#13B5EA', borderRadius: 12, padding: 16, alignItems: 'center' }}>
-            {busy ? <ActivityIndicator color="#fff" /> :
-              <Text style={{ fontWeight: '900', color: '#fff', fontSize: 16 }}>Connect to Xero</Text>}
+            {busy ? <ActivityIndicator color={themeColours.primaryText} /> :
+              <Text style={{ fontWeight: '900', color: themeColours.primaryText, fontSize: 16 }}>Connect to Xero</Text>}
           </TouchableOpacity>
         )
       )}

@@ -6,6 +6,7 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import ConfirmedRecipeDetailPanel from './ConfirmedRecipeDetailPanel';
+import { useColours } from '../../context/ThemeContext';
 
 type Filter = 'all' | 'confirmed' | 'drafts';
 
@@ -24,6 +25,8 @@ type Recipe = {
 
 export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter }) {
   const venueId = useVenueId();
+  const colours = useColours();
+  const S = makeStyles(colours);
   const [rows, setRows] = useState<Recipe[]>([]);
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string|null>(null);
@@ -71,7 +74,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
     if (filter !== 'drafts') return; // safety: only allow in Drafts view
     Alert.alert(
       'Confirm recipe?',
-      `Lock “${r.name}” and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
+      `Lock "${r.name}" and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Confirm', style: 'destructive', onPress: async () => {
@@ -163,17 +166,19 @@ function formatMoney(n?: number|null) {
   return `$${v.toFixed(2)}`;
 }
 
-const S = StyleSheet.create({
-  header: { padding:16 },
-  title: { fontSize:18, fontWeight:'900', marginBottom:10 },
-  search: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:42, color:'#111827' },
-  row: { padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, marginTop:10, flexDirection:'row', gap:12 },
-  rowTitle: { fontWeight:'800' },
-  rowSub: { color:'#6B7280', marginTop:2 },
-  rowKpi: { fontWeight:'900' },
-  rowKpiSub: { color:'#6B7280', marginTop:2, fontSize:12 },
-  chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
-  chipText: { fontSize:12, fontWeight:'700', color:'#111' },
-  chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
-  chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor:'#16A34A' },
-});
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    header: { padding:16 },
+    title: { fontSize:18, fontWeight:'900', marginBottom:10 },
+    search: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:42, color:'#111827' },
+    row: { padding:12, borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, marginTop:10, flexDirection:'row', gap:12 },
+    rowTitle: { fontWeight:'800' },
+    rowSub: { color:'#6B7280', marginTop:2 },
+    rowKpi: { fontWeight:'900' },
+    rowKpiSub: { color:'#6B7280', marginTop:2, fontSize:12 },
+    chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
+    chipText: { fontSize:12, fontWeight:'700', color:'#111' },
+    chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
+    chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor: c.success },
+  });
+}

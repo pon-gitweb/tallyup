@@ -164,7 +164,7 @@ function InventoryImportScreen() {
 
       {/* Hero */}
       <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
-        <Text style={{ fontSize: 26, fontWeight: '900', color: '#fff' }}>Import your inventory</Text>
+        <Text style={{ fontSize: 26, fontWeight: '900', color: themeColours.primaryText }}>Import your inventory</Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 15 }}>
           Upload your existing stocktake sheet and we'll set everything up for you — products, areas, and categories.
         </Text>
@@ -207,8 +207,8 @@ function InventoryImportScreen() {
           'Start your first stocktake straight away',
         ].map((step, i) => (
           <View key={i} style={{ flexDirection: 'row', gap: 10, marginBottom: i < 3 ? 6 : 0 }}>
-            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#16A34A', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900' }}>{i + 1}</Text>
+            <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: themeColours.success, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: themeColours.primaryText, fontSize: 11, fontWeight: '900' }}>{i + 1}</Text>
             </View>
             <Text style={{ color: '#166534', fontSize: 13, flex: 1 }}>{step}</Text>
           </View>
