@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
 import OfflineBanner from '../components/OfflineBanner';
 import { useTheme, useColours } from '../context/ThemeContext';
@@ -21,6 +22,37 @@ import { resetAllDepartmentsStockTake } from '../services/reset';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
 import { updateDoc } from 'firebase/firestore';
+
+const NUDGE_KEYS = {
+  noProducts:   'tallyup_nudge_no_products_v1',
+  noSuppliers:  'tallyup_nudge_no_suppliers_v1',
+  unassigned:   'tallyup_nudge_unassigned_v1',
+  noStocktake:  'tallyup_nudge_no_stocktake_v1',
+};
+
+function ContextNudge({ message, cta, onCta, onDismiss, c }) {
+  return (
+    <View style={{
+      marginHorizontal: 12, marginBottom: 8,
+      backgroundColor: c.surface, borderRadius: 12, padding: 12,
+      borderWidth: 1, borderColor: c.border,
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+    }}>
+      <Text style={{ flex: 1, fontSize: 13, color: c.navy, lineHeight: 18 }}>{message}</Text>
+      {cta && onCta && (
+        <TouchableOpacity
+          onPress={onCta}
+          style={{ backgroundColor: c.primary, borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 }}
+        >
+          <Text style={{ color: c.primaryText, fontWeight: '700', fontSize: 12 }}>{cta}</Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity onPress={onDismiss} style={{ padding: 4 }}>
+        <Text style={{ fontSize: 16, color: c.textSecondary }}>×</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
 
 export default function DashboardScreen() {
   const nav = useNavigation<any>();
@@ -93,6 +125,49 @@ export default function DashboardScreen() {
       }
     }).catch(() => {});
   }, [venueId]);
+
+  // ── Contextual nudge data ──────────────────────────────────────────────────
+  const [productCount, setProductCount] = React.useState<number | null>(null);
+  const [unassignedCount, setUnassignedCount] = React.useState(0);
+  const [supplierCount, setSupplierCount] = React.useState<number | null>(null);
+  const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+      let unassigned = 0;
+      snap.forEach(d => {
+        const data = d.data();
+        if (!data.supplierId || data.supplierId === 'unassigned') unassigned++;
+      });
+      setProductCount(snap.size);
+      setUnassignedCount(unassigned);
+    }).catch(() => {});
+    getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
+      let count = 0;
+      snap.forEach(d => { if (!d.data().isHoldingSupplier) count++; });
+      setSupplierCount(count);
+    }).catch(() => {});
+  }, [venueId]);
+
+  React.useEffect(() => {
+    Promise.all(
+      Object.entries(NUDGE_KEYS).map(([k, sk]) =>
+        AsyncStorage.getItem(sk).then(v => [k, v !== null])
+      )
+    ).then(pairs => {
+      const m: Record<string, boolean> = {};
+      pairs.forEach(([k, v]) => { m[k as string] = v as boolean; });
+      setNudgeDismissed(m);
+    }).catch(() => {});
+  }, []);
+
+  function dismissNudge(key: string) {
+    setNudgeDismissed(prev => ({ ...prev, [key]: true }));
+    AsyncStorage.setItem(NUDGE_KEYS[key], '1').catch(() => {});
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   async function dismissOnboarding() {
     setOnboardingDismissed(true);
@@ -264,6 +339,44 @@ export default function DashboardScreen() {
             </View>
           </View>
         )}
+        {/* ── Graduated contextual nudges ──────────────────────────────── */}
+        {productCount === 0 && !nudgeDismissed.noProducts && (
+          <ContextNudge
+            c={colours}
+            message="Add products to run your first stocktake and unlock AI reorder suggestions."
+            cta="Add products →"
+            onCta={() => nav.navigate('Products')}
+            onDismiss={() => dismissNudge('noProducts')}
+          />
+        )}
+        {productCount > 0 && supplierCount === 0 && !nudgeDismissed.noSuppliers && (
+          <ContextNudge
+            c={colours}
+            message="Add a supplier to unlock ordering, AI reorder suggestions, and invoice matching."
+            cta="Add supplier →"
+            onCta={() => nav.navigate('StockControl')}
+            onDismiss={() => dismissNudge('noSuppliers')}
+          />
+        )}
+        {productCount > 0 && supplierCount > 0 && unassignedCount > 0 && !nudgeDismissed.unassigned && (
+          <ContextNudge
+            c={colours}
+            message={`${unassignedCount} product${unassignedCount !== 1 ? 's' : ''} ${unassignedCount !== 1 ? 'have' : 'has'} no supplier — assign one to improve ordering and variance accuracy.`}
+            cta="Review products →"
+            onCta={() => nav.navigate('Products')}
+            onDismiss={() => dismissNudge('unassigned')}
+          />
+        )}
+        {productCount > 0 && stocktakeCount === 0 && !nudgeDismissed.noStocktake && (
+          <ContextNudge
+            c={colours}
+            message="Complete your first stocktake to unlock variance reports, usage trends, and smart reorder levels."
+            cta="Start stocktake →"
+            onCta={() => nav.navigate('DepartmentSelection')}
+            onDismiss={() => dismissNudge('noStocktake')}
+          />
+        )}
+        {/* ─────────────────────────────────────────────────────────────── */}
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
         {stocktakeCount > 0 && (
           <View style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: colours.primaryLight, borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colours.border }}>
