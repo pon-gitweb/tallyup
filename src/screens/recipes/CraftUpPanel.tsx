@@ -64,7 +64,7 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const tip = useMemo(
-    () => 'Craft-It: choose type and mode, we'll handle the rest. Name + ingredients are set in the draft screen.',
+    () => "Craft-It: choose type and mode, we'll handle the rest. Name + ingredients are set in the draft screen.",
     []
   );
   const dataPath = `venues/${venueId || '…'}/recipes/<recipeId> · status: draft | confirmed`;
