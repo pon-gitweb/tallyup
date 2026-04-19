@@ -13,7 +13,7 @@ function AdvancedSettingsScreen() {
     <TouchableOpacity
       style={[{ backgroundColor: colour || themeColours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }]}
       onPress={() => nav.navigate(route as never)}>
-      <Text style={{ color: '#fff', fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: themeColours.primaryText, fontWeight: '800' }}>{label}</Text>
     </TouchableOpacity>
   );
   return (
@@ -31,7 +31,7 @@ function AdvancedSettingsScreen() {
         <>
           <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 8, letterSpacing: 1 }}>DEV — SENTRY TEST</Text>
           <TouchableOpacity
-            style={{ backgroundColor: '#DC2626', padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
+            style={{ backgroundColor: themeColours.error, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
             onPress={() => {
               Alert.alert(
                 'Send test error to Sentry?',
@@ -49,7 +49,7 @@ function AdvancedSettingsScreen() {
               );
             }}
           >
-            <Text style={{ color: '#fff', fontWeight: '800' }}>Test Sentry capture</Text>
+            <Text style={{ color: themeColours.primaryText, fontWeight: '800' }}>Test Sentry capture</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={{ backgroundColor: '#7F1D1D', padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
@@ -57,7 +57,7 @@ function AdvancedSettingsScreen() {
               throw new Error('TallyUp dev test — forced crash via error boundary');
             }}
           >
-            <Text style={{ color: '#fff', fontWeight: '800' }}>Force crash (error boundary test)</Text>
+            <Text style={{ color: themeColours.primaryText, fontWeight: '800' }}>Force crash (error boundary test)</Text>
           </TouchableOpacity>
         </>
       )}

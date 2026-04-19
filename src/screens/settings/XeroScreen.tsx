@@ -90,7 +90,7 @@ function XeroScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={{
               width: 12, height: 12, borderRadius: 6,
-              backgroundColor: isConnected ? '#16A34A' : '#9CA3AF',
+              backgroundColor: isConnected ? themeColours.success : '#9CA3AF',
             }} />
             <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>
               {isConnected ? 'Connected' : 'Not connected'}
@@ -128,7 +128,7 @@ function XeroScreen() {
               paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
               alignSelf: 'center',
             }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: isConnected ? '#16A34A' : '#9CA3AF' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: isConnected ? themeColours.success : '#9CA3AF' }}>
                 {isConnected ? 'Active' : 'Pending'}
               </Text>
             </View>
