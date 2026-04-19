@@ -14,6 +14,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { analyzePhotoForCount, recordPhotoCountCorrection } from '../../../services/vision/photoCount';
 import { useVenueId } from '../../../context/VenueProvider';
+import { useColours } from '../../../context/ThemeContext';
 
 type Props = {
   visible: boolean;
@@ -28,6 +29,7 @@ type Stage = 'camera' | 'analysing' | 'confirm' | 'error';
 
 export default function PhotoCountModal({ visible, onClose, productName, productId, unit, onConfirm }: Props) {
   const venueId = useVenueId();
+  const colours = useColours();
   const [stage, setStage] = useState<Stage>('camera');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -97,7 +99,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
     onClose();
   }, [userCount, result, venueId, productId, productName, imageUri, onConfirm, reset, onClose]);
 
-  const confidenceColor = (c: number) => c >= 0.8 ? '#16A34A' : c >= 0.5 ? '#D97706' : '#DC2626';
+  const confidenceColor = (c: number) => c >= 0.8 ? colours.success : c >= 0.5 ? '#D97706' : colours.error;
   const confidenceLabel = (c: number) => c >= 0.8 ? 'High confidence' : c >= 0.5 ? 'Medium confidence' : 'Low confidence — please verify';
 
   return (

@@ -42,9 +42,10 @@ type AreaRow = {
 };
 
 function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
+  const c = useColours();
   const fillCount = status === 'done' ? 3 : status === 'inprog' ? 1 : 0;
   const star = (filled: boolean, key: number) =>
-    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? '#c47b2b' : '#CBD5E1'} />;
+    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? c.amber : '#CBD5E1'} />;
   return (
     <View style={{ flexDirection: 'row', gap: 2 }}>
       {star(fillCount >= 1, 1)}
