@@ -7,6 +7,7 @@ import {
 import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import {
   approveBudgetOverride, rejectBudgetOverride, BudgetOverrideRequest
@@ -14,6 +15,7 @@ import {
 
 function BudgetApprovalInboxScreen() {
   const venueId = useVenueId();
+  const colours = useColours();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BudgetOverrideRequest[]>([]);
   const [rejectFor, setRejectFor] = useState<BudgetOverrideRequest | null>(null);
@@ -134,9 +136,9 @@ function BudgetApprovalInboxScreen() {
               <TouchableOpacity
                 disabled={busy}
                 onPress={() => onApprove(req)}
-                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#16A34A', alignItems: 'center' }}
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: colours.success, alignItems: 'center' }}
               >
-                <Text style={{ fontWeight: '800', color: '#fff' }}>Approve</Text>
+                <Text style={{ fontWeight: '800', color: colours.primaryText }}>Approve</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -168,9 +170,9 @@ function BudgetApprovalInboxScreen() {
               <TouchableOpacity
                 disabled={busy}
                 onPress={onReject}
-                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#DC2626', alignItems: 'center' }}
+                style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: colours.error, alignItems: 'center' }}
               >
-                <Text style={{ fontWeight: '800', color: '#fff' }}>{busy ? 'Rejecting...' : 'Reject'}</Text>
+                <Text style={{ fontWeight: '800', color: colours.primaryText }}>{busy ? 'Rejecting...' : 'Reject'}</Text>
               </TouchableOpacity>
             </View>
           </View>
