@@ -233,7 +233,7 @@ export default function DashboardScreen() {
         <OfflineBanner />
         {lastArea && (
           <TouchableOpacity
-            onPress={() => nav.navigate('StockTakeAreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+            onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
             style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: colours.navy, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <Text style={{ fontSize: 20 }}>▶️</Text>
             <View style={{ flex: 1 }}>
@@ -354,7 +354,7 @@ export default function DashboardScreen() {
             c={colours}
             message="Add a supplier to unlock ordering, AI reorder suggestions, and invoice matching."
             cta="Add supplier →"
-            onCta={() => nav.navigate('StockControl')}
+            onCta={() => nav.navigate('Suppliers')}
             onDismiss={() => dismissNudge('noSuppliers')}
           />
         )}

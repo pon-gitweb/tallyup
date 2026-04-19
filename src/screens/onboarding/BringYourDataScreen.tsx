@@ -11,12 +11,18 @@ import {
 } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
+import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { parseCsv, toObjects } from '../../services/imports/csv';
+import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
+
+const API_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
 type Step = 'intro' | 'products' | 'invoices' | 'confirm';
+type InvoiceType = 'csv' | 'pdf' | 'photo' | null;
 
 function slugId(s: string) {
   return String(s || '')
@@ -36,10 +42,19 @@ export default function BringYourDataScreen() {
   const [busy, setBusy] = useState(false);
 
   const [lastStocktakeDate, setLastStocktakeDate] = useState('');
+
+  // Products
   const [productsCsv, setProductsCsv] = useState<string | null>(null);
   const [productsFileName, setProductsFileName] = useState<string | null>(null);
   const [productsCount, setProductsCount] = useState(0);
+
+  // Invoices
   const [invoicesFileName, setInvoicesFileName] = useState<string | null>(null);
+  const [invoicesType, setInvoicesType] = useState<InvoiceType>(null);
+  const [invoiceLines, setInvoiceLines] = useState<Array<{ name: string; qty: number; unitPrice?: number }>>([]);
+  const [processingInvoice, setProcessingInvoice] = useState(false);
+
+  // ── Products CSV picker ────────────────────────────────────────────────────
 
   const pickProductsCsv = useCallback(async () => {
     try {
@@ -65,25 +80,130 @@ export default function BringYourDataScreen() {
     }
   }, []);
 
-  const pickInvoices = useCallback(async () => {
+  // ── Invoice processing ─────────────────────────────────────────────────────
+
+  async function processInvoiceFile(uri: string, type: 'csv' | 'pdf', name: string) {
+    if (!venueId) return;
+    setProcessingInvoice(true);
+    try {
+      const auth = getAuth();
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Not signed in');
+
+      const ext = type === 'csv' ? '.csv' : '.pdf';
+      const mimeType = type === 'csv' ? 'text/csv' : 'application/pdf';
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const destPath = `venues/${venueId}/onboarding/invoices/${Date.now()}${ext}`;
+
+      const uploadRes = await fetch(`${API_BASE}/upload-file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ destPath, dataUrl: `data:${mimeType};base64,${base64}` }),
+      });
+      if (!uploadRes.ok) throw new Error('Upload failed');
+      const { fullPath } = await uploadRes.json();
+
+      const endpoint = type === 'csv' ? 'process-invoices-csv' : 'process-invoices-pdf';
+      const processRes = await fetch(`${API_BASE}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ venueId, storagePath: fullPath }),
+      });
+      if (!processRes.ok) throw new Error('Processing failed');
+      const result = await processRes.json();
+      setInvoiceLines(result.lines || []);
+      setInvoicesFileName(name);
+      setInvoicesType(type);
+    } catch (e: any) {
+      Alert.alert(
+        'Could not process invoice',
+        e?.message || 'File saved — you can match it later from Orders.',
+      );
+      setInvoicesFileName(name);
+      setInvoicesType(type);
+      setInvoiceLines([]);
+    } finally {
+      setProcessingInvoice(false);
+    }
+  }
+
+  const pickInvoicesCsv = useCallback(async () => {
     try {
       const pick = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/plain', 'application/pdf', '*/*'],
+        type: ['text/csv', 'text/plain', '*/*'],
         copyToCacheDirectory: true,
       });
       if (pick.canceled) return;
       const asset = pick.assets?.[0] ?? pick;
-      setInvoicesFileName(String(asset.name || 'invoices'));
+      await processInvoiceFile(String(asset.uri), 'csv', String(asset.name || 'invoices.csv'));
     } catch (e: any) {
-      Alert.alert('File error', e?.message || 'Could not read file');
+      Alert.alert('File error', e?.message || 'Could not open file');
     }
-  }, []);
+  }, [venueId]);
+
+  const pickInvoicesPdf = useCallback(async () => {
+    try {
+      const pick = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', '*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (pick.canceled) return;
+      const asset = pick.assets?.[0] ?? pick;
+      await processInvoiceFile(String(asset.uri), 'pdf', String(asset.name || 'invoice.pdf'));
+    } catch (e: any) {
+      Alert.alert('File error', e?.message || 'Could not open file');
+    }
+  }, [venueId]);
+
+  const captureInvoicePhoto = useCallback(async () => {
+    if (!venueId) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Camera required', 'Allow camera access to photograph an invoice.');
+      return;
+    }
+    const pic = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+    });
+    if (pic.canceled) return;
+    const asset = pic.assets[0];
+    setProcessingInvoice(true);
+    try {
+      const result = await runPhotoOcrJob({ venueId, localUri: asset.uri });
+      setInvoiceLines(result.lines || []);
+      setInvoicesFileName('invoice-photo.jpg');
+      setInvoicesType('photo');
+    } catch (e: any) {
+      Alert.alert('Photo scan failed', e?.message || 'Could not read this invoice photo.');
+      setInvoicesFileName('invoice-photo.jpg');
+      setInvoicesType('photo');
+      setInvoiceLines([]);
+    } finally {
+      setProcessingInvoice(false);
+    }
+  }, [venueId]);
+
+  function clearInvoice() {
+    setInvoicesFileName(null);
+    setInvoicesType(null);
+    setInvoiceLines([]);
+  }
+
+  // ── Finish ─────────────────────────────────────────────────────────────────
 
   async function onFinish() {
     if (!venueId || busy) return;
     setBusy(true);
     try {
-      // Create "Unassigned" holding supplier
       await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
         name: 'Unassigned',
         email: null,
@@ -96,7 +216,6 @@ export default function BringYourDataScreen() {
         updatedAt: serverTimestamp(),
       });
 
-      // Write products from CSV if provided
       if (productsCsv && productsCount > 0) {
         try {
           const parsed = parseCsv(productsCsv);
@@ -123,12 +242,12 @@ export default function BringYourDataScreen() {
         } catch {}
       }
 
-      // Mark onboarding complete on venue doc
       await updateDoc(doc(db, 'venues', venueId), {
         onboardingRoad: 'data',
         onboardingCompletedAt: serverTimestamp(),
         onboardingLastStocktakeDate: lastStocktakeDate || null,
         onboardingHasInvoices: !!invoicesFileName,
+        onboardingInvoiceLinesCount: invoiceLines.length,
       });
 
       nav.navigate('Dashboard');
@@ -145,6 +264,7 @@ export default function BringYourDataScreen() {
     <SafeAreaView style={S.safe}>
       <ScrollView contentContainerStyle={S.content} keyboardShouldPersistTaps="handled">
 
+        {/* ── Step 1: Intro ───────────────────────────────────────────── */}
         {step === 'intro' && (
           <>
             <Text style={S.eyebrow}>Road 2 — Bring your data</Text>
@@ -176,6 +296,7 @@ export default function BringYourDataScreen() {
           </>
         )}
 
+        {/* ── Step 2: Products ────────────────────────────────────────── */}
         {step === 'products' && (
           <>
             <Text style={S.eyebrow}>Step 2 of 3</Text>
@@ -215,13 +336,14 @@ export default function BringYourDataScreen() {
           </>
         )}
 
+        {/* ── Step 3: Invoices ────────────────────────────────────────── */}
         {step === 'invoices' && (
           <>
             <Text style={S.eyebrow}>Step 3 of 3</Text>
             <Text style={S.h1}>Invoices since your last stocktake</Text>
             <Text style={S.lead}>
-              Invoices tell us what came in the door — without them, variance is estimated. You can always add
-              them later from <Text style={{ fontWeight: '700' }}>Orders → Upload Invoice</Text>.
+              Invoices tell us what came in the door — without them, variance is estimated. Upload a file or
+              photograph a paper invoice.
             </Text>
 
             {!!lastStocktakeDate && (
@@ -235,23 +357,60 @@ export default function BringYourDataScreen() {
               </View>
             )}
 
-            <View style={S.uploadCard}>
-              {invoicesFileName ? (
-                <>
-                  <Text style={S.uploadedName}>{invoicesFileName}</Text>
-                  <Text style={S.uploadedCount}>Ready to process</Text>
-                  <TouchableOpacity onPress={pickInvoices} style={S.changeBtn}>
-                    <Text style={S.changeBtnText}>Change file</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity style={S.uploadBtn} onPress={pickInvoices}>
-                  <Text style={S.uploadBtnText}>Upload invoices (CSV or PDF)</Text>
+            {processingInvoice ? (
+              <View style={[S.uploadCard, { alignItems: 'center', paddingVertical: 28 }]}>
+                <ActivityIndicator color={colours.primary} style={{ marginBottom: 10 }} />
+                <Text style={{ fontSize: 13, color: colours.textSecondary }}>Reading invoice…</Text>
+              </View>
+            ) : invoicesFileName ? (
+              <View style={S.uploadCard}>
+                <Text style={S.uploadedName}>{invoicesFileName}</Text>
+                {invoiceLines.length > 0 ? (
+                  <>
+                    <Text style={[S.uploadedCount, { color: colours.success }]}>
+                      {invoiceLines.length} line{invoiceLines.length !== 1 ? 's' : ''} extracted
+                    </Text>
+                    {invoiceLines.slice(0, 3).map((l, i) => (
+                      <Text key={i} style={S.linePreview}>
+                        · {l.name}{l.qty ? ` × ${l.qty}` : ''}{l.unitPrice ? ` @ $${l.unitPrice.toFixed(2)}` : ''}
+                      </Text>
+                    ))}
+                    {invoiceLines.length > 3 && (
+                      <Text style={S.linePreviewMore}>+ {invoiceLines.length - 3} more</Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={S.uploadedCount}>Saved — lines couldn't be extracted automatically</Text>
+                )}
+                <TouchableOpacity onPress={clearInvoice} style={S.changeBtn}>
+                  <Text style={S.changeBtnText}>Remove</Text>
                 </TouchableOpacity>
-              )}
-            </View>
+              </View>
+            ) : (
+              <View style={S.uploadCard}>
+                <Text style={S.uploadTypeLabel}>Choose a format:</Text>
+                <View style={S.uploadTypeRow}>
+                  <TouchableOpacity style={S.uploadTypeBtn} onPress={pickInvoicesCsv}>
+                    <Text style={S.uploadTypeBtnIcon}>📄</Text>
+                    <Text style={S.uploadTypeBtnText}>CSV</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={S.uploadTypeBtn} onPress={pickInvoicesPdf}>
+                    <Text style={S.uploadTypeBtnIcon}>📋</Text>
+                    <Text style={S.uploadTypeBtnText}>PDF</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={S.uploadTypeBtn} onPress={captureInvoicePhoto}>
+                    <Text style={S.uploadTypeBtnIcon}>📷</Text>
+                    <Text style={S.uploadTypeBtnText}>Photo</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
-            <TouchableOpacity style={S.cta} onPress={() => setStep('confirm')}>
+            <TouchableOpacity
+              style={[S.cta, processingInvoice && { opacity: 0.4 }]}
+              onPress={() => setStep('confirm')}
+              disabled={processingInvoice}
+            >
               <Text style={S.ctaText}>
                 {invoicesFileName ? 'Next — Review →' : "I'll add invoices later →"}
               </Text>
@@ -263,6 +422,7 @@ export default function BringYourDataScreen() {
           </>
         )}
 
+        {/* ── Step 4: Confirm ─────────────────────────────────────────── */}
         {step === 'confirm' && (
           <>
             <Text style={S.eyebrow}>Here's what we have</Text>
@@ -285,7 +445,13 @@ export default function BringYourDataScreen() {
               />
               <ConfirmRow
                 label="Invoices"
-                value={invoicesFileName || 'Not uploaded'}
+                value={
+                  invoicesFileName
+                    ? invoiceLines.length > 0
+                      ? `${invoiceLines.length} lines from ${invoicesFileName}`
+                      : invoicesFileName
+                    : 'Not uploaded'
+                }
                 ok={!!invoicesFileName}
                 colours={colours}
                 last
@@ -385,11 +551,21 @@ function makeStyles(c: ReturnType<typeof useColours>) {
       backgroundColor: c.primary, borderRadius: 10, paddingVertical: 12, alignItems: 'center',
     },
     uploadBtnText: { color: c.primaryText, fontWeight: '700' },
+    uploadTypeLabel: { fontSize: 12, color: c.textSecondary, marginBottom: 10 },
+    uploadTypeRow: { flexDirection: 'row', gap: 10 },
+    uploadTypeBtn: {
+      flex: 1, backgroundColor: c.primaryLight, borderRadius: 12, paddingVertical: 14,
+      alignItems: 'center', borderWidth: 1, borderColor: c.border,
+    },
+    uploadTypeBtnIcon: { fontSize: 22, marginBottom: 4 },
+    uploadTypeBtnText: { fontSize: 13, fontWeight: '700', color: c.navy },
     uploadedName: { fontSize: 14, fontWeight: '700', color: c.navy, marginBottom: 4 },
-    uploadedCount: { fontSize: 12, color: c.textSecondary, marginBottom: 10 },
+    uploadedCount: { fontSize: 12, color: c.textSecondary, marginBottom: 8 },
+    linePreview: { fontSize: 12, color: c.textSecondary, marginBottom: 2 },
+    linePreviewMore: { fontSize: 11, color: c.textSecondary, marginTop: 2, fontStyle: 'italic' },
     changeBtn: {
       alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 12,
-      borderRadius: 8, borderWidth: 1, borderColor: c.border,
+      borderRadius: 8, borderWidth: 1, borderColor: c.border, marginTop: 8,
     },
     changeBtnText: { fontSize: 12, color: c.textSecondary },
     dateCtxCard: {

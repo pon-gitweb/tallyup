@@ -55,6 +55,7 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 import ProductsScreen from '../../screens/setup/ProductsScreen';
 import ProductsCsvImportScreen from '../../screens/setup/ProductsCsvImportScreen';
 import EditProductScreen from '../../screens/setup/EditProductScreen';
+import SuppliersScreen from '../../screens/setup/SuppliersScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -93,6 +94,7 @@ export default function MainStack() {
         component={EditProductScreen}
         options={{ title: 'Edit Product' }}
       />
+      <Stack.Screen name="Suppliers" component={SuppliersScreen} options={{ title: 'Suppliers' }} />
 
       {/* Reports hub + detail */}
       <Stack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />

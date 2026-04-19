@@ -10,10 +10,14 @@ import {
   createDraftsFromSuggestions as createDraftsFromSuggestionsLegacy,
   computeSuggestionKey as computeSuggestionKeyLegacy,
 } from '../../services/orders/createFromSuggestions';
+import {
+  finalizeReceiveFromPdf,
+  finalizeReceiveFromCsv,
+} from '../../services/orders/receive';
 
 export const OrdersService = {
-  finalizeReceiveFromPdf: (...args: Parameters<typeof OrdersRepo.finalizeReceiveFromPdf>) => OrdersRepo.finalizeReceiveFromPdf(...args),
-  finalizeReceiveFromCsv: (...args: Parameters<typeof OrdersRepo.finalizeReceiveFromCsv>) => OrdersRepo.finalizeReceiveFromCsv(...args),
+  finalizeReceiveFromPdf,
+  finalizeReceiveFromCsv,
   submitOrHoldDraftOrder: (...args: Parameters<typeof OrdersRepo.submitOrHoldDraftOrder>) => OrdersRepo.submitOrHoldDraftOrder(...args),
   submitDraftOrder: (...args: Parameters<typeof OrdersRepo.submitDraftOrder>) => OrdersRepo.submitDraftOrder(...args),
   deleteDraft: (...args: Parameters<typeof OrdersRepo.deleteDraft>) => OrdersRepo.deleteDraft(...args),
