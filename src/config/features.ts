@@ -9,4 +9,5 @@ export const FEATURES = {
   SUPPLIER_PORTAL: false,
   XERO_INTEGRATION: false,
   BILLING_ACTIVE: false,
+  ONBOARDING_HARD_GATE: false,
 } as const;

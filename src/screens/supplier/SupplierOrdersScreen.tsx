@@ -6,15 +6,18 @@ import { SupplierPortalService, SupplierOrderView, SupplierOrderStatus } from '.
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 
-const STATUS_COLOURS: Record<SupplierOrderStatus, string> = {
-  pending: '#F59E0B', acknowledged: '#2563EB',
-  partial: '#7C3AED', fulfilled: '#16A34A', cancelled: '#DC2626',
-};
+function getStatusColours(c: ReturnType<typeof useColours>): Record<SupplierOrderStatus, string> {
+  return {
+    pending: '#F59E0B', acknowledged: '#2563EB',
+    partial: '#7C3AED', fulfilled: c.success, cancelled: c.error,
+  };
+}
 
 function SupplierOrdersScreen() {
   const route = useRoute<any>();
   const { supplierId } = route.params;
   const themeColours = useColours();
+  const STATUS_COLOURS = getStatusColours(themeColours);
   const [orders, setOrders] = useState<SupplierOrderView[]>([]);
   const [loading, setLoading] = useState(true);
 

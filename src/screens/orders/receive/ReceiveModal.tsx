@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useColours } from '../../../context/ThemeContext';
 
 import ManualReceiveScreen from './ManualReceiveScreen';
 import GenericCsvProcessorScreen from './GenericCsvProcessorScreen';
@@ -20,6 +21,7 @@ type Props = {
 const tabs: Tab[] = ['Manual','CSV','PDF','Scan'];
 
 export default function ReceiveModal({ visible, onClose, orderId, venueId, orderLines, initialTab='Manual' }: Props) {
+  const colours = useColours();
   const [tab, setTab] = useState<Tab>(initialTab);
   useEffect(() => { setTab(initialTab); }, [initialTab, visible]);
 

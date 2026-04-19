@@ -7,6 +7,7 @@ import { collection, getDocs, getFirestore } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
+import { useColours } from '../../context/ThemeContext';
 
 type Stats = { totalAreas: number; inProgress: number; completed: number };
 
@@ -14,6 +15,7 @@ export default function ExistingVenueDashboard() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const db = getFirestore();
+  const colours = useColours();
 
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({ totalAreas: 0, inProgress: 0, completed: 0 });
@@ -30,7 +32,6 @@ export default function ExistingVenueDashboard() {
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
-  // Load simple area stats (best-effort)
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -64,93 +65,90 @@ export default function ExistingVenueDashboard() {
   const goSuppliers = () => nav.navigate('SuppliersList');
   const goSalesImport = () => nav.navigate('SalesImportHome');
 
+  const S = StyleSheet.create({
+    container: { flex: 1, backgroundColor: colours.background },
+    headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
+    greetTitle: { color: colours.text, fontWeight: '800', fontSize: 20 },
+    greetSub: { color: colours.textSecondary, marginTop: 4 },
+    card: { backgroundColor: colours.surface, borderRadius: 14, padding: 14, marginTop: 12, borderWidth: 1, borderColor: colours.border },
+    cardTitle: { color: colours.text, fontWeight: '800', marginBottom: 6, fontSize: 16 },
+    cardText: { color: colours.textSecondary },
+    bold: { fontWeight: '800', color: colours.text },
+    row: { flexDirection: 'row', gap: 10, marginTop: 12 },
+    rowSpread: { flexDirection: 'row', gap: 10, marginTop: 8, flexWrap: 'wrap' },
+    primaryBtn: { backgroundColor: colours.primary, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, flex: 1, alignItems: 'center' },
+    primaryText: { color: colours.primaryText, fontWeight: '700' },
+    secondaryBtn: { backgroundColor: colours.border, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center' },
+    secondaryText: { color: colours.text, fontWeight: '700' },
+    quickBtnAmber: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: colours.amber },
+    quickBtnSuccess: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: colours.success },
+    quickText: { color: colours.primaryText, fontWeight: '800' },
+    center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+    caption: { color: colours.textSecondary, marginTop: 12, fontSize: 12, textAlign: 'center' },
+  });
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
-      {/* Header */}
-      <View style={styles.headerRow}>
+    <ScrollView style={S.container} contentContainerStyle={{ padding: 16 }}>
+      <View style={S.headerRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.greetTitle}>Hi {friendly}</Text>
-          <Text style={styles.greetSub}>Your venue overview at a glance.</Text>
+          <Text style={S.greetTitle}>Hi {friendly}</Text>
+          <Text style={S.greetSub}>Your venue overview at a glance.</Text>
         </View>
         <IdentityBadge />
       </View>
 
-      {/* Session status */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Stock Take Session</Text>
-        <Text style={styles.cardText}>Status: <Text style={styles.bold}>{sessionStatus}</Text></Text>
-        <View style={styles.row}>
-          <TouchableOpacity onPress={goStockTake} style={styles.primaryBtn}>
-            <Text style={styles.primaryText}>Open Stock Take</Text>
+      <View style={S.card}>
+        <Text style={S.cardTitle}>Stock Take Session</Text>
+        <Text style={S.cardText}>Status: <Text style={S.bold}>{sessionStatus}</Text></Text>
+        <View style={S.row}>
+          <TouchableOpacity onPress={goStockTake} style={S.primaryBtn}>
+            <Text style={S.primaryText}>Open Stock Take</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={goReports} style={styles.secondaryBtn}>
-            <Text style={styles.secondaryText}>Reports</Text>
+          <TouchableOpacity onPress={goReports} style={S.secondaryBtn}>
+            <Text style={S.secondaryText}>Reports</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Areas state */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Areas</Text>
+      <View style={S.card}>
+        <Text style={S.cardTitle}>Areas</Text>
         {loading ? (
-          <View style={styles.center}><ActivityIndicator /></View>
+          <View style={S.center}><ActivityIndicator color={colours.primary} /></View>
         ) : (
-          <View style={styles.rowSpread}>
-            <StatPill label="Total" value={stats.totalAreas} />
-            <StatPill label="In progress" value={stats.inProgress} />
-            <StatPill label="Completed" value={stats.completed} />
+          <View style={S.rowSpread}>
+            <StatPill label="Total" value={stats.totalAreas} colours={colours} />
+            <StatPill label="In progress" value={stats.inProgress} colours={colours} />
+            <StatPill label="Completed" value={stats.completed} colours={colours} />
           </View>
         )}
       </View>
 
-      {/* Quick links */}
-      <View style={styles.row}>
-        <TouchableOpacity onPress={goSuppliers} style={[styles.quickBtn, { backgroundColor: '#F59E0B' }]}>
-          <Text style={styles.quickText}>Suppliers</Text>
+      <View style={S.row}>
+        <TouchableOpacity onPress={goSuppliers} style={S.quickBtnAmber}>
+          <Text style={S.quickText}>Suppliers</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={goSalesImport} style={[styles.quickBtn, { backgroundColor: '#10B981' }]}>
-          <Text style={styles.quickText}>Sales Import</Text>
+        <TouchableOpacity onPress={goSalesImport} style={S.quickBtnSuccess}>
+          <Text style={S.quickText}>Sales Import</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.caption}>Tip: tap the badge to see your full identity.</Text>
+      <Text style={S.caption}>Tip: tap the badge to see your full identity.</Text>
     </ScrollView>
   );
 }
 
-function StatPill({ label, value }: { label: string; value: number }) {
+function StatPill({ label, value, colours }: { label: string; value: number; colours: any }) {
   return (
     <View style={{
-      backgroundColor: '#111827',
+      backgroundColor: colours.navy,
       paddingHorizontal: 12,
       paddingVertical: 10,
       borderRadius: 12,
       minWidth: 90,
       alignItems: 'center',
     }}>
-      <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{label}</Text>
-      <Text style={{ color: 'white', fontWeight: '800', fontSize: 18 }}>{value}</Text>
+      <Text style={{ color: colours.textSecondary, fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: colours.primaryText, fontWeight: '800', fontSize: 18 }}>{value}</Text>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F1115' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
-  greetTitle: { color: 'white', fontWeight: '800', fontSize: 20 },
-  greetSub: { color: '#9CA3AF', marginTop: 4 },
-  card: { backgroundColor: '#111827', borderRadius: 14, padding: 14, marginTop: 12 },
-  cardTitle: { color: 'white', fontWeight: '800', marginBottom: 6, fontSize: 16 },
-  cardText: { color: '#D1D5DB' },
-  bold: { fontWeight: '800', color: 'white' },
-  row: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  rowSpread: { flexDirection: 'row', gap: 10, marginTop: 8, flexWrap: 'wrap' },
-  primaryBtn: { backgroundColor: '#3B82F6', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, flex: 1, alignItems: 'center' },
-  primaryText: { color: 'white', fontWeight: '700' },
-  secondaryBtn: { backgroundColor: '#374151', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center' },
-  secondaryText: { color: 'white', fontWeight: '700' },
-  quickBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  quickText: { color: '#0F1115', fontWeight: '800' },
-  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
-  caption: { color: '#9CA3AF', marginTop: 12, fontSize: 12, textAlign: 'center' },
-});

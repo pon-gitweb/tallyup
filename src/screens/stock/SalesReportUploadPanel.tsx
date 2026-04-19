@@ -3,6 +3,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
@@ -22,6 +23,7 @@ const EXPECTED_HEADERS = [
 
 export default function SalesReportUploadPanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
+  const colours = useColours();
   const [busy, setBusy] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
 
@@ -180,7 +182,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
               <Text style={{ color: '#4B5563', fontSize: 13, flex: 1 }}>
                 {h.desc}
                 {h.required ? (
-                  <Text style={{ color: '#DC2626' }}> *</Text>
+                  <Text style={{ color: colours.error }}> *</Text>
                 ) : null}
               </Text>
             </View>

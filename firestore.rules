@@ -95,6 +95,20 @@ service cloud.firestore {
         && (request.resource.data.cycleResetAt is timestamp)
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
 
+      // Venue-level preferences (managers/owners only)
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['weeklySummaryEmail', 'timezone', 'autoSuggestPar']);
+
+      // Onboarding state (managers/owners complete roads; any member can dismiss)
+      allow update: if hasVenueRole(venueId, ['manager','owner'])
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['onboardingRoad', 'onboardingCompletedAt',
+                       'onboardingLastStocktakeDate', 'onboardingHasInvoices']);
+      allow update: if isVenueMember(venueId)
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['onboardingDismissedAt']);
+
       match /members/{uid} {
         allow read: if isVenueMember(venueId);
         allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
@@ -230,7 +244,7 @@ service cloud.firestore {
             }
             function isMetaUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-                'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+                'name','unit','supplierId','costPrice','salePrice','parLevel','flagRecount','updatedAt'
               ]) && request.resource.data.updatedAt is timestamp;
             }
             function isInductedCreate() {
@@ -402,7 +416,7 @@ service cloud.firestore {
           }
           function isMetaUpdate() {
             return request.resource.data.diff(resource.data).changedKeys().hasOnly([
-              'name','unit','supplierId','costPrice','salePrice','parLevel','updatedAt'
+              'name','unit','supplierId','costPrice','salePrice','parLevel','flagRecount','updatedAt'
             ]) && request.resource.data.updatedAt is timestamp;
           }
           function isInductedCreate() {
@@ -779,6 +793,19 @@ service cloud.firestore {
       match /aiUsage/{monthKey} {
         allow get, list: if isVenueMember(venueId);
         allow create, update: if isVenueMember(venueId);
+      }
+
+      match /importJobs/{jobId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.createdAt is timestamp;
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).changedKeys()
+               .hasOnly(['status','finishedAt','counts','errors'])
+          && request.resource.data.status in [
+               'processing','completed','completed_with_errors','queued','failed'
+             ];
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
     }
   }

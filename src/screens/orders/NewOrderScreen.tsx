@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { listProducts, Product } from '../../services/products'; // keeps existing API
 import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
@@ -17,6 +18,7 @@ type Params = { supplierId?: string; supplierName?: string };
 export default function NewOrderScreen() {
   const insets = useSafeAreaInsets();
   const venueId = useVenueId();
+  const colours = useColours();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const nav = useNavigation<any>();
 

@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../../context/VenueProvider';
+import { useColours } from '../../../context/ThemeContext';
 
 type Line = {
   id: string;
@@ -49,6 +50,7 @@ export default function ManualReceiveScreen({
 }: Props) {
   const venueIdFromHook = useVenueId();
   const venueId = propVenueId || venueIdFromHook;
+  const colours = useColours();
 
   // Local copy of lines (either from props or Firestore)
   const [lines, setLines] = useState<Line[]>(orderLines || []);

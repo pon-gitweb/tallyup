@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { captureError } from '../services/crashReporting';
 
 type State = { error?: any; info?: any };
 
@@ -12,7 +13,7 @@ export default class AppErrorBoundary extends React.Component<React.PropsWithChi
 
   componentDidCatch(error: any, info: any) {
     console.error('[ErrorBoundary] componentDidCatch error:', error);
-    console.error('[ErrorBoundary] componentDidCatch info:', info);
+    captureError(error, 'AppErrorBoundary');
     this.setState({ error, info });
   }
 

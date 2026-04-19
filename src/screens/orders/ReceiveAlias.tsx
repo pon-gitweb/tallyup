@@ -8,6 +8,7 @@ import {
   collection, getDocs, writeBatch, serverTimestamp, setDoc
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 
 type Line = {
   productId: string;
@@ -20,6 +21,7 @@ export default function ReceiveAlias() {
   const route = useRoute<any>();
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const colours = useColours();
 
   const orderId: string | undefined = route?.params?.orderId;
   const [loading, setLoading] = useState(true);

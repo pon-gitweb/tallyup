@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
@@ -23,6 +24,7 @@ export default function DraftRecipeDetailPanel({
   recipeId, onClose, initialName = null, initialCategory = null, initialMode = null
 }: Props) {
   const venueId = useVenueId();
+  const colours = useColours();
 
   // Prefill & state
   const [name, setName] = useState<string>(initialName || '');
@@ -511,9 +513,9 @@ const isRrpManual =
         <TouchableOpacity
           disabled={busy}
           onPress={confirmNow}
-          style={{ padding:14, borderRadius:12, backgroundColor:'#16a34a' }}
+          style={{ padding:14, borderRadius:12, backgroundColor: colours.success }}
         >
-          <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>
+          <Text style={{ color: colours.primaryText, fontWeight:'800', textAlign:'center' }}>
             {busy ? 'Confirming…' : 'Confirm Recipe'}
           </Text>
         </TouchableOpacity>

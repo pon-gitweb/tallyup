@@ -73,7 +73,7 @@ function XeroScreen() {
 
       {/* Header */}
       <View style={{ backgroundColor: '#13B5EA', borderRadius: 16, padding: 20 }}>
-        <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>Xero</Text>
+        <Text style={{ fontSize: 28, fontWeight: '900', color: themeColours.primaryText }}>Xero</Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', marginTop: 4, fontSize: 14 }}>
           Connect your Xero account to automatically sync purchase orders and invoices.
         </Text>
@@ -90,7 +90,7 @@ function XeroScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={{
               width: 12, height: 12, borderRadius: 6,
-              backgroundColor: isConnected ? '#16A34A' : '#9CA3AF',
+              backgroundColor: isConnected ? themeColours.success : '#9CA3AF',
             }} />
             <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>
               {isConnected ? 'Connected' : 'Not connected'}
@@ -128,7 +128,7 @@ function XeroScreen() {
               paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
               alignSelf: 'center',
             }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: isConnected ? '#16A34A' : '#9CA3AF' }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: isConnected ? themeColours.success : '#9CA3AF' }}>
                 {isConnected ? 'Active' : 'Pending'}
               </Text>
             </View>
@@ -157,8 +157,8 @@ function XeroScreen() {
         ) : (
           <TouchableOpacity onPress={onConnect} disabled={busy}
             style={{ backgroundColor: '#13B5EA', borderRadius: 12, padding: 16, alignItems: 'center' }}>
-            {busy ? <ActivityIndicator color="#fff" /> :
-              <Text style={{ fontWeight: '900', color: '#fff', fontSize: 16 }}>Connect to Xero</Text>}
+            {busy ? <ActivityIndicator color={themeColours.primaryText} /> :
+              <Text style={{ fontWeight: '900', color: themeColours.primaryText, fontSize: 16 }}>Connect to Xero</Text>}
           </TouchableOpacity>
         )
       )}

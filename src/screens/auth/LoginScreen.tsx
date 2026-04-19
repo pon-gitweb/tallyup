@@ -9,6 +9,7 @@ import AppErrorBoundary from '../../components/AppErrorBoundary';
 import { db } from '../../services/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { DEV_VENUE_ID } from '../../config/devVenue';
+import { useColours } from '../../context/ThemeContext';
 
 function mapAuthError(e: any): string {
   const code = (e?.code || '').toString();
@@ -21,14 +22,12 @@ function mapAuthError(e: any): string {
 }
 
 async function attachToDevVenue(uid: string, email: string | null) {
-  // Attach the current user to the known dev venue (create missing docs if needed).
   const vref = doc(db, 'venues', DEV_VENUE_ID);
   const mref = doc(db, 'venues', DEV_VENUE_ID, 'members', uid);
   const uref = doc(db, 'users', uid);
 
   const vSnap = await getDoc(vref);
   if (!vSnap.exists()) {
-    // Only minimal fields; we're attaching to an existing venue id you've been using
     await setDoc(vref, { venueId: DEV_VENUE_ID, name: 'TallyUp Dev Venue', createdAt: serverTimestamp(), dev: true }, { merge: true });
   }
   await setDoc(mref, { uid, role: 'owner', joinedAt: serverTimestamp(), dev: true }, { merge: true });
@@ -39,13 +38,13 @@ function LoginScreenInner() {
   const nav = useNavigation<any>();
   const auth = getAuth();
   const venueId = useVenueId();
+  const colours = useColours();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Signed in + no venue => Auth.Setup (prod-oriented; dev flow handled explicitly below)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) return;
@@ -64,8 +63,7 @@ function LoginScreenInner() {
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), pass);
-      // Providers will route; if this user has no venue, Setup screen will be shown.
-    } catch (e:any) {
+    } catch (e: any) {
       Alert.alert('Sign-in failed', mapAuthError(e));
     } finally {
       setBusy(false);
@@ -75,12 +73,11 @@ function LoginScreenInner() {
   const doDevLogin = async () => {
     setBusy(true);
     try {
-      const { email: em, password: pw } = await devLogin(); // test@example.com / test1234
+      const { email: em, password: pw } = await devLogin();
       const cred = await signInWithEmailAndPassword(auth, em, pw);
-      // Force attach to your dev venue id every time
       await attachToDevVenue(cred.user.uid, cred.user.email ?? em);
       Alert.alert('Dev Login', 'Attached to Dev Venue');
-    } catch (e:any) {
+    } catch (e: any) {
       Alert.alert('Dev login failed', mapAuthError(e));
     } finally {
       setBusy(false);
@@ -88,6 +85,24 @@ function LoginScreenInner() {
   };
 
   const gotoRegister = () => nav.navigate('Register');
+
+  const S = StyleSheet.create({
+    container: { flex: 1, backgroundColor: colours.background },
+    inner: { flex: 1, padding: 20, justifyContent: 'center' },
+    title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center', color: colours.text },
+    input: { borderWidth: 1, borderColor: colours.border, borderRadius: 10, padding: 12, marginBottom: 10, backgroundColor: colours.surface, color: colours.text },
+    passRow: { flexDirection: 'row', alignItems: 'center' },
+    revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: colours.border, borderRadius: 10 },
+    revealText: { fontWeight: '700', color: colours.text },
+    primary: { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
+    primaryText: { color: colours.primaryText, fontWeight: '700' },
+    secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: colours.border },
+    secondaryText: { color: colours.text, fontWeight: '700' },
+    disabled: { opacity: 0.6 },
+    ghost: { padding: 10, alignItems: 'center', marginTop: 12 },
+    ghostText: { color: colours.textSecondary },
+    footer: { paddingHorizontal: 16, paddingBottom: 16 },
+  });
 
   return (
     <View style={S.container}>
@@ -97,6 +112,7 @@ function LoginScreenInner() {
         <TextInput
           style={S.input}
           placeholder="Email"
+          placeholderTextColor={colours.textSecondary}
           autoCapitalize="none"
           keyboardType="email-address"
           value={email}
@@ -107,17 +123,18 @@ function LoginScreenInner() {
           <TextInput
             style={[S.input, { flex: 1, marginBottom: 0 }]}
             placeholder="Password"
+            placeholderTextColor={colours.textSecondary}
             secureTextEntry={!reveal}
             value={pass}
             onChangeText={setPass}
           />
           <TouchableOpacity onPress={() => setReveal(v => !v)} style={S.revealBtn}>
-            <Text style={{ fontWeight: '700' }}>{reveal ? 'Hide' : 'Show'}</Text>
+            <Text style={S.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
           </TouchableOpacity>
         </View>
 
         <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
-          {busy ? <ActivityIndicator /> : <Text style={S.primaryText}>Sign In</Text>}
+          {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Sign In</Text>}
         </TouchableOpacity>
 
         <TouchableOpacity style={S.secondary} onPress={gotoRegister} disabled={busy}>
@@ -136,7 +153,6 @@ function LoginScreenInner() {
   );
 }
 
-// Error boundary wrapper
 export default function LoginScreen() {
   return (
     <AppErrorBoundary>
@@ -144,20 +160,3 @@ export default function LoginScreen() {
     </AppErrorBoundary>
   );
 }
-
-const S = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  inner: { flex: 1, padding: 20, justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, padding: 12, marginBottom: 10 },
-  passRow: { flexDirection: 'row', alignItems: 'center' },
-  revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 10 },
-  primary: { backgroundColor: '#0A84FF', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
-  primaryText: { color: '#fff', fontWeight: '700' },
-  secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: '#D1D5DB' },
-  secondaryText: { color: '#111827', fontWeight: '700' },
-  disabled: { opacity: 0.6 },
-  ghost: { padding: 10, alignItems: 'center', marginTop: 12 },
-  ghostText: { color: '#6B7280' },
-  footer: { paddingHorizontal: 16, paddingBottom: 16 },
-});

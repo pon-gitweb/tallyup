@@ -30,6 +30,7 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useColours } from '../../context/ThemeContext';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 import { resetDepartment } from '../../services/reset';
@@ -107,6 +108,8 @@ async function enrichDepartmentsWithAreaStatus(
 function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const colours = useColours();
+  const styles = makeStyles(colours);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -323,7 +326,7 @@ function DepartmentSelectionScreen() {
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
           </View>
         </View>
-        <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
+        <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
       </TouchableOpacity>
     );
   };
@@ -373,8 +376,8 @@ function DepartmentSelectionScreen() {
       {/* List */}
       {loading ? (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-          <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#6B7280' }}>
+          <ActivityIndicator color={colours.primary} />
+          <Text style={{ marginTop: 8, color: colours.textSecondary }}>
             Loading departments…
           </Text>
         </View>
@@ -388,7 +391,7 @@ function DepartmentSelectionScreen() {
           }
           ListEmptyComponent={
             <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#6B7280', textAlign: 'center' }}>
+              <Text style={{ color: colours.textSecondary, textAlign: 'center' }}>
                 No departments found yet.{'\n'}
                 We&apos;ll create defaults (Bar, Kitchen, etc.) automatically
                 for new venues.
@@ -402,55 +405,58 @@ function DepartmentSelectionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: 'white', padding: 16 },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  title: { fontSize: 22, fontWeight: '800' },
-  sub: { color: '#6B7280', marginTop: 2 },
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    wrap: { flex: 1, backgroundColor: c.background, padding: 16 },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    title: { fontSize: 22, fontWeight: '800', color: c.text },
+    sub: { color: c.textSecondary, marginTop: 2 },
 
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  searchInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#D0D3D7',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: 'white',
-  },
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    searchInput: {
+      flex: 1,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: c.surface,
+      color: c.text,
+    },
 
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 10,
-    backgroundColor: '#F9FAFB',
-  },
-  rowTitle: { fontSize: 16, fontWeight: '700' },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 14,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.border,
+      marginBottom: 10,
+      backgroundColor: c.surface,
+    },
+    rowTitle: { fontSize: 16, fontWeight: '700', color: c.text },
 
-  pill: {
-    fontWeight: '700',
-    fontSize: 12,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-    borderRadius: 999,
-  },
-  pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
-  pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
-  pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
-});
+    pill: {
+      fontWeight: '700',
+      fontSize: 12,
+      paddingVertical: 2,
+      paddingHorizontal: 8,
+      borderRadius: 999,
+    },
+    pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
+    pillInProg: { backgroundColor: c.primaryLight, color: c.primary },
+    pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+  });
+}
 
 export default withErrorBoundary(DepartmentSelectionScreen, 'Departments');

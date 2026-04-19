@@ -92,7 +92,7 @@ function InventoryImportPreviewScreen() {
 
       {/* Header */}
       <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 20, gap: 6 }}>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff' }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: themeColours.primaryText }}>
           We found {products.length} products
         </Text>
         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>
@@ -166,7 +166,7 @@ function InventoryImportPreviewScreen() {
                   }}>
                     <Text style={{
                       fontSize: 10, fontWeight: '700',
-                      color: product.confidence === 'high' ? '#166534' : product.confidence === 'medium' ? '#92400E' : '#DC2626',
+                      color: product.confidence === 'high' ? '#166534' : product.confidence === 'medium' ? '#92400E' : themeColours.error,
                     }}>
                       {product.confidence === 'high' ? 'Confident' : product.confidence === 'medium' ? 'Check' : 'Unsure'}
                     </Text>
@@ -186,8 +186,8 @@ function InventoryImportPreviewScreen() {
       <TouchableOpacity onPress={onConfirm} disabled={importing}
         style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 18, alignItems: 'center' }}>
         {importing
-          ? <ActivityIndicator color="#fff" />
-          : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
+          ? <ActivityIndicator color={themeColours.primaryText} />
+          : <Text style={{ color: themeColours.primaryText, fontWeight: '900', fontSize: 16 }}>
               Import {products.length} products →
             </Text>
         }

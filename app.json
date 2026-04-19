@@ -46,6 +46,7 @@
     },
     "extra": {
       "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
+      "sentryDsn": "https://10945fa61dcadabd7534d19dd003be7d@o4511163676164096.ingest.us.sentry.io/4511214931935232",
       "eas": {
         "projectId": "f51fbba0-356b-46ef-9ef5-2017ee9ad59f"
       }
@@ -54,7 +55,15 @@
       "expo-asset",
       "expo-font",
       "expo-camera",
-      "react-native-ble-plx"
+      "react-native-ble-plx",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "organization": "stack-mosaic-ltd",
+          "project": "react-native"
+        }
+      ]
     ],
     "updates": {
       "enabled": false,

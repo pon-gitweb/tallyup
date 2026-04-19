@@ -21,7 +21,10 @@
     "production": {
       "extends": "base",
       "autoIncrement": true,
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
+      }
     },
     "play-aab": {
       "extends": "base",
@@ -29,7 +32,10 @@
         "buildType": "app-bundle"
       },
       "distribution": "store",
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
+      }
     },
     "tester-apk": {
       "extends": "base",
@@ -59,7 +65,10 @@
       },
       "distribution": "store",
       "environment": "production",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
+      }
     }
   },
   "submit": {

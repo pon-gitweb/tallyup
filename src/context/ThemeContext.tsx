@@ -10,19 +10,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 
 export type ThemeColours = {
-  primary: string;        // Main brand colour — buttons, active states
+  primary: string;        // Action colour — buttons, active states (brand: teal #1b4f72)
   primaryLight: string;   // Light tint of primary — backgrounds
   primaryText: string;    // Text on primary backgrounds
-  accent: string;         // Secondary accent — highlights
-  background: string;     // App background
+  accent: string;         // Secondary accent (brand: teal #1b4f72)
+  background: string;     // App background (brand: cream #f5f3ee)
   surface: string;        // Card/surface background
   border: string;         // Border colour
-  text: string;           // Primary text
+  text: string;           // Primary text (brand: navy #0B132B)
   textSecondary: string;  // Secondary/muted text
   success: string;        // Green — positive states
-  warning: string;        // Amber — warnings
+  warning: string;        // Amber — required fields and AI nudges only (#c47b2b)
   error: string;          // Red — errors
   danger: string;         // Red — destructive actions
+  // Named brand tokens — use these directly for semantic clarity
+  cream: string;          // #f5f3ee — background fill
+  teal: string;           // #1b4f72 — single action colour
+  amber: string;          // #c47b2b — required fields, AI nudges
+  navy: string;           // #0B132B — headings, nav, body text
 };
 
 export type ThemeConfig = {
@@ -32,31 +37,41 @@ export type ThemeConfig = {
   fontScale: number;          // 1.0 = default, 0.9 = compact, 1.1 = large
   cardRadius: number;         // Border radius for cards (default 14)
   density: 'comfortable' | 'compact' | 'spacious';
+  // Typography — swap from 'System' once @expo-google-fonts are installed:
+  //   npx expo install @expo-google-fonts/playfair-display @expo-google-fonts/inter
+  //   then load PlayfairDisplay_700Bold + Inter_400Regular at app entry
+  fontTitle: string;          // Playfair Display — screen titles, section headers
+  fontBody: string;           // Inter — body copy, labels, inputs
 };
 
 export const DEFAULT_COLOURS: ThemeColours = {
-  primary: '#0F172A',       // Deep navy — professional, hospitality
-  primaryLight: '#EFF6FF',  // Light blue tint
+  primary: '#1b4f72',       // Teal — single action colour (buttons, active states)
+  primaryLight: '#e8f2f9',  // Light teal tint
   primaryText: '#FFFFFF',
-  accent: '#2563EB',        // Blue accent
-  background: '#F8FAFC',    // Off-white background
-  surface: '#FFFFFF',       // Pure white cards
-  border: '#E2E8F0',        // Subtle border
-  text: '#0F172A',          // Near-black text
-  textSecondary: '#64748B', // Slate grey
+  accent: '#1b4f72',        // Teal accent
+  background: '#f5f3ee',    // Cream — app background
+  surface: '#faf9f6',       // Warm white — cards and sheets
+  border: '#dcd9d2',        // Warm grey border
+  text: '#0B132B',          // Navy — headings and body
+  textSecondary: '#5c6b7a', // Muted navy-grey
   success: '#16A34A',
-  warning: '#D97706',
+  warning: '#c47b2b',       // Amber — required fields and AI nudges
   error: '#DC2626',
   danger: '#DC2626',
+  // Named brand tokens
+  cream: '#f5f3ee',
+  teal: '#1b4f72',
+  amber: '#c47b2b',
+  navy: '#0B132B',
 };
 
 export const PRESET_THEMES: { name: string; colours: Partial<ThemeColours> }[] = [
-  { name: 'Midnight (Default)', colours: { primary: '#0F172A', accent: '#2563EB' } },
-  { name: 'Forest', colours: { primary: '#14532D', accent: '#16A34A', primaryLight: '#F0FDF4' } },
-  { name: 'Slate', colours: { primary: '#334155', accent: '#0EA5E9', primaryLight: '#F0F9FF' } },
-  { name: 'Burgundy', colours: { primary: '#7F1D1D', accent: '#B91C1C', primaryLight: '#FEF2F2' } },
-  { name: 'Charcoal', colours: { primary: '#1C1917', accent: '#78716C', primaryLight: '#F5F5F4' } },
-  { name: 'Ocean', colours: { primary: '#0C4A6E', accent: '#0284C7', primaryLight: '#F0F9FF' } },
+  { name: 'Hosti (Default)', colours: { primary: '#1b4f72', accent: '#1b4f72', background: '#f5f3ee', surface: '#faf9f6' } },
+  { name: 'Midnight', colours: { primary: '#0F172A', accent: '#2563EB', background: '#F8FAFC', surface: '#FFFFFF' } },
+  { name: 'Forest', colours: { primary: '#14532D', accent: '#16A34A', primaryLight: '#F0FDF4', background: '#f5f3ee', surface: '#faf9f6' } },
+  { name: 'Slate', colours: { primary: '#334155', accent: '#0EA5E9', primaryLight: '#F0F9FF', background: '#f5f3ee', surface: '#faf9f6' } },
+  { name: 'Burgundy', colours: { primary: '#7F1D1D', accent: '#B91C1C', primaryLight: '#FEF2F2', background: '#f5f3ee', surface: '#faf9f6' } },
+  { name: 'Ocean', colours: { primary: '#0C4A6E', accent: '#0284C7', primaryLight: '#F0F9FF', background: '#f5f3ee', surface: '#faf9f6' } },
 ];
 
 export const DEFAULT_THEME: ThemeConfig = {
@@ -66,6 +81,8 @@ export const DEFAULT_THEME: ThemeConfig = {
   fontScale: 1.0,
   cardRadius: 14,
   density: 'comfortable',
+  fontTitle: 'System',  // → 'PlayfairDisplay_700Bold' once @expo-google-fonts/playfair-display is installed
+  fontBody: 'System',   // → 'Inter_400Regular' once @expo-google-fonts/inter is installed
 };
 
 const CACHE_KEY = '@hosti_theme';

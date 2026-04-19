@@ -4,9 +4,11 @@ import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { GuideState, GuideStep, resetGuide, dismissGuide, getCompletedCount, loadGuideState, markStepComplete } from '../../services/guide/SetupGuideService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useColours } from '../../context/ThemeContext';
 
 function SetupGuideScreen() {
   const nav = useNavigation<any>();
+  const colours = useColours();
   const [state, setState] = useState<GuideState | null>(null);
 
   const load = useCallback(async () => { setState(await loadGuideState()); }, []);
@@ -58,8 +60,8 @@ function SetupGuideScreen() {
       {state.steps.map((step, i) => (
         <View key={step.id} style={{ borderRadius: 14, padding: 14, borderWidth: 1, borderColor: step.completed ? '#BBF7D0' : '#E5E7EB', backgroundColor: step.completed ? '#F0FDF4' : '#FAFAFA' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: step.completed ? '#16A34A' : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontWeight: '900', color: step.completed ? '#fff' : '#6B7280', fontSize: 13 }}>{step.completed ? 'v' : i + 1}</Text>
+            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: step.completed ? colours.success : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontWeight: '900', color: step.completed ? colours.primaryText : '#6B7280', fontSize: 13 }}>{step.completed ? 'v' : i + 1}</Text>
             </View>
             <Text style={{ fontWeight: '900', fontSize: 16, flex: 1, color: step.completed ? '#166534' : '#111', textDecorationLine: step.completed ? 'line-through' : 'none' }}>{step.title}</Text>
             {step.completed && <View style={{ backgroundColor: '#BBF7D0', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}><Text style={{ fontSize: 11, fontWeight: '800', color: '#166534' }}>Done</Text></View>}

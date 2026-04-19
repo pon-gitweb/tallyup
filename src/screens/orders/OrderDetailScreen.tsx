@@ -4,6 +4,7 @@ import { OrdersService } from '../../domain/orders';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Modal } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -103,6 +104,7 @@ export default function OrderDetailScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const venueId = useVenueId();
+  const colours = useColours();
   const orderId = (route.params as any)?.orderId as string;
 
   const [orderMeta, setOrderMeta] = useState<any>(null);

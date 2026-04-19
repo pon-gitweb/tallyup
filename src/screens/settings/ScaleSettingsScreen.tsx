@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { ScaleService, ScaleType, ScaleInfo, ScaleStatus } from '../../services/scale/ScaleService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useColours } from '../../context/ThemeContext';
 
 const SCALE_TYPES: { type: ScaleType; name: string; description: string; price: string; link: string; verified: boolean }[] = [
   {
@@ -40,6 +41,7 @@ const SCALE_TYPES: { type: ScaleType; name: string; description: string; price: 
 ];
 
 function ScaleSettingsScreen() {
+  const colours = useColours();
   const [selectedType, setSelectedType] = useState<ScaleType>(ScaleService.getScaleType());
   const [status, setStatus] = useState<ScaleStatus>(ScaleService.getStatus());
   const [scanning, setScanning] = useState(false);
@@ -118,7 +120,7 @@ function ScaleSettingsScreen() {
             {weight != null ? weight.toFixed(1) : '—'}
             <Text style={{ fontSize: 20, color: '#6B7280' }}> g</Text>
           </Text>
-          {stable && <Text style={{ color: '#16A34A', fontWeight: '700', marginTop: 4 }}>Stable ✓</Text>}
+          {stable && <Text style={{ color: colours.success, fontWeight: '700', marginTop: 4 }}>Stable ✓</Text>}
           {!stable && weight != null && <Text style={{ color: '#D97706', fontWeight: '700', marginTop: 4 }}>Settling...</Text>}
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
             <TouchableOpacity onPress={onTare}
@@ -127,7 +129,7 @@ function ScaleSettingsScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={onDisconnect}
               style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', alignItems: 'center' }}>
-              <Text style={{ fontWeight: '800', color: '#DC2626' }}>Disconnect</Text>
+              <Text style={{ fontWeight: '800', color: colours.error }}>Disconnect</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -222,8 +224,8 @@ function ScaleSettingsScreen() {
 
           {!scanning && foundScales.length === 0 && status !== 'disconnected' && (
             <View style={{ backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#FECACA' }}>
-              <Text style={{ fontWeight: '800', color: '#DC2626', marginBottom: 4 }}>No scales found</Text>
-              <Text style={{ color: '#DC2626', fontSize: 13 }}>
+              <Text style={{ fontWeight: '800', color: colours.error, marginBottom: 4 }}>No scales found</Text>
+              <Text style={{ color: colours.error, fontSize: 13 }}>
                 Make sure your scale is on and in pairing mode. Try moving it closer to your phone.
               </Text>
             </View>

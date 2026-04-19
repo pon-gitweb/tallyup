@@ -30,3 +30,6 @@ export { processSalesPdf } from "./processSalesPdf";
 
 // === HTTP API (upload-file, health) ===
 export { api } from "./api";
+
+// === Weekly summary email (scheduled, Monday 8am venue local time) ===
+export { weeklySummaryEmail } from "./weeklySummary";

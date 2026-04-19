@@ -35,6 +35,7 @@ import * as Sharing from 'expo-sharing';
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
+import { useColours } from '../../context/ThemeContext';
 
 type Item = {
   id: string; name: string;
@@ -107,6 +108,7 @@ const Row = React.memo(function Row({
   saveCount,
   pending,
 }: RowProps) {
+  const colours = useColours();
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
   const countedNow = countedInThisCycle(item);
@@ -220,7 +222,7 @@ const Row = React.memo(function Row({
             <Text
               style={{
                 fontSize: 12,
-                color: countedNow ? '#4CAF50' : '#DC2626',
+                color: countedNow ? '#4CAF50' : colours.error,
                 fontWeight: countedNow ? '600' : '700',
               }}>
               {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
@@ -230,7 +232,7 @@ const Row = React.memo(function Row({
             {lowStock && (
               <Text style={{
                 fontSize: 12,
-                color: '#DC2626',
+                color: colours.error,
                 fontWeight: '800',
                 backgroundColor: '#FEE2E2',
                 paddingHorizontal: 6,
@@ -393,6 +395,7 @@ const Row = React.memo(function Row({
 function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
+  const colours = useColours();
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueIdFromCtx = useVenueId();
@@ -782,6 +785,7 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const ensureAreaStarted = async () => {
+    if (startedAtMs) return;
     try {
       const a = await getDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId));
       const data = a.data() as AreaDoc | undefined;
@@ -1105,13 +1109,15 @@ try {
       // Calculate total value
       let totalValue = 0;
       try {
-        const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
-        itemsSnap.forEach(d => {
-          const data = d.data();
-          const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
-          const cost = typeof data.costPrice === 'number' ? data.costPrice : 0;
-          totalValue += count * cost;
-        });
+        for (const areaDoc of snap.docs) {
+          const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaDoc.id, 'items'));
+          itemsSnap.forEach(d => {
+            const data = d.data();
+            const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
+            const cost = typeof data.costPrice === 'number' ? data.costPrice : 0;
+            totalValue += count * cost;
+          });
+        }
       } catch {}
       const counted = items.filter(i => i.lastCountAt);
       const missed = items.filter(i => !i.lastCountAt);
@@ -1396,7 +1402,7 @@ const openHistory = throttleAction(async (item: Item) => {
           <Text style={{ color:'white', fontWeight:'800' }}>Add product</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setLearnOpen(true)} style={{ paddingVertical:10, paddingHorizontal:12 }}>
-          <Text style={{ color:'#0B132B' }}>Learn more</Text>
+          <Text style={{ color: colours.navy }}>Learn more</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -2031,7 +2037,7 @@ const openHistory = throttleAction(async (item: Item) => {
             style={{
               padding: 12,
               borderRadius: 10,
-              backgroundColor: submittingArea ? '#16A34A99' : '#16A34A',
+              backgroundColor: submittingArea ? '#16A34A99' : colours.success,
               flex: 1,
             }}
           >
@@ -2087,7 +2093,7 @@ const openHistory = throttleAction(async (item: Item) => {
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14 }}>
               <TouchableOpacity onPress={() => setInfoOpen(false)} style={{ padding: 10 }}>
-                <Text style={{ color: '#0B132B', fontWeight: '600' }}>OK</Text>
+                <Text style={{ color: colours.navy, fontWeight: '600' }}>OK</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2105,7 +2111,7 @@ const openHistory = throttleAction(async (item: Item) => {
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
               <TouchableOpacity onPress={() => setLearnOpen(false)} style={{ padding: 10 }}>
-                <Text style={{ color: '#0B132B', fontWeight: '600' }}>Got it</Text>
+                <Text style={{ color: colours.navy, fontWeight: '600' }}>Got it</Text>
               </TouchableOpacity>
             </View>
           </View>

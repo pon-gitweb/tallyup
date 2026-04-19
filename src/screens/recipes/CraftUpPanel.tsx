@@ -7,6 +7,7 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useColours } from '../../context/ThemeContext';
 
 import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
@@ -63,7 +64,7 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const tip = useMemo(
-    () => 'Craft-It: choose type and mode, we’ll handle the rest. Name + ingredients are set in the draft screen.',
+    () => 'Craft-It: choose type and mode, we'll handle the rest. Name + ingredients are set in the draft screen.',
     []
   );
   const dataPath = `venues/${venueId || '…'}/recipes/<recipeId> · status: draft | confirmed`;
@@ -163,6 +164,8 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
 ----------------------------------------------------------------------- */
 function RecipesListTab() {
   const venueId = useVenueId();
+  const colours = useColours();
+  const styles = makeStyles(colours);
   const [rows, setRows] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [viewId, setViewId] = useState<string|null>(null);
@@ -268,6 +271,8 @@ function RecipesListTab() {
 
 /* ---------------- Read-only Recipe Card ---------------- */
 function RecipeCardView({ recipe, onClose }) {
+  const colours = useColours();
+  const styles = makeStyles(colours);
   const cost = Number(recipe?.cogs ?? 0);
   const rrp = Number(recipe?.rrp ?? 0);
   const gp = rrp > 0 ? ((rrp - cost) / rrp) * 100 : 0;
@@ -288,7 +293,7 @@ function RecipeCardView({ recipe, onClose }) {
     return [qty, unit, name].filter(Boolean).join(' ');
   };
 
-  const gpColor = gp >= 65 ? '#16A34A' : gp >= 55 ? '#D97706' : '#DC2626';
+  const gpColor = gp >= 65 ? colours.success : gp >= 55 ? '#D97706' : colours.error;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
@@ -317,7 +322,7 @@ function RecipeCardView({ recipe, onClose }) {
           )}
           {yieldQty != null && (
             <View style={{ paddingVertical: 3, paddingHorizontal: 10, borderRadius: 999, backgroundColor: '#F0FDF4' }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>Makes {yieldQty} {yieldUnit}</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colours.success }}>Makes {yieldQty} {yieldUnit}</Text>
             </View>
           )}
           <View style={[styles.chip, styles.chipConfirmed]}>
@@ -394,6 +399,8 @@ function RecipeCardView({ recipe, onClose }) {
 -------------------------------------------------------------- */
 function DraftsTab() {
   const venueId = useVenueId();
+  const colours = useColours();
+  const styles = makeStyles(colours);
   const [rows, setRows] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<string|null>(null);
@@ -507,19 +514,21 @@ function DraftsTab() {
   );
 }
 
-const styles = StyleSheet.create({
-  title: { fontSize: 18, fontWeight: '900', marginBottom: 10 },
-  search: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:42, color:'#111827' },
-  row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB', marginBottom: 10
-  },
-  rowTitle: { fontWeight: '800' },
-  rowSub: { color: '#6B7280', marginTop: 2 },
-  chev: { fontSize: 22, color: '#94A3B8', marginLeft: 8 },
-  chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
-  chipText: { fontSize:12, fontWeight:'700', color:'#111' },
-  chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
-  chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor:'#16A34A' },
-});
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    title: { fontSize: 18, fontWeight: '900', marginBottom: 10 },
+    search: { borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:42, color:'#111827' },
+    row: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
+      backgroundColor: '#F9FAFB', marginBottom: 10
+    },
+    rowTitle: { fontWeight: '800' },
+    rowSub: { color: '#6B7280', marginTop: 2 },
+    chev: { fontSize: 22, color: '#94A3B8', marginLeft: 8 },
+    chip: { paddingHorizontal:8, paddingVertical:2, borderRadius:999 },
+    chipText: { fontSize:12, fontWeight:'700', color:'#111' },
+    chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
+    chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor: c.success },
+  });
+}

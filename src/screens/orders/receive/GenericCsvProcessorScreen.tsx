@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } fr
 import * as DocumentPicker from 'expo-document-picker';
 import { uploadInvoiceCsv } from '../../../services/invoices/invoiceUpload';
 import { processInvoicesCsv } from '../../../services/invoices/processInvoicesCsv';
+import { useColours } from '../../../context/ThemeContext';
 
 type Props = {
   orderId: string;
@@ -20,6 +21,7 @@ export default function GenericCsvProcessorScreen({
   onDone,
   embed,
 }: Props) {
+  const colours = useColours();
   const [busy, setBusy] = useState(false);
 
   const pickAndProcess = async () => {

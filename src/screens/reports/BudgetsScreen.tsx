@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
 import { getAIContext } from '../../services/aiContext';
 import { AI_BASE_URL } from '../../config/ai';
@@ -14,6 +15,7 @@ type Row = Budget & { progress?: { spent: number; remaining: number; pct: number
 
 export default function BudgetsScreen() {
   const venueId = useVenueId();
+  const colours = useColours();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -264,7 +266,7 @@ export default function BudgetsScreen() {
               <Text style={styles.btitle}>{name}</Text>
               <Text style={styles.sub}>{start} → {end}</Text>
               <View style={styles.barWrap}>
-                <View style={[styles.barFill, { width: pct + '%', backgroundColor: pct >= 100 ? '#DC2626' : pct >= 80 ? '#D97706' : '#16A34A' }]} />
+                <View style={[styles.barFill, { width: pct + '%', backgroundColor: pct >= 100 ? colours.error : pct >= 80 ? '#D97706' : colours.success }]} />
               </View>
               <Text style={styles.sub}>
                 Spent {prog ? prog.spent.toFixed(2) : '—'} / {Number(b.amount || 0).toFixed(2)} ({pct}%)

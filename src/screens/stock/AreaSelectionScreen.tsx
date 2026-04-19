@@ -15,6 +15,7 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useColours } from '../../context/ThemeContext';
 
 type Params = { venueId: string; departmentId: string };
 type AreaRow = {
@@ -41,9 +42,10 @@ type AreaRow = {
 };
 
 function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
+  const c = useColours();
   const fillCount = status === 'done' ? 3 : status === 'inprog' ? 1 : 0;
   const star = (filled: boolean, key: number) =>
-    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? '#F59E0B' : '#CBD5E1'} />;
+    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? c.amber : '#CBD5E1'} />;
   return (
     <View style={{ flexDirection: 'row', gap: 2 }}>
       {star(fillCount >= 1, 1)}
@@ -57,6 +59,8 @@ function AreaSelectionInner() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const { venueId, departmentId } = (route.params || {}) as Params;
+  const colours = useColours();
+  const styles = makeStyles(colours);
 
   const uid = getAuth().currentUser?.uid || null;
 
@@ -261,7 +265,7 @@ function AreaSelectionInner() {
             )}
           </View>
         </View>
-        <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
+        <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
       </TouchableOpacity>
     );
   };
@@ -278,7 +282,7 @@ function AreaSelectionInner() {
           <IdentityBadge />
         </View>
 
-        <Text style={{ color: '#6B7280', marginTop: 8 }}>
+        <Text style={{ color: colours.textSecondary, marginTop: 8 }}>
           Please go back to Stock Control or Departments and reopen this department. This prevents partial or
           orphaned stock takes.
         </Text>
@@ -356,7 +360,7 @@ function AreaSelectionInner() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListEmptyComponent={
             <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-              <Text style={{ color: '#6B7280' }}>No matching areas.</Text>
+              <Text style={{ color: colours.textSecondary }}>No matching areas.</Text>
             </View>
           }
           contentContainerStyle={{ paddingBottom: 60 }}
@@ -393,49 +397,51 @@ function AreaSelectionInner() {
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: 'white', padding: 16 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  title: { fontSize: 22, fontWeight: '800' },
-  sub: { color: '#6B7280', marginTop: 2 },
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    wrap: { flex: 1, backgroundColor: c.background, padding: 16 },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    title: { fontSize: 22, fontWeight: '800', color: c.text },
+    sub: { color: c.textSecondary, marginTop: 2 },
 
-  legendRow: { flexDirection: 'row', justifyContent: 'flex-start', gap: 14, marginBottom: 8 },
-  legendItem: { flexDirection: 'row', alignItems: 'center' },
-  legendText: { color: '#6B7280', marginLeft: 4, fontSize: 12 },
+    legendRow: { flexDirection: 'row', justifyContent: 'flex-start', gap: 14, marginBottom: 8 },
+    legendItem: { flexDirection: 'row', alignItems: 'center' },
+    legendText: { color: c.textSecondary, marginLeft: 4, fontSize: 12 },
 
-  searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  searchInput: {
-    flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white'
-  },
+    searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+    searchInput: {
+      flex: 1, borderWidth: 1, borderColor: c.border, borderRadius: 10,
+      paddingHorizontal: 12, paddingVertical: 10, backgroundColor: c.surface, color: c.text,
+    },
 
-  row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB',
-    marginBottom: 10, backgroundColor: '#F9FAFB'
-  },
-  rowTitle: { fontSize: 16, fontWeight: '700' },
-  rowSub: { color: '#6B7280' },
+    row: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      padding: 14, borderRadius: 12, borderWidth: 1, borderColor: c.border,
+      marginBottom: 10, backgroundColor: c.surface,
+    },
+    rowTitle: { fontSize: 16, fontWeight: '700', color: c.text },
+    rowSub: { color: c.textSecondary },
 
-  primaryBtn: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, marginLeft: 8 },
-  primaryText: { color: 'white', fontWeight: '800' },
+    primaryBtn: { backgroundColor: c.primary, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, marginLeft: 8 },
+    primaryText: { color: c.primaryText, fontWeight: '800' },
 
-  smallBtn: { backgroundColor: '#E5E7EB', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, marginLeft: 8 },
-  smallText: { fontWeight: '700', color: '#374151' },
+    smallBtn: { backgroundColor: c.border, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, marginLeft: 8 },
+    smallText: { fontWeight: '700', color: c.text },
 
-  pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
-  pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
-  pillInProg: { backgroundColor: '#e1effe', color: '#1e429f' },
-  pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
-  pillLocked: { backgroundColor: '#FEE2E2', color: '#B91C1C' },
-  pillMine: { backgroundColor: '#DBEAFE', color: '#1D4ED8' },
+    pill: { fontWeight: '700', fontSize: 12, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999 },
+    pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
+    pillInProg: { backgroundColor: c.primaryLight, color: c.primary },
+    pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+    pillLocked: { backgroundColor: '#FEE2E2', color: '#B91C1C' },
+    pillMine: { backgroundColor: c.primaryLight, color: c.primary },
 
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  modalCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, width: '90%' },
-  modalTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8 },
-  modalInput: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white' },
-  secondaryBtn: { backgroundColor: '#E5E7EB', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
-  secondaryText: { fontWeight: '700' },
-});
+    modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+    modalCard: { backgroundColor: c.surface, padding: 16, borderRadius: 12, width: '90%' },
+    modalTitle: { fontSize: 16, fontWeight: '800', marginBottom: 8, color: c.text },
+    modalInput: { borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: c.background, color: c.text },
+    secondaryBtn: { backgroundColor: c.border, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+    secondaryText: { fontWeight: '700', color: c.text },
+  });
+}
 
 export default withErrorBoundary(AreaSelectionInner, 'AreaSelection');

@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
 import { searchProductsBySupplierPrefixPage, listProductsBySupplierPage } from '../../../services/products';
+import { useColours } from '../../../context/ThemeContext';
 
 type Line = {
   id?: string | null;
@@ -34,6 +35,8 @@ export default function ReceiveApproveScreen({
   venueId?: string | null;
   supplierId?: string | null;
 }) {
+  const colours = useColours();
+
   // Pre-populate: manual is seeded from submitted order; csv from parsed invoice
   const [lines, setLines] = useState<Line[]>(
     (linesIn || []).map(l => ({

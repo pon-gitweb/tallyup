@@ -8,11 +8,13 @@ import OriginalOrderDetailScreen from './OrderDetailScreen';
 import { getApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 
 export default function OrderDetailWithHeader(props: any) {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { venueId, user } = useVenue() as any;
+  const colours = useColours();
 
   const p = (route?.params as any) || {};
   const orderId: string | undefined = p?.orderId || p?.id || p?.order?.id;

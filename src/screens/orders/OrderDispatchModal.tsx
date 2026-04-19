@@ -11,6 +11,7 @@ import {
   ActivityIndicator, Alert, Linking, Modal,
   ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
+import { useColours } from '../../context/ThemeContext';
 
 type OrderLine = { name: string; qty: number; unit?: string; unitCost?: number };
 
@@ -57,6 +58,7 @@ export default function OrderDispatchModal({
   orderingMethod = 'email', lines, totalCost,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const colours = useColours();
   const db = getFirestore();
 
   const markPlaced = useCallback(async (method: string) => {
@@ -221,7 +223,7 @@ export default function OrderDispatchModal({
                 <Text style={{ fontSize: 24 }}>🌐</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '900', color: supplierPortalUrl ? '#166534' : '#9CA3AF' }}>Open supplier portal</Text>
-                  <Text style={{ fontSize: 12, color: supplierPortalUrl ? '#16A34A' : '#9CA3AF', marginTop: 2 }}>
+                  <Text style={{ fontSize: 12, color: supplierPortalUrl ? colours.success : '#9CA3AF', marginTop: 2 }}>
                     {supplierPortalUrl ? supplierPortalUrl : 'No portal URL set — add in Supplier settings'}
                   </Text>
                 </View>

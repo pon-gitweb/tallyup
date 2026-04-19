@@ -18,13 +18,42 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
+import { useColours } from '../../context/ThemeContext';
 
 import * as svc from '../../services/products';
 const hasCreate = typeof svc.createProduct === 'function';
 const hasUpdate = typeof svc.updateProduct === 'function';
 const hasUpsert = typeof svc.upsertProduct === 'function';
 
+// PAR level defaults by product category.
+// Applied automatically when a category is inferred from the global catalog.
+const PAR_DEFAULTS: Record<string, number> = {
+  spirits: 2,
+  spirit: 2,
+  wine: 6,
+  wines: 6,
+  beer: 24,
+  beers: 24,
+  ale: 24,
+  lager: 24,
+  cider: 24,
+  'dry goods': 2,
+  'dry good': 2,
+  perishable: 1,
+  perishables: 1,
+  produce: 1,
+  dairy: 1,
+};
 
+function defaultParForCategory(cat: string | null | undefined): number | null {
+  if (!cat) return null;
+  const k = cat.toLowerCase().trim();
+  if (k in PAR_DEFAULTS) return PAR_DEFAULTS[k];
+  for (const [key, val] of Object.entries(PAR_DEFAULTS)) {
+    if (k.includes(key) || key.includes(k)) return val;
+  }
+  return null;
+}
 
 type NavParams = { productId?: string | null; product?: any | null };
 
@@ -42,6 +71,7 @@ export default function EditProductScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const colours = useColours();
 
   const params: NavParams = route?.params || {};
   const editingId = params?.productId || null;
@@ -180,34 +210,39 @@ export default function EditProductScreen() {
       style={{ flex: 1 }}
       behavior={Platform.select({ ios:'padding', android: undefined })}
     >
-      <ScrollView contentContainerStyle={styles.wrap}>
-        <Text style={styles.title}>{editingId ? 'Edit Product' : 'Add Product'}</Text>
+      <ScrollView contentContainerStyle={[styles.wrap, { backgroundColor: colours.background }]}>
+        <Text style={[styles.title, { color: colours.text }]}>{editingId ? 'Edit Product' : 'Add Product'}</Text>
 
         {/* ---- Global Catalog Autofill (reads-only; applies a patch into the form) ---- */}
         <AutoFillFromCatalog
           initialTerm={form.name ?? ''}
           onApply={(patch) => {
-            setForm((prev:any) => ({
-              ...prev,
-              // never override a name the user already typed (unless empty)
-              name: clean(prev.name).length ? prev.name : patch.name,
-              // merge rest
-              sku: patch.sku ?? prev.sku ?? null,
-              unit: patch.unit ?? prev.unit ?? null,
-              size: patch.size ?? prev.size ?? null,
-              packSize: patch.packSize ?? prev.packSize ?? null,
-              abv: patch.abv ?? prev.abv ?? null,
-              costPrice: patch.costPrice ?? prev.costPrice ?? null,
-              gstPercent: patch.gstPercent ?? prev.gstPercent ?? 15,
-              supplierNameSuggested: patch.supplierNameSuggested ?? prev.supplierNameSuggested ?? null,
-              supplierGlobalId: patch.supplierGlobalId ?? prev.supplierGlobalId ?? null,
-              categorySuggested: patch.categorySuggested ?? prev.categorySuggested ?? null,
-            }));
+            setForm((prev:any) => {
+              const newCategory = patch.categorySuggested ?? prev.categorySuggested ?? null;
+              // Auto-set PAR from category only when the field is still empty
+              const existingPar = intOrNull(prev.parLevel);
+              const autoPar = existingPar == null ? defaultParForCategory(newCategory) : null;
+              return {
+                ...prev,
+                name: clean(prev.name).length ? prev.name : patch.name,
+                sku: patch.sku ?? prev.sku ?? null,
+                unit: patch.unit ?? prev.unit ?? null,
+                size: patch.size ?? prev.size ?? null,
+                packSize: patch.packSize ?? prev.packSize ?? null,
+                abv: patch.abv ?? prev.abv ?? null,
+                costPrice: patch.costPrice ?? prev.costPrice ?? null,
+                gstPercent: patch.gstPercent ?? prev.gstPercent ?? 15,
+                supplierNameSuggested: patch.supplierNameSuggested ?? prev.supplierNameSuggested ?? null,
+                supplierGlobalId: patch.supplierGlobalId ?? prev.supplierGlobalId ?? null,
+                categorySuggested: newCategory,
+                parLevel: existingPar != null ? prev.parLevel : (autoPar != null ? String(autoPar) : prev.parLevel),
+              };
+            });
           }}
         />
 
         {/* ---- Core fields ---- */}
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
           <Field label="Name *">
             <TextInput
               value={form.name}
@@ -237,6 +272,11 @@ export default function EditProductScreen() {
                 keyboardType="number-pad"
                 style={styles.input}
               />
+              {form.categorySuggested && intOrNull(form.parLevel) === defaultParForCategory(form.categorySuggested) && intOrNull(form.parLevel) != null && (
+                <Text style={{ fontSize: 11, color: colours.amber, marginTop: 3 }}>
+                  Auto-set from {form.categorySuggested}
+                </Text>
+              )}
             </Field>
           </FieldRow>
 
@@ -317,22 +357,22 @@ export default function EditProductScreen() {
 
         {/* ---- Supplier hints (non-binding) ---- */}
         {(form.supplierNameSuggested || form.supplierGlobalId || form.categorySuggested) ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Supplier hint</Text>
+          <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
+            <Text style={[styles.cardTitle, { color: colours.text }]}>Supplier hint</Text>
             {!!form.supplierNameSuggested && (
-              <Text style={styles.hint}>
+              <Text style={[styles.hint, { color: colours.text }]}>
                 Suggested supplier: <Text style={styles.bold}>{form.supplierNameSuggested}</Text>
               </Text>
             )}
             {!!form.categorySuggested && (
-              <Text style={styles.hint}>
+              <Text style={[styles.hint, { color: colours.text }]}>
                 Suggested category: <Text style={styles.bold}>{form.categorySuggested}</Text>
               </Text>
             )}
             {!!form.supplierGlobalId && (
-              <Text style={styles.hintDim}>Catalog source: {form.supplierGlobalId}</Text>
+              <Text style={[styles.hintDim, { color: colours.textSecondary }]}>Catalog source: {form.supplierGlobalId}</Text>
             )}
-            <Text style={[styles.hintDim, { marginTop: 6 }]}>
+            <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 6 }]}>
               This does not link a venue supplier. Use “Supplier Tools” on the Products screen to set a preferred supplier.
             </Text>
           </View>
@@ -341,18 +381,18 @@ export default function EditProductScreen() {
         {/* ---- Actions ---- */}
         <View style={{ height: 8 }} />
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.btnSecondary} onPress={()=>nav.goBack()} disabled={saving}>
-            <Text style={styles.btnSecondaryText}>Cancel</Text>
+          <TouchableOpacity style={[styles.btnSecondary, { backgroundColor: colours.border }]} onPress={()=>nav.goBack()} disabled={saving}>
+            <Text style={[styles.btnSecondaryText, { color: colours.text }]}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.btnPrimary, !canSave && { opacity: 0.5 }]}
+            style={[styles.btnPrimary, { backgroundColor: colours.primary }, !canSave && { opacity: 0.5 }]}
             onPress={save}
             disabled={!canSave || saving}
           >
             {saving ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colours.primaryText} />
             ) : (
-              <Text style={styles.btnPrimaryText}>{editingId ? 'Save' : 'Create'}</Text>
+              <Text style={[styles.btnPrimaryText, { color: colours.primaryText }]}>{editingId ? 'Save' : 'Create'}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -369,23 +409,23 @@ export default function EditProductScreen() {
           onRequestClose={() => setInductionMissing(null)}
         >
           <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Just a few details</Text>
-              <Text style={styles.modalText}>
+            <View style={[styles.modalCard, { backgroundColor: colours.surface }]}>
+              <Text style={[styles.modalTitle, { color: colours.text }]}>Just a few details</Text>
+              <Text style={[styles.modalText, { color: colours.text }]}>
                 To use this product in stocktakes and ordering, we need:
               </Text>
               {inductionMissing.map((m) => (
-                <Text key={m} style={styles.modalBullet}>• {m}</Text>
+                <Text key={m} style={[styles.modalBullet, { color: colours.text }]}>• {m}</Text>
               ))}
-              <Text style={[styles.modalText, { marginTop: 8 }]}>
+              <Text style={[styles.modalText, { color: colours.text, marginTop: 8 }]}>
                 Fill these in above and tap Save again.
               </Text>
               <View style={styles.modalActions}>
                 <TouchableOpacity
-                  style={styles.modalBtn}
+                  style={[styles.modalBtn, { backgroundColor: colours.navy }]}
                   onPress={() => setInductionMissing(null)}
                 >
-                  <Text style={styles.modalBtnText}>Got it</Text>
+                  <Text style={[styles.modalBtnText, { color: colours.primaryText }]}>Got it</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -398,10 +438,10 @@ export default function EditProductScreen() {
 
 // ------- Small layout helpers -------
 
-function Field({ label, children, style }:any) {
+function Field({ label, children, style, labelColour }:any) {
   return (
     <View style={[{ marginBottom: 10 }, style]}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, labelColour && { color: labelColour }]}>{label}</Text>
       {children}
     </View>
   );
@@ -412,15 +452,14 @@ function FieldRow({ children }:any) {
 }
 
 // ------- Styles -------
+// Static styles (brand-neutral). Colour-sensitive styles use inline colours from useColours().
 const styles = StyleSheet.create({
-  wrap: { padding: 16, backgroundColor: '#fff' },
+  wrap: { padding: 16 },
   title: { fontSize: 22, fontWeight: '800', marginBottom: 12 },
 
   card: {
-    backgroundColor: '#F9FAFB',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
     padding: 12,
     marginBottom: 12,
   },
@@ -428,37 +467,33 @@ const styles = StyleSheet.create({
 
   label: { fontWeight: '700', marginBottom: 4 },
   input: {
-    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
 
-  hint: { color: '#374151' },
-  hintDim: { color: '#6B7280', fontSize: 12 },
+  hint: {},
+  hintDim: { fontSize: 12 },
   bold: { fontWeight: '700' },
 
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   btnPrimary: {
-    backgroundColor: '#0A84FF',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
     minWidth: 110,
     alignItems: 'center',
   },
-  btnPrimaryText: { color: '#fff', fontWeight: '800' },
+  btnPrimaryText: { fontWeight: '800' },
   btnSecondary: {
-    backgroundColor: '#E5E7EB',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
     minWidth: 110,
     alignItems: 'center',
   },
-  btnSecondaryText: { color: '#111827', fontWeight: '800' },
+  btnSecondaryText: { fontWeight: '800' },
 
   modalBackdrop: {
     flex: 1,
@@ -468,21 +503,19 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   modalCard: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     width: '100%',
     maxWidth: 420,
   },
   modalTitle: { fontSize: 18, fontWeight: '800', marginBottom: 8 },
-  modalText: { fontSize: 14, color: '#111827' },
-  modalBullet: { fontSize: 14, color: '#111827', marginTop: 4 },
+  modalText: { fontSize: 14 },
+  modalBullet: { fontSize: 14, marginTop: 4 },
   modalActions: { marginTop: 16, flexDirection: 'row', justifyContent: 'flex-end' },
   modalBtn: {
-    backgroundColor: '#111827',
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 999,
   },
-  modalBtnText: { color: '#FFFFFF', fontWeight: '700' },
+  modalBtnText: { fontWeight: '700' },
 });

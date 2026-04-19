@@ -1,9 +1,13 @@
 import React from 'react';
+import * as Sentry from '@sentry/react-native';
 import RootNavigator from './src/navigation/RootNavigator';
 import { VenueProvider } from './src/context/VenueProvider';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
+import { initCrashReporting } from './src/services/crashReporting';
 
-export default function App() {
+initCrashReporting();
+
+function App() {
   console.log('[TallyUp App] mount');
   return (
     <VenueProvider>
@@ -13,3 +17,5 @@ export default function App() {
     </VenueProvider>
   );
 }
+
+export default Sentry.wrap(App);
