@@ -159,6 +159,7 @@ async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: st
 // ════════════════════════════════════════════════════════════════════════════
 export const processInvoicesCsv = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onRequest(async (req, res) => {
     try {
       const uid = await verifyToken(req);
@@ -226,6 +227,7 @@ export const processInvoicesPdf = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const processSalesCsv = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onRequest(async (req, res) => {
     try {
       const uid = await verifyToken(req);
@@ -248,6 +250,7 @@ export const processSalesCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const processProductsCsv = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onRequest(async (req, res) => {
     try {
       const uid = await verifyToken(req);
@@ -288,6 +291,7 @@ export const processProductsCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const uploadCsv = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onRequest(async (req, res) => {
     try {
       const uid = await verifyToken(req);
@@ -311,6 +315,7 @@ export const uploadCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const uploadShelfScanPhotoCallable = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
     const { venueId, scanId, base64, contentType } = data || {};
@@ -455,6 +460,7 @@ export const aiVarianceExplain = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const allocatePo = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
     const venueId = data?.venueId;
@@ -477,6 +483,7 @@ export const allocatePo = functions
 // ════════════════════════════════════════════════════════════════════════════
 export const ensureVenueDefaultsCallable = functions
   .region("us-central1")
+  .runWith({ memory: "256MB", timeoutSeconds: 60 })
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
     const venueId = data?.venueId;
