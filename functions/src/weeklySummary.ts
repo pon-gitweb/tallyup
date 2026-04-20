@@ -140,7 +140,7 @@ async function collectVenueSummary(
           flaggedItems.push({ name, lastCount, unit });
 
         if (lastCount === 0 && zeroItems.length < 10)
-          zeroItems.push({ name });
+          zeroItems.push({ name, lastCount: 0 });
       }
     }
   }

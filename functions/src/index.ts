@@ -33,3 +33,18 @@ export { api } from "./api";
 
 // === Weekly summary email (scheduled, Monday 8am venue local time) ===
 export { weeklySummaryEmail } from "./weeklySummary";
+
+// === Legacy functions — deployed directly, must remain exported to avoid deletion ===
+export {
+  processInvoicesCsv,
+  processInvoicesPdf,
+  processSalesCsv,
+  processProductsCsv,
+  uploadCsv,
+  uploadShelfScanPhotoCallable,
+  onShelfScanJobCreate,
+  varianceDepartmentReport,
+  aiVarianceExplain,
+  allocatePo,
+  ensureVenueDefaultsCallable,
+} from "./legacyFunctions";
