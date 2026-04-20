@@ -1,7 +1,7 @@
 {
   "functions": {
     "source": "functions",
-    "runtime": "nodejs22",
+    "runtime": "nodejs20",
     "predeploy": ["npm --prefix functions install", "npm --prefix functions run build"]
   },
   "firestore": {
