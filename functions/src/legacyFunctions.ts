@@ -2,7 +2,7 @@
  * Legacy Cloud Functions — these were deployed directly to Firebase and must
  * remain exported here so `firebase deploy --only functions` does not delete them.
  */
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 
 const db = () => admin.firestore();
