@@ -3,6 +3,7 @@
  * remain exported here so `firebase deploy --only functions` does not delete them.
  */
 import * as functions from "firebase-functions";
+import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 
 const db = () => admin.firestore();
@@ -157,10 +158,9 @@ async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: st
 // ════════════════════════════════════════════════════════════════════════════
 // 1. processInvoicesCsv  — standalone HTTP wrapper around CSV invoice parsing
 // ════════════════════════════════════════════════════════════════════════════
-export const processInvoicesCsv = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onRequest(async (req, res) => {
+export const processInvoicesCsv = onRequest(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, invoker: "public" },
+  async (req, res) => {
     try {
       const uid = await verifyToken(req);
       if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
@@ -225,10 +225,9 @@ export const processInvoicesPdf = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 3. processSalesCsv  — parse a sales CSV from Storage
 // ════════════════════════════════════════════════════════════════════════════
-export const processSalesCsv = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onRequest(async (req, res) => {
+export const processSalesCsv = onRequest(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, invoker: "public" },
+  async (req, res) => {
     try {
       const uid = await verifyToken(req);
       if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
@@ -248,10 +247,9 @@ export const processSalesCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 4. processProductsCsv  — parse a products CSV from Storage into product rows
 // ════════════════════════════════════════════════════════════════════════════
-export const processProductsCsv = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onRequest(async (req, res) => {
+export const processProductsCsv = onRequest(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, invoker: "public" },
+  async (req, res) => {
     try {
       const uid = await verifyToken(req);
       if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
@@ -289,10 +287,9 @@ export const processProductsCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 5. uploadCsv  — accept base64/text CSV body and write to Storage
 // ════════════════════════════════════════════════════════════════════════════
-export const uploadCsv = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onRequest(async (req, res) => {
+export const uploadCsv = onRequest(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, invoker: "public" },
+  async (req, res) => {
     try {
       const uid = await verifyToken(req);
       if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
@@ -313,13 +310,12 @@ export const uploadCsv = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 6. uploadShelfScanPhotoCallable  — callable: upload a shelf scan photo
 // ════════════════════════════════════════════════════════════════════════════
-export const uploadShelfScanPhotoCallable = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
-    const { venueId, scanId, base64, contentType } = data || {};
-    if (!venueId || !scanId || !base64) throw new functions.https.HttpsError("invalid-argument", "Missing venueId, scanId, or base64");
+export const uploadShelfScanPhotoCallable = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required");
+    const { venueId, scanId, base64, contentType } = request.data || {};
+    if (!venueId || !scanId || !base64) throw new HttpsError("invalid-argument", "Missing venueId, scanId, or base64");
     const ext = (contentType || "image/jpeg").includes("png") ? ".png" : ".jpg";
     const destPath = `venues/${venueId}/shelfScans/${scanId}/photo${ext}`;
     const buf = Buffer.from(base64, "base64");
@@ -458,13 +454,12 @@ export const aiVarianceExplain = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 10. allocatePo  — callable: reserve and return the next PO number for venue
 // ════════════════════════════════════════════════════════════════════════════
-export const allocatePo = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
-    const venueId = data?.venueId;
-    if (!venueId) throw new functions.https.HttpsError("invalid-argument", "Missing venueId");
+export const allocatePo = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required");
+    const venueId = request.data?.venueId;
+    if (!venueId) throw new HttpsError("invalid-argument", "Missing venueId");
     const firestore = db();
     const counterRef = firestore.doc(`venues/${venueId}/meta/poCounter`);
     const poNumber = await firestore.runTransaction(async (tx) => {
@@ -481,13 +476,12 @@ export const allocatePo = functions
 // ════════════════════════════════════════════════════════════════════════════
 // 11. ensureVenueDefaultsCallable  — callable: write missing venue defaults
 // ════════════════════════════════════════════════════════════════════════════
-export const ensureVenueDefaultsCallable = functions
-  .region("us-central1")
-  .runWith({ memory: "256MB", timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
-    const venueId = data?.venueId;
-    if (!venueId) throw new functions.https.HttpsError("invalid-argument", "Missing venueId");
+export const ensureVenueDefaultsCallable = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Auth required");
+    const venueId = request.data?.venueId;
+    if (!venueId) throw new HttpsError("invalid-argument", "Missing venueId");
     const firestore = db();
     const venueRef = firestore.doc(`venues/${venueId}`);
     const snap = await venueRef.get();
