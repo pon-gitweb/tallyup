@@ -182,12 +182,11 @@ export const processInvoicesCsv = onRequest(
 export const processInvoicesPdf = functions
   .region("us-central1")
   .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
-  .https.onRequest(async (req, res) => {
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Auth required");
+    const { venueId, storagePath } = data || {};
+    if (!venueId || !storagePath) throw new functions.https.HttpsError("invalid-argument", "Missing venueId or storagePath");
     try {
-      const uid = await verifyToken(req);
-      if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-      const { venueId, storagePath } = req.body || {};
-      if (!venueId || !storagePath) { res.status(400).json({ ok: false, error: "Missing venueId or storagePath" }); return; }
       const [buf] = await admin.storage().bucket().file(storagePath).download();
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const pdfParse = require("pdf-parse");
@@ -203,7 +202,7 @@ export const processInvoicesPdf = functions
       const warnings: string[] = [];
       if (!lines.length) warnings.push("No line items detected — please review manually.");
       warnings.push("PDF parsed using text extraction (beta).");
-      res.json({
+      return {
         ok: true,
         invoice: {
           source: "pdf", storagePath,
@@ -215,10 +214,10 @@ export const processInvoicesPdf = functions
         lines,
         confidence: lines.length > 0 ? 0.6 : 0.2,
         warnings,
-      });
+      };
     } catch (e: any) {
       console.error("[processInvoicesPdf]", e?.message || e);
-      res.status(500).json({ ok: false, error: e?.message || "PDF processing failed" });
+      throw new functions.https.HttpsError("internal", e?.message || "PDF processing failed");
     }
   });
 
