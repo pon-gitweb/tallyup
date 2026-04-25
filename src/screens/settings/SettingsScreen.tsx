@@ -10,6 +10,8 @@ import {
   Modal,
   ScrollView,
   Switch,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
@@ -181,7 +183,15 @@ export default function SettingsScreen() {
 
   return (
     <LocalThemeGate>
-      <View style={styles.wrap}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+      <ScrollView
+        style={styles.scrollRoot}
+        contentContainerStyle={styles.wrap}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Header with badge */}
         <View style={styles.headerRow}>
           <MaybeTText style={styles.title}>Settings</MaybeTText>
@@ -518,14 +528,16 @@ export default function SettingsScreen() {
             </View>
           </LocalThemeGate>
         </Modal>
-      </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </LocalThemeGate>
   );
 }
 
 function makeStyles(c: ReturnType<typeof useColours>) {
   return StyleSheet.create({
-    wrap: { flex: 1, padding: 16, gap: 12, backgroundColor: c.background },
+    scrollRoot: { flex: 1, backgroundColor: c.background },
+    wrap: { padding: 16, gap: 12, paddingBottom: 40 },
     headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { color: c.text, fontSize: 22, fontWeight: '800', marginBottom: 4 },
     card: { backgroundColor: c.surface, padding: 12, borderRadius: 12, gap: 6, borderWidth: 1, borderColor: c.border },
@@ -547,7 +559,6 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     stubBtnText: { fontWeight: '800', color: c.text, textAlign: 'center' },
     aboutBtn: { backgroundColor: c.navy },
     signOut: {
-      marginTop: 'auto',
       backgroundColor: c.danger,
       paddingVertical: 14,
       borderRadius: 12,
