@@ -81,8 +81,6 @@ type RowProps = {
   countedInThisCycle: (it: Item) => boolean;
   clampNonNegative: (n: number) => number;
   approveNow: (it: Item) => Promise<void>;
-  saveCount: (it: Item) => Promise<void>;
-  pending: boolean;
 };
 
 const Row = React.memo(function Row({
@@ -105,14 +103,13 @@ const Row = React.memo(function Row({
   countedInThisCycle,
   clampNonNegative,
   approveNow,
-  saveCount,
-  pending,
 }: RowProps) {
   const colours = useColours();
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
   const countedNow = countedInThisCycle(item);
-  const locked = countedNow && !isManager;
+  const locked = false;
+  const hasLocalEntry = /^(\d+(\.\d+)?|\.\d+)$/.test((localQty[item.id] ?? '').trim());
   const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
 
   const typedRaw = (localQty[item.id] ?? '').trim();
@@ -171,7 +168,7 @@ const Row = React.memo(function Row({
     </TouchableOpacity>
   ) : null;
 
-  if (locked && compactCounted) {
+  if (hasLocalEntry && compactCounted) {
     return (
       <TouchableOpacity
         activeOpacity={0.9}
@@ -182,7 +179,10 @@ const Row = React.memo(function Row({
           <View style={{ flex:1 }}>
             <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '700' }}>{item.name}</Text>
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-              <Text style={{ fontSize:12, color:'#4CAF50' }}>Counted: {item.lastCount}</Text>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
+                <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#4CAF50' }} />
+                <Text style={{ fontSize:12, color:'#4CAF50', fontWeight:'600' }}>Entered: {localQty[item.id]}</Text>
+              </View>
               {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
               {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
               {FlagBadge}
@@ -210,7 +210,7 @@ const Row = React.memo(function Row({
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
         gap: 8,
-        backgroundColor: countedNow ? '#FFFFFF' : '#F9FAFB',
+        backgroundColor: hasLocalEntry ? '#FFFFFF' : '#F9FAFB',
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -218,15 +218,19 @@ const Row = React.memo(function Row({
           <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
 
           <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            {/* Counted status */}
-            <Text
-              style={{
-                fontSize: 12,
-                color: countedNow ? '#4CAF50' : colours.error,
-                fontWeight: countedNow ? '600' : '700',
-              }}>
-              {countedNow ? `Counted: ${item.lastCount}` : 'To count'}
-            </Text>
+            {/* Counted indicator — based on local entry, not Firestore */}
+            {hasLocalEntry ? (
+              <View style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
+                <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#4CAF50' }} />
+                <Text style={{ fontSize:12, color:'#4CAF50', fontWeight:'600' }}>
+                  {localQty[item.id]}
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ fontSize:12, color:colours.error, fontWeight:'700' }}>
+                To count
+              </Text>
+            )}
 
             {/* LOW pill */}
             {lowStock && (
@@ -317,19 +321,18 @@ const Row = React.memo(function Row({
           maxLength={32}
           returnKeyType="done"
           blurOnSubmit={false}
-          editable={!locked}
+          editable={true}
           onFocus={()=>setFocusedInputId(item.id)}
           onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
           onSubmitEditing={() => {
-            saveCount(item);
             inputRefs.current[item.id]?.blur?.();
           }}
           style={{
             flexGrow: 1, minWidth: 160,
             paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
-            borderWidth: 1, borderColor: locked ? '#ddd' : '#ccc', borderRadius: 10,
+            borderWidth: 1, borderColor: '#ccc', borderRadius: 10,
             height: Math.max(44, dens(40)),
-            backgroundColor: locked ? '#f7f7f7' : '#fff',
+            backgroundColor: '#fff',
             fontSize: isCompact ? 13 : 15
           }}
         />
@@ -344,25 +347,6 @@ const Row = React.memo(function Row({
             <Text style={{ fontWeight:'900' }}>＋</Text>
           </TouchableOpacity>
         ) : null}
-
-        <TouchableOpacity
-          onPress={ ()=>saveCount(item) }
-          disabled={locked}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            backgroundColor: locked ? '#B0BEC5' : '#0A84FF',
-            paddingVertical: dens(10),
-            paddingHorizontal: dens(12),
-            borderRadius: 10,
-            minHeight: 44
-          }}
-        >
-          {(localQty[item.id] ?? '').trim() !== '' ? <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#00E5FF' }} /> : null}
-          <Text style={{ color: '#fff', fontWeight: '800' }}>{locked ? 'Locked' : 'Save'}</Text>
-          {pending ? <View style={{ width:6, height:6, borderRadius:3, backgroundColor:'#F59E0B' }} /> : null}
-        </TouchableOpacity>
 
         {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
           <TouchableOpacity
@@ -588,6 +572,32 @@ function StockTakeAreaInventoryScreen() {
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const localQtyRef = React.useRef<Record<string, string>>({});
   React.useEffect(() => { localQtyRef.current = localQty; }, [localQty]);
+  const draftKey = venueId && departmentId && areaId
+    ? `countDraft:${venueId}:${departmentId}:${areaId}`
+    : null;
+  const draftRestoredRef = React.useRef(false);
+
+  // Restore draft from AsyncStorage on mount
+  useEffect(() => {
+    if (!draftKey || !AS) return;
+    (async () => {
+      try {
+        const stored = await AS.getItem(draftKey);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === 'object') setLocalQty(parsed);
+        }
+      } catch {}
+      finally { draftRestoredRef.current = true; }
+    })();
+  }, [draftKey]);
+
+  // Persist draft to AsyncStorage on every localQty change (after restore)
+  useEffect(() => {
+    if (!draftKey || !AS || !draftRestoredRef.current) return;
+    AS.setItem(draftKey, JSON.stringify(localQty)).catch(() => {});
+  }, [localQty, draftKey]);
+
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
@@ -1143,9 +1153,12 @@ try {
   const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
   const [submittingArea, setSubmittingArea] = useState(false);
 
+  const hasLocalEntry = (it: Item) =>
+    /^(\d+(\.\d+)?|\.\d+)$/.test((localQty[it.id] ?? '').trim());
+
   const openReview = () => {
-    const counted = items.filter(countedInThisCycle);
-    const missing = items.filter((it) => !countedInThisCycle(it));
+    const counted = items.filter(hasLocalEntry);
+    const missing = items.filter((it) => !hasLocalEntry(it));
     const flagged = items.filter((it) => !!it.flagRecount);
     setReviewCounted(counted);
     setReviewMissing(missing);
@@ -1165,20 +1178,25 @@ try {
   const completeArea = async () => {
     if (submittingArea) return;
 
-    const missing = items.filter((it) => !countedInThisCycle(it));
+    const missing = items.filter((it) => !hasLocalEntry(it));
 
     const perform = async () => {
       if (submittingArea) return;
       setSubmittingArea(true);
       try {
-        if (missing.length > 0) {
-          await Promise.all(missing.map((it) =>
-            updateDoc(
-              doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
-              { lastCount: 0, lastCountAt: serverTimestamp() }
-            )
-          ));
-        }
+        await ensureAreaStarted();
+
+        // Write all items from localQty — entered items use their value, unset items get 0
+        await Promise.all(items.map((it) => {
+          const raw = (localQty[it.id] ?? '').trim();
+          const qty = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
+          return setDoc(
+            doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId!,'items',it.id),
+            { lastCount: qty, lastCountAt: serverTimestamp() },
+            { merge: true }
+          );
+        }));
+
         // Stamp confirmedCount on all items for safe cycle reset
         try {
           const { getDocs: _getDocs, writeBatch: _writeBatch } = await import('firebase/firestore');
@@ -1192,6 +1210,12 @@ try {
           });
           await confirmBatch.commit();
         } catch {}
+
+        // Clear the local draft after successful submit
+        if (draftKey && AS) {
+          try { await AS.removeItem(draftKey); } catch {}
+        }
+
         await updateDoc(
           doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
           { completedAt: serverTimestamp() }
@@ -1209,7 +1233,7 @@ try {
       const itemList = missing.slice(0, 8).map((it) => `• ${it.name || 'Unnamed'}`).join('\n');
       const overflow = missing.length > 8 ? `\n...and ${missing.length - 8} more` : '';
       const msg = missing.length === items.length
-        ? `No items have been counted yet this cycle. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
+        ? `No items have been entered yet. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
         : `These ${missing.length.toLocaleString()} item${missing.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`;
       Alert.alert('Incomplete counts', msg, [
         { text: 'Go back', style: 'cancel' },
@@ -1505,8 +1529,6 @@ const openHistory = throttleAction(async (item: Item) => {
             countedInThisCycle={countedInThisCycle}
             clampNonNegative={clampNonNegative}
             approveNow={approveNow}
-            saveCount={saveCount}
-            pending={pendingSyncIds.has(item.id)}
           />
         )}
         ListHeaderComponent={
@@ -1924,10 +1946,7 @@ const openHistory = throttleAction(async (item: Item) => {
                 >
                   <Text style={{ fontWeight: '700' }}>{it.name}</Text>
                   <Text style={{ color: '#374151' }}>
-                    Saved:{' '}
-                    {typeof it.lastCount === 'number'
-                      ? it.lastCount
-                      : '—'}
+                    Count: {localQty[it.id] ?? '—'}
                   </Text>
                 </TouchableOpacity>
               ))
@@ -2299,7 +2318,7 @@ const openHistory = throttleAction(async (item: Item) => {
           });
 
           setLocalQty((m) => ({ ...m, [photoFor.id]: String(count) }));
-          await saveCount(photoFor, Number(count));
+          // Count stored in localQty; written to Firestore on area submit
 }}
       />
 
