@@ -4,6 +4,7 @@
     "slug": "tallyup",
     "version": "1.0.11",
     "orientation": "portrait",
+    "scheme": "tallyup",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,

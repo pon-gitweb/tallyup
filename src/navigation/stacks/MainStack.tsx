@@ -14,6 +14,8 @@ import StockTakeAreaInventoryScreen from '../../screens/stock/StockTakeAreaInven
 // Control & settings
 import StockControlScreen from '../../screens/stock/StockControlScreen';
 import SettingsScreen from '../../screens/settings/SettingsScreen';
+import TeamMembersScreen from '../../screens/settings/TeamMembersScreen';
+import AcceptInviteScreen from '../../screens/auth/AcceptInviteScreen';
 
 // Reports
 import ReportsScreen from '../../screens/reports/ReportsScreen';
@@ -85,6 +87,8 @@ export default function MainStack() {
         options={{ title: 'Stock Control' }}
       />
       <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen name="TeamMembers" component={TeamMembersScreen} options={{ title: 'Team Members' }} />
+      <Stack.Screen name="AcceptInvite" component={AcceptInviteScreen} options={{ title: 'Accept Invite', headerBackTitle: 'Back' }} />
 
       {/* Products */}
       <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />

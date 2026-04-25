@@ -246,6 +246,18 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>AI Usage</Text>
           </TouchableOpacity>
         </View>
+        {/* Team Members — owners and managers only */}
+        {isManager && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: themeColours.navy }]}
+              onPress={() => nav.navigate('TeamMembers')}
+            >
+              <Text style={styles.btnText}>Team Members</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Operations</Text></View>
         {/* Report Preferences button */}
         <View style={styles.row}>

@@ -114,6 +114,21 @@ service cloud.firestore {
         allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
       }
 
+      match /invites/{inviteId} {
+        // Any venue member can read invites (to check status)
+        allow read: if isVenueMember(venueId) || isSignedIn();
+        // Only owners and managers can create invites
+        allow create: if hasVenueRole(venueId, ['owner','manager'])
+          && request.resource.data.keys().hasAll(['email','role','status','createdAt'])
+          && request.resource.data.status == 'pending'
+          && request.resource.data.role in ['owner','manager','staff']
+          && request.resource.data.createdAt is timestamp;
+        // Only owners and managers can cancel (delete) invites
+        allow delete: if hasVenueRole(venueId, ['owner','manager']);
+        // Status updates (accept/expire) are done server-side via Cloud Function only
+        allow update: if false;
+      }
+
       match /departments/{departmentId} {
         allow read: if isVenueMember(venueId);
         allow create, update: if hasVenueRole(venueId, ['manager','owner']);

@@ -10,6 +10,9 @@ try {
 // === Membership (claims sync + callable) ===
 export { onMemberWrite, refreshMyClaims } from "./membership";
 
+// === Invites (send email + accept callable) ===
+export { onInviteCreated, acceptInviteCallable } from "./invites";
+
 // === Invoice OCR job queue (PDF/CSV etc) ===
 export { onOcrJobQueued } from "./ocr/parseInvoice";
 
