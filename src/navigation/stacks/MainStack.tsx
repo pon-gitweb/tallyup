@@ -46,6 +46,9 @@ import SupplierCatalogueScreen from '../../screens/supplier/SupplierCatalogueScr
 import SupplierOrdersScreen from '../../screens/supplier/SupplierOrdersScreen';
 import SupplierSpecialsScreen from '../../screens/supplier/SupplierSpecialsScreen';
 
+// Adjustments
+import AdjustmentInboxScreen from '../../screens/adjustments/AdjustmentInboxScreen';
+
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
 import OrdersScreen from '../../screens/orders/OrdersScreen';
@@ -123,6 +126,7 @@ export default function MainStack() {
         options={{ title: 'Budgets' }}
       />
       <Stack.Screen name="BudgetApprovalInbox" component={BudgetApprovalInboxScreen} options={{ title: 'Budget Approvals' }} />
+      <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
       <Stack.Screen name="ScaleSettings" component={ScaleSettingsScreen} options={{ title: 'Bluetooth Scale' }} />
       <Stack.Screen name="SetupGuide" component={SetupGuideScreen} options={{ title: 'Setup Guide' }} />
       <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />

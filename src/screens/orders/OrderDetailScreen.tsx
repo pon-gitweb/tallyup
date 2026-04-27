@@ -627,7 +627,11 @@ export default function OrderDetailScreen() {
             {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
           </Text>
         </View>
-        {String(orderMeta?.status).toLowerCase()==='submitted' ? (
+        {(() => {
+          const st = (orderMeta?.status || '').toString().toLowerCase();
+          console.log('[OrderDetail] order status check', { orderId, status: orderMeta?.status, normalised: st, orderMeta });
+          return ['submitted', 'placed', 'dispatched'].includes(st);
+        })() ? (
           <TouchableOpacity
             style={[S.receiveBtn, { position: 'absolute', right: 16, bottom: 16, zIndex: 10, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4 }]}
             onPress={()=>setReceiveOpen(true)}

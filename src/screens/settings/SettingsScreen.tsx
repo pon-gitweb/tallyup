@@ -12,7 +12,9 @@ import {
   Switch,
   KeyboardAvoidingView,
   Platform,
+  Share,
 } from 'react-native';
+import { HintService } from '../../services/hints/HintService';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
@@ -410,7 +412,7 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.amber }]}
-            onPress={() => { HintService.resetAll(); Alert.alert('Tips reset', 'All tips and hints will show again.'); }}
+            onPress={async () => { try { await HintService.resetAll(); Alert.alert('Tips reset', 'All tips and hints will show again.'); } catch { Alert.alert('Error', 'Could not reset tips. Please try again.'); } }}
           >
             <Text style={styles.btnText}>Reset Tips & Hints</Text>
           </TouchableOpacity>
