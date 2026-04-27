@@ -67,7 +67,6 @@ type RowProps = {
   dens: (n: number) => number;
   areaStarted: boolean;
   showExpected: boolean;
-  compactCounted: boolean;
   showSteppers: boolean;
   isManager: boolean;
   localQty: Record<string, string>;
@@ -89,7 +88,6 @@ const Row = React.memo(function Row({
   dens,
   areaStarted,
   showExpected,
-  compactCounted,
   showSteppers,
   isManager,
   localQty,
@@ -108,9 +106,7 @@ const Row = React.memo(function Row({
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
   const countedNow = countedInThisCycle(item);
-  const locked = false;
   const hasLocalEntry = /^(\d+(\.\d+)?|\.\d+)$/.test((localQty[item.id] ?? '').trim());
-  const placeholder = (showExpected ? (expectedStr ? `expected ${expectedStr}` : 'expected — none available') : 'enter count here');
 
   const typedRaw = (localQty[item.id] ?? '').trim();
   const typedNum = /^(\d+(\.\d+)?|\.\d+)$/.test(typedRaw) ? parseFloat(typedRaw) : null;
@@ -151,54 +147,6 @@ const Row = React.memo(function Row({
   };
   useEffect(() => () => stopRepeat(), []);
 
-  const FlagBadge = item.flagRecount ? (
-    <View style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEF3C7' }}>
-      <Text style={{ color:'#92400E', fontWeight:'800', fontSize:11 }}>Recount</Text>
-    </View>
-  ) : null;
-
-  const LowBadge = lowStock ? (
-    <TouchableOpacity
-      onPress={() => openEditItem(item, true)}
-      style={{ paddingVertical:1, paddingHorizontal:6, borderRadius:10, backgroundColor:'#FEE2E2' }}
-    >
-      <Text style={{ color:'#B91C1C', fontWeight:'800', fontSize:11 }}>
-        Low: {visibleCount ?? 0} &lt; {item.parLevel}
-      </Text>
-    </TouchableOpacity>
-  ) : null;
-
-  if (hasLocalEntry && compactCounted) {
-    return (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onLongPress={() => setMenuFor(item)}
-        style={{ paddingVertical: dens(10), paddingHorizontal: dens(12), minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#eee', gap: 8, backgroundColor:'#FAFAFA' }}
-      >
-        <View style={{ flexDirection:'row', alignItems:'center' }}>
-          <View style={{ flex:1 }}>
-            <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '700' }}>{item.name}</Text>
-            <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-              <View style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
-                <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#4CAF50' }} />
-                <Text style={{ fontSize:12, color:'#4CAF50', fontWeight:'600' }}>Entered: {localQty[item.id]}</Text>
-              </View>
-              {item.unit ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text> : null}
-              {item.supplierName ? <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text> : null}
-              {FlagBadge}
-              {LowBadge}
-            </View>
-          </View>
-          {areaStarted && showExpected && expectedStr ? (
-            <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
-              <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
-            </View>
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  }
-
   return (
     <TouchableOpacity
       activeOpacity={0.9}
@@ -206,170 +154,142 @@ const Row = React.memo(function Row({
       style={{
         paddingVertical: dens(10),
         paddingHorizontal: dens(12),
-        minHeight: 44,
+        minHeight: 56,
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
-        gap: 8,
         backgroundColor: hasLocalEntry ? '#FFFFFF' : '#F9FAFB',
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {/* Single row: product info left (flex:1) + count controls right */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+
+        {/* LEFT — full product description */}
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: isCompact ? 14 : 16, fontWeight: '600' }}>{item.name}</Text>
-
-          <View style={{ flexDirection:'row', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-            {/* Counted indicator — based on local entry, not Firestore */}
-            {hasLocalEntry ? (
-              <View style={{ flexDirection:'row', alignItems:'center', gap:4 }}>
-                <View style={{ width:8, height:8, borderRadius:4, backgroundColor:'#4CAF50' }} />
-                <Text style={{ fontSize:12, color:'#4CAF50', fontWeight:'600' }}>
-                  {localQty[item.id]}
-                </Text>
+          <Text
+            style={{ fontSize: isCompact ? 14 : 15, fontWeight: '600', lineHeight: isCompact ? 18 : 21 }}
+            numberOfLines={2}
+          >
+            {item.name}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 3 }}>
+            {hasLocalEntry && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CAF50' }} />
+                <Text style={{ fontSize: 11, color: '#4CAF50', fontWeight: '700' }}>Counted</Text>
               </View>
-            ) : (
-              <Text style={{ fontSize:12, color:colours.error, fontWeight:'700' }}>
-                To count
-              </Text>
             )}
-
-            {/* LOW pill */}
             {lowStock && (
-              <Text style={{
-                fontSize: 12,
-                color: colours.error,
-                fontWeight: '800',
-                backgroundColor: '#FEE2E2',
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-                borderRadius: 6,
-              }}>
-                LOW
-              </Text>
+              <TouchableOpacity onPress={() => openEditItem(item, true)}>
+                <Text style={{ fontSize: 11, color: '#B91C1C', fontWeight: '800', backgroundColor: '#FEE2E2', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+                  LOW
+                </Text>
+              </TouchableOpacity>
             )}
-
-            {/* FLAGGED pill */}
             {item.flagRecount && (
-              <Text style={{
-                fontSize: 12,
-                color: '#6A1B9A',
-                fontWeight: '800',
-                backgroundColor: '#F3E8FF',
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-                borderRadius: 6,
-              }}>
-                FLAGGED
+              <Text style={{ fontSize: 11, color: '#6A1B9A', fontWeight: '800', backgroundColor: '#F3E8FF', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+                RECOUNT
               </Text>
             )}
-
-            {/* Outlier '?' — only when counted and expected exists */}
             {showOutlier && (
-              <Text style={{
-                fontSize: 12,
-                color: '#B45309',
-                fontWeight: '800',
-                backgroundColor: '#FEF3C7',
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-                borderRadius: 6,
-              }}>
+              <Text style={{ fontSize: 11, color: '#B45309', fontWeight: '800', backgroundColor: '#FEF3C7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
                 ?
               </Text>
             )}
-
-            {/* Unit */}
-            {item.unit ? (
-              <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.unit}</Text>
+            {item.unit ? <Text style={{ fontSize: 11, color: '#6B7280' }}>{item.unit}</Text> : null}
+            {item.supplierName ? <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{item.supplierName}</Text> : null}
+            {areaStarted && showExpected && expectedStr ? (
+              <Text style={{ fontSize: 11, color: '#0A5FFF', fontWeight: '600' }}>exp: {expectedStr}</Text>
             ) : null}
-
-            {/* Supplier */}
-            {item.supplierName ? (
-              <Text style={{ fontSize:12, color:'#6B7280' }}>• {item.supplierName}</Text>
-            ) : null}
-
-            {/* Existing flag badge (icon) */}
-            {FlagBadge}
           </View>
         </View>
 
-        {areaStarted && showExpected && expectedStr ? (
-          <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12, backgroundColor: '#EAF4FF', marginLeft: 8 }}>
-            <Text style={{ color: '#0A5FFF', fontWeight: '700', fontSize: 12 }}>Expected: {expectedStr}</Text>
-          </View>
-        ) : null}
-      </View>
+        {/* RIGHT — count controls: [−] [input] [+] */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {showSteppers && (
+            <TouchableOpacity
+              onPress={() => adjustTyped(-1)}
+              onLongPress={() => startRepeat(-1)}
+              onPressOut={stopRepeat}
+              style={{
+                width: 36, height: 44, borderRadius: 8,
+                borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb',
+                justifyContent: 'center', alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontWeight: '900', fontSize: 20 }}>−</Text>
+            </TouchableOpacity>
+          )}
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {showSteppers && !locked ? (
-          <TouchableOpacity
-            onPress={() => adjustTyped(-1)}
-            onLongPress={() => startRepeat(-1)}
-            onPressOut={stopRepeat}
-            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
-          >
-            <Text style={{ fontWeight:'900' }}>−</Text>
-          </TouchableOpacity>
-        ) : null}
-
-        <TextInput
-          ref={(el)=>{ inputRefs.current[item.id]=el; }}
-          value={localQty[item.id] ?? ''}
-          onChangeText={(t)=>setLocalQty(m=>({...m,[item.id]:t}))}
-          placeholder={placeholder}
-          keyboardType="decimal-pad"
-          inputMode="decimal"
-          maxLength={32}
-          returnKeyType="done"
-          blurOnSubmit={false}
-          editable={true}
-          onFocus={()=>setFocusedInputId(item.id)}
-          onBlur={()=>setFocusedInputId((prev)=>prev===item.id?null:prev)}
-          onSubmitEditing={() => {
-            inputRefs.current[item.id]?.blur?.();
-          }}
-          style={{
-            flexGrow: 1, minWidth: 160,
-            paddingVertical: Math.max(10, dens(8)), paddingHorizontal: dens(12),
-            borderWidth: 1, borderColor: '#ccc', borderRadius: 10,
-            height: Math.max(44, dens(40)),
-            backgroundColor: '#fff',
-            fontSize: isCompact ? 13 : 15
-          }}
-        />
-
-        {showSteppers && !locked ? (
-          <TouchableOpacity
-            onPress={() => adjustTyped(1)}
-            onLongPress={() => startRepeat(1)}
-            onPressOut={stopRepeat}
-            style={{ paddingVertical: dens(8), paddingHorizontal: dens(12), borderRadius:10, borderWidth:1, borderColor:'#e5e7eb', backgroundColor:'#f9fafb' }}
-          >
-            <Text style={{ fontWeight:'900' }}>＋</Text>
-          </TouchableOpacity>
-        ) : null}
-
-        {isManager && ENABLE_MANAGER_INLINE_APPROVE ? (
-          <TouchableOpacity
-            onPress={ throttleAction(()=>approveNow(item)) }
-            disabled={locked}
+          <TextInput
+            ref={(el) => { inputRefs.current[item.id] = el; }}
+            value={localQty[item.id] ?? ''}
+            onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
+            placeholder="0"
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            maxLength={10}
+            returnKeyType="done"
+            blurOnSubmit={false}
+            editable={true}
+            onFocus={() => setFocusedInputId(item.id)}
+            onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
+            onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
             style={{
-              backgroundColor: locked ? '#CFD8DC' : '#10B981',
-              paddingVertical: dens(10),
-              paddingHorizontal: dens(12),
+              width: 80,
+              paddingVertical: Math.max(8, dens(6)),
+              paddingHorizontal: 6,
+              borderWidth: 2,
+              borderColor: hasLocalEntry ? '#4CAF50' : '#d1d5db',
               borderRadius: 10,
-              minHeight: 44
+              height: Math.max(44, dens(40)),
+              backgroundColor: '#fff',
+              fontSize: 18,
+              fontWeight: '700',
+              textAlign: 'center',
             }}
-          >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
-          </TouchableOpacity>
-        ) : null}
+          />
 
-        {countedNow && !isManager ? (
-          <TouchableOpacity onPress={() => openAdjustment(item)} style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}>
-            <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
-          </TouchableOpacity>
-        ) : null}
+          {showSteppers && (
+            <TouchableOpacity
+              onPress={() => adjustTyped(1)}
+              onLongPress={() => startRepeat(1)}
+              onPressOut={stopRepeat}
+              style={{
+                width: 36, height: 44, borderRadius: 8,
+                borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb',
+                justifyContent: 'center', alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontWeight: '900', fontSize: 20 }}>＋</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
+
+      {/* Manager inline approve */}
+      {isManager && ENABLE_MANAGER_INLINE_APPROVE && (
+        <TouchableOpacity
+          onPress={throttleAction(() => approveNow(item))}
+          style={{
+            marginTop: 6, alignSelf: 'flex-start',
+            backgroundColor: '#10B981',
+            paddingVertical: dens(8), paddingHorizontal: dens(12),
+            borderRadius: 10, minHeight: 36,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '800' }}>Approve now (Mgr)</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Staff adjustment request */}
+      {countedNow && !isManager && (
+        <TouchableOpacity
+          onPress={() => openAdjustment(item)}
+          style={{ marginTop: 6, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}
+        >
+          <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 });
@@ -529,7 +449,7 @@ function StockTakeAreaInventoryScreen() {
   const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
   const [onlyUncounted, setOnlyUncounted] = useState(false);
   const [onlyLow, setOnlyLow] = useState(false);
-  const [showSteppers, setShowSteppers] = useState(false);
+  const [showSteppers, setShowSteppers] = useState(true);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
 
   // More menu
@@ -728,6 +648,10 @@ function StockTakeAreaInventoryScreen() {
     return lcMs >= startedAtMs;
   };
 
+  // Local-state source of truth for "has been counted this session"
+  const hasLocalEntry = (it: Item): boolean =>
+    /^(\d+(\.\d+)?|\.\d+)$/.test((localQty[it.id] ?? '').trim());
+
   const isLow = (it: Item) =>
     typeof it.parLevel === 'number' &&
     typeof it.lastCount === 'number' &&
@@ -752,12 +676,12 @@ function StockTakeAreaInventoryScreen() {
   const filtered = useMemo(() => {
     let rows = filteredBase;
     if (onlyLow) rows = rows.filter(isLow);
-    if (onlyUncounted) rows = rows.filter((it) => !countedInThisCycle(it) || it.id === focusedInputId);
+    if (onlyUncounted) rows = rows.filter((it) => !hasLocalEntry(it) || it.id === focusedInputId);
     if (onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
     if (sortUncountedFirst) {
       rows = rows.slice().sort((a, b) => {
-        const au = countedInThisCycle(a) ? 1 : 0;
-        const bu = countedInThisCycle(b) ? 1 : 0;
+        const au = hasLocalEntry(a) ? 1 : 0;
+        const bu = hasLocalEntry(b) ? 1 : 0;
         if (au !== bu) return au - bu;
         const an = (a.name || '').toLowerCase(); const bn = (b.name || '').toLowerCase();
         return an < bn ? -1 : an > bn ? 1 : 0;
@@ -766,7 +690,7 @@ function StockTakeAreaInventoryScreen() {
     return rows;
   }, [filteredBase, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs, focusedInputId]);
 
-  const countedCount = items.filter(countedInThisCycle).length;
+  const countedCount = items.filter(hasLocalEntry).length;
   const lowCount = items.filter(isLow).length;
   const flaggedCount = items.filter((it)=>!!it.flagRecount).length;
   const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
@@ -786,7 +710,7 @@ function StockTakeAreaInventoryScreen() {
       const idx = filtered.findIndex((x) => x.id === currentId);
       startIdx = idx >= 0 ? idx : 0;
     }
-    const nextUncountedIdx = filtered.findIndex((x, i) => i >= startIdx && !countedInThisCycle(x));
+    const nextUncountedIdx = filtered.findIndex((x, i) => i >= startIdx && !hasLocalEntry(x));
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : -1;
     if (targetIdx === -1) { Keyboard.dismiss(); setFocusedInputId(null); return; }
     const nextId = filtered[targetIdx].id;
@@ -1153,9 +1077,6 @@ try {
   const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
   const [submittingArea, setSubmittingArea] = useState(false);
 
-  const hasLocalEntry = (it: Item) =>
-    /^(\d+(\.\d+)?|\.\d+)$/.test((localQty[it.id] ?? '').trim());
-
   const openReview = () => {
     const counted = items.filter(hasLocalEntry);
     const missing = items.filter((it) => !hasLocalEntry(it));
@@ -1515,7 +1436,6 @@ const openHistory = throttleAction(async (item: Item) => {
             dens={dens}
             areaStarted={areaStarted}
             showExpected={showExpected}
-            compactCounted={compactCounted}
             showSteppers={showSteppers}
             isManager={isManager}
             localQty={localQty}
