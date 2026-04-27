@@ -304,7 +304,7 @@ export default function TeamMembersScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colours.background }}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <Text style={{ fontSize: 22, fontWeight: '800', color: colours.text }}>Team Members</Text>
           {canInvite && (
             <TouchableOpacity
@@ -314,6 +314,12 @@ export default function TeamMembersScreen() {
               <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 14 }}>+ Invite</Text>
             </TouchableOpacity>
           )}
+        </View>
+
+        <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#BFDBFE' }}>
+          <Text style={{ fontSize: 13, color: '#1E40AF', lineHeight: 18 }}>
+            Team members are specific to each venue. Staff invited here will only have access to this venue.
+          </Text>
         </View>
 
         {loading ? (
