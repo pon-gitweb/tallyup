@@ -40,8 +40,8 @@ export default function OrderDetailWithHeader(props: any) {
   );
 
   const showSubmit  = status === 'draft';
-  const showReceive = status === 'submitted';
-  const showInvoice = status === 'submitted' || status === 'received';
+  const showReceive = status === 'submitted' || status === 'placed' || status === 'dispatched';
+  const showInvoice = status === 'submitted' || status === 'placed' || status === 'dispatched' || status === 'received';
 
   const doSubmit = useCallback(async () => {
     try {
