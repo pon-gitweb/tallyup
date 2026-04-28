@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  Modal,
+  PanResponder,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
@@ -73,8 +75,10 @@ export default function ReportsIndexScreen() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiInsights, setAiInsights] = useState<AiInsight[] | null>(null);
-  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+  const [insightsModalVisible, setInsightsModalVisible] = useState(false);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsList, setInsightsList] = useState<AiInsight[]>([]);
+  const [insightsError, setInsightsError] = useState(false);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -118,16 +122,6 @@ export default function ReportsIndexScreen() {
               if (!cancelled) setAiLoading(false);
             });
 
-          // Fire AI Insights section async — non-blocking
-          setAiInsightsLoading(true);
-          fetchAiInsights(venueId, d)
-            .then((insights) => {
-              if (!cancelled) setAiInsights(insights.length > 0 ? insights : null);
-            })
-            .catch(() => {})
-            .finally(() => {
-              if (!cancelled) setAiInsightsLoading(false);
-            });
         }
       })
       .catch(() => {
@@ -138,6 +132,28 @@ export default function ReportsIndexScreen() {
       cancelled = true;
     };
   }, [venueId]);
+
+  // ── On-demand AI insights ────────────────────────────────────────────────
+
+  async function handleGetInsights() {
+    if (!venueId || !data || insightsLoading) return;
+    setInsightsLoading(true);
+    setInsightsError(false);
+    setInsightsList([]);
+    try {
+      const insights = await fetchAiInsights(venueId, data);
+      if (insights.length === 0) {
+        setInsightsError(true);
+      } else {
+        setInsightsList(insights);
+      }
+    } catch {
+      setInsightsError(true);
+    } finally {
+      setInsightsLoading(false);
+      setInsightsModalVisible(true);
+    }
+  }
 
   // ── Empty / loading states ────────────────────────────────────────────────
 
@@ -368,36 +384,38 @@ export default function ReportsIndexScreen() {
             )}
           </Lane>
 
-          {/* ── AI INSIGHTS (owner/manager only) ── */}
-          {isManager && (
-            <View style={styles.insightSection}>
-              <Text style={styles.insightSectionLabel}>✦ AI INSIGHTS</Text>
-              {aiInsightsLoading ? (
-                <View style={styles.aiLoading}>
-                  <ActivityIndicator color="#60A5FA" size="small" />
-                  <Text style={styles.aiLoadingText}>Analysing your stocktake…</Text>
-                </View>
-              ) : aiInsights && aiInsights.length > 0 ? (
-                aiInsights.map((insight, idx) => (
-                  <InsightCard
-                    key={idx}
-                    insight={insight}
-                    isLast={idx === aiInsights.length - 1}
-                  />
-                ))
+          {/* ── GET AI INSIGHTS button (owner/manager only, after stocktake) ── */}
+          {isManager && data.hasCountData && (
+            <TouchableOpacity
+              style={styles.insightsBtn}
+              onPress={handleGetInsights}
+              activeOpacity={0.8}
+              disabled={insightsLoading}
+            >
+              {insightsLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text style={styles.laneEmpty}>
-                  {data.hasCountData
-                    ? 'AI analysis unavailable right now — check back shortly.'
-                    : 'Complete your first stocktake to unlock AI Insights.'}
-                </Text>
+                <>
+                  <Text style={styles.insightsBtnTitle}>✨ Get AI Insights</Text>
+                  <Text style={styles.insightsBtnSub}>Analyse this stocktake with AI</Text>
+                </>
               )}
-            </View>
+            </TouchableOpacity>
           )}
 
           {/* ── Secondary nav (owner/manager only) ── */}
           {isManager && <SecondaryNav nav={nav} />}
         </ScrollView>
+
+        {/* ── AI Insights modal ── */}
+        <InsightsModal
+          visible={insightsModalVisible}
+          loading={insightsLoading}
+          insights={insightsList}
+          error={insightsError}
+          onClose={() => setInsightsModalVisible(false)}
+          onRetry={handleGetInsights}
+        />
       </View>
     </LocalThemeGate>
   );
@@ -445,6 +463,88 @@ function InsightCard({
         <Text style={styles.insightAction}>{insight.action}</Text>
       ) : null}
     </View>
+  );
+}
+
+function InsightsModal({
+  visible,
+  loading,
+  insights,
+  error,
+  onClose,
+  onRetry,
+}: {
+  visible: boolean;
+  loading: boolean;
+  insights: AiInsight[];
+  error: boolean;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const dragPan = React.useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) =>
+        g.dy > 5 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 80) onClose();
+      },
+    })
+  ).current;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalContainer}>
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <View style={styles.modalSheet}>
+          <View {...dragPan.panHandlers} style={styles.modalDragArea}>
+            <View style={styles.modalDragHandle} />
+          </View>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>✨ AI Insights</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.modalCloseIcon}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {loading ? (
+              <View style={styles.modalCenter}>
+                <ActivityIndicator color="#60A5FA" size="large" />
+                <Text style={styles.modalLoadingText}>Analysing your stocktake…</Text>
+              </View>
+            ) : error ? (
+              <View style={styles.modalCenter}>
+                <Text style={styles.modalErrorText}>
+                  Unable to generate insights right now. Please try again.
+                </Text>
+                <TouchableOpacity style={styles.modalRetryBtn} onPress={onRetry}>
+                  <Text style={styles.modalRetryText}>Try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              insights.map((insight, idx) => (
+                <InsightCard
+                  key={idx}
+                  insight={insight}
+                  isLast={idx === insights.length - 1}
+                />
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -696,24 +796,31 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // AI Insights section
-  insightSection: {
-    marginBottom: 16,
-    backgroundColor: '#0D1624',
+  // AI Insights button
+  insightsBtn: {
+    backgroundColor: '#1b4f72',
     borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#1E3A5F',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginBottom: 16,
+    alignItems: 'center',
+    minHeight: 62,
+    justifyContent: 'center',
   },
-  insightSectionLabel: {
-    color: '#60A5FA',
-    fontSize: 11,
+  insightsBtnTitle: {
+    color: '#fff',
+    fontSize: 15,
     fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 14,
   },
+  insightsBtnSub: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+    marginTop: 3,
+  },
+
+  // Insight cards (used inside modal)
   insightCard: {
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   insightCardBorder: {
     borderBottomWidth: 1,
@@ -721,21 +828,99 @@ const styles = StyleSheet.create({
   },
   insightHeadline: {
     color: '#F1F5F9',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     marginBottom: 6,
   },
   insightObservation: {
     color: '#94A3B8',
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
   },
   insightAction: {
-    color: '#60A5FA',
+    color: '#5EAAD0',
     fontSize: 13,
     lineHeight: 18,
-    marginTop: 6,
+    marginTop: 8,
     fontStyle: 'italic',
+  },
+
+  // Modal
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  modalSheet: {
+    backgroundColor: '#0F1823',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+  },
+  modalDragArea: {
+    paddingTop: 12,
+    paddingBottom: 6,
+    alignItems: 'center',
+  },
+  modalDragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#334155',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+  },
+  modalTitle: {
+    color: '#F1F5F9',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalCloseIcon: {
+    color: '#64748B',
+    fontSize: 18,
+  },
+  modalBody: {
+    paddingHorizontal: 18,
+    paddingBottom: 40,
+  },
+  modalCenter: {
+    paddingVertical: 32,
+    alignItems: 'center',
+  },
+  modalLoadingText: {
+    color: '#64748B',
+    fontSize: 14,
+    marginTop: 14,
+  },
+  modalErrorText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalRetryBtn: {
+    backgroundColor: '#1b4f72',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+  },
+  modalRetryText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
 
   // Secondary nav
