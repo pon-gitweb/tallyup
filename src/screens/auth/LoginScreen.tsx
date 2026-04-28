@@ -107,7 +107,7 @@ function LoginScreenInner() {
   return (
     <View style={S.container}>
       <View style={S.inner}>
-        <Text style={S.title}>Welcome to TallyUp</Text>
+        <Text style={S.title}>Welcome to Hosti-Stock</Text>
 
         <TextInput
           style={S.input}

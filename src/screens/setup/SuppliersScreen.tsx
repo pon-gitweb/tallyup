@@ -515,7 +515,7 @@ export default function SuppliersScreen() {
             <Text style={styles.section}>Order Timing Policy (optional)</Text>
             <Text style={styles.hintSmall}>
               Use this if the supplier has a daily cutoff (e.g. “orders before
-              4pm go on tomorrow’s truck”) or if you want TallyUp to hold and
+              4pm go on tomorrow’s truck”) or if you want Hosti-Stock to hold and
               merge orders for a few hours.
             </Text>
 

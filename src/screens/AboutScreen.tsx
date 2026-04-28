@@ -22,7 +22,7 @@ export default function AboutScreen() {
         <ScrollView contentContainerStyle={{ padding: tokens.spacing.lg }}>
           <TView surface padded>
             <TText size="xl" weight="bold" style={{ textAlign: 'center', marginBottom: tokens.spacing.sm }}>
-              TallyUp
+              Hosti-Stock
             </TText>
             <TText muted style={{ textAlign: 'center', marginBottom: tokens.spacing.lg }}>
               Brand/theme/legal scaffolding. Dev preview only.

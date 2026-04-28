@@ -28,7 +28,7 @@ export default function OnboardingRoadScreen() {
   return (
     <SafeAreaView style={S.safe}>
       <ScrollView contentContainerStyle={S.content}>
-        <Text style={S.eyebrow}>Welcome to TallyUp</Text>
+        <Text style={S.eyebrow}>Welcome to Hosti-Stock</Text>
         <Text style={S.h1}>Let's set up your venue your way</Text>
         <Text style={S.lead}>
           Two minutes now saves you hours later. Pick the path that fits where you are today.

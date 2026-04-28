@@ -281,7 +281,7 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
     </div>
 
     <p style="text-align:center;font-size:11px;color:#CBD5E1;margin-top:16px;">
-      Hosti-Stock &middot; Powered by TallyUp
+      Hosti-Stock
     </p>
   </div>
 </body>

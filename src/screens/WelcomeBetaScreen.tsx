@@ -42,7 +42,7 @@ export default function BetaWelcomeScreen() {
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
           <Text style={S.betaPill}>BETA</Text>
-          <Text style={S.title}>Welcome to TallyUp</Text>
+          <Text style={S.title}>Welcome to Hosti-Stock</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.

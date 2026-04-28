@@ -14,7 +14,7 @@ export default function TermsScreen() {
             <TText size="xl" weight="bold" style={{ marginBottom: tokens.spacing.md }}>Terms of Use</TText>
             <TText muted>
               These terms are placeholder scaffolding for V2. Replace with your real legal copy.
-              Use of TallyUp is subject to your venue’s agreements and applicable law.
+              Use of Hosti-Stock is subject to your venue’s agreements and applicable law.
             </TText>
           </TView>
         </ScrollView>

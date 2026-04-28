@@ -19,7 +19,7 @@ async function sendInviteEmail(
       <p style="margin:0 0 16px">
         <strong>${escHtml(invitedByName)}</strong> has invited you to join
         <strong>${escHtml(venueName)}</strong> as a <strong>${escHtml(roleLabel)}</strong>
-        on TallyUp — the hospitality inventory app.
+        on Hosti-Stock — the hospitality inventory app.
       </p>
       <div style="margin:24px 0">
         <a href="${inviteLink}"
@@ -37,9 +37,9 @@ async function sendInviteEmail(
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      from: 'TallyUp <invites@hosti.co.nz>',
+      from: 'Hosti-Stock <invites@hosti.co.nz>',
       to: [to],
-      subject: `You're invited to join ${venueName} on TallyUp`,
+      subject: `You're invited to join ${venueName} on Hosti-Stock`,
       html,
     }),
   });
