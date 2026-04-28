@@ -26,7 +26,7 @@ async function verifyToken(req: express.Request): Promise<string | null> {
 // Returns meter state to client on every AI response.
 // Prepares for future billing tier enforcement.
 
-type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr';
+type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr' | 'ai-insights';
 
 interface MeterState {
   aiUsed: number;
@@ -373,6 +373,61 @@ app.post("/budget-suggest", async (req, res) => {
   }
 });
 
+
+// ── POST /ai-insights ────────────────────────────────────────────────────────
+// Body: { venueId, data, cacheKey }
+// Returns: { ok, insights: [{headline, observation, action}] }
+app.post("/ai-insights", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, data, cacheKey } = req.body || {};
+    if (!venueId || !data) { res.status(400).json({ ok: false, error: "Missing venueId or data" }); return; }
+
+    const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on patterns, trends, and opportunities. Return as JSON array: [{headline, observation, action}]`;
+
+    const userMessage = "Stocktake data for analysis:\n\n" + JSON.stringify(data, null, 2);
+
+    const raw = await callClaude(systemPrompt, userMessage);
+
+    let insights: any[] = [];
+    try {
+      const m = raw.match(/\[[\s\S]*\]/);
+      insights = m ? JSON.parse(m[0]) : [];
+    } catch { insights = []; }
+
+    const cleaned = insights
+      .filter((i: any) => i && i.headline && i.observation)
+      .slice(0, 4)
+      .map((i: any) => ({
+        headline: String(i.headline),
+        observation: String(i.observation),
+        action: i.action ? String(i.action) : null,
+      }));
+
+    // Cache to Firestore for reuse across app opens
+    if (cacheKey && cleaned.length > 0) {
+      try {
+        const db = admin.firestore();
+        await db.doc(`venues/${venueId}/reports/aiInsights`).set({
+          insights: cleaned,
+          cacheKey,
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        console.log("[api/ai-insights] cache write failed", e);
+      }
+    }
+
+    await trackAiCall(venueId, "ai-insights");
+    console.log("[api/ai-insights] OK", { uid, venueId, count: cleaned.length });
+    res.json({ ok: true, insights: cleaned });
+  } catch (e: any) {
+    console.error("[api/ai-insights] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Insights generation failed" });
+  }
+});
 
 // ── Claude-powered invoice line extraction ───────────────────────
 async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: string; qty: number; unitPrice?: number }>> {

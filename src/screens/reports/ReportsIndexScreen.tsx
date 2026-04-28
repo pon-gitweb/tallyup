@@ -14,6 +14,7 @@ import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
+import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -72,6 +73,8 @@ export default function ReportsIndexScreen() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiInsights, setAiInsights] = useState<AiInsight[] | null>(null);
+  const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -113,6 +116,17 @@ export default function ReportsIndexScreen() {
             .catch(() => {})
             .finally(() => {
               if (!cancelled) setAiLoading(false);
+            });
+
+          // Fire AI Insights section async — non-blocking
+          setAiInsightsLoading(true);
+          fetchAiInsights(venueId, d)
+            .then((insights) => {
+              if (!cancelled) setAiInsights(insights.length > 0 ? insights : null);
+            })
+            .catch(() => {})
+            .finally(() => {
+              if (!cancelled) setAiInsightsLoading(false);
             });
         }
       })
@@ -354,6 +368,33 @@ export default function ReportsIndexScreen() {
             )}
           </Lane>
 
+          {/* ── AI INSIGHTS (owner/manager only) ── */}
+          {isManager && (
+            <View style={styles.insightSection}>
+              <Text style={styles.insightSectionLabel}>✦ AI INSIGHTS</Text>
+              {aiInsightsLoading ? (
+                <View style={styles.aiLoading}>
+                  <ActivityIndicator color="#60A5FA" size="small" />
+                  <Text style={styles.aiLoadingText}>Analysing your stocktake…</Text>
+                </View>
+              ) : aiInsights && aiInsights.length > 0 ? (
+                aiInsights.map((insight, idx) => (
+                  <InsightCard
+                    key={idx}
+                    insight={insight}
+                    isLast={idx === aiInsights.length - 1}
+                  />
+                ))
+              ) : (
+                <Text style={styles.laneEmpty}>
+                  {data.hasCountData
+                    ? 'AI analysis unavailable right now — check back shortly.'
+                    : 'Complete your first stocktake to unlock AI Insights.'}
+                </Text>
+              )}
+            </View>
+          )}
+
           {/* ── Secondary nav (owner/manager only) ── */}
           {isManager && <SecondaryNav nav={nav} />}
         </ScrollView>
@@ -385,6 +426,24 @@ function SecondaryNav({ nav }: { nav: any }) {
       <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
       <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
       <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
+    </View>
+  );
+}
+
+function InsightCard({
+  insight,
+  isLast,
+}: {
+  insight: { headline: string; observation: string; action: string | null };
+  isLast: boolean;
+}) {
+  return (
+    <View style={[styles.insightCard, !isLast && styles.insightCardBorder]}>
+      <Text style={styles.insightHeadline}>{insight.headline}</Text>
+      <Text style={styles.insightObservation}>{insight.observation}</Text>
+      {insight.action ? (
+        <Text style={styles.insightAction}>{insight.action}</Text>
+      ) : null}
     </View>
   );
 }
@@ -635,6 +694,48 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 12,
     marginTop: 2,
+  },
+
+  // AI Insights section
+  insightSection: {
+    marginBottom: 16,
+    backgroundColor: '#0D1624',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1E3A5F',
+  },
+  insightSectionLabel: {
+    color: '#60A5FA',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 14,
+  },
+  insightCard: {
+    paddingVertical: 12,
+  },
+  insightCardBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  insightHeadline: {
+    color: '#F1F5F9',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  insightObservation: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  insightAction: {
+    color: '#60A5FA',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+    fontStyle: 'italic',
   },
 
   // Secondary nav
