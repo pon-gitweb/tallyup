@@ -26,7 +26,7 @@ async function verifyToken(req: express.Request): Promise<string | null> {
 // Returns meter state to client on every AI response.
 // Prepares for future billing tier enforcement.
 
-type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr' | 'ai-insights';
+type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr' | 'ai-insights' | 'extract-inventory';
 
 interface MeterState {
   aiUsed: number;
@@ -426,6 +426,133 @@ app.post("/ai-insights", async (req, res) => {
   } catch (e: any) {
     console.error("[api/ai-insights] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Insights generation failed" });
+  }
+});
+
+// ── POST /extract-inventory ───────────────────────────────────────────────────
+// Body: { imageBase64?: string, pdfBase64?: string, fileBase64?: string, mimeType: string, venueId?: string }
+// Returns: { ok, lines: [{name, quantity, unit, area}] }
+// Accepts any of imageBase64 / pdfBase64 / fileBase64; mimeType determines handling.
+app.post("/extract-inventory", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { imageBase64, pdfBase64, fileBase64, mimeType, venueId } = req.body || {};
+
+    // Resolve the raw base64 and whether it's an image or PDF
+    const rawBase64: string = imageBase64 || pdfBase64 || fileBase64 || "";
+    if (!rawBase64) {
+      res.status(400).json({ ok: false, error: "Missing imageBase64, pdfBase64, or fileBase64" });
+      return;
+    }
+
+    const isImage = !!(imageBase64) || (!!mimeType && mimeType.startsWith("image/"));
+    const resolvedMime: string = mimeType || (isImage ? "image/jpeg" : "application/pdf");
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const systemPrompt =
+      "You are reading a hospitality stocktake sheet. " +
+      "Extract all product names and quantities. " +
+      "Return as JSON array: [{name, quantity, unit, area}]. " +
+      "If area is not clear use 'General'. " +
+      "Return only valid JSON, no preamble.";
+
+    let rawText = "";
+
+    if (isImage) {
+      // Vision path: send image directly to Claude
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: resolvedMime, data: rawBase64 },
+              },
+              { type: "text", text: "Extract all items from this stocktake sheet." },
+            ],
+          }],
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => "");
+        throw new Error("Claude vision error: " + err);
+      }
+      const data = await resp.json() as any;
+      rawText = data?.content?.[0]?.text || "[]";
+    } else {
+      // PDF path: parse text with pdf-parse, then extract with Claude
+      const pdfParse = require("pdf-parse");
+      const buffer = Buffer.from(rawBase64, "base64");
+      const pdfData = await pdfParse(buffer);
+      const text = (pdfData.text || "").slice(0, 12000);
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{
+            role: "user",
+            content: "Extract items from this stocktake sheet:\n\n" + text,
+          }],
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => "");
+        throw new Error("Claude PDF error: " + err);
+      }
+      const data = await resp.json() as any;
+      rawText = data?.content?.[0]?.text || "[]";
+    }
+
+    // Parse JSON array — be tolerant of extra text around it
+    let items: any[] = [];
+    try {
+      const m = rawText.match(/\[[\s\S]*\]/);
+      items = m ? JSON.parse(m[0]) : [];
+    } catch { items = []; }
+
+    const lines = items
+      .filter((l: any) => l && typeof l.name === "string" && l.name.trim().length > 0)
+      .map((l: any) => ({
+        name: String(l.name).trim(),
+        quantity: Number.isFinite(Number(l.quantity)) ? Number(l.quantity) : 0,
+        unit: l.unit ? String(l.unit).trim() : null,
+        area: l.area ? String(l.area).trim() : "General",
+      }));
+
+    // Track usage if venueId provided (best-effort, non-blocking)
+    if (venueId) {
+      trackAiCall(venueId, "extract-inventory").catch(() => {});
+    }
+
+    console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", linesCount: lines.length });
+    res.json({ ok: true, lines });
+
+  } catch (e: any) {
+    console.error("[api/extract-inventory] ERROR", e?.message || e);
+    // Graceful failure — return empty array, not a 500, so the client can skip gracefully
+    res.json({ ok: false, lines: [], error: e?.message || "Extraction failed" });
   }
 });
 
