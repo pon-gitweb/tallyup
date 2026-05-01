@@ -21,6 +21,7 @@ import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
 import { useColours } from '../../context/ThemeContext';
 
 import * as svc from '../../services/products';
+import { listSuppliers, createSupplier, Supplier } from '../../services/suppliers';
 const hasCreate = typeof svc.createProduct === 'function';
 const hasUpdate = typeof svc.updateProduct === 'function';
 const hasUpsert = typeof svc.upsertProduct === 'function';
@@ -105,9 +106,51 @@ export default function EditProductScreen() {
   const [saving, setSaving] = useState(false);
   const [inductionMissing, setInductionMissing] = useState<string[] | null>(null);
 
+  // Supplier picker state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [addingSupplier, setAddingSupplier] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierEmail, setNewSupplierEmail] = useState('');
+  const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [savingSupplier, setSavingSupplier] = useState(false);
+
   const canSave = useMemo(() => {
     return clean(form.name).length > 0 && !!venueId;
   }, [form, venueId]);
+
+  // Load suppliers when the picker is opened
+  useEffect(() => {
+    if (!venueId || !showSupplierModal || suppliers.length > 0) return;
+    listSuppliers(venueId)
+      .then((list) => setSuppliers(list.filter((s) => !s.isHoldingSupplier)))
+      .catch(() => {});
+  }, [venueId, showSupplierModal]);
+
+  async function handleAddNewSupplier() {
+    if (!venueId || !newSupplierName.trim()) return;
+    setSavingSupplier(true);
+    try {
+      const id = await createSupplier(venueId, {
+        name: newSupplierName.trim(),
+        email: newSupplierEmail.trim() || null,
+        phone: newSupplierPhone.trim() || null,
+        orderingMethod: 'email',
+      });
+      const created: Supplier = { id, name: newSupplierName.trim(), email: newSupplierEmail.trim() || null, phone: newSupplierPhone.trim() || null };
+      setSuppliers((prev) => [created, ...prev]);
+      setForm((p: any) => ({ ...p, supplierId: id, supplierName: created.name }));
+      setShowSupplierModal(false);
+      setAddingSupplier(false);
+      setNewSupplierName('');
+      setNewSupplierEmail('');
+      setNewSupplierPhone('');
+    } catch (e: any) {
+      Alert.alert('Could not save supplier', e?.message || 'Please try again.');
+    } finally {
+      setSavingSupplier(false);
+    }
+  }
 
   // -------- Save (service first, then Firestore fallback)
   async function save() {
@@ -345,13 +388,14 @@ export default function EditProductScreen() {
           </FieldRow>
 
           <Field label="Supplier *">
-            <TextInput
-              value={form.supplierName ?? ''}
-              onChangeText={(v)=>setForm((p:any)=>({ ...p, supplierName: v }))}
-              placeholder="Who do you usually buy this from?"
-              autoCapitalize="words"
-              style={styles.input}
-            />
+            <TouchableOpacity
+              onPress={() => setShowSupplierModal(true)}
+              style={[styles.input, { justifyContent: 'center', minHeight: 40 }]}
+            >
+              <Text style={{ color: form.supplierName ? colours.text : colours.textSecondary }}>
+                {form.supplierName || 'Select supplier…'}
+              </Text>
+            </TouchableOpacity>
           </Field>
         </View>
 
@@ -399,6 +443,108 @@ export default function EditProductScreen() {
 
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      {/* Supplier picker modal */}
+      <Modal
+        transparent
+        visible={showSupplierModal}
+        animationType="slide"
+        onRequestClose={() => { setShowSupplierModal(false); setAddingSupplier(false); }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colours.surface, maxHeight: '75%' }]}>
+            {addingSupplier ? (
+              <>
+                <Text style={[styles.modalTitle, { color: colours.text }]}>New Supplier</Text>
+                <TextInput
+                  value={newSupplierName}
+                  onChangeText={setNewSupplierName}
+                  placeholder="Supplier name *"
+                  placeholderTextColor={colours.textSecondary}
+                  style={[styles.input, { color: colours.text, borderColor: colours.border, marginBottom: 8 }]}
+                  autoFocus
+                />
+                <TextInput
+                  value={newSupplierEmail}
+                  onChangeText={setNewSupplierEmail}
+                  placeholder="Email (optional)"
+                  placeholderTextColor={colours.textSecondary}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  style={[styles.input, { color: colours.text, borderColor: colours.border, marginBottom: 8 }]}
+                />
+                <TextInput
+                  value={newSupplierPhone}
+                  onChangeText={setNewSupplierPhone}
+                  placeholder="Phone (optional)"
+                  placeholderTextColor={colours.textSecondary}
+                  keyboardType="phone-pad"
+                  style={[styles.input, { color: colours.text, borderColor: colours.border, marginBottom: 16 }]}
+                />
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: colours.border, marginRight: 8 }]}
+                    onPress={() => setAddingSupplier(false)}
+                    disabled={savingSupplier}
+                  >
+                    <Text style={[styles.modalBtnText, { color: colours.text }]}>Back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: colours.primary, opacity: newSupplierName.trim() ? 1 : 0.5 }]}
+                    onPress={handleAddNewSupplier}
+                    disabled={savingSupplier || !newSupplierName.trim()}
+                  >
+                    {savingSupplier
+                      ? <ActivityIndicator color={colours.primaryText} size="small" />
+                      : <Text style={[styles.modalBtnText, { color: colours.primaryText }]}>Save & select</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.modalTitle, { color: colours.text }]}>Select Supplier</Text>
+                <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+                  {suppliers.length === 0 && (
+                    <Text style={{ color: colours.textSecondary, fontSize: 13, paddingVertical: 8 }}>
+                      No suppliers yet
+                    </Text>
+                  )}
+                  {suppliers.map((sup) => (
+                    <TouchableOpacity
+                      key={sup.id}
+                      onPress={() => {
+                        setForm((p: any) => ({ ...p, supplierId: sup.id || null, supplierName: sup.name }));
+                        setShowSupplierModal(false);
+                      }}
+                      style={{
+                        paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
+                        borderBottomColor: colours.border,
+                        backgroundColor: form.supplierId === sup.id ? colours.primaryLight : 'transparent',
+                        paddingHorizontal: 4, borderRadius: 6,
+                      }}
+                    >
+                      <Text style={{ fontWeight: '600', color: colours.text }}>{sup.name}</Text>
+                      {sup.email ? <Text style={{ fontSize: 11, color: colours.textSecondary }}>{sup.email}</Text> : null}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity
+                  onPress={() => setAddingSupplier(true)}
+                  style={{ paddingVertical: 12, marginTop: 4, alignItems: 'center' }}
+                >
+                  <Text style={{ color: colours.primary, fontWeight: '700' }}>+ Add new supplier</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: colours.border, alignSelf: 'flex-end' }]}
+                  onPress={() => setShowSupplierModal(false)}
+                >
+                  <Text style={[styles.modalBtnText, { color: colours.text }]}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Induction modal for missing required metadata */}
       {inductionMissing && (
