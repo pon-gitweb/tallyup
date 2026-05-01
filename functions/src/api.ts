@@ -662,6 +662,253 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
 });
 
+// ── POST /suitee ──────────────────────────────────────────────────────────────
+app.post("/suitee", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { question, venueId, history } = req.body || {};
+    if (!question || typeof question !== "string") {
+      res.status(400).json({ ok: false, error: "Missing question" }); return;
+    }
+    if (!venueId || typeof venueId !== "string") {
+      res.status(400).json({ ok: false, error: "Missing venueId" }); return;
+    }
+
+    const db = admin.firestore();
+
+    // ── Gather venue context ──────────────────────────────────────────────────
+
+    // Products
+    let products: any[] = [];
+    try {
+      const snap = await db.collection(`venues/${venueId}/products`).limit(200).get();
+      products = snap.docs.map(d => {
+        const data = d.data();
+        return {
+          name: data.name || d.id,
+          costPrice: typeof data.costPrice === "number" ? data.costPrice : null,
+          parLevel: typeof data.parLevel === "number" ? data.parLevel : null,
+          lastCountAt: data.lastCountAt?.toDate?.()?.toISOString() || null,
+        };
+      });
+    } catch {}
+
+    // Suppliers
+    let supplierNames: string[] = [];
+    try {
+      const snap = await db.collection(`venues/${venueId}/suppliers`).get();
+      supplierNames = snap.docs
+        .filter(d => !d.data().isHoldingSupplier)
+        .map(d => d.data().name || d.id);
+    } catch {}
+
+    // Variance data — traverse departments → areas → items (same logic as briefing service)
+    const allShortages: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
+    const allExcesses: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
+    const trendItems: { name: string; deptName: string }[] = [];
+    let totalItemsCounted = 0;
+    let shortfallDollars = 0;
+    let excessDollars = 0;
+    let stockHoldingValue = 0;
+    let hasCountData = false;
+
+    try {
+      const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+      for (const deptDoc of deptsSnap.docs) {
+        const deptName: string = (deptDoc.data().name as string) || deptDoc.id;
+        const areasSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas`).get();
+        for (const areaDoc of areasSnap.docs) {
+          const areaName: string = (areaDoc.data().name as string) || areaDoc.id;
+          const itemsSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas/${areaDoc.id}/items`).get();
+          for (const itemDoc of itemsSnap.docs) {
+            const d = itemDoc.data();
+            const lastCount = typeof d.lastCount === "number" ? d.lastCount : null;
+            const confirmedCount = typeof d.confirmedCount === "number" ? d.confirmedCount : null;
+            const parLevel = typeof d.parLevel === "number" ? d.parLevel : null;
+            const costPrice = typeof d.costPrice === "number" ? d.costPrice : null;
+            const name: string = (d.name as string) || itemDoc.id;
+
+            // Stock holding value from latest known count
+            const holdingCount = lastCount ?? confirmedCount ?? 0;
+            if (costPrice) stockHoldingValue += holdingCount * costPrice;
+
+            const lastCountAtMs: number | null = d.lastCountAt?.toMillis?.() ?? d.lastCountAt?.toDate?.()?.getTime?.() ?? null;
+            const confirmedCountAtMs: number | null = d.confirmedCountAt?.toMillis?.() ?? d.confirmedCountAt?.toDate?.()?.getTime?.() ?? null;
+            const countedInCycle = lastCountAtMs != null && (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
+            if (!countedInCycle || lastCount == null) continue;
+
+            totalItemsCounted++;
+            hasCountData = true;
+
+            const baseline: number | null = confirmedCount ?? parLevel ?? null;
+            if (baseline == null) continue;
+
+            const varianceUnits = lastCount - baseline;
+            const dollar = costPrice != null ? Math.abs(varianceUnits) * costPrice : 0;
+
+            if (varianceUnits < 0) {
+              allShortages.push({ name, varianceUnits, dollarVariance: dollar, deptName, areaName });
+              shortfallDollars += dollar;
+            } else if (varianceUnits > 0) {
+              allExcesses.push({ name, varianceUnits, dollarVariance: dollar, deptName, areaName });
+              excessDollars += dollar;
+            }
+
+            if (confirmedCount != null && parLevel != null && confirmedCount < parLevel && lastCount < parLevel) {
+              trendItems.push({ name, deptName });
+            }
+          }
+        }
+      }
+    } catch {}
+
+    if (!hasCountData) {
+      res.json({ ok: true, answer: "Complete your first stocktake to start asking Suitee questions about your venue." });
+      return;
+    }
+
+    allShortages.sort((a, b) => b.dollarVariance - a.dollarVariance);
+    allExcesses.sort((a, b) => b.dollarVariance - a.dollarVariance);
+
+    // Slow movers — products not counted in 30+ days
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const slowMovers = products
+      .filter(p => !p.lastCountAt || new Date(p.lastCountAt).getTime() < thirtyDaysAgo)
+      .slice(0, 10);
+
+    // Recent orders
+    let recentOrders: { supplierName: string; status: string; totalValue: number | null; createdAt: string | null }[] = [];
+    try {
+      const ordersSnap = await db.collection(`venues/${venueId}/orders`).limit(10).get();
+      recentOrders = ordersSnap.docs.map(d => {
+        const od = d.data();
+        return {
+          supplierName: (od.supplierName as string) || (od.supplierId as string) || "Unknown",
+          status: (od.status as string) || "unknown",
+          totalValue: typeof od.totalValue === "number" ? od.totalValue : null,
+          createdAt: od.createdAt?.toDate?.()?.toISOString()?.slice(0, 10) || null,
+        };
+      });
+    } catch {}
+
+    // Sales data
+    let salesSummary = "";
+    try {
+      const salesSnap = await db.collection(`venues/${venueId}/salesReports`).limit(3).get();
+      if (!salesSnap.empty) {
+        salesSummary = salesSnap.docs.map(d => JSON.stringify(d.data())).join("\n");
+      }
+    } catch {}
+
+    // ── Build context payload ─────────────────────────────────────────────────
+    const lines: string[] = [
+      "=== VENUE DATA SNAPSHOT ===",
+      "",
+      "CURRENT STOCKTAKE:",
+      `  Total shortage: $${shortfallDollars.toFixed(2)}`,
+      `  Total excess: $${excessDollars.toFixed(2)}`,
+      `  Items counted: ${totalItemsCounted}`,
+      `  Estimated stock holding value: $${stockHoldingValue.toFixed(2)}`,
+      "",
+      "TOP SHORTAGES (by dollar value):",
+      ...allShortages.slice(0, 10).map(s =>
+        `  - ${s.name}: ${s.varianceUnits} units${s.dollarVariance > 0 ? ` (-$${s.dollarVariance.toFixed(2)})` : ""} [${s.deptName}/${s.areaName}]`
+      ),
+      "",
+      "TOP EXCESSES:",
+      ...allExcesses.slice(0, 5).map(e =>
+        `  - ${e.name}: +${e.varianceUnits} units${e.dollarVariance > 0 ? ` ($${e.dollarVariance.toFixed(2)})` : ""} [${e.deptName}/${e.areaName}]`
+      ),
+      "",
+      "TREND ITEMS (short 2+ consecutive cycles):",
+      trendItems.length ? trendItems.map(t => `  - ${t.name} (${t.deptName})`).join("\n") : "  None detected yet",
+      "",
+      `PRODUCTS IN SYSTEM: ${products.length}`,
+      `SUPPLIERS: ${supplierNames.join(", ") || "None"}`,
+    ];
+
+    if (slowMovers.length > 0) {
+      lines.push("", "SLOW/UNCOUNTED PRODUCTS (30+ days without a count):");
+      slowMovers.forEach(p => lines.push(`  - ${p.name}${p.costPrice ? ` ($${p.costPrice}/unit)` : ""}`));
+    }
+
+    if (recentOrders.length > 0) {
+      lines.push("", "RECENT ORDERS:");
+      recentOrders.forEach(o =>
+        lines.push(`  - ${o.supplierName}: ${o.status}${o.totalValue ? ` ($${o.totalValue.toFixed(2)})` : ""}${o.createdAt ? ` on ${o.createdAt}` : ""}`)
+      );
+    }
+
+    if (salesSummary) {
+      lines.push("", "RECENT SALES DATA:", salesSummary);
+    }
+
+    const context = lines.join("\n");
+
+    const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti-Stock.
+You have been given real data from this venue's stocktake and ordering history. Answer the operator's question using only this data — never invent numbers or make assumptions beyond what the data shows.
+
+You answer questions like:
+- What was my GP last month?
+- Which product has the worst variance?
+- When did we last run out of Hendricks?
+- Which supplier is costing us the most?
+- What are my slowest moving lines?
+
+Your tone is direct, analytical, and honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
+
+If the data doesn't contain enough information to answer confidently, say so clearly: "I don't have enough data to answer that yet. Complete X more stocktakes to unlock this insight."
+
+Never answer questions about how to use the app — direct those to Izzy.
+
+${context}`;
+
+    // Build multi-turn messages (history + current question)
+    const messages: { role: string; content: string }[] = [];
+    if (Array.isArray(history)) {
+      for (const msg of history) {
+        if (msg.role === "user" || msg.role === "assistant") {
+          messages.push({ role: msg.role, content: String(msg.text || msg.content || "") });
+        }
+      }
+    }
+    messages.push({ role: "user", content: question });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 800,
+        system: systemPrompt,
+        messages,
+      }),
+    });
+    if (!claudeResp.ok) {
+      const err = await claudeResp.text().catch(() => "");
+      throw new Error("Claude API error: " + err);
+    }
+    const claudeData = await claudeResp.json() as any;
+    const answer = claudeData?.content?.[0]?.text || "I'm having trouble accessing your data right now. Please try again.";
+
+    console.log("[api/suitee] OK", { uid, venueId, questionLength: question.length });
+    res.json({ ok: true, answer });
+
+  } catch (e: any) {
+    console.error("[api/suitee] ERROR", e?.message || e);
+    res.json({ ok: false, answer: "I'm having trouble accessing your data right now. Please try again." });
+  }
+});
+
 // ── POST /izzy ────────────────────────────────────────────────────────────────
 app.post("/izzy", async (req, res) => {
   try {

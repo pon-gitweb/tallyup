@@ -9,14 +9,20 @@ import {
   StyleSheet,
   Modal,
   PanResponder,
+  KeyboardAvoidingView,
+  Platform,
+  TextInput,
+  FlatList,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
+import { AI_BASE_URL } from '../../config/ai';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -79,6 +85,11 @@ export default function ReportsIndexScreen() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsList, setInsightsList] = useState<AiInsight[]>([]);
   const [insightsError, setInsightsError] = useState(false);
+
+  const [suiteeOpen, setSuiteeOpen] = useState(false);
+  const [suiteeMessages, setSuiteeMessages] = useState<{ role: string; text: string }[]>([]);
+  const [suiteeInput, setSuiteeInput] = useState('');
+  const [suiteeLoading, setSuiteeLoading] = useState(false);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -153,6 +164,38 @@ export default function ReportsIndexScreen() {
       setInsightsLoading(false);
       setInsightsModalVisible(true);
     }
+  }
+
+  // ── Suitee chat ──────────────────────────────────────────────────────────
+
+  async function handleSuiteeSend() {
+    const text = suiteeInput.trim();
+    if (!text || suiteeLoading || !venueId) return;
+    setSuiteeInput('');
+    const newMessages = [...suiteeMessages, { role: 'user', text }];
+    setSuiteeMessages(newMessages);
+    setSuiteeLoading(true);
+    try {
+      const token = await getAuth().currentUser?.getIdToken();
+      const resp = await fetch(`${AI_BASE_URL}/api/suitee`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ question: text, venueId, history: suiteeMessages }),
+      });
+      const json = await resp.json().catch(() => ({}));
+      const answer = json?.answer || "I'm having trouble accessing your data right now. Please try again.";
+      setSuiteeMessages([...newMessages, { role: 'assistant', text: answer }]);
+    } catch {
+      setSuiteeMessages([...newMessages, { role: 'assistant', text: "I'm having trouble accessing your data right now. Please try again." }]);
+    } finally {
+      setSuiteeLoading(false);
+    }
+  }
+
+  function handleSuiteeClose() {
+    setSuiteeOpen(false);
+    setSuiteeMessages([]);
+    setSuiteeInput('');
   }
 
   // ── Empty / loading states ────────────────────────────────────────────────
@@ -403,6 +446,23 @@ export default function ReportsIndexScreen() {
             </TouchableOpacity>
           )}
 
+          {/* ── SUITEE button (owner/manager only, after stocktake) ── */}
+          {isManager && data.hasCountData && (
+            <TouchableOpacity
+              style={styles.suiteeBtn}
+              onPress={() => setSuiteeOpen(true)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.suiteeBtnTop}>
+                <Text style={styles.suiteeBtnTitle}>📊 Ask Suitee</Text>
+                <View style={styles.suiteeBadge}>
+                  <Text style={styles.suiteeBadgeText}>Beta</Text>
+                </View>
+              </View>
+              <Text style={styles.suiteeBtnSub}>Ask anything about your venue data</Text>
+            </TouchableOpacity>
+          )}
+
           {/* ── Secondary nav (owner/manager only) ── */}
           {isManager && <SecondaryNav nav={nav} />}
         </ScrollView>
@@ -415,6 +475,17 @@ export default function ReportsIndexScreen() {
           error={insightsError}
           onClose={() => setInsightsModalVisible(false)}
           onRetry={handleGetInsights}
+        />
+
+        {/* ── Suitee chat modal ── */}
+        <SuiteeModal
+          visible={suiteeOpen}
+          messages={suiteeMessages}
+          input={suiteeInput}
+          loading={suiteeLoading}
+          onInputChange={setSuiteeInput}
+          onSend={handleSuiteeSend}
+          onClose={handleSuiteeClose}
         />
       </View>
     </LocalThemeGate>
@@ -544,6 +615,95 @@ function InsightsModal({
           </ScrollView>
         </View>
       </View>
+    </Modal>
+  );
+}
+
+function SuiteeModal({
+  visible,
+  messages,
+  input,
+  loading,
+  onInputChange,
+  onSend,
+  onClose,
+}: {
+  visible: boolean;
+  messages: { role: string; text: string }[];
+  input: string;
+  loading: boolean;
+  onInputChange: (v: string) => void;
+  onSend: () => void;
+  onClose: () => void;
+}) {
+  const flatRef = React.useRef<FlatList>(null);
+  const displayMessages = messages.length
+    ? messages
+    : [{ role: 'assistant', text: 'I have access to your venue data. Ask me anything about stocktake variance, stock holding value, slow movers, or supplier performance.' }];
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={sStyles.wrap} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <TouchableOpacity style={sStyles.backdrop} onPress={onClose} activeOpacity={1} />
+        <View style={sStyles.sheet}>
+          <View style={sStyles.header}>
+            <View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={sStyles.title}>📊 Suitee</Text>
+                <View style={sStyles.badge}>
+                  <Text style={sStyles.badgeText}>BETA</Text>
+                </View>
+              </View>
+              <Text style={sStyles.subtitle}>Your venue intelligence</Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={{ padding: 8 }}>
+              <Text style={{ color: '#64748B', fontSize: 18 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <FlatList
+            ref={flatRef}
+            data={displayMessages}
+            keyExtractor={(_, i) => String(i)}
+            contentContainerStyle={sStyles.messageList}
+            onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: true })}
+            renderItem={({ item }) => (
+              <View style={[sStyles.bubble, item.role === 'user' ? sStyles.bubbleUser : sStyles.bubbleAssistant]}>
+                <Text style={item.role === 'user' ? sStyles.bubbleTextUser : sStyles.bubbleTextAssistant}>
+                  {item.text}
+                </Text>
+              </View>
+            )}
+          />
+
+          {loading && (
+            <View style={sStyles.loadingRow}>
+              <ActivityIndicator size="small" color="#60A5FA" />
+              <Text style={sStyles.loadingText}>Suitee is thinking…</Text>
+            </View>
+          )}
+
+          <View style={sStyles.inputRow}>
+            <TextInput
+              style={sStyles.input}
+              placeholder="Ask about your venue data…"
+              placeholderTextColor="#475569"
+              value={input}
+              onChangeText={onInputChange}
+              onSubmitEditing={onSend}
+              returnKeyType="send"
+              multiline={false}
+            />
+            <TouchableOpacity
+              onPress={onSend}
+              style={[sStyles.sendBtn, (!input.trim() || loading) && sStyles.sendBtnDisabled]}
+              disabled={!input.trim() || loading}
+            >
+              <Text style={sStyles.sendText}>→</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -923,6 +1083,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  // Suitee button
+  suiteeBtn: {
+    backgroundColor: '#0B132B',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1E3A5F',
+  },
+  suiteeBtnTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  suiteeBtnTitle: {
+    color: '#F9FAFB',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  suiteeBtnSub: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+  },
+  suiteeBadge: {
+    backgroundColor: '#1E3A5F',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  suiteeBadgeText: {
+    color: '#60A5FA',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+
   // Secondary nav
   secondaryNav: {
     marginTop: 8,
@@ -956,4 +1154,89 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '300',
   },
+});
+
+// ─── Suitee modal styles ──────────────────────────────────────────────────────
+
+const sStyles = StyleSheet.create({
+  wrap: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  sheet: {
+    backgroundColor: '#0F1823',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  title: { fontSize: 18, fontWeight: '800', color: '#F1F5F9' },
+  subtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  badge: {
+    backgroundColor: '#1E3A5F',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  badgeText: { color: '#60A5FA', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  messageList: { padding: 12, gap: 8 },
+  bubble: {
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    maxWidth: '85%',
+  },
+  bubbleUser: { alignSelf: 'flex-end', backgroundColor: '#0B132B', borderWidth: 1, borderColor: '#1E3A5F' },
+  bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: '#161B2A' },
+  bubbleTextUser: { color: '#F9FAFB', fontSize: 14, lineHeight: 20 },
+  bubbleTextAssistant: { color: '#CBD5E1', fontSize: 14, lineHeight: 20 },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  loadingText: { color: '#64748B', fontSize: 13, fontStyle: 'italic' },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#161B2A',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  sendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#0B132B',
+    borderWidth: 1,
+    borderColor: '#1E3A5F',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendBtnDisabled: { opacity: 0.4 },
+  sendText: { color: '#60A5FA', fontSize: 18, fontWeight: '700' },
 });
