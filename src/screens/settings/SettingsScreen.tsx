@@ -39,10 +39,12 @@ export default function SettingsScreen() {
   const onShare = React.useCallback(async () => {
     try {
       await Share.share({
-        message: 'I use Hosti-Stock to manage inventory at my venue — it saves me hours every week. Check it out: https://www.hosti.co.nz',
+        message: "I'm using Hosti-Stock to manage my venue inventory. Check it out at hostistock.com",
         title: 'Hosti-Stock — Inventory for hospitality',
       });
-    } catch {}
+    } catch (e: any) {
+      Alert.alert('Could not share', e?.message || 'Please try again.');
+    }
   }, []);
   const nav = useNavigation<any>();
   const auth = getAuth();
@@ -290,7 +292,13 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.primary }]}
-            onPress={() => nav.navigate('Adjustments')}
+            onPress={() => {
+              if (!isManager) {
+                Alert.alert('Manager access required', 'Only managers and owners can view and action adjustments.');
+                return;
+              }
+              nav.navigate('Adjustments');
+            }}
           >
             <Text style={styles.btnText}>Adjustments</Text>
             {isManager && pendingCount > 0 ? (
@@ -501,7 +509,14 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.amber }]}
-            onPress={async () => { try { await HintService.resetAll(); Alert.alert('Tips reset', 'All tips and hints will show again.'); } catch { Alert.alert('Error', 'Could not reset tips. Please try again.'); } }}
+            onPress={async () => {
+              try {
+                await HintService.resetAll();
+                Alert.alert('Done', 'Tips have been reset.');
+              } catch (e: any) {
+                Alert.alert('Error', 'Could not reset tips. Please try again.');
+              }
+            }}
           >
             <Text style={styles.btnText}>Reset Tips & Hints</Text>
           </TouchableOpacity>

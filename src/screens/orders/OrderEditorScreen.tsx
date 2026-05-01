@@ -65,7 +65,9 @@ export default function OrderEditorScreen() {
           const data = snap.data() as any;
           setNotes(data?.notes ?? '');
           setSupplierId(data?.supplierId ?? null);
+          setOrder(data);
           setOrderOk(true);
+          if (__DEV__) console.log('[OrderEditor] order loaded:', JSON.stringify({ id: orderId, status: data?.status, supplierId: data?.supplierId, supplierName: data?.supplierName }));
         } else {
           setOrderOk(false);
         }
@@ -403,13 +405,22 @@ export default function OrderEditorScreen() {
           />
 
           {/* Footer actions */}
-          <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' }}>
+          <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff', gap: 8 }}>
             <TouchableOpacity
               onPress={submitOrder}
               style={{ backgroundColor: colours.primary, paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
             >
               <Text style={{ color: 'white', fontWeight: '800' }}>Submit Order</Text>
             </TouchableOpacity>
+            {/* Receive button — shown for any non-draft order (treat undefined status as submitted) */}
+            {(order?.status ?? 'submitted') !== 'draft' && (
+              <TouchableOpacity
+                onPress={() => nav.navigate('Receive' as never, { orderId } as never)}
+                style={{ backgroundColor: '#16A34A', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+              >
+                <Text style={{ color: 'white', fontWeight: '800' }}>Receive Order</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </>
       )}
