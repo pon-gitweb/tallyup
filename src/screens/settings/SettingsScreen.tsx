@@ -13,12 +13,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Share,
+  ActivityIndicator,
 } from 'react-native';
 import { HintService } from '../../services/hints/HintService';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { resetAllDepartmentsStockTake } from '../../services/reset';
 
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
@@ -128,6 +130,7 @@ export default function SettingsScreen() {
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [resettingCycle, setResettingCycle] = useState(false);
 
   useEffect(() => {
     let unsubMember: any;
@@ -178,6 +181,65 @@ export default function SettingsScreen() {
       'Full Reset (stub)',
       'The full venue-wide stock-take reset is disabled for BETA. Use per-department long-press reset from the Departments screen.'
     );
+  }
+
+  async function doResetCycle() {
+    if (!venueId) return;
+    try {
+      const currentUid = auth.currentUser?.uid ?? null;
+      const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+      let inProgressUser: string | null = null;
+      for (const dep of depsSnap.docs) {
+        const areas = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+        for (const area of areas.docs) {
+          const d = area.data() as any;
+          if (d.startedAt && !d.completedAt && d.currentLock?.uid && d.currentLock.uid !== currentUid) {
+            inProgressUser = d.currentLock.displayName || 'Another user';
+            break;
+          }
+        }
+        if (inProgressUser) break;
+      }
+      const message = inProgressUser
+        ? `${inProgressUser} is currently counting. Resetting now will discard their in-progress count. Are you sure?`
+        : 'This resets all areas for a fresh count. Completed data is saved.';
+      Alert.alert('Start new stocktake?', message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: inProgressUser ? 'Reset anyway' : 'Start new cycle',
+          style: inProgressUser ? 'destructive' : 'default',
+          onPress: async () => {
+            setResettingCycle(true);
+            try {
+              await resetAllDepartmentsStockTake(venueId);
+              Alert.alert('Cycle reset', 'All areas have been reset. You can start a fresh stocktake.');
+            } catch (e: any) {
+              Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown'));
+            } finally {
+              setResettingCycle(false);
+            }
+          },
+        },
+      ]);
+    } catch {
+      Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start new cycle',
+          onPress: async () => {
+            setResettingCycle(true);
+            try {
+              await resetAllDepartmentsStockTake(venueId);
+              Alert.alert('Cycle reset', 'All areas have been reset. You can start a fresh stocktake.');
+            } catch (e: any) {
+              Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown'));
+            } finally {
+              setResettingCycle(false);
+            }
+          },
+        },
+      ]);
+    }
   }
 
   const openAbout = () => setAboutOpen(true);
@@ -258,6 +320,33 @@ export default function SettingsScreen() {
               <Text style={styles.btnText}>Team Members</Text>
             </TouchableOpacity>
           </View>
+        )}
+
+        {/* Stocktake Management — managers/owners only */}
+        {isManager && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderText}>Stocktake Management</Text>
+            </View>
+            <View style={styles.row}>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: '#c47b2b', opacity: resettingCycle ? 0.6 : 1 }]}
+                onPress={doResetCycle}
+                disabled={resettingCycle}
+              >
+                {resettingCycle ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Text style={styles.btnText}>Reset Stocktake Cycle</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 3, textAlign: 'center' }}>
+                      Starts a new stocktake cycle for all areas. This cannot be undone.
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
         )}
 
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Operations</Text></View>

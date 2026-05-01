@@ -1,5 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { devLogin } from '../../config/devAuth';
@@ -10,6 +23,8 @@ import { db } from '../../services/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { DEV_VENUE_ID } from '../../config/devVenue';
 import { useColours } from '../../context/ThemeContext';
+
+const appIcon = require('../../../assets/icon.png');
 
 function mapAuthError(e: any): string {
   const code = (e?.code || '').toString();
@@ -39,6 +54,8 @@ function LoginScreenInner() {
   const auth = getAuth();
   const venueId = useVenueId();
   const colours = useColours();
+
+  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
@@ -88,8 +105,16 @@ function LoginScreenInner() {
 
   const S = StyleSheet.create({
     container: { flex: 1, backgroundColor: colours.background },
-    inner: { flex: 1, padding: 20, justifyContent: 'center' },
-    title: { fontSize: 24, fontWeight: '700', marginBottom: 16, textAlign: 'center', color: colours.text },
+    scroll: { flexGrow: 1, padding: 24, paddingBottom: 16 },
+    brandSection: { alignItems: 'center', paddingTop: 52, paddingBottom: 36 },
+    logoImg: { width: 80, height: 80, borderRadius: 18, marginBottom: 16 },
+    brandName: {
+      fontSize: 34,
+      fontWeight: '700',
+      color: colours.navy,
+      letterSpacing: 0.5,
+      fontFamily: fontsLoaded ? 'PlayfairDisplay_700Bold' : undefined,
+    },
     input: { borderWidth: 1, borderColor: colours.border, borderRadius: 10, padding: 12, marginBottom: 10, backgroundColor: colours.surface, color: colours.text },
     passRow: { flexDirection: 'row', alignItems: 'center' },
     revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: colours.border, borderRadius: 10 },
@@ -106,45 +131,55 @@ function LoginScreenInner() {
 
   return (
     <View style={S.container}>
-      <View style={S.inner}>
-        <Text style={S.title}>Welcome to Hosti-Stock</Text>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
+          {/* Brand section */}
+          <View style={S.brandSection}>
+            <Image source={appIcon} style={S.logoImg} resizeMode="contain" />
+            <Text style={S.brandName}>Hosti-Stock</Text>
+          </View>
 
-        <TextInput
-          style={S.input}
-          placeholder="Email"
-          placeholderTextColor={colours.textSecondary}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-
-        <View style={S.passRow}>
+          {/* Form */}
           <TextInput
-            style={[S.input, { flex: 1, marginBottom: 0 }]}
-            placeholder="Password"
+            style={S.input}
+            placeholder="Email"
             placeholderTextColor={colours.textSecondary}
-            secureTextEntry={!reveal}
-            value={pass}
-            onChangeText={setPass}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
           />
-          <TouchableOpacity onPress={() => setReveal(v => !v)} style={S.revealBtn}>
-            <Text style={S.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
+
+          <View style={S.passRow}>
+            <TextInput
+              style={[S.input, { flex: 1, marginBottom: 0 }]}
+              placeholder="Password"
+              placeholderTextColor={colours.textSecondary}
+              secureTextEntry={!reveal}
+              value={pass}
+              onChangeText={setPass}
+            />
+            <TouchableOpacity onPress={() => setReveal(v => !v)} style={S.revealBtn}>
+              <Text style={S.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
+            {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Sign In</Text>}
           </TouchableOpacity>
-        </View>
 
-        <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
-          {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Sign In</Text>}
-        </TouchableOpacity>
+          <TouchableOpacity style={S.secondary} onPress={gotoRegister} disabled={busy}>
+            <Text style={S.secondaryText}>Create Account</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={S.secondary} onPress={gotoRegister} disabled={busy}>
-          <Text style={S.secondaryText}>Create Account</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={S.ghost} onPress={doDevLogin} disabled={busy}>
-          <Text style={S.ghostText}>Dev Login</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity style={S.ghost} onPress={doDevLogin} disabled={busy}>
+            <Text style={S.ghostText}>Dev Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <View style={S.footer}>
         <LegalFooter />

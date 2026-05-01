@@ -8,6 +8,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
+import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -18,6 +19,7 @@ const WELCOME_STORAGE_KEY = 'tallyup_welcome_seen_v1';
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
+  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
 
   const markSeenAndGoMain = async (mode: 'tour' | 'skip') => {
     try {
@@ -42,7 +44,7 @@ export default function BetaWelcomeScreen() {
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
           <Text style={S.betaPill}>BETA</Text>
-          <Text style={S.title}>Welcome to Hosti-Stock</Text>
+          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti-Stock</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.

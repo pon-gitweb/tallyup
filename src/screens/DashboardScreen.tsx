@@ -18,7 +18,6 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
-import { resetAllDepartmentsStockTake } from '../services/reset';
 import IdentityBadge from '../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
 import { updateDoc } from 'firebase/firestore';
@@ -73,8 +72,6 @@ export default function DashboardScreen() {
 
   const [busy, setBusy] = useState(false);
   const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string;startedAt?:number;lockedBy?:string|null} | null>(null);
-  const [allComplete, setAllComplete] = React.useState(false);
-  const [resettingCycle, setResettingCycle] = React.useState(false);
 
   React.useEffect(() => {
     if (!venueId) return;
@@ -98,14 +95,6 @@ export default function DashboardScreen() {
         }
         if (best) {
           setLastArea(best);
-          setAllComplete(false);
-        } else if (deptSnap.docs.length > 0) {
-          let hasAny = false;
-          for (const deptDoc2 of deptSnap.docs) {
-            const a2 = await getDocs(query(collection(db, 'venues', venueId, 'departments', deptDoc2.id, 'areas'), limit(1)));
-            if (!a2.empty) { hasAny = true; break; }
-          }
-          setAllComplete(hasAny);
         }
     }).catch(() => {});
   }, [venueId]);
@@ -245,58 +234,6 @@ export default function DashboardScreen() {
             <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
           </TouchableOpacity>)
         }
-        {allComplete && !lastArea && (
-          <TouchableOpacity
-            onPress={async () => {
-              const { Alert } = require('react-native');
-              try {
-                const db2 = getFirestore();
-                const depsSnap2 = await getDocs(collection(db2, 'venues', venueId, 'departments'));
-                let inProgressUser = null;
-                for (const dep2 of depsSnap2.docs) {
-                  const areas2 = await getDocs(collection(db2, 'venues', venueId, 'departments', dep2.id, 'areas'));
-                  for (const area2 of areas2.docs) {
-                    const d = area2.data();
-                    if (d.startedAt && !d.completedAt && d.currentLock?.uid && d.currentLock.uid !== currentUid) {
-                      inProgressUser = d.currentLock.displayName || 'Another user';
-                      break;
-                    }
-                  }
-                  if (inProgressUser) break;
-                }
-                const message = inProgressUser
-                  ? `${inProgressUser} is currently counting. Resetting now will discard their in-progress count. Are you sure?`
-                  : 'This resets all areas for a fresh count. Completed data is saved.';
-                Alert.alert('Start new stocktake?', message, [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: inProgressUser ? 'Reset anyway' : 'Start new cycle', style: inProgressUser ? 'destructive' : 'default', onPress: async () => {
-                    setResettingCycle(true);
-                    try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
-                    catch (e: any) { console.error('[Reset] failed:', e?.code, e?.message); Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown')); }
-                    finally { setResettingCycle(false); }
-                  }},
-                ]);
-              } catch {
-                Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Start new cycle', onPress: async () => {
-                    setResettingCycle(true);
-                    try { await resetAllDepartmentsStockTake(venueId); setAllComplete(false); }
-                    catch (e: any) { console.error('[Reset] failed:', e?.code, e?.message); Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown')); }
-                    finally { setResettingCycle(false); }
-                  }},
-                ]);
-              }
-            }}
-            style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: colours.success, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10, opacity: resettingCycle ? 0.5 : 1 }}>
-            <Text style={{ fontSize: 20 }}>🔄</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colours.primaryText, fontWeight: '900', fontSize: 15 }}>{resettingCycle ? 'Resetting...' : 'Start new stocktake cycle'}</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>All areas complete — begin a fresh count</Text>
-            </View>
-            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
-          </TouchableOpacity>
-        )}
         {onboardingRoad === null && !onboardingDismissed && (
           <View style={{
             marginHorizontal: 12, marginBottom: 12,

@@ -9,6 +9,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
+import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { useNavigation } from '@react-navigation/native';
 
 // Uses your app icon from /assets/icon.png
@@ -16,6 +17,7 @@ const appIcon = require('../assets/icon.png');
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
+  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
 
   const goDashboard = () => navigation.navigate('Dashboard');
   const goStockTake = () => navigation.navigate('DepartmentSelection');
@@ -29,7 +31,7 @@ export default function BetaWelcomeScreen() {
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
           <Text style={S.betaPill}>BETA</Text>
-          <Text style={S.title}>Welcome to Hosti-Stock</Text>
+          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti-Stock</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.
