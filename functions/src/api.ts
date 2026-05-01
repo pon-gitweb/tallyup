@@ -662,6 +662,53 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
 });
 
+// ── POST /izzy ────────────────────────────────────────────────────────────────
+app.post("/izzy", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { question } = req.body || {};
+    if (!question || typeof question !== "string") {
+      res.status(400).json({ ok: false, error: "Missing question" }); return;
+    }
+    const systemPrompt = `You are Izzy, the friendly in-app guide for Hosti-Stock — an inventory management app for hospitality venues. You only answer how-to questions about using Hosti-Stock.
+
+Keep answers warm, practical, and brief — 2 to 4 sentences maximum, like advice from a helpful colleague behind the bar. Use plain language with no jargon.
+
+If asked something unrelated to the app, politely redirect: "I'm best at Hosti-Stock questions — try asking me how to do something in the app!"
+
+Never make up features. If you are unsure, suggest checking Settings or contacting support.`;
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+    const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{ role: "user", content: question }],
+      }),
+    });
+    if (!claudeResp.ok) {
+      const err = await claudeResp.text().catch(() => "");
+      throw new Error("Claude API error: " + err);
+    }
+    const data = await claudeResp.json() as any;
+    const answer = data?.content?.[0]?.text || "I'm having trouble right now. Please try again.";
+    console.log("[api/izzy] OK", { uid, questionLength: question.length });
+    res.json({ ok: true, answer });
+  } catch (e: any) {
+    console.error("[api/izzy] ERROR", e?.message || e);
+    res.json({ ok: false, answer: "I'm having trouble right now. Please try again." });
+  }
+});
+
 export const api = functions
   .region("us-central1")
   .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })

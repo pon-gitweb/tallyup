@@ -1,7 +1,9 @@
 // @ts-nocheck
 import OrderEditorScreen from '../../screens/orders/OrderEditorScreen';
 import React from 'react';
+import { View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import IzzyAssistant from '../../components/IzzyAssistant';
 
 // Core
 import DashboardScreen from '../../screens/DashboardScreen';
@@ -66,6 +68,7 @@ const Stack = createNativeStackNavigator();
 
 export default function MainStack() {
   return (
+    <View style={{ flex: 1 }}>
     <Stack.Navigator>
       {/* Home */}
       <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
@@ -177,5 +180,7 @@ export default function MainStack() {
       />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
     </Stack.Navigator>
+    <IzzyAssistant />
+    </View>
   );
 }
