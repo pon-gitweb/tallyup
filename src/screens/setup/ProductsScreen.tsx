@@ -69,10 +69,10 @@ function CatalogueModal({
               <View style={cS.emptyState}>
                 <Text style={cS.emptyTitle}>No catalogues available yet</Text>
                 <Text style={cS.emptyBody}>
-                  Upload a supplier catalogue to browse products here.
+                  Upload a supplier catalogue to browse and add products in bulk.
                 </Text>
                 <TouchableOpacity onPress={onUpload} style={cS.emptyLink}>
-                  <Text style={cS.emptyLinkText}>Upload a supplier catalogue →</Text>
+                  <Text style={cS.emptyLinkText}>Want to add a supplier catalogue? → Go to Suppliers</Text>
                 </TouchableOpacity>
               </View>
             ) : (

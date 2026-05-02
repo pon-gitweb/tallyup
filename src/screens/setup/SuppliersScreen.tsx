@@ -13,6 +13,10 @@ import {
   ScrollView,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { getAuth } from 'firebase/auth';
+import { getFirestore, collection, addDoc, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
 import {
@@ -24,6 +28,7 @@ import {
 } from '../../services/suppliers';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 import { pickParseAndUploadProductsCsv } from '../../services/imports/pickAndUploadCsv';
+import { AI_BASE_URL } from '../../config/ai';
 
 function isValidHHmm(s: string) {
   if (!s) return true; // allow blank (means none)
@@ -59,6 +64,7 @@ export default function SuppliersScreen() {
   const [saving, setSaving] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [catalogueBusy, setCatalogueBusy] = useState(false);
 
   async function load() {
     if (!venueId) {
@@ -277,6 +283,100 @@ export default function SuppliersScreen() {
     }
   }
 
+  // Save extracted catalogue products to global_suppliers Firestore collection
+  async function saveCatalogueToFirestore(supplierLabel: string, products: any[]) {
+    if (!products.length) {
+      Alert.alert('No products found', "We couldn't extract any products from this file. Try better lighting or a clearer photo.");
+      return;
+    }
+    Alert.alert(
+      'Save catalogue?',
+      `We found ${products.length} product${products.length !== 1 ? 's' : ''} in this catalogue.\n\nSave as "${supplierLabel}" so it appears in the Supplier Catalogues browser?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Save ${products.length} products`,
+          onPress: async () => {
+            try {
+              const db = getFirestore();
+              // Create or overwrite the global_suppliers doc with a unique-ish id
+              const safeId = supplierLabel.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 40) + '_' + Date.now();
+              const supRef = doc(db, 'global_suppliers', safeId);
+              await setDoc(supRef, { name: supplierLabel, source: 'user-upload', createdAt: fsServerTimestamp() });
+              const itemsCol = collection(db, 'global_suppliers', safeId, 'items');
+              for (const p of products) {
+                await addDoc(itemsCol, {
+                  name: p.name || '',
+                  size: p.size || null,
+                  unit: p.unit || null,
+                  category: p.category || null,
+                  sku: p.sku || null,
+                  priceBottleExGst: p.price ? parseFloat(String(p.price).replace(/[^0-9.]/g, '')) || null : null,
+                  gstPercent: 15,
+                  supplier: supplierLabel,
+                });
+              }
+              Alert.alert('Saved', `"${supplierLabel}" catalogue saved with ${products.length} products. It now appears in Supplier Catalogues.`);
+            } catch (e: any) {
+              Alert.alert('Save failed', e?.message || 'Could not save catalogue.');
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function uploadCataloguePdf() {
+    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+    const supplierLabel = (name || '').trim() || 'Uploaded Catalogue';
+    try {
+      setCatalogueBusy(true);
+      const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (res.canceled || !res.assets?.length) return;
+      const uri = res.assets[0].uri;
+      const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      const token = await getAuth().currentUser?.getIdToken();
+      const resp = await fetch(`${AI_BASE_URL}/api/extract-inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ fileBase64: b64, mimeType: 'application/pdf', venueId, mode: 'catalogue' }),
+      });
+      const json = await resp.json().catch(() => ({}));
+      const products = json?.products || [];
+      await saveCatalogueToFirestore(supplierLabel, products);
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message || 'Could not process PDF.');
+    } finally {
+      setCatalogueBusy(false);
+    }
+  }
+
+  async function photographCataloguePage() {
+    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+    const supplierLabel = (name || '').trim() || 'Photographed Catalogue';
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.status !== 'granted') { Alert.alert('Camera needed', 'Allow camera access to photograph catalogue pages.'); return; }
+      const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
+      if (res.canceled || !res.assets?.length) return;
+      setCatalogueBusy(true);
+      const b64 = await FileSystem.readAsStringAsync(res.assets[0].uri, { encoding: FileSystem.EncodingType.Base64 });
+      const token = await getAuth().currentUser?.getIdToken();
+      const resp = await fetch(`${AI_BASE_URL}/api/extract-inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ imageBase64: b64, mimeType: 'image/jpeg', venueId, mode: 'catalogue' }),
+      });
+      const json = await resp.json().catch(() => ({}));
+      const products = json?.products || [];
+      await saveCatalogueToFirestore(supplierLabel, products);
+    } catch (e: any) {
+      Alert.alert('Photo failed', e?.message || 'Could not process photo.');
+    } finally {
+      setCatalogueBusy(false);
+    }
+  }
+
   // NEW: Upload supplier catalogue via server function (CSV only, no Blob)
   async function uploadSupplierCsv() {
     try {
@@ -439,11 +539,7 @@ export default function SuppliersScreen() {
               </View>
 
               <TouchableOpacity
-                style={[
-                  styles.capturePill,
-                  { alignSelf: 'flex-start', marginTop: 6 },
-                  uploadBusy && { opacity: 0.6 },
-                ]}
+                style={[styles.capturePill, { alignSelf: 'flex-start', marginTop: 6 }, uploadBusy && { opacity: 0.6 }]}
                 disabled={uploadBusy}
                 onPress={uploadSupplierCsv}
               >
@@ -451,6 +547,28 @@ export default function SuppliersScreen() {
                   {uploadBusy ? 'Uploading…' : 'Upload catalogue CSV'}
                 </Text>
               </TouchableOpacity>
+
+              <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 8, marginBottom: 4 }}>Catalogue upload</Text>
+              <View style={styles.captureRow}>
+                <TouchableOpacity
+                  style={[styles.capturePill, catalogueBusy && { opacity: 0.6 }]}
+                  disabled={catalogueBusy}
+                  onPress={uploadCataloguePdf}
+                >
+                  <Text style={styles.capturePillText}>
+                    {catalogueBusy ? 'Reading…' : '📄 Upload PDF catalogue'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.capturePill, catalogueBusy && { opacity: 0.6 }]}
+                  disabled={catalogueBusy}
+                  onPress={photographCataloguePage}
+                >
+                  <Text style={styles.capturePillText}>
+                    {catalogueBusy ? 'Reading…' : '📷 Photograph catalogue'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Main details form */}

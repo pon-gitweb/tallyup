@@ -470,6 +470,12 @@ app.post("/extract-inventory", async (req, res) => {
         "barcode number if visible, and unit (e.g. bottle, can, kg). " +
         'Return as JSON object: {"name":"...","brand":"...","size":"...","category":"...","barcode":"...","unit":"..."}. ' +
         "Return only valid JSON, no preamble.";
+    } else if (mode === "catalogue") {
+      systemPrompt =
+        "This is a supplier product catalogue page. Extract all products visible. " +
+        "For each product return: name, size, unit, category, SKU/code if visible, price if visible. " +
+        'Return as JSON array: [{"name":"...","size":"...","unit":"...","category":"...","sku":"...","price":"..."}]. ' +
+        "Return only valid JSON, no preamble.";
     } else {
       systemPrompt =
         "You are reading a hospitality stocktake sheet. " +
@@ -492,6 +498,7 @@ app.post("/extract-inventory", async (req, res) => {
       const promptText =
         mode === "shelf-scan" ? "Identify all products visible on this shelf." :
         mode === "product-photo" ? "Extract all product details from these photos." :
+        mode === "catalogue" ? "Extract all products from this catalogue page." :
         "Extract all items from this stocktake sheet.";
       imageContent.push({ type: "text", text: promptText });
 
@@ -580,6 +587,24 @@ app.post("/extract-inventory", async (req, res) => {
       } catch {}
       console.log("[api/extract-inventory] product-photo OK", { uid, name: product.name });
       res.json({ ok: true, product, lines: [] });
+    } else if (mode === "catalogue") {
+      let products: any[] = [];
+      try {
+        const m = rawText.match(/\[[\s\S]*\]/);
+        const parsed = m ? JSON.parse(m[0]) : [];
+        products = (Array.isArray(parsed) ? parsed : [])
+          .filter((p: any) => p && typeof p.name === "string" && p.name.trim())
+          .map((p: any) => ({
+            name: String(p.name).trim(),
+            size: p.size ? String(p.size).trim() : "",
+            unit: p.unit ? String(p.unit).trim() : "",
+            category: p.category ? String(p.category).trim() : "",
+            sku: p.sku ? String(p.sku).trim() : "",
+            price: p.price ? String(p.price).trim() : "",
+          }));
+      } catch {}
+      console.log("[api/extract-inventory] catalogue OK", { uid, count: products.length });
+      res.json({ ok: true, products, lines: [] });
     } else {
       // Default: stocktake sheet
       let items: any[] = [];

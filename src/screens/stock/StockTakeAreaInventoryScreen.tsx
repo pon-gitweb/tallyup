@@ -1202,25 +1202,14 @@ try {
 );
   };
 
-  const useBluetoothFor = (item: Item) => {
-    if (ScaleService.isConnected()) {
-      const unsub = ScaleService.onWeight((reading: any) => {
-        if (reading.stable) {
-          unsub();
-          const qty = parseFloat((reading.weightGrams / 1000).toFixed(3));
-          Alert.alert('Scale reading', item.name + ': ' + reading.weightGrams + 'g — use this weight?', [
-            { text: 'Yes', onPress: () => { setMenuFor(null); } },
-            { text: 'No', style: 'cancel' },
-          ]);
-        }
-      });
-      Alert.alert('Place on scale', 'Put ' + item.name + ' on the scale and wait for a stable reading.');
-    } else {
-      Alert.alert('Scale not connected', 'Connect a Bluetooth scale first.',
-        [{ text: 'Connect scale', onPress: () => { setMenuFor(null); nav.navigate('ScaleSettings' as never); } },
-         { text: 'Cancel', style: 'cancel' }]
+  const useBluetoothFor = (_item: Item) => {
+    try {
+      Alert.alert(
+        'Bluetooth Scale',
+        'Bluetooth scale integration is coming soon. Connect a compatible scale in Settings once the feature is available.',
+        [{ text: 'Got it' }]
       );
-    }
+    } catch {}
   };
   const usePhotoFor = (item: Item) => {
     setPhotoFor(item);
@@ -2216,6 +2205,7 @@ const openHistory = throttleAction(async (item: Item) => {
         visible={venueSearchOpen}
         onClose={() => setVenueSearchOpen(false)}
         venueId={venueId}
+        areaName={areaName}
         onSelect={handleVenueProductSelected}
       />
 
