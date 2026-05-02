@@ -23,7 +23,8 @@
         "NSLocationWhenInUseUsageDescription": "Hosti-Stock may use your location for delivery and venue features.",
         "NSBluetoothAlwaysUsageDescription": "Hosti-Stock connects to Bluetooth scales for automatic weight-based stock counting.",
         "NSBluetoothPeripheralUsageDescription": "Hosti-Stock connects to Bluetooth scales for automatic weight-based stock counting.",
-        "NSMicrophoneUsageDescription": "Hosti-Stock uses your microphone for voice counting during stocktake."
+        "NSMicrophoneUsageDescription": "Hosti-Stock uses your microphone for voice counting during stocktake.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
