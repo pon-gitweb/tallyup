@@ -24,6 +24,9 @@
       "environment": "production",
       "env": {
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.2-xcode-26.2"
       }
     },
     "play-aab": {
