@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.hostistock.tallyup",
       "buildNumber": "1",
       "infoPlist": {
-        "NSCameraUsageDescription": "Hosti-Stock uses your camera to scan barcodes and photograph invoices.",
+        "NSCameraUsageDescription": "Hosti-Stock uses your camera to scan barcodes and photograph invoices and products.",
         "NSPhotoLibraryUsageDescription": "Hosti-Stock needs access to your photos to upload invoices and shelf scans.",
         "NSLocationWhenInUseUsageDescription": "Hosti-Stock may use your location for delivery and venue features.",
         "NSBluetoothAlwaysUsageDescription": "Hosti-Stock connects to Bluetooth scales for automatic weight-based stock counting.",
