@@ -438,7 +438,7 @@ app.post("/extract-inventory", async (req, res) => {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
 
-    const { imageBase64, pdfBase64, fileBase64, mimeType, venueId } = req.body || {};
+    const { imageBase64, pdfBase64, fileBase64, mimeType, venueId, mode, imageBase64Back } = req.body || {};
 
     // Resolve the raw base64 and whether it's an image or PDF
     const rawBase64: string = imageBase64 || pdfBase64 || fileBase64 || "";
@@ -453,17 +453,48 @@ app.post("/extract-inventory", async (req, res) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
 
-    const systemPrompt =
-      "You are reading a hospitality stocktake sheet. " +
-      "Extract all product names and quantities. " +
-      "Return as JSON array: [{name, quantity, unit, area}]. " +
-      "If area is not clear use 'General'. " +
-      "Return only valid JSON, no preamble.";
+    // System prompt varies by mode
+    let systemPrompt: string;
+    if (mode === "shelf-scan") {
+      systemPrompt =
+        "This is a photo of a bar or restaurant shelf with multiple products visible. " +
+        "Identify every product you can see. For each product return name, brand (if visible), " +
+        "size in ml or L (if visible), and category (spirits/wine/beer/cider/non-alcoholic/food/other). " +
+        "Do not estimate counts — just identify what products are there. " +
+        'Return as JSON array: [{"name":"...","brand":"...","size":"...","category":"..."}]. ' +
+        "If you cannot identify a product clearly, omit it. Return only valid JSON, no preamble.";
+    } else if (mode === "product-photo") {
+      systemPrompt =
+        "These are photos of a single product — front and possibly back. " +
+        "Extract: name, brand, size (ml or L), category (spirits/wine/beer/cider/non-alcoholic/food/other), " +
+        "barcode number if visible, and unit (e.g. bottle, can, kg). " +
+        'Return as JSON object: {"name":"...","brand":"...","size":"...","category":"...","barcode":"...","unit":"..."}. ' +
+        "Return only valid JSON, no preamble.";
+    } else {
+      systemPrompt =
+        "You are reading a hospitality stocktake sheet. " +
+        "Extract all product names and quantities. " +
+        "Return as JSON array: [{name, quantity, unit, area}]. " +
+        "If area is not clear use 'General'. " +
+        "Return only valid JSON, no preamble.";
+    }
 
     let rawText = "";
 
     if (isImage) {
-      // Vision path: send image directly to Claude
+      // Vision path: send image(s) directly to Claude
+      const imageContent: any[] = [
+        { type: "image", source: { type: "base64", media_type: resolvedMime, data: rawBase64 } },
+      ];
+      if (mode === "product-photo" && imageBase64Back) {
+        imageContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64Back } });
+      }
+      const promptText =
+        mode === "shelf-scan" ? "Identify all products visible on this shelf." :
+        mode === "product-photo" ? "Extract all product details from these photos." :
+        "Extract all items from this stocktake sheet.";
+      imageContent.push({ type: "text", text: promptText });
+
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -475,16 +506,7 @@ app.post("/extract-inventory", async (req, res) => {
           model: "claude-sonnet-4-20250514",
           max_tokens: 4096,
           system: systemPrompt,
-          messages: [{
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: { type: "base64", media_type: resolvedMime, data: rawBase64 },
-              },
-              { type: "text", text: "Extract all items from this stocktake sheet." },
-            ],
-          }],
+          messages: [{ role: "user", content: imageContent }],
         }),
       });
       if (!resp.ok) {
@@ -511,10 +533,7 @@ app.post("/extract-inventory", async (req, res) => {
           model: "claude-sonnet-4-20250514",
           max_tokens: 4096,
           system: systemPrompt,
-          messages: [{
-            role: "user",
-            content: "Extract items from this stocktake sheet:\n\n" + text,
-          }],
+          messages: [{ role: "user", content: "Extract items from this stocktake sheet:\n\n" + text }],
         }),
       });
       if (!resp.ok) {
@@ -525,29 +544,62 @@ app.post("/extract-inventory", async (req, res) => {
       rawText = data?.content?.[0]?.text || "[]";
     }
 
-    // Parse JSON array — be tolerant of extra text around it
-    let items: any[] = [];
-    try {
-      const m = rawText.match(/\[[\s\S]*\]/);
-      items = m ? JSON.parse(m[0]) : [];
-    } catch { items = []; }
+    // Track usage (best-effort, non-blocking)
+    if (venueId) trackAiCall(venueId, "extract-inventory").catch(() => {});
 
-    const lines = items
-      .filter((l: any) => l && typeof l.name === "string" && l.name.trim().length > 0)
-      .map((l: any) => ({
-        name: String(l.name).trim(),
-        quantity: Number.isFinite(Number(l.quantity)) ? Number(l.quantity) : 0,
-        unit: l.unit ? String(l.unit).trim() : null,
-        area: l.area ? String(l.area).trim() : "General",
-      }));
+    // Parse response based on mode
+    if (mode === "shelf-scan") {
+      let products: any[] = [];
+      try {
+        const m = rawText.match(/\[[\s\S]*\]/);
+        const parsed = m ? JSON.parse(m[0]) : [];
+        products = (Array.isArray(parsed) ? parsed : [])
+          .filter((p: any) => p && typeof p.name === "string" && p.name.trim())
+          .map((p: any) => ({
+            name: String(p.name).trim(),
+            brand: p.brand ? String(p.brand).trim() : "",
+            size: p.size ? String(p.size).trim() : "",
+            category: p.category ? String(p.category).trim() : "other",
+          }));
+      } catch {}
+      console.log("[api/extract-inventory] shelf-scan OK", { uid, count: products.length });
+      res.json({ ok: true, products, lines: [] });
+    } else if (mode === "product-photo") {
+      let product: any = {};
+      try {
+        const m = rawText.match(/\{[\s\S]*\}/);
+        const parsed = m ? JSON.parse(m[0]) : {};
+        product = {
+          name: String(parsed.name || "").trim(),
+          brand: String(parsed.brand || "").trim(),
+          size: String(parsed.size || "").trim(),
+          category: String(parsed.category || "other").trim(),
+          barcode: String(parsed.barcode || "").trim(),
+          unit: String(parsed.unit || "bottle").trim(),
+        };
+      } catch {}
+      console.log("[api/extract-inventory] product-photo OK", { uid, name: product.name });
+      res.json({ ok: true, product, lines: [] });
+    } else {
+      // Default: stocktake sheet
+      let items: any[] = [];
+      try {
+        const m = rawText.match(/\[[\s\S]*\]/);
+        items = m ? JSON.parse(m[0]) : [];
+      } catch { items = []; }
 
-    // Track usage if venueId provided (best-effort, non-blocking)
-    if (venueId) {
-      trackAiCall(venueId, "extract-inventory").catch(() => {});
+      const lines = items
+        .filter((l: any) => l && typeof l.name === "string" && l.name.trim().length > 0)
+        .map((l: any) => ({
+          name: String(l.name).trim(),
+          quantity: Number.isFinite(Number(l.quantity)) ? Number(l.quantity) : 0,
+          unit: l.unit ? String(l.unit).trim() : null,
+          area: l.area ? String(l.area).trim() : "General",
+        }));
+
+      console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", linesCount: lines.length });
+      res.json({ ok: true, lines });
     }
-
-    console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", linesCount: lines.length });
-    res.json({ ok: true, lines });
 
   } catch (e: any) {
     console.error("[api/extract-inventory] ERROR", e?.message || e);

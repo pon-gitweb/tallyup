@@ -4,6 +4,9 @@ import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
 import SmartShelfModal from "./components/SmartShelfModal";
 import ShelfPhotoModal from "./components/ShelfPhotoModal";
+import ShelfScanModal from "../../components/stocktake/ShelfScanModal";
+import ProductPhotoModal from "../../components/stocktake/ProductPhotoModal";
+import VenueProductSearchModal from "../../components/stocktake/VenueProductSearchModal";
 import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPhoto";
 import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
 import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
@@ -455,12 +458,17 @@ function StockTakeAreaInventoryScreen() {
   // More menu
   const [moreOpen, setMoreOpen] = useState(false);
 
-  // Smart Shelf Count
+  // Smart Shelf Count (existing)
   const [shelfOpen, setShelfOpen] = useState(false);
   const [shelfPhotoOpen, setShelfPhotoOpen] = useState(false);
   const [shelfLoading, setShelfLoading] = useState(false);
   const [shelfJobId, setShelfJobId] = useState(null);
   const [shelfProposals, setShelfProposals] = useState([]);
+
+  // New capture tools
+  const [captureShelfOpen, setCaptureShelfOpen] = useState(false);
+  const [captureProductOpen, setCaptureProductOpen] = useState(false);
+  const [venueSearchOpen, setVenueSearchOpen] = useState(false);
 
   // Persist/restore view prefs
   useEffect(() => { (async () => {
@@ -1328,6 +1336,45 @@ const openHistory = throttleAction(async (item: Item) => {
     } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
   };
 
+  // ── New capture handlers ──────────────────────────────────────────────────
+
+  const handleShelfScanConfirm = async (products: { name: string; brand: string; size: string; category: string }[]) => {
+    if (!venueId) throw new Error('Missing venue');
+    await ensureAreaStarted();
+    for (const p of products) {
+      const displayName = [p.name, p.brand, p.size].filter(Boolean).join(' ').trim() || p.name;
+      await addDoc(
+        collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+        { name: displayName, unit: p.size || null, inductionStatus: 'pending', inductionSource: 'shelf-scan', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      );
+    }
+  };
+
+  const handleProductPhotoConfirm = async (product: { name: string; brand: string; size: string; unit: string }, count: number) => {
+    if (!venueId) throw new Error('Missing venue');
+    await ensureAreaStarted();
+    const displayName = [product.name, product.brand, product.size].filter(Boolean).join(' ').trim() || product.name;
+    await addDoc(
+      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+      { name: displayName, unit: product.unit || null, inductionStatus: 'pending', inductionSource: 'product-photo', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastCount: count, lastCountAt: serverTimestamp() }
+    );
+  };
+
+  const handleVenueProductSelected = async (product: any) => {
+    if (!venueId) return;
+    const already = items.find(it => it.name?.toLowerCase() === (product.name || '').toLowerCase());
+    if (already) { Alert.alert('Already here', `${product.name} is already in this area.`); return; }
+    await ensureAreaStarted();
+    await addDoc(
+      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+      { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, costPrice: product.costPrice || null, parLevel: product.parLevel || null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    );
+    hapticSuccess();
+    Alert.alert('Added', `${product.name} added to this area.`);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (!itemsPathOk) {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -1337,19 +1384,40 @@ const openHistory = throttleAction(async (item: Item) => {
   }
 
   const EmptyState = () => (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 24, alignItems:'center' }}>
-      <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 6 }}>No items in this area yet</Text>
-      <Text style={{ color: '#6B7280', textAlign:'center', marginBottom: 12 }}>
-        Add your first product to start counting. You can also import later from invoices or suppliers.
+    <View style={{ padding: 16 }}>
+      <Text style={{ fontSize: 17, fontWeight: '800', marginBottom: 4, color: '#0f172a' }}>
+        No products in this area yet
       </Text>
-      <View style={{ flexDirection:'row', gap:12 }}>
-        <TouchableOpacity onPress={() => nameInputRef.current?.focus()} style={{ paddingVertical:10, paddingHorizontal:14, backgroundColor:'#0A84FF', borderRadius:10 }}>
-          <Text style={{ color:'white', fontWeight:'800' }}>Add product</Text>
+      <Text style={{ color: '#6B7280', marginBottom: 16, fontSize: 13 }}>
+        Add your first products to start counting
+      </Text>
+      {[
+        { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
+        { icon: '📸', title: 'Add product by photo', desc: 'Photo the front of a bottle — AI identifies it', onPress: () => setCaptureProductOpen(true) },
+        { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
+        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => nameInputRef.current?.focus() },
+      ].map(card => (
+        <TouchableOpacity
+          key={card.icon}
+          onPress={card.onPress}
+          activeOpacity={0.75}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+            backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10,
+            borderWidth: 1, borderColor: '#f1f5f9',
+            shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 1,
+          }}
+        >
+          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#eef6ff', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 18 }}>{card.icon}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#0f172a' }}>{card.title}</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{card.desc}</Text>
+          </View>
+          <Text style={{ fontSize: 18, color: '#cbd5e1' }}>›</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setLearnOpen(true)} style={{ paddingVertical:10, paddingHorizontal:12 }}>
-          <Text style={{ color: colours.navy }}>Learn more</Text>
-        </TouchableOpacity>
-      </View>
+      ))}
     </View>
   );
 
@@ -1673,6 +1741,12 @@ const openHistory = throttleAction(async (item: Item) => {
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); usePhotoFor(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFF8E1', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#9A3412' }}>Camera (Cam)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setCaptureShelfOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F0FFF4', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#14532D' }}>📷 Photograph shelf</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setCaptureProductOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#92400E' }}>📸 Add product by photo</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openEditItem(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Edit item</Text>
@@ -2108,6 +2182,13 @@ const openHistory = throttleAction(async (item: Item) => {
               </Text>
             </TouchableOpacity>
 
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F0FFF4', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#14532D' }}>📷 Photograph this shelf</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ setMoreOpen(false); setTimeout(()=>setCaptureProductOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#92400E' }}>📸 Add product by photo</Text>
+            </TouchableOpacity>
+
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
               <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
@@ -2117,6 +2198,27 @@ const openHistory = throttleAction(async (item: Item) => {
         </View>
       </Modal>
     
+      <ShelfScanModal
+        visible={captureShelfOpen}
+        onClose={() => setCaptureShelfOpen(false)}
+        venueId={venueId}
+        areaName={areaName}
+        onConfirm={handleShelfScanConfirm}
+      />
+      <ProductPhotoModal
+        visible={captureProductOpen}
+        onClose={() => setCaptureProductOpen(false)}
+        venueId={venueId}
+        areaName={areaName}
+        onConfirm={handleProductPhotoConfirm}
+      />
+      <VenueProductSearchModal
+        visible={venueSearchOpen}
+        onClose={() => setVenueSearchOpen(false)}
+        venueId={venueId}
+        onSelect={handleVenueProductSelected}
+      />
+
       <ShelfPhotoModal
         visible={shelfPhotoOpen}
         onClose={() => setShelfPhotoOpen(false)}
