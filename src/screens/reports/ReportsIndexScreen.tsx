@@ -19,6 +19,8 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
+import { db } from '../../services/firebase';
+import { collection, query, where, limit, getDocs, orderBy } from 'firebase/firestore';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
@@ -91,6 +93,10 @@ export default function ReportsIndexScreen() {
   const [suiteeInput, setSuiteeInput] = useState('');
   const [suiteeLoading, setSuiteeLoading] = useState(false);
 
+  const [priceChanges, setPriceChanges] = useState<any[]>([]);
+  const [priceHistoryItem, setPriceHistoryItem] = useState<any>(null);
+  const [priceHistory, setPriceHistory] = useState<any[]>([]);
+
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
   useEffect(() => {
@@ -143,6 +149,53 @@ export default function ReportsIndexScreen() {
       cancelled = true;
     };
   }, [venueId]);
+
+  // ── Price changes ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    async function loadPriceChanges() {
+      try {
+        const q = query(
+          collection(db, 'venues', venueId, 'products'),
+          where('priceChanged', '==', true),
+          limit(10)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const changed = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const withHistory = await Promise.all(changed.map(async (prod: any) => {
+          try {
+            const hq = query(
+              collection(db, 'venues', venueId, 'products', prod.id, 'priceHistory'),
+              orderBy('date', 'desc'),
+              limit(1)
+            );
+            const hs = await getDocs(hq);
+            const latest = hs.empty ? null : { id: hs.docs[0].id, ...hs.docs[0].data() };
+            return { ...prod, latestChange: latest };
+          } catch { return { ...prod, latestChange: null }; }
+        }));
+        if (!cancelled) setPriceChanges(withHistory.filter((p: any) => p.latestChange));
+      } catch {}
+    }
+    loadPriceChanges();
+    return () => { cancelled = true; };
+  }, [venueId]);
+
+  async function handleOpenPriceHistory(product: any) {
+    setPriceHistoryItem(product);
+    setPriceHistory([]);
+    try {
+      const hq = query(
+        collection(db, 'venues', venueId, 'products', product.id, 'priceHistory'),
+        orderBy('date', 'desc'),
+        limit(10)
+      );
+      const hs = await getDocs(hq);
+      setPriceHistory(hs.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch {}
+  }
 
   // ── On-demand AI insights ────────────────────────────────────────────────
 
@@ -427,6 +480,39 @@ export default function ReportsIndexScreen() {
             )}
           </Lane>
 
+          {/* ── PRICE CHANGES LANE (owner/manager only) ── */}
+          {isManager && priceChanges.length > 0 && (
+            <Lane label="⚠️ PRICE CHANGES DETECTED">
+              {priceChanges.map((product: any) => {
+                const h = product.latestChange;
+                if (!h) return null;
+                const dateStr = h.date?.toDate
+                  ? h.date.toDate().toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
+                  : '–';
+                const sign = (h.changePercent ?? 0) >= 0 ? '+' : '';
+                const color = h.direction === 'increase' ? '#F87171' : '#4ADE80';
+                return (
+                  <TouchableOpacity
+                    key={product.id}
+                    style={styles.lineRow}
+                    onPress={() => handleOpenPriceHistory(product)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.lineRowName}>{product.name}</Text>
+                      <Text style={styles.lineRowSub}>
+                        ${(h.oldPrice ?? 0).toFixed(2)} → ${(h.newPrice ?? 0).toFixed(2)} · {h.supplierName || 'unknown supplier'} · {dateStr}
+                      </Text>
+                    </View>
+                    <Text style={[styles.lineRowNeg, { color }]}>
+                      {sign}{(h.changePercent ?? 0).toFixed(1)}%
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </Lane>
+          )}
+
           {/* ── GET AI INSIGHTS button (owner/manager only, after stocktake) ── */}
           {isManager && data.hasCountData && (
             <TouchableOpacity
@@ -487,6 +573,52 @@ export default function ReportsIndexScreen() {
           onSend={handleSuiteeSend}
           onClose={handleSuiteeClose}
         />
+
+        {/* ── Price history modal ── */}
+        <Modal
+          visible={!!priceHistoryItem}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setPriceHistoryItem(null)}
+        >
+          <View style={styles.modalContainer}>
+            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPriceHistoryItem(null)} />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Price History — {priceHistoryItem?.name}</Text>
+                <TouchableOpacity onPress={() => setPriceHistoryItem(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Text style={styles.modalCloseIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView contentContainerStyle={styles.modalBody}>
+                {priceHistory.length === 0 ? (
+                  <View style={styles.modalCenter}>
+                    <ActivityIndicator color="#60A5FA" />
+                  </View>
+                ) : priceHistory.map((h: any, idx: number) => {
+                  const dateStr = h.date?.toDate
+                    ? h.date.toDate().toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' })
+                    : '–';
+                  const sign = (h.changePercent ?? 0) >= 0 ? '+' : '';
+                  const color = h.direction === 'increase' ? '#F87171' : '#4ADE80';
+                  return (
+                    <View key={h.id || idx} style={[styles.lineRow, { paddingVertical: 12 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.lineRowName}>
+                          ${(h.oldPrice ?? 0).toFixed(2)} → ${(h.newPrice ?? 0).toFixed(2)}
+                        </Text>
+                        <Text style={styles.lineRowSub}>{h.supplierName || 'Unknown supplier'} · {dateStr}</Text>
+                      </View>
+                      <Text style={[styles.lineRowNeg, { color }]}>
+                        {sign}{(h.changePercent ?? 0).toFixed(1)}%
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
       </View>
     </LocalThemeGate>
   );

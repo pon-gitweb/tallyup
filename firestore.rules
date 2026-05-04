@@ -512,6 +512,10 @@ service cloud.firestore {
         match /prices/{supplierId} {
           allow read, write: if hasVenueRole(venueId, ['manager','owner']);
         }
+        match /priceHistory/{entryId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if isVenueMember(venueId);
+        }
         match /{sub=**} {
           allow read, write: if hasVenueRole(venueId, ['manager','owner']);
         }

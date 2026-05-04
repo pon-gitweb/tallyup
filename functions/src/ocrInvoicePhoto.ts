@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
+import { trackPriceChanges } from "./priceTracking";
 
 const vision = new ImageAnnotatorClient();
 
@@ -170,6 +171,15 @@ export const ocrInvoicePhoto = functions
       invoiceNumber: payload.invoiceNumber,
       linesCount: payload.lines.length,
     });
+
+    // Track price changes against existing products (non-blocking)
+    trackPriceChanges({
+      venueId,
+      lines,
+      supplierId: data?.supplierId || "",
+      supplierName: data?.supplierName || payload.supplierName || "",
+      invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
+    }).catch((e: any) => console.log("[ocrInvoicePhoto] price tracking error", e?.message));
 
     // onCall will wrap this as { result: payload } for HTTPS; our RN client
     // supports both {result: ...} and plain object.

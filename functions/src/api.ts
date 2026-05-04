@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
+import { trackPriceChanges } from "./priceTracking";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -1035,6 +1036,65 @@ app.post("/suitee", async (req, res) => {
       }
     } catch {}
 
+    // Price change data (last 90 days)
+    const priceChangeLines: string[] = [];
+    try {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const changedSnap = await db.collection(`venues/${venueId}/products`)
+        .where("priceChanged", "==", true)
+        .limit(10)
+        .get();
+
+      if (!changedSnap.empty) {
+        const supplierIncreases: Record<string, number> = {};
+        const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null }[] = [];
+
+        for (const prodDoc of changedSnap.docs) {
+          try {
+            const histSnap = await db.collection(`venues/${venueId}/products/${prodDoc.id}/priceHistory`)
+              .orderBy("date", "desc")
+              .limit(3)
+              .get();
+            for (const h of histSnap.docs) {
+              const hd = h.data() as any;
+              const hDate: Date | null = hd.date?.toDate ? hd.date.toDate() : null;
+              if (hDate && hDate >= ninetyDaysAgo) {
+                recentChanges.push({
+                  productName: prodDoc.data().name || prodDoc.id,
+                  oldPrice: hd.oldPrice ?? 0,
+                  newPrice: hd.newPrice ?? 0,
+                  changePercent: hd.changePercent ?? 0,
+                  direction: hd.direction || "increase",
+                  supplierName: hd.supplierName || "Unknown",
+                  date: hDate,
+                });
+                if (hd.direction === "increase" && hd.supplierName) {
+                  supplierIncreases[hd.supplierName] = (supplierIncreases[hd.supplierName] || 0) + 1;
+                }
+              }
+            }
+          } catch {}
+        }
+
+        if (recentChanges.length > 0) {
+          const topSupplier = Object.entries(supplierIncreases).sort((a, b) => b[1] - a[1])[0];
+          priceChangeLines.push(`PRICE CHANGES (last 90 days): ${recentChanges.length} detected`);
+          recentChanges.slice(0, 8).forEach(c => {
+            const sign = c.changePercent >= 0 ? "+" : "";
+            const dateStr = c.date ? c.date.toISOString().slice(0, 10) : "–";
+            priceChangeLines.push(
+              `  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}`
+            );
+          });
+          if (topSupplier) {
+            priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] price change query error", e?.message);
+    }
+
     // ── Build context payload ─────────────────────────────────────────────────
     const lines: string[] = [
       "=== VENUE DATA SNAPSHOT ===",
@@ -1078,6 +1138,10 @@ app.post("/suitee", async (req, res) => {
       lines.push("", "RECENT SALES DATA:", salesSummary);
     }
 
+    if (priceChangeLines.length > 0) {
+      lines.push("", ...priceChangeLines);
+    }
+
     const context = lines.join("\n");
 
     const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti-Stock.
@@ -1089,6 +1153,8 @@ You answer questions like:
 - When did we last run out of Hendricks?
 - Which supplier is costing us the most?
 - What are my slowest moving lines?
+- Which supplier has increased prices the most?
+- How much have price increases cost us?
 
 Your tone is direct, analytical, and honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
 
@@ -1379,6 +1445,15 @@ app.post("/process-invoices-csv", async (req, res) => {
     console.log("[api/process-invoices-csv] OK", { uid, venueId, storagePath, linesCount: lines.length });
     res.json(payload);
 
+    // Track price changes non-blocking
+    trackPriceChanges({
+      venueId,
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice })),
+      supplierId: req.body?.supplierId || "",
+      supplierName: req.body?.supplierName || "",
+      invoiceId: `csv_${storagePath}`,
+    }).catch((e: any) => console.log("[api/process-invoices-csv] price tracking error", e?.message));
+
   } catch (e: any) {
     console.error("[api/process-invoices-csv] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "CSV processing failed" });
@@ -1443,6 +1518,15 @@ app.post("/process-invoices-pdf", async (req, res) => {
 
     console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName });
     res.json(payload);
+
+    // Track price changes non-blocking
+    trackPriceChanges({
+      venueId,
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice })),
+      supplierId: req.body?.supplierId || "",
+      supplierName: supplierName || req.body?.supplierName || "",
+      invoiceId: poNumber || `pdf_${storagePath}`,
+    }).catch((e: any) => console.log("[api/process-invoices-pdf] price tracking error", e?.message));
 
   } catch (e: any) {
     console.error("[api/process-invoices-pdf] ERROR", e?.message || e);
