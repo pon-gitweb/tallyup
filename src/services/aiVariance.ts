@@ -8,7 +8,7 @@ type ExplainOut = { summary: string; factors?: string[]; missing?: string[]; con
 
 const base =
   (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL) ||
-  'http://localhost:3001';
+  'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 const URL_EXPLAIN = `${String(base).replace(/\/+$/,'')}/api/variance-explain`;
 
 export async function explainVariance(input: ExplainInput): Promise<ExplainOut> {

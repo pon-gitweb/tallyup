@@ -2,9 +2,10 @@
 type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string };
 type ParsedInvoicePayload = any;
 
-const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
-  ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
-  : '';
+const _FALLBACK = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
+const BASE = ((typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
+  ? String((process as any).env.EXPO_PUBLIC_AI_URL)
+  : _FALLBACK).replace(/\/+$/, '');
 
 async function postJson(url:string, body:any) {
   const res = await fetch(url, {

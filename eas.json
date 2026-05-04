@@ -5,7 +5,10 @@
   },
   "build": {
     "base": {
-      "node": "22.19.0"
+      "node": "22.19.0",
+      "env": {
+        "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api"
+      }
     },
     "development": {
       "extends": "base",
@@ -23,6 +26,7 @@
       "autoIncrement": true,
       "environment": "production",
       "env": {
+        "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
       },
       "ios": {
@@ -37,6 +41,7 @@
       "distribution": "store",
       "environment": "production",
       "env": {
+        "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
       }
     },
@@ -70,6 +75,7 @@
       "environment": "production",
       "autoIncrement": true,
       "env": {
+        "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
       }
     }

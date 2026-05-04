@@ -1,9 +1,10 @@
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
 
-const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
-  ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
-  : '';
+const FALLBACK_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
+const BASE = ((typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
+  ? String((process as any).env.EXPO_PUBLIC_AI_URL)
+  : FALLBACK_BASE).replace(/\/+$/, '');
 
 async function postJson(url: string, body: any) {
   // Attach Firebase ID token so API can verify the caller & venue membership
@@ -29,7 +30,7 @@ async function postJson(url: string, body: any) {
 
 export async function uploadUriViaApi(opts: { fileUri: string; destPath: string; contentType: string; cacheControl?: string }) {
   const { fileUri, destPath, contentType, cacheControl } = opts;
-  if (!BASE) throw new Error('Missing EXPO_PUBLIC_AI_URL');
+  if (!BASE) throw new Error('Missing AI base URL');
   if (!fileUri) throw new Error('uploadUriViaApi: missing fileUri');
   if (!destPath) throw new Error('uploadUriViaApi: missing destPath');
   if (!contentType) throw new Error('uploadUriViaApi: missing contentType');

@@ -2,7 +2,7 @@
  * AI config — single source of truth for AI/Functions endpoints.
  * EXPO_PUBLIC_AI_URL may end in /api or not — we normalise here.
  */
-const RAW_BASE = process.env.EXPO_PUBLIC_AI_URL || "http://localhost:3001";
+const RAW_BASE = process.env.EXPO_PUBLIC_AI_URL || 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
 /**
  * Strip trailing /api from the base URL so we can append paths cleanly.

@@ -14,32 +14,12 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
 
-  // Camera capture -> upload -> pending snapshot (no OCR yet)
-  const takePhoto = useCallback(async ()=>{
-    try{
-      if (!venueId) throw new Error('Not ready: no venue selected');
-
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Camera denied', 'Enable camera permissions to capture a photo.');
-        return;
-      }
-
-      const res = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
-        exif: false,
-        allowsEditing: false,
-      });
-      if (res.canceled || !res.assets?.[0]?.uri) return;
-
-      setBusy(true);
-      const a = res.assets[0];
-      const filename = a.fileName || `fast-receive-${Date.now()}.jpg`;
-
-      const up = await uploadFastInvoice(venueId, a.uri, filename, 'image/jpeg');
-
-      // Save a pending snapshot; OCR will later update this doc
+  const uploadPhoto = useCallback(async (uri: string) => {
+    if (!venueId) throw new Error('Not ready: no venue selected');
+    setBusy(true);
+    try {
+      const filename = `fast-receive-${Date.now()}.jpg`;
+      const up = await uploadFastInvoice(venueId, uri, filename, 'image/jpeg');
       const save = await persistFastReceiveSnapshot({
         venueId,
         source: 'photo',
@@ -53,19 +33,45 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         },
       });
       if (!save || save.ok !== true) {
-        const path = `venues/${venueId}/fastReceives`;
         const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied at ${path}: ${msg}`);
+        throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
-
       Alert.alert('Photo Saved', 'Captured image saved as a Pending Fast Receive.');
       onClose();
-    } catch(e:any){
-      Alert.alert('Photo capture failed', String(e?.message||e));
     } finally {
       setBusy(false);
     }
   }, [venueId, onClose]);
+
+  const takePhoto = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Camera access required', 'Please allow camera access in Settings to photograph invoices.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85, exif: false, allowsEditing: false });
+      if (res.canceled || !res.assets?.[0]?.uri) return;
+      await uploadPhoto(res.assets[0].uri);
+    } catch(e:any) {
+      Alert.alert('Photo capture failed', String(e?.message||e));
+    }
+  }, [uploadPhoto]);
+
+  const pickFromLibrary = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Photo library access required', 'Please allow photo access in Settings.');
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
+      if (res.canceled || !res.assets?.[0]?.uri) return;
+      await uploadPhoto(res.assets[0].uri);
+    } catch(e:any) {
+      Alert.alert('Photo upload failed', String(e?.message||e));
+    }
+  }, [uploadPhoto]);
 
   // CSV/PDF flow (unchanged)
   const pickAndProcess = useCallback(async ()=>{
@@ -135,20 +141,32 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
 
   return (
     <View style={{ flex:1, padding:16, backgroundColor:'#fff' }}>
-      <Text style={{ fontSize:18, fontWeight:'900', marginBottom:8 }}>Fast Receive (Scan / Upload)</Text>
-      <Text style={{ color:'#6B7280', marginBottom:12 }}>
+      <Text style={{ fontSize:18, fontWeight:'900', marginBottom:4 }}>Fast Receive (Scan / Upload)</Text>
+      <Text style={{ color:'#6B7280', marginBottom:12, fontSize:13 }}>
         Receive deliveries without opening Submitted Orders. CSV/PDF tries to auto-attach by PO.
       </Text>
 
-      <TouchableOpacity disabled={busy} onPress={takePhoto} style={{ padding:14, borderRadius:12, backgroundColor:'#0ea5e9', marginBottom:10 }}>
-        <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Working…' : 'Take Photo (Save Pending)'}</Text>
+      {/* Invoice photo guidance */}
+      <View style={{ backgroundColor:'#EFF6FF', borderRadius:12, padding:12, marginBottom:14, borderWidth:1, borderColor:'#BFDBFE' }}>
+        <Text style={{ fontWeight:'800', color:'#1E40AF', marginBottom:4 }}>📄 Photograph the invoice</Text>
+        <Text style={{ color:'#1E40AF', fontSize:12, lineHeight:18 }}>
+          Place the invoice flat. Ensure all text is visible.{'\n'}Good lighting, no shadows across the text.
+        </Text>
+      </View>
+
+      <TouchableOpacity disabled={busy} onPress={takePhoto} style={{ padding:14, borderRadius:12, backgroundColor:'#0ea5e9', marginBottom:8 }}>
+        <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Working…' : '📷 Take Photo'}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity disabled={busy} onPress={pickFromLibrary} style={{ padding:14, borderRadius:12, backgroundColor:'#E0F2FE', marginBottom:10, borderWidth:1, borderColor:'#BAE6FD' }}>
+        <Text style={{ color:'#0369A1', fontWeight:'800', textAlign:'center' }}>{busy ? 'Working…' : '🖼️ Choose from Library'}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity disabled={busy} onPress={pickAndProcess} style={{ padding:14, borderRadius:12, backgroundColor:'#111', marginBottom:10 }}>
         <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{busy ? 'Processing…' : 'Upload Invoice (CSV / PDF)'}</Text>
       </TouchableOpacity>
 
-      <Text style={{ color:'#6B7280', marginTop:8 }}>{quickTip}</Text>
+      <Text style={{ color:'#6B7280', marginTop:4, fontSize:12 }}>{quickTip}</Text>
 
       <TouchableOpacity disabled={busy} onPress={onClose} style={{ padding:14, borderRadius:12, backgroundColor:'#F3F4F6', marginTop:12 }}>
         <Text style={{ color:'#111', fontWeight:'800', textAlign:'center' }}>Close</Text>

@@ -890,10 +890,14 @@ const qty = parseFloat(typed);
     payload.lastCountAt = nowTs;
   }
 
-  console.log('[Area quick add] Attempting to create with data:', payload);
+  const writePath = `venues/${venueId}/departments/${departmentId}/areas/${areaId}/items`;
+  console.log('[Area quick add] path=', writePath, 'venueId=', venueId, 'departmentId=', departmentId, 'areaId=', areaId, 'data=', JSON.stringify(payload));
+  if (!venueId || !departmentId || !areaId) {
+    Alert.alert('Cannot add item', 'Missing venue, department, or area context. Please go back and re-enter this area.');
+    return;
+  }
 
   try {
-    // Ensure this area has a startedAt for this stocktake window
     await ensureAreaStarted();
 
     const colRef = collection(
@@ -909,8 +913,8 @@ const qty = parseFloat(typed);
 
     const docRef = await addDoc(colRef, payload);
 
-    console.log('[Area quick add] SUCCESS id=', docRef.id);
-    Alert.alert('Added', `“${nm}” was added to this area.`);
+    console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
+    Alert.alert('Added', `”${nm}” was added to this area.`);
 
     // Clear only the name & qty so the user can keep their preferred unit/supplier
     setAddingName('');
@@ -1206,8 +1210,11 @@ try {
     try {
       Alert.alert(
         'Bluetooth Scale',
-        'Bluetooth scale integration is coming soon. Connect a compatible scale in Settings once the feature is available.',
-        [{ text: 'Got it' }]
+        'Bluetooth scale integration coming soon. Connect a compatible scale in Settings once available.',
+        [
+          { text: 'Open Scale Settings', onPress: () => { setMenuFor(null); nav.navigate('ScaleSettings' as never); } },
+          { text: 'Got it', style: 'cancel' },
+        ]
       );
     } catch {}
   };

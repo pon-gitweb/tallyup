@@ -4,7 +4,7 @@
 const RUNTIME_AI_BASE =
   (typeof process !== "undefined" && process && process.env && process.env.EXPO_PUBLIC_AI_URL)
     ? String(process.env.EXPO_PUBLIC_AI_URL)
-    : "http://localhost:3001";
+    : 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
 /** Build absolute URL from a path or absolute input. */
 export function buildAiUrl(path: string): string {

@@ -1,12 +1,12 @@
 type ProcessInvoicePdfArgs = { venueId: string; orderId: string; storagePath: string };
 type ParsedInvoicePayload = any;
 
-const BASE = (typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
-  ? String((process as any).env.EXPO_PUBLIC_AI_URL).replace(/\/+$/, '')
-  : '';
+const _FB = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
+const BASE = ((typeof process !== 'undefined' && (process as any).env?.EXPO_PUBLIC_AI_URL)
+  ? String((process as any).env.EXPO_PUBLIC_AI_URL)
+  : _FB).replace(/\/+$/, '');
 
 export async function processInvoicePdf(args: ProcessInvoicePdfArgs): Promise<ParsedInvoicePayload> {
-  if (!BASE) throw new Error('Missing EXPO_PUBLIC_AI_URL');
   const res = await fetch(`${BASE}/process-invoice-pdf`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

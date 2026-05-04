@@ -229,18 +229,11 @@ export default function BringYourDataScreen() {
     }
   }, [venueId]);
 
-  const captureInvoicePhoto = useCallback(async () => {
+  const processInvoicePhoto = useCallback(async (uri: string) => {
     if (!venueId) return;
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Camera required', 'Allow camera access to photograph an invoice.');
-      return;
-    }
-    const pic = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
-    if (pic.canceled) return;
     setProcessingInvoice(true);
     try {
-      const result = await runPhotoOcrJob({ venueId, localUri: pic.assets[0].uri });
+      const result = await runPhotoOcrJob({ venueId, localUri: uri });
       setInvoiceLines(result.lines || []);
       setInvoiceSupplierName(result.supplierName || null);
       setInvoicesFileName('invoice-photo.jpg');
@@ -255,6 +248,24 @@ export default function BringYourDataScreen() {
       setProcessingInvoice(false);
     }
   }, [venueId]);
+
+  const captureInvoicePhoto = useCallback(async () => {
+    if (!venueId) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) { Alert.alert('Camera required', 'Allow camera access to photograph an invoice.'); return; }
+    const pic = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
+    if (pic.canceled || !pic.assets?.[0]) return;
+    await processInvoicePhoto(pic.assets[0].uri);
+  }, [venueId, processInvoicePhoto]);
+
+  const pickInvoicePhoto = useCallback(async () => {
+    if (!venueId) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert('Photo library required', 'Allow photo access to select an invoice image.'); return; }
+    const pic = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
+    if (pic.canceled || !pic.assets?.[0]) return;
+    await processInvoicePhoto(pic.assets[0].uri);
+  }, [venueId, processInvoicePhoto]);
 
   function clearInvoice() {
     setInvoicesFileName(null);
@@ -582,8 +593,12 @@ export default function BringYourDataScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity style={S.uploadTypeBtn} onPress={captureInvoicePhoto}>
                     <Text style={S.uploadTypeBtnIcon}>📷</Text>
-                    <Text style={S.uploadTypeBtnText}>Photo</Text>
+                    <Text style={S.uploadTypeBtnText}>Take Photo</Text>
                     <Text style={S.uploadTypeBtnSub}>Paper invoice</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={S.uploadTypeBtn} onPress={pickInvoicePhoto}>
+                    <Text style={S.uploadTypeBtnIcon}>🖼️</Text>
+                    <Text style={S.uploadTypeBtnText}>Library</Text>
                   </TouchableOpacity>
                 </View>
               </View>

@@ -49,22 +49,10 @@ export default function PhotoCountModal({ visible, onClose, productName, product
     onClose();
   }, [reset, onClose]);
 
-  const takePhoto = useCallback(async () => {
+  const runAnalysis = useCallback(async (uri: string) => {
+    setImageUri(uri);
+    setStage('analysing');
     try {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (perm.status !== 'granted') {
-        Alert.alert('Camera permission needed', 'Please allow camera access in settings.');
-        return;
-      }
-      const res = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 0.7,
-      });
-      if (res.canceled || !res.assets?.length) return;
-      const uri = res.assets[0].uri;
-      setImageUri(uri);
-      setStage('analysing');
-
       const analysis = await analyzePhotoForCount(uri, productName, unit);
       setResult(analysis);
       setUserCount(String(analysis.estimatedCount || ''));
@@ -74,6 +62,38 @@ export default function PhotoCountModal({ visible, onClose, productName, product
       setStage('error');
     }
   }, [productName, unit]);
+
+  const takePhoto = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Camera access required', 'Please allow camera access in Settings.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.7 });
+      if (res.canceled || !res.assets?.length) return;
+      await runAnalysis(res.assets[0].uri);
+    } catch (e: any) {
+      setErrorMsg(e?.message || 'Camera failed');
+      setStage('error');
+    }
+  }, [runAnalysis]);
+
+  const pickFromLibrary = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Photo library access required', 'Please allow photo access in Settings.');
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+      if (res.canceled || !res.assets?.length) return;
+      await runAnalysis(res.assets[0].uri);
+    } catch (e: any) {
+      setErrorMsg(e?.message || 'Library failed');
+      setStage('error');
+    }
+  }, [runAnalysis]);
 
   const onConfirmCount = useCallback(async () => {
     const count = parseFloat(userCount);
@@ -121,21 +141,24 @@ export default function PhotoCountModal({ visible, onClose, productName, product
           {/* Stage: Camera */}
           {stage === 'camera' && (
             <View style={{ gap: 12 }}>
-              <View style={{ backgroundColor: '#F9FAFB', borderRadius: 16, padding: 20, alignItems: 'center', borderWidth: 2, borderColor: '#E5E7EB', borderStyle: 'dashed' }}>
-                <Text style={{ fontSize: 48, marginBottom: 12 }}>📸</Text>
-                <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 6 }}>Photograph the shelf</Text>
-                <Text style={{ color: '#6B7280', textAlign: 'center', fontSize: 13, marginBottom: 16 }}>
-                  Point your camera at the products. Claude will count what it sees and ask you to confirm.
+              <View style={{ backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BFDBFE' }}>
+                <Text style={{ fontWeight: '800', color: '#1E40AF', fontSize: 15, marginBottom: 4 }}>
+                  📷 Photograph shelf section
                 </Text>
-                <TouchableOpacity onPress={takePhoto}
-                  style={{ backgroundColor: '#111', padding: 16, borderRadius: 12, alignItems: 'center', width: '100%' }}>
-                  <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Take Photo</Text>
-                </TouchableOpacity>
+                <Text style={{ color: '#1E40AF', fontSize: 13, lineHeight: 20 }}>
+                  Capture 8–12 bottles maximum per photo.{'\n'}
+                  Stand 1–2 metres back, labels facing you.{'\n'}
+                  Take multiple photos for a long shelf.
+                </Text>
               </View>
-              <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 12 }}>
-                <Text style={{ color: '#1D4ED8', fontWeight: '700', marginBottom: 4 }}>Tips for best results</Text>
-                <Text style={{ color: '#1D4ED8', fontSize: 13 }}>• Include the full shelf in frame{'\n'}• Good lighting helps accuracy{'\n'}• One product type per photo works best</Text>
-              </View>
+              <TouchableOpacity onPress={takePhoto}
+                style={{ backgroundColor: '#111', padding: 16, borderRadius: 12, alignItems: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>📷 Take Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={pickFromLibrary}
+                style={{ backgroundColor: '#F3F4F6', padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#E5E7EB' }}>
+                <Text style={{ color: '#111', fontWeight: '800', fontSize: 16 }}>🖼️ Choose from Library</Text>
+              </TouchableOpacity>
             </View>
           )}
 
