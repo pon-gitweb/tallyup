@@ -2,10 +2,11 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import express = require("express");
 import cors = require("cors");
+import Stripe from "stripe";
 
 const app = express();
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "20mb", verify: (req: any, _res: any, buf: Buffer) => { req.rawBody = buf; } }));
 
 // ── Verify Firebase ID token from Authorization header ──────────────────────
 async function verifyToken(req: express.Request): Promise<string | null> {
@@ -734,6 +735,161 @@ app.post("/photo-count", async (req, res) => {
   }
 });
 
+// ── Stripe ───────────────────────────────────────────────────────────────────
+
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY not configured");
+  return new Stripe(key, { apiVersion: "2026-04-22.dahlia" as any });
+}
+
+// POST /stripe/create-checkout-session
+app.post("/stripe/create-checkout-session", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, priceId, successUrl, cancelUrl } = req.body || {};
+    if (!venueId || !priceId || !successUrl || !cancelUrl) {
+      res.status(400).json({ ok: false, error: "Missing venueId, priceId, successUrl, or cancelUrl" });
+      return;
+    }
+    const stripe = getStripe();
+    const db = admin.firestore();
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: venueId,
+      ...(existingCustomerId ? { customer: existingCustomerId } : {}),
+      metadata: { venueId, uid },
+    });
+    console.log("[api/stripe/create-checkout-session] OK", { uid, venueId, sessionId: session.id });
+    res.json({ ok: true, sessionId: session.id, url: session.url });
+  } catch (e: any) {
+    console.error("[api/stripe/create-checkout-session] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Checkout session creation failed" });
+  }
+});
+
+// POST /stripe/webhook
+app.post("/stripe/webhook", async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error("[api/stripe/webhook] STRIPE_WEBHOOK_SECRET not configured");
+    res.status(500).json({ error: "Webhook secret not configured" });
+    return;
+  }
+  let event: any;
+  try {
+    const stripe = getStripe();
+    event = stripe.webhooks.constructEvent((req as any).rawBody || Buffer.from(JSON.stringify(req.body)), sig as string, webhookSecret);
+  } catch (e: any) {
+    console.error("[api/stripe/webhook] Signature verification failed", e?.message);
+    res.status(400).json({ error: "Webhook signature verification failed" });
+    return;
+  }
+  const db = admin.firestore();
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as any;
+      const venueId = session.client_reference_id || (session.metadata as any)?.venueId;
+      if (venueId) {
+        let subData: any = null;
+        if (session.subscription) {
+          try { subData = await getStripe().subscriptions.retrieve(session.subscription as string); } catch {}
+        }
+        await db.doc(`venues/${venueId}`).set({
+          subscription: {
+            status: "active",
+            plan: "core",
+            modules: [],
+            stripeCustomerId: session.customer,
+            stripeSubscriptionId: session.subscription,
+            currentPeriodEnd: subData ? new Date((subData as any).current_period_end * 1000).toISOString() : null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        }, { merge: true });
+        console.log("[api/stripe/webhook] checkout.session.completed", { venueId });
+      }
+    } else if (event.type === "customer.subscription.updated") {
+      const sub = event.data.object as any;
+      const customerId = typeof sub.customer === "string" ? sub.customer : (sub.customer as any)?.id;
+      const venuesSnap = await db.collection("venues").where("subscription.stripeCustomerId", "==", customerId).limit(1).get();
+      if (!venuesSnap.empty) {
+        const venueDoc = venuesSnap.docs[0];
+        const planMeta = (sub.items?.data?.[0]?.price?.metadata as any)?.plan || "core";
+        const modules = (sub.items?.data || []).map((item: any) => item.price?.metadata?.module).filter(Boolean);
+        await venueDoc.ref.set({
+          subscription: {
+            status: sub.status === "active" ? "active" : sub.status,
+            plan: planMeta,
+            modules,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: sub.id,
+            currentPeriodEnd: new Date((sub as any).current_period_end * 1000).toISOString(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        }, { merge: true });
+        console.log("[api/stripe/webhook] subscription.updated", { venueId: venueDoc.id, status: sub.status });
+      }
+    } else if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object as any;
+      const customerId = typeof sub.customer === "string" ? sub.customer : (sub.customer as any)?.id;
+      const venuesSnap = await db.collection("venues").where("subscription.stripeCustomerId", "==", customerId).limit(1).get();
+      if (!venuesSnap.empty) {
+        const venueDoc = venuesSnap.docs[0];
+        await venueDoc.ref.set({
+          subscription: {
+            status: "cancelled",
+            plan: null,
+            modules: [],
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: sub.id,
+            currentPeriodEnd: new Date((sub as any).current_period_end * 1000).toISOString(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        }, { merge: true });
+        console.log("[api/stripe/webhook] subscription.deleted", { venueId: venueDoc.id });
+      }
+    }
+  } catch (e: any) {
+    console.error("[api/stripe/webhook] Handler error", e?.message);
+  }
+  res.json({ received: true });
+});
+
+// GET /stripe/portal
+app.get("/stripe/portal", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, returnUrl } = req.query as Record<string, string>;
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    const db = admin.firestore();
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const customerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
+    if (!customerId) {
+      res.status(400).json({ ok: false, error: "No Stripe customer found for this venue" });
+      return;
+    }
+    const stripe = getStripe();
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl || "https://hostistock.com",
+    });
+    console.log("[api/stripe/portal] OK", { uid, venueId });
+    res.json({ ok: true, url: portalSession.url });
+  } catch (e: any) {
+    console.error("[api/stripe/portal] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Portal session creation failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
@@ -1035,7 +1191,7 @@ Never make up features. If you are unsure, suggest checking Settings or contacti
 
 export const api = functions
   .region("us-central1")
-  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"] })
   .https.onRequest(app);
 
 // ── Shared invoice parsing helpers ───────────────────────────────────────────

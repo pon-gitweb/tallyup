@@ -8,16 +8,31 @@ import {
 } from 'firebase/firestore';
 import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
 
+export type SubscriptionData = {
+  status: string;
+  plan: string | null;
+  modules: string[];
+  currentPeriodEnd: string | null;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+};
+
 type VenueCtx = {
   loading: boolean;
   user: User | null;
   venueId: string | null;
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
+  subscription: SubscriptionData | null;
+  isPilot: boolean;
+  isActive: boolean;
+  plan: string | null;
+  hasModule: (moduleId: string) => boolean;
 };
 
 const Ctx = createContext<VenueCtx>({
   loading: true, user: null, venueId: null, refresh: () => {}, attachVenueIfMissing: async () => {},
+  subscription: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
 });
 
 export function VenueProvider({ children }: { children: React.ReactNode }) {
@@ -25,10 +40,12 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
+  const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
 
   useEffect(() => {
     console.log('[TallyUp VenueProvider] mount');
@@ -89,13 +106,46 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     };
   }, [nonce]);
 
+  useEffect(() => {
+    if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
+    if (!venueId) { setSubscription(null); return; }
+    unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      const sub = data?.subscription ?? null;
+      setSubscription(sub ? {
+        status: sub.status || 'pilot',
+        plan: sub.plan ?? null,
+        modules: Array.isArray(sub.modules) ? sub.modules : [],
+        currentPeriodEnd: sub.currentPeriodEnd ?? null,
+        stripeCustomerId: sub.stripeCustomerId,
+        stripeSubscriptionId: sub.stripeSubscriptionId,
+      } : null);
+    }, (err) => {
+      console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
+      setSubscription(null);
+    });
+    return () => {
+      if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
+    };
+  }, [venueId]);
+
+  const isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
+  const isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
+  const plan = subscription?.plan ?? null;
+  const hasModule = (moduleId: string) => subscription?.modules?.includes(moduleId) ?? false;
+
   const value = useMemo(() => ({
     loading,
     user,
     venueId,
     refresh: () => setNonce(n => n + 1),
     attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user); },
-  }), [loading, user, venueId]);
+    subscription,
+    isPilot,
+    isActive,
+    plan,
+    hasModule,
+  }), [loading, user, venueId, subscription, isPilot, isActive, plan]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -142,4 +192,8 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
 export function useVenue() { return useContext(Ctx); }
 export function useVenueId(): string | null { return useContext(Ctx).venueId; }
+export function useSubscription() {
+  const { subscription, isPilot, isActive, plan, hasModule } = useContext(Ctx);
+  return { subscription, isPilot, isActive, plan, hasModule };
+}
 
