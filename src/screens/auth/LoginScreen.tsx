@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
+// Font package not installed — using system font
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { devLogin } from '../../config/devAuth';
@@ -55,7 +55,7 @@ function LoginScreenInner() {
   const venueId = useVenueId();
   const colours = useColours();
 
-  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
+  const fontsLoaded = false;
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');

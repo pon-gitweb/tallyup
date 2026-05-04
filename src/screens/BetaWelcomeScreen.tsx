@@ -9,7 +9,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
+// Font package not installed — using system font
 import { useNavigation } from '@react-navigation/native';
 
 // Uses your app icon from /assets/icon.png
@@ -17,7 +17,7 @@ const appIcon = require('../assets/icon.png');
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
-  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
+  const fontsLoaded = false;
 
   const goDashboard = () => navigation.navigate('Dashboard');
   const goStockTake = () => navigation.navigate('DepartmentSelection');

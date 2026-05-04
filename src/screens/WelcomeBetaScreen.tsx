@@ -8,7 +8,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
+// Font package not installed — using system font
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -19,7 +19,7 @@ const WELCOME_STORAGE_KEY = 'tallyup_welcome_seen_v1';
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
-  const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
+  const fontsLoaded = false;
 
   const markSeenAndGoMain = async (mode: 'tour' | 'skip') => {
     try {
