@@ -69,6 +69,13 @@ interface ItemRow {
   unit?: string;
 }
 
+interface SlowMoverRow {
+  productName: string;
+  daysSinceMovement: number;
+  currentCount: number;
+  costPrice: number | null;
+}
+
 interface VenueSummary {
   venueName: string;
   stocktakesCompleted: number;
@@ -77,6 +84,7 @@ interface VenueSummary {
   flaggedItems: ItemRow[];   // flagRecount === true
   zeroItems: ItemRow[];      // lastCount === 0
   topItems: ItemRow[];       // highest counts in active areas
+  slowMovers: SlowMoverRow[];
 }
 
 async function collectVenueSummary(
@@ -149,13 +157,33 @@ async function collectVenueSummary(
     .sort((a, b) => b.lastCount - a.lastCount)
     .slice(0, 5);
 
-  return { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems };
+  const slowMovers: SlowMoverRow[] = [];
+  try {
+    const smSnap = await db.collection(`venues/${venueId}/slowMovers`)
+      .orderBy("daysSinceMovement", "desc")
+      .limit(20)
+      .get();
+    const now = new Date();
+    smSnap.docs.forEach((d) => {
+      const sm = d.data();
+      const du: Date | null = sm.dismissedUntil?.toDate?.() ?? null;
+      if (du && du > now) return; // skip dismissed
+      slowMovers.push({
+        productName: sm.productName || "Unknown",
+        daysSinceMovement: sm.daysSinceMovement || 0,
+        currentCount: sm.currentCount || 0,
+        costPrice: typeof sm.costPrice === "number" ? sm.costPrice : null,
+      });
+    });
+  } catch {}
+
+  return { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers };
 }
 
 // ── Email HTML builder ────────────────────────────────────────────────────────
 
 function buildEmailHtml(data: VenueSummary, weekOf: string): string {
-  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems } = data;
+  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers } = data;
 
   const section = (title: string, body: string) => `
     <div style="margin-bottom:28px;">
@@ -244,6 +272,29 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
         `<div style="font-size:14px;color:#DC2626;padding:4px 0;">&#9888; ${i.name}</div>`
       ).join("");
 
+  const totalSlowValue = slowMovers.reduce((sum, sm) => sum + ((sm.costPrice || 0) * sm.currentCount), 0);
+  const topSm = slowMovers[0] ?? null;
+  const slowMoversBody = slowMovers.length === 0
+    ? `<p style="font-size:13px;color:#059669;font-weight:600;margin:0;">&#10003; No slow moving stock detected.</p>`
+    : `<p style="margin:0 0 8px;font-size:14px;color:#374151;">
+         <strong>${slowMovers.length}</strong> line${slowMovers.length !== 1 ? "s" : ""} &middot;
+         <strong>$${totalSlowValue.toFixed(2)}</strong> total value
+       </p>
+       ${topSm ? `<p style="margin:0 0 10px;font-size:13px;color:#6B7280;">
+         Top slow mover: <strong>${topSm.productName}</strong> &mdash; ${topSm.daysSinceMovement} days no movement
+       </p>` : ""}
+       <table style="width:100%;border-collapse:collapse;">
+         <tr>
+           <th style="text-align:left;font-size:11px;color:#9CA3AF;font-weight:700;
+                      text-transform:uppercase;padding-bottom:6px;">Product</th>
+           <th style="text-align:right;font-size:11px;color:#9CA3AF;font-weight:700;
+                      text-transform:uppercase;padding-bottom:6px;">Days idle</th>
+         </tr>
+         ${slowMovers.slice(0, 5).map((sm) =>
+           tableRow(sm.productName, pill("#FEF3C7", "#92400E", `${sm.daysSinceMovement} days`))
+         ).join("")}
+       </table>`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -270,6 +321,7 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
       ${section("Flagged for Recount", flaggedBody)}
       ${section("Top Counted Products", topBody)}
       ${section("Zero Stock", zeroBody)}
+      ${section("Slow Moving Stock", slowMoversBody)}
 
       <div style="margin-top:24px;padding-top:20px;border-top:1px solid #F3F4F6;text-align:center;">
         <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">

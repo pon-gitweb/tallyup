@@ -1036,6 +1036,32 @@ app.post("/suitee", async (req, res) => {
       }
     } catch {}
 
+    // Tracked slow movers from slowMovers collection
+    const trackedSlowMoverLines: string[] = [];
+    try {
+      const smSnap = await db.collection(`venues/${venueId}/slowMovers`).limit(20).get();
+      if (!smSnap.empty) {
+        const smList = smSnap.docs.map(d => d.data() as any).filter((sm: any) => {
+          if (!sm.dismissedUntil) return true;
+          const du: Date | null = sm.dismissedUntil?.toDate?.() ?? null;
+          return !du || du < new Date();
+        });
+        if (smList.length > 0) {
+          const totalValue = smList.reduce((sum: number, sm: any) => sum + ((sm.costPrice || 0) * (sm.currentCount || 0)), 0);
+          trackedSlowMoverLines.push(`SLOW MOVING STOCK (30+ days no movement): ${smList.length} lines, $${totalValue.toFixed(2)} total value`);
+          smList.slice(0, 10).forEach((sm: any) => {
+            trackedSlowMoverLines.push(
+              `  - ${sm.productName}: ${sm.currentCount} on hand, ${sm.daysSinceMovement} days idle${sm.expiryRisk ? " ⚠ expiry risk" : ""}`
+            );
+          });
+          const top = [...smList].sort((a: any, b: any) => b.daysSinceMovement - a.daysSinceMovement)[0];
+          if (top) trackedSlowMoverLines.push(`  Slowest: ${top.productName} — ${top.daysSinceMovement} days`);
+        }
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] slow movers query error", e?.message);
+    }
+
     // Price change data (last 90 days)
     const priceChangeLines: string[] = [];
     try {
@@ -1125,6 +1151,10 @@ app.post("/suitee", async (req, res) => {
     if (slowMovers.length > 0) {
       lines.push("", "SLOW/UNCOUNTED PRODUCTS (30+ days without a count):");
       slowMovers.forEach(p => lines.push(`  - ${p.name}${p.costPrice ? ` ($${p.costPrice}/unit)` : ""}`));
+    }
+
+    if (trackedSlowMoverLines.length > 0) {
+      lines.push("", ...trackedSlowMoverLines);
     }
 
     if (recentOrders.length > 0) {
@@ -1533,3 +1563,149 @@ app.post("/process-invoices-pdf", async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || "PDF processing failed" });
   }
 });
+
+// ── scheduleSlowMoversCheck ───────────────────────────────────────────────────
+// Runs every Monday at 8am Pacific/Auckland time.
+// Flags products with no movement in 30+ days and count > 0.
+// Writes results to venues/{venueId}/slowMovers.
+export const scheduleSlowMoversCheck = functions
+  .region("us-central1")
+  .runWith({ memory: "512MB", timeoutSeconds: 540 })
+  .pubsub.schedule("every monday 08:00")
+  .timeZone("Pacific/Auckland")
+  .onRun(async () => {
+    const db = admin.firestore();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    let venuesSnap: any;
+    try {
+      venuesSnap = await db.collection("venues").get();
+    } catch (e) {
+      console.error("[scheduleSlowMoversCheck] failed to query venues:", e);
+      return null;
+    }
+
+    const results = await Promise.allSettled(
+      venuesSnap.docs.map(async (venueDoc: any) => {
+        const venueId: string = venueDoc.id;
+        const slowMovers: any[] = [];
+
+        try {
+          const deptsSnap = await db.collection(`venues/${venueId}/departments`).limit(30).get();
+
+          for (const deptDoc of deptsSnap.docs) {
+            const deptName: string = deptDoc.data().name || deptDoc.id;
+            const areasSnap = await db
+              .collection(`venues/${venueId}/departments/${deptDoc.id}/areas`)
+              .limit(50)
+              .get();
+
+            for (const areaDoc of areasSnap.docs) {
+              const areaName: string = areaDoc.data().name || areaDoc.id;
+              const itemsSnap = await db
+                .collection(`venues/${venueId}/departments/${deptDoc.id}/areas/${areaDoc.id}/items`)
+                .limit(200)
+                .get();
+
+              for (const itemDoc of itemsSnap.docs) {
+                const item = itemDoc.data();
+                const lastCount = typeof item.lastCount === "number" ? item.lastCount : null;
+                if (lastCount === null || lastCount <= 0) continue;
+
+                const lastCountAt: Date | null = item.lastCountAt?.toDate?.() ?? null;
+                if (!lastCountAt || lastCountAt >= thirtyDaysAgo) continue;
+
+                const daysSinceMovement = Math.floor(
+                  (Date.now() - lastCountAt.getTime()) / (1000 * 60 * 60 * 24)
+                );
+
+                const confirmedCount = typeof item.confirmedCount === "number" ? item.confirmedCount : null;
+                const confirmedCountAt: Date | null = item.confirmedCountAt?.toDate?.() ?? null;
+                let velocityPerWeek = 0;
+                if (confirmedCount !== null && confirmedCount > lastCount && confirmedCountAt) {
+                  const daysBetween = Math.max(
+                    1,
+                    (lastCountAt.getTime() - confirmedCountAt.getTime()) / (1000 * 60 * 60 * 24)
+                  );
+                  velocityPerWeek = ((confirmedCount - lastCount) / daysBetween) * 7;
+                }
+
+                const projectedSellThrough = velocityPerWeek > 0
+                  ? Math.round((lastCount / velocityPerWeek) * 7)
+                  : null;
+
+                let expiryRisk = false;
+                try {
+                  if (item.expiryDate) {
+                    const expiryDate: Date | null =
+                      item.expiryDate?.toDate?.() ??
+                      (typeof item.expiryDate === "string" ? new Date(item.expiryDate) : null);
+                    if (expiryDate) {
+                      const daysUntilExpiry = Math.floor(
+                        (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                      );
+                      if (daysUntilExpiry > 0 && (projectedSellThrough === null || projectedSellThrough > daysUntilExpiry)) {
+                        expiryRisk = true;
+                      }
+                    }
+                  }
+                } catch {}
+
+                if (slowMovers.length >= 200) break;
+                slowMovers.push({
+                  productId: itemDoc.id,
+                  productName: item.name || itemDoc.id,
+                  areaId: areaDoc.id,
+                  areaName,
+                  deptId: deptDoc.id,
+                  deptName,
+                  currentCount: lastCount,
+                  costPrice: typeof item.costPrice === "number" ? item.costPrice : null,
+                  lastMovementAt: lastCountAt.toISOString(),
+                  daysSinceMovement,
+                  velocityPerWeek: Math.round(velocityPerWeek * 100) / 100,
+                  expiryRisk,
+                  projectedSellThrough,
+                  flaggedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+              }
+              if (slowMovers.length >= 200) break;
+            }
+            if (slowMovers.length >= 200) break;
+          }
+        } catch (e: any) {
+          console.error(`[scheduleSlowMoversCheck] scan error for venue=${venueId}:`, e?.message);
+          return;
+        }
+
+        try {
+          const existingSnap = await db.collection(`venues/${venueId}/slowMovers`).limit(300).get();
+
+          if (existingSnap.docs.length > 0) {
+            const delBatch = db.batch();
+            existingSnap.docs.forEach((d: any) => delBatch.delete(d.ref));
+            await delBatch.commit();
+          }
+
+          if (slowMovers.length > 0) {
+            const writeBatch = db.batch();
+            slowMovers.forEach((sm) => {
+              const ref = db.doc(`venues/${venueId}/slowMovers/${sm.productId}`);
+              writeBatch.set(ref, sm);
+            });
+            await writeBatch.commit();
+          }
+
+          console.log(`[scheduleSlowMoversCheck] venue=${venueId}: ${slowMovers.length} slow movers written`);
+        } catch (e: any) {
+          console.error(`[scheduleSlowMoversCheck] write error for venue=${venueId}:`, e?.message);
+        }
+      })
+    );
+
+    const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    if (failed.length > 0) {
+      console.error(`[scheduleSlowMoversCheck] ${failed.length}/${results.length} venue(s) failed`);
+    }
+    return null;
+  });

@@ -20,7 +20,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import { db } from '../../services/firebase';
-import { collection, query, where, limit, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, limit, getDocs, orderBy, doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
@@ -96,6 +96,8 @@ export default function ReportsIndexScreen() {
   const [priceChanges, setPriceChanges] = useState<any[]>([]);
   const [priceHistoryItem, setPriceHistoryItem] = useState<any>(null);
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
+
+  const [slowMovers, setSlowMovers] = useState<any[]>([]);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -182,6 +184,49 @@ export default function ReportsIndexScreen() {
     loadPriceChanges();
     return () => { cancelled = true; };
   }, [venueId]);
+
+  // ── Slow movers ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    async function loadSlowMovers() {
+      try {
+        const q = query(
+          collection(db, 'venues', venueId, 'slowMovers'),
+          orderBy('daysSinceMovement', 'desc'),
+          limit(20)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const now = new Date();
+        const visible = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter((sm: any) => {
+          if (!sm.dismissedUntil) return true;
+          const du: Date | null = sm.dismissedUntil?.toDate?.() ?? null;
+          return !du || du < now;
+        });
+        setSlowMovers(visible);
+      } catch {}
+    }
+    loadSlowMovers();
+    return () => { cancelled = true; };
+  }, [venueId]);
+
+  async function handleSlowMoverAction(item: any, action: 'promotion' | 'delist' | 'dismiss') {
+    try {
+      const ref = doc(db, 'venues', venueId, 'slowMovers', item.productId);
+      if (action === 'dismiss') {
+        await updateDoc(ref, {
+          dismissedUntil: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+        });
+        setSlowMovers(prev => prev.filter((sm: any) => sm.productId !== item.productId));
+      } else {
+        await updateDoc(ref, { status: action, updatedAt: Timestamp.now() });
+        setSlowMovers(prev => prev.map((sm: any) =>
+          sm.productId === item.productId ? { ...sm, status: action } : sm
+        ));
+      }
+    } catch {}
+  }
 
   async function handleOpenPriceHistory(product: any) {
     setPriceHistoryItem(product);
@@ -510,6 +555,47 @@ export default function ReportsIndexScreen() {
                   </TouchableOpacity>
                 );
               })}
+            </Lane>
+          )}
+
+          {/* ── SLOW MOVING STOCK LANE (owner/manager only) ── */}
+          {isManager && slowMovers.length > 0 && (
+            <Lane label="🐌 SLOW MOVING STOCK">
+              {slowMovers.map((item: any) => (
+                <View key={item.productId} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1E293B' }}>
+                  <Text style={styles.lineRowName}>{item.productName}</Text>
+                  <Text style={styles.lineRowSub}>
+                    {item.areaName} · {item.daysSinceMovement} days no movement · {item.currentCount} on hand
+                    {item.expiryRisk ? '  ⚠ expiry risk' : ''}
+                  </Text>
+                  {item.status === 'promotion' && (
+                    <Text style={{ fontSize: 11, color: '#60A5FA', marginTop: 2 }}>📢 Flagged for promotion</Text>
+                  )}
+                  {item.status === 'delist' && (
+                    <Text style={{ fontSize: 11, color: '#F59E0B', marginTop: 2 }}>🗑 Consider delisting</Text>
+                  )}
+                  <View style={{ flexDirection: 'row', marginTop: 8, gap: 6 }}>
+                    <TouchableOpacity
+                      onPress={() => handleSlowMoverAction(item, 'promotion')}
+                      style={{ backgroundColor: '#0B132B', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#1E3A5F' }}
+                    >
+                      <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '600' }}>Flag for promotion</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSlowMoverAction(item, 'delist')}
+                      style={{ backgroundColor: '#1A1200', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#3D2600' }}
+                    >
+                      <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '600' }}>Consider delisting</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSlowMoverAction(item, 'dismiss')}
+                      style={{ backgroundColor: '#161B2A', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#1E293B' }}
+                    >
+                      <Text style={{ color: '#64748B', fontSize: 11, fontWeight: '600' }}>Dismiss</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
             </Lane>
           )}
 
