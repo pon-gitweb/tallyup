@@ -447,6 +447,61 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>Xero Integration</Text>
           </TouchableOpacity>
         </View>
+
+        {/* POS Integration section */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>POS Integration</Text></View>
+        {([
+          { key: 'wizbang',    label: 'Wizbang Onetap' },
+          { key: 'lightspeed', label: 'Lightspeed' },
+          { key: 'square',     label: 'Square' },
+          { key: 'bepoz',      label: 'BEPOZ' },
+          { key: 'impos',      label: 'Impos' },
+        ] as const).map(({ key, label }) => (
+          <View key={key} style={[styles.row, { alignItems: 'center' }]}>
+            <View style={[styles.btn, {
+              backgroundColor: themeColours.surface,
+              borderWidth: 1,
+              borderColor: themeColours.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }]}>
+              <Text style={{ color: themeColours.text, fontWeight: '700', flex: 1 }}>{label}</Text>
+              <View style={{
+                backgroundColor: themeColours.background,
+                borderRadius: 999,
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderWidth: 1,
+                borderColor: themeColours.border,
+                marginLeft: 8,
+                marginRight: 8,
+              }}>
+                <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontWeight: '700' }}>Coming soon</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => Alert.alert(
+                  `Connect ${label}`,
+                  `Connect ${label} to import products and sales data automatically. Contact your POS provider and mention Hosti-Stock to request integration.`
+                )}
+              >
+                <Text style={{ color: themeColours.primary, fontWeight: '700', fontSize: 13 }}>Learn more</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+        <View style={styles.row}>
+          <View style={[styles.btn, {
+            backgroundColor: themeColours.surface,
+            borderWidth: 1,
+            borderColor: themeColours.border,
+          }]}>
+            <Text style={{ color: themeColours.textSecondary, fontSize: 13, textAlign: 'center' }}>
+              Using a different POS?{'\n'}Email us at{' '}
+              <Text style={{ color: themeColours.primary, fontWeight: '700' }}>hello@hostistock.com</Text>
+            </Text>
+          </View>
+        </View>
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
         {/* Appearance button */}
         <View style={styles.row}>
