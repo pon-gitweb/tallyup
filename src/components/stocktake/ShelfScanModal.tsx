@@ -15,6 +15,8 @@ import {
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../../config/ai';
 
@@ -55,6 +57,29 @@ export default function ShelfScanModal({ visible, onClose, venueId, areaName, on
       await runScan(photo.base64);
     } catch {
       setFailMsg('Camera error. Please try again.');
+      setStep('failed');
+    }
+  };
+
+  const pickFromLibrary = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Photo library access needed', 'Allow photo library access to choose a shelf photo.', [
+          { text: 'Cancel', style: 'cancel' },
+          ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
+        ]);
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, quality: 0.7 });
+      if (result.canceled || !result.assets?.length) return;
+      const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      setStep('processing');
+      await runScan(b64);
+    } catch {
+      setFailMsg('Could not load photo. Please try again.');
       setStep('failed');
     }
   };
@@ -171,9 +196,12 @@ export default function ShelfScanModal({ visible, onClose, venueId, areaName, on
               </View>
             </View>
 
-            <View style={{ position: 'absolute', bottom: 48, left: 0, right: 0, alignItems: 'center' }}>
+            <View style={{ position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center', gap: 12 }}>
               <TouchableOpacity onPress={capture} style={S.captureBtn} activeOpacity={0.8}>
                 <View style={S.captureBtnInner} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={pickFromLibrary} style={{ backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 }}>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>🖼️ Choose from Library</Text>
               </TouchableOpacity>
             </View>
           </CameraView>

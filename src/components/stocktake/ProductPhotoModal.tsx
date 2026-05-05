@@ -81,9 +81,44 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
     setStep('back-prompt');
   };
 
+  const pickFrontFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (perm.status !== 'granted') {
+      Alert.alert('Photo library access needed', 'Allow photo library access to choose a photo.', [
+        { text: 'Cancel', style: 'cancel' },
+        ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
+      ]);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, quality: 0.7 });
+    if (result.canceled || !result.assets?.length) return;
+    const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    setFrontB64(b64);
+    setStep('back-prompt');
+  };
+
   const takeBackPhoto = async () => {
     if (!await ensureCamera()) return;
     const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.7 });
+    if (result.canceled || !result.assets?.length) return;
+    const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    await runScan(frontB64!, b64);
+  };
+
+  const pickBackFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (perm.status !== 'granted') {
+      Alert.alert('Photo library access needed', 'Allow photo library access to choose a photo.', [
+        { text: 'Cancel', style: 'cancel' },
+        ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
+      ]);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, quality: 0.7 });
     if (result.canceled || !result.assets?.length) return;
     const b64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
       encoding: FileSystem.EncodingType.Base64,
@@ -189,7 +224,10 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             <Text style={S.stepTitle}>Photograph the front of the bottle</Text>
             <Text style={S.stepSub}>Show the label clearly in frame</Text>
             <TouchableOpacity style={[S.btn, { marginTop: 28 }]} onPress={takeFrontPhoto} activeOpacity={0.8}>
-              <Text style={S.btnText}>Open Camera</Text>
+              <Text style={S.btnText}>📷 Open Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={pickFrontFromLibrary} activeOpacity={0.8}>
+              <Text style={S.btnTextDark}>🖼️ Choose from Library</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={handleClose} style={{ marginTop: 16 }}>
               <Text style={{ color: '#64748b', fontSize: 14 }}>Cancel</Text>
@@ -204,7 +242,10 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             <Text style={S.stepTitle}>Now photograph the back</Text>
             <Text style={S.stepSub}>Capture the barcode and size details</Text>
             <TouchableOpacity style={[S.btn, { marginTop: 28 }]} onPress={takeBackPhoto} activeOpacity={0.8}>
-              <Text style={S.btnText}>Open Camera</Text>
+              <Text style={S.btnText}>📷 Open Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={pickBackFromLibrary} activeOpacity={0.8}>
+              <Text style={S.btnTextDark}>🖼️ Choose from Library</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={skipBack} activeOpacity={0.8}>
               <Text style={S.btnTextDark}>Skip back photo</Text>

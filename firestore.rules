@@ -274,7 +274,7 @@ service cloud.firestore {
               && request.resource.data.createdAt is timestamp
               && request.resource.data.updatedAt is timestamp
               && request.resource.data.inductionStatus in ['pending','complete']
-              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']
+              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search']
               && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
               && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
               && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
@@ -446,7 +446,7 @@ service cloud.firestore {
             && request.resource.data.createdAt is timestamp
             && request.resource.data.updatedAt is timestamp
             && request.resource.data.inductionStatus in ['pending','complete']
-            && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']
+            && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search']
             && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
             && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
             && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)

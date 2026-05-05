@@ -69,6 +69,61 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     }
   }, [venueId, onClose]);
 
+  // LIBRARY: pick existing photo, upload JPEG, create pending snapshot
+  const pickPhotoFromLibrary = useCallback(async () => {
+    try {
+      if (!venueId) throw new Error('Not ready: no venue selected');
+
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Permission needed', 'Photo library access is required to choose a photo.');
+        return;
+      }
+
+      const photo = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: false,
+        quality: 0.85,
+        base64: false,
+      });
+      if (photo.canceled || !photo.assets?.[0]?.uri) return;
+
+      setBusy(true);
+      const asset = photo.assets[0];
+      const filename = `invoice_${Date.now()}.jpg`;
+
+      const up = await uploadFastInvoice(venueId, asset.uri, filename, 'image/jpeg' as any);
+
+      const payload = {
+        invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
+        lines: [],
+        confidence: null,
+        warnings: ['OCR not yet enabled: review photo and attach to order manually.'],
+      };
+
+      const save = await persistFastReceiveSnapshot({
+        venueId,
+        source: 'photo',
+        storagePath: up.fullPath,
+        payload,
+        parsedPo: null,
+      });
+      if (!save || save.ok !== true) {
+        const msg = (save && save.error) ? String(save.error) : 'unknown error';
+        throw new Error(`FastReceive snapshot write denied: ${msg}`);
+      }
+
+      Alert.alert(
+        'Photo saved',
+        'Snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.'
+      );
+      onClose();
+    } catch (e: any) {
+      Alert.alert('Photo select failed', String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [venueId, onClose]);
+
   // CSV/PDF upload
   const pickAndProcess = useCallback(async () => {
     try {
@@ -140,7 +195,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   }, [venueId, onClose]);
 
   const quickTip = useMemo(() => {
-    return 'Tip: If the scan finds ≥5 lines and ≥50 items, we’ll prompt for item check-off. Fewer lines/items can be quick-confirmed.';
+    return "Tip: If the scan finds ≥5 lines and ≥50 items, we'll prompt for item check-off. Fewer lines/items can be quick-confirmed.";
   }, []);
 
   return (
@@ -156,12 +211,17 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       >
         <Text style={{ fontSize: 18, fontWeight: '900', marginBottom: 8 }}>Fast Receive (Scan / Upload)</Text>
         <Text style={{ color: '#6B7280', marginBottom: 4 }}>
-          Receive deliveries without opening Submitted Orders. We’ll try to match a PO and attach automatically.
+          Receive deliveries without opening Submitted Orders. We'll try to match a PO and attach automatically.
         </Text>
-        <Text style={{ color: '#9CA3AF', marginBottom: 12, fontSize: 12, lineHeight: 16 }}>
-          1) Take a clear photo or upload a CSV/PDF. 2) We store a snapshot and try to attach to a submitted order.
-          3) Anything unmatched appears under Fast Receives (Pending) in Stock Control for managers to review.
-        </Text>
+        <View style={{ backgroundColor: '#F0F9FF', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#BAE6FD' }}>
+          <Text style={{ color: '#0369A1', fontWeight: '800', marginBottom: 6, fontSize: 13 }}>📄 Photograph the invoice</Text>
+          <Text style={{ color: '#0369A1', fontSize: 12, lineHeight: 18 }}>
+            • Place invoice flat on a surface{'\n'}
+            • Ensure all text is clearly visible{'\n'}
+            • Good lighting — avoid shadows across the text{'\n'}
+            • Capture the full invoice in frame
+          </Text>
+        </View>
 
         <TouchableOpacity
           disabled={busy}
@@ -175,7 +235,23 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           }}
         >
           <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-            {busy ? 'Working…' : 'Take Photo (OCR-ready)'}
+            {busy ? 'Working…' : '📷 Take Photo'}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          disabled={busy}
+          onPress={pickPhotoFromLibrary}
+          style={{
+            padding: 14,
+            borderRadius: 12,
+            backgroundColor: '#0369A1',
+            marginBottom: 10,
+            opacity: busy ? 0.85 : 1,
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
+            {busy ? 'Working…' : '🖼️ Choose from Library'}
           </Text>
         </TouchableOpacity>
 
@@ -191,7 +267,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           }}
         >
           <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-            {busy ? 'Processing…' : 'Upload Invoice (CSV / PDF)'}
+            {busy ? 'Processing…' : '📄 Upload CSV / PDF'}
           </Text>
         </TouchableOpacity>
 

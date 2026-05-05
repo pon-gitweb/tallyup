@@ -1337,12 +1337,20 @@ const openHistory = throttleAction(async (item: Item) => {
   const handleShelfScanConfirm = async (products: { name: string; brand: string; size: string; category: string }[]) => {
     if (!venueId) throw new Error('Missing venue');
     await ensureAreaStarted();
+    let added = 0;
+    let skipped = 0;
     for (const p of products) {
       const displayName = [p.name, p.brand, p.size].filter(Boolean).join(' ').trim() || p.name;
+      const alreadyExists = items.some(it => it.name?.toLowerCase() === displayName.toLowerCase());
+      if (alreadyExists) { skipped++; continue; }
       await addDoc(
         collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
         { name: displayName, unit: p.size || null, inductionStatus: 'pending', inductionSource: 'shelf-scan', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
       );
+      added++;
+    }
+    if (skipped > 0) {
+      Alert.alert('Shelf scan complete', `${added} product${added !== 1 ? 's' : ''} added, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
     }
   };
 
@@ -1357,13 +1365,16 @@ const openHistory = throttleAction(async (item: Item) => {
   };
 
   const handleVenueProductSelected = async (product: any) => {
-    if (!venueId) return;
+    if (!venueId || !departmentId || !areaId) {
+      Alert.alert('Error', 'Missing area information. Please go back and reopen this area.');
+      return;
+    }
     const already = items.find(it => it.name?.toLowerCase() === (product.name || '').toLowerCase());
     if (already) { Alert.alert('Already here', `${product.name} is already in this area.`); return; }
     await ensureAreaStarted();
     await addDoc(
       collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-      { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, costPrice: product.costPrice || null, parLevel: product.parLevel || null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
     );
     hapticSuccess();
     Alert.alert('Added', `${product.name} added to this area.`);
