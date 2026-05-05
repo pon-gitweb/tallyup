@@ -94,7 +94,7 @@ function InventoryImportScreen() {
     setLoadingMsg('Reading your file...');
     try {
       const base64 = await readBase64(fileUri);
-      setLoadingMsg('Claude is reading your inventory...');
+      setLoadingMsg('Hosti Intelligence is reading your inventory...');
       const token = await getAuth().currentUser?.getIdToken();
       const resp = await fetch(EXTRACT_URL, {
         method: 'POST',
@@ -225,7 +225,7 @@ function InventoryImportScreen() {
         <ActivityIndicator size="large" color={themeColours.primary} />
         <Text style={{ fontSize: 18, fontWeight: '900', color: themeColours.text, textAlign: 'center' }}>{loadingMsg}</Text>
         <Text style={{ color: themeColours.textSecondary, textAlign: 'center', fontSize: 14 }}>
-          Claude is reading your inventory and organising it for you. This usually takes 10–30 seconds.
+          Hosti Intelligence is reading your inventory and organising it for you. This usually takes 10–30 seconds.
         </Text>
       </View>
     );
@@ -331,7 +331,7 @@ function InventoryImportScreen() {
 
       <View style={{ backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
         <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 8 }}>What happens next</Text>
-        {['Claude reads your file and finds all your products','We group them by area or category','You review and confirm — edit anything before importing','Start your first stocktake straight away'].map((step, i) => (
+        {['Hosti Intelligence reads your file and finds all your products','We group them by area or category','You review and confirm — edit anything before importing','Start your first stocktake straight away'].map((step, i) => (
           <View key={i} style={{ flexDirection: 'row', gap: 10, marginBottom: i < 3 ? 6 : 0 }}>
             <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: themeColours.success, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: themeColours.primaryText, fontSize: 11, fontWeight: '900' }}>{i + 1}</Text>

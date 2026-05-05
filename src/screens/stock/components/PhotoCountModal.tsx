@@ -167,7 +167,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
             <View style={{ alignItems: 'center', gap: 16, paddingTop: 40 }}>
               {imageUri && <Image source={{ uri: imageUri }} style={{ width: '100%', height: 200, borderRadius: 12 }} resizeMode="cover" />}
               <ActivityIndicator size="large" color="#111" />
-              <Text style={{ fontWeight: '800', fontSize: 16 }}>Claude is counting...</Text>
+              <Text style={{ fontWeight: '800', fontSize: 16 }}>Hosti Intelligence is counting...</Text>
               <Text style={{ color: '#6B7280', textAlign: 'center' }}>Analysing your photo for {productName || 'stock items'}</Text>
             </View>
           )}
