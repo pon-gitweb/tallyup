@@ -15,13 +15,9 @@ import {
 // Font package not installed — using system font
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
-import { devLogin } from '../../config/devAuth';
 import LegalFooter from '../../components/LegalFooter';
 import { useVenueId } from '../../context/VenueProvider';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
-import { db } from '../../services/firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { DEV_VENUE_ID } from '../../config/devVenue';
 import { useColours } from '../../context/ThemeContext';
 
 const appIcon = require('../../../assets/icon.png');
@@ -34,19 +30,6 @@ function mapAuthError(e: any): string {
   if (code.includes('operation-not-allowed')) return 'Email/Password sign-in is not enabled in Firebase.';
   if (code.includes('too-many-requests')) return 'Too many attempts. Please try again later.';
   return e?.message ?? 'An error occurred.';
-}
-
-async function attachToDevVenue(uid: string, email: string | null) {
-  const vref = doc(db, 'venues', DEV_VENUE_ID);
-  const mref = doc(db, 'venues', DEV_VENUE_ID, 'members', uid);
-  const uref = doc(db, 'users', uid);
-
-  const vSnap = await getDoc(vref);
-  if (!vSnap.exists()) {
-    await setDoc(vref, { venueId: DEV_VENUE_ID, name: 'TallyUp Dev Venue', createdAt: serverTimestamp(), dev: true }, { merge: true });
-  }
-  await setDoc(mref, { uid, role: 'owner', joinedAt: serverTimestamp(), dev: true }, { merge: true });
-  await setDoc(uref, { uid, email: email ?? null, venueId: DEV_VENUE_ID, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 function LoginScreenInner() {
@@ -87,20 +70,6 @@ function LoginScreenInner() {
     }
   };
 
-  const doDevLogin = async () => {
-    setBusy(true);
-    try {
-      const { email: em, password: pw } = await devLogin();
-      const cred = await signInWithEmailAndPassword(auth, em, pw);
-      await attachToDevVenue(cred.user.uid, cred.user.email ?? em);
-      Alert.alert('Dev Login', 'Attached to Dev Venue');
-    } catch (e: any) {
-      Alert.alert('Dev login failed', mapAuthError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const gotoRegister = () => nav.navigate('Register');
 
   const S = StyleSheet.create({
@@ -124,8 +93,6 @@ function LoginScreenInner() {
     secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: colours.border },
     secondaryText: { color: colours.text, fontWeight: '700' },
     disabled: { opacity: 0.6 },
-    ghost: { padding: 10, alignItems: 'center', marginTop: 12 },
-    ghostText: { color: colours.textSecondary },
     footer: { paddingHorizontal: 16, paddingBottom: 16 },
   });
 
@@ -175,9 +142,6 @@ function LoginScreenInner() {
             <Text style={S.secondaryText}>Create Account</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={S.ghost} onPress={doDevLogin} disabled={busy}>
-            <Text style={S.ghostText}>Dev Login</Text>
-          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
 
