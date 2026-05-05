@@ -1,12 +1,14 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
+import LandingScreen from '../screens/auth/LandingScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import SetupWizard from '../screens/setup/SetupWizard';
 import CreateVenueScreen from '../screens/CreateVenueScreen';
 
 export type AuthStackParamList = {
+  Landing: undefined;
   Login: undefined;
   Register: undefined;
   Setup: undefined;
@@ -18,6 +20,7 @@ const Stack = createNativeStackNavigator<AuthStackParamList>();
 export default function AuthNavigator() {
   return (
     <Stack.Navigator id={undefined as any}>
+      <Stack.Screen name="Landing" component={LandingScreen} options={{ headerShown: false }} />
       <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
       <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Create Account' }} />
       <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue' }} />
