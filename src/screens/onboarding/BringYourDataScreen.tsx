@@ -20,6 +20,10 @@ import { parseCsv, toObjects } from '../../services/imports/csv';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import {
+  invoiceFingerprint, salesFingerprint,
+  checkProcessed, writeProcessed, confirmDuplicateImport,
+} from '../../services/deduplication';
 
 const API_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
@@ -64,6 +68,10 @@ export default function BringYourDataScreen() {
   const [salesFileName, setSalesFileName] = useState<string | null>(null);
   const [salesReport, setSalesReport] = useState<any | null>(null);
   const [salesProcessing, setSalesProcessing] = useState(false);
+
+  // ── Deduplication hashes (written to Firestore on onFinish) ─────────────────
+  const [pendingInvoiceHash, setPendingInvoiceHash] = useState<string | null>(null);
+  const [pendingSalesHash, setPendingSalesHash] = useState<string | null>(null);
 
   // ── Products: CSV ──────────────────────────────────────────────────────────
   const pickProductsCsv = useCallback(async () => {
@@ -192,6 +200,22 @@ export default function BringYourDataScreen() {
       });
       if (!processRes.ok) throw new Error('Processing failed');
       const result = await processRes.json();
+      // Deduplication check
+      if (venueId) {
+        const lines = result.lines || [];
+        const total = lines.reduce((s: number, l: any) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
+        const hash = invoiceFingerprint(result.invoice?.supplierName || null, lines, result.invoice?.deliveryDate || null, total);
+        const { exists, processedAt } = await checkProcessed(venueId, 'processedInvoices', hash);
+        if (exists) {
+          const dateStr = processedAt ? processedAt.toLocaleDateString('en-NZ') : 'previously';
+          const proceed = await confirmDuplicateImport(
+            'Invoice already processed',
+            `This invoice appears to have already been processed on ${dateStr}. Import anyway?`,
+          );
+          if (!proceed) return;
+        }
+        setPendingInvoiceHash(hash);
+      }
       setInvoiceLines(result.lines || []);
       setInvoiceSupplierName(result.invoice?.supplierName || null);
       setInvoicesFileName(name);
@@ -234,6 +258,22 @@ export default function BringYourDataScreen() {
     setProcessingInvoice(true);
     try {
       const result = await runPhotoOcrJob({ venueId, localUri: uri });
+      // Deduplication check
+      if (venueId) {
+        const lines = result.lines || [];
+        const total = lines.reduce((s: number, l: any) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
+        const hash = invoiceFingerprint(result.supplierName || null, lines, null, total);
+        const { exists, processedAt } = await checkProcessed(venueId, 'processedInvoices', hash);
+        if (exists) {
+          const dateStr = processedAt ? processedAt.toLocaleDateString('en-NZ') : 'previously';
+          const proceed = await confirmDuplicateImport(
+            'Invoice already processed',
+            `This invoice appears to have already been processed on ${dateStr}. Import anyway?`,
+          );
+          if (!proceed) return;
+        }
+        setPendingInvoiceHash(hash);
+      }
       setInvoiceLines(result.lines || []);
       setInvoiceSupplierName(result.supplierName || null);
       setInvoicesFileName('invoice-photo.jpg');
@@ -289,6 +329,21 @@ export default function BringYourDataScreen() {
         fileUri: String(asset.uri),
         filename: String(asset.name || 'sales.csv'),
       });
+      // Deduplication check
+      if (venueId && report) {
+        const lines = report.lines || [];
+        const hash = salesFingerprint(lines, report.period);
+        const { exists, processedAt } = await checkProcessed(venueId, 'processedSalesReports', hash);
+        if (exists) {
+          const dateStr = processedAt ? processedAt.toLocaleDateString('en-NZ') : 'previously';
+          const proceed = await confirmDuplicateImport(
+            'Sales report already loaded',
+            `A sales report covering this period appears to have already been loaded on ${dateStr}. Import anyway?`,
+          );
+          if (!proceed) { setSalesProcessing(false); return; }
+        }
+        setPendingSalesHash(hash);
+      }
       setSalesReport(report);
       setSalesFileName(String(asset.name || 'sales.csv'));
     } catch (e: any) {
@@ -391,6 +446,19 @@ export default function BringYourDataScreen() {
         onboardingHasSales: !!salesReport,
         onboardingInvoiceLinesCount: invoiceLines.length,
       });
+
+      // Write deduplication fingerprints
+      if (pendingInvoiceHash) {
+        await writeProcessed(venueId, 'processedInvoices', pendingInvoiceHash, {
+          supplierName: invoiceSupplierName,
+          lineCount: invoiceLines.length,
+        });
+      }
+      if (pendingSalesHash) {
+        await writeProcessed(venueId, 'processedSalesReports', pendingSalesHash, {
+          lineCount: salesReport?.lines?.length || 0,
+        });
+      }
 
       nav.navigate('Dashboard');
     } catch (e: any) {

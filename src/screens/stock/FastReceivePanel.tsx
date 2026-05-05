@@ -9,6 +9,7 @@ import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import { invoiceFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 
 export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
@@ -155,6 +156,25 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         ? await processInvoicesCsv({ venueId, orderId: 'UNSET', storagePath: up.fullPath })
         : await processInvoicesPdf({ venueId, orderId: 'UNSET', storagePath: up.fullPath });
 
+      // Invoice deduplication check
+      const invLines = parsed?.lines || [];
+      const invTotal = invLines.reduce((s: number, l: any) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
+      const invHash = invoiceFingerprint(
+        parsed?.invoice?.supplierName || null,
+        invLines,
+        parsed?.invoice?.deliveryDate || null,
+        invTotal,
+      );
+      const { exists: invExists, processedAt: invProcessedAt } = await checkProcessed(venueId, 'processedInvoices', invHash);
+      if (invExists) {
+        const dateStr = invProcessedAt ? invProcessedAt.toLocaleDateString('en-NZ') : 'previously';
+        const proceed = await confirmDuplicateImport(
+          'Invoice already processed',
+          `This invoice appears to have already been processed on ${dateStr}. Import anyway?`,
+        );
+        if (!proceed) { setBusy(false); return; }
+      }
+
       const parsedPo = parsed?.invoice?.poNumber ?? null;
 
       const save = await persistFastReceiveSnapshot({
@@ -174,6 +194,12 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         venueId,
         parsed,
         storagePath: up.fullPath,
+      });
+
+      // Write deduplication fingerprint after successful save
+      await writeProcessed(venueId, 'processedInvoices', invHash, {
+        supplierName: parsed?.invoice?.supplierName || null,
+        lineCount: invLines.length,
       });
 
       if (result.attached) {

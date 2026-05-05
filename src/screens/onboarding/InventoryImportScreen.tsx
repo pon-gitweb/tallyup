@@ -19,6 +19,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { AI_BASE_URL } from '../../config/ai';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { stocktakeFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 
 const EXTRACT_URL = `${AI_BASE_URL}/api/extract-inventory`;
 
@@ -103,6 +104,20 @@ function InventoryImportScreen() {
         throw new Error(err?.error || 'Could not read your file. Please try a different format.');
       }
       const result: ExtractionResult = await resp.json();
+      // Stocktake deduplication check
+      if (venueId && (result.products?.length ?? 0) > 0) {
+        const hash = stocktakeFingerprint(result.products);
+        const { exists, processedAt } = await checkProcessed(venueId, 'processedStocktakes', hash);
+        if (exists) {
+          const dateStr = processedAt ? processedAt.toLocaleDateString('en-NZ') : 'previously';
+          const proceed = await confirmDuplicateImport(
+            'Stocktake already imported',
+            `This stocktake sheet appears to have already been imported on ${dateStr}. Import anyway?`,
+          );
+          if (!proceed) { setLoading(false); return; }
+        }
+        await writeProcessed(venueId, 'processedStocktakes', hash, { productCount: result.products.length });
+      }
       setLoading(false);
       nav.navigate('InventoryImportPreview', { result, venueId });
     } catch (e: any) {
@@ -139,6 +154,20 @@ function InventoryImportScreen() {
         summary: `Found ${products.length} products across ${total} page${total !== 1 ? 's' : ''}. ${dupeCount} duplicate${dupeCount !== 1 ? 's' : ''} removed.`,
         warnings: dupeCount > 0 ? [`${dupeCount} duplicate product${dupeCount !== 1 ? 's' : ''} removed across pages.`] : [],
       };
+      // Stocktake deduplication check (multi-page)
+      if (venueId && products.length > 0) {
+        const hash = stocktakeFingerprint(products);
+        const { exists, processedAt } = await checkProcessed(venueId, 'processedStocktakes', hash);
+        if (exists) {
+          const dateStr = processedAt ? processedAt.toLocaleDateString('en-NZ') : 'previously';
+          const proceed = await confirmDuplicateImport(
+            'Stocktake already imported',
+            `This stocktake sheet appears to have already been imported on ${dateStr}. Import anyway?`,
+          );
+          if (!proceed) { setLoading(false); setPages([]); setPhotoStage('idle'); return; }
+        }
+        await writeProcessed(venueId, 'processedStocktakes', hash, { productCount: products.length });
+      }
       setLoading(false);
       setPages([]);
       setPhotoStage('idle');

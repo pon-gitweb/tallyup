@@ -8,6 +8,7 @@ import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import { refreshAIContext } from '../../services/aiContext';
+import { salesFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 
 const EXPECTED_HEADERS = [
   { col: 'name', desc: 'Product name', required: true },
@@ -60,11 +61,26 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       ).length ?? 0;
 
       if (lineCount === 0) {
+        // handled below — don't dedup empty reports
         Alert.alert(
           'Nothing parsed',
           'No lines were found in this CSV.\n\nMake sure your file has the required column headers — tap "Expected format" to see what we need.',
         );
         return;
+      }
+
+      // Sales report deduplication check
+      const salesLines = parsed?.lines || [];
+      const salesPeriod = (parsed?.report || parsed)?.period;
+      const salesHash = salesFingerprint(salesLines, salesPeriod);
+      const { exists: salesExists, processedAt: salesProcessedAt } = await checkProcessed(venueId, 'processedSalesReports', salesHash);
+      if (salesExists) {
+        const dateStr = salesProcessedAt ? salesProcessedAt.toLocaleDateString('en-NZ') : 'previously';
+        const proceed = await confirmDuplicateImport(
+          'Sales report already loaded',
+          `A sales report covering this period appears to have already been loaded on ${dateStr}. Import anyway?`,
+        );
+        if (!proceed) { setBusy(false); return; }
       }
 
       const saved = await storeSalesReport({
@@ -74,6 +90,12 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       });
 
       if (!saved?.ok) throw new Error(saved?.error || 'storeSalesReport failed');
+
+      // Write deduplication fingerprint after successful save
+      await writeProcessed(venueId, 'processedSalesReports', salesHash, {
+        lineCount,
+        reportDate: salesPeriod?.start || null,
+      });
 
       // Non-blocking: match sales lines to recipes and write theoretical consumption
       if (parsed?.lines?.length > 0 && saved?.id) {

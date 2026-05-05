@@ -70,26 +70,49 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
         });
         onClose();
       } else {
-        // Not found — offer to add as new
+        // Not in venue — check global catalogue for pre-fill
+        const globalSnap = await getDocs(query(collection(db, 'global_products'), where('barcode', '==', data)));
         setLoading(false);
-        Alert.alert(
-          'Product not found',
-          'Barcode: ' + data + '\n\nNo product with this barcode exists in your venue. Would you like to add it as a new product?',
-          [
-            {
-              text: 'Add as new',
-              onPress: () => { onNotFound(data); onClose(); },
-            },
-            {
-              text: 'Scan again',
-              onPress: () => {
-                setLastScanned(null);
-                cooldown.current = false;
+
+        if (!globalSnap.empty) {
+          const gd = globalSnap.docs[0];
+          const gp = gd.data() as any;
+          const displayName = [gp.name, gp.brand, gp.size].filter(Boolean).join(' ') || data;
+          Alert.alert(
+            'Found in catalogue',
+            `We found this product in our catalogue:\n\n${displayName}\n\nIs this correct?`,
+            [
+              {
+                text: 'Yes, use this',
+                onPress: () => {
+                  onFound({
+                    id: gd.id,
+                    name: gp.name || data,
+                    unit: gp.unit || null,
+                    supplierName: null,
+                    supplierId: null,
+                    costPrice: null,
+                    parLevel: null,
+                  });
+                  onClose();
+                },
               },
-            },
-            { text: 'Cancel', style: 'cancel', onPress: onClose },
-          ]
-        );
+              { text: 'Add as new', onPress: () => { onNotFound(data); onClose(); } },
+              { text: 'Scan again', onPress: () => { setLastScanned(null); cooldown.current = false; } },
+              { text: 'Cancel', style: 'cancel', onPress: onClose },
+            ]
+          );
+        } else {
+          Alert.alert(
+            'Product not found',
+            'Barcode: ' + data + '\n\nNo product with this barcode exists in your venue. Would you like to add it as a new product?',
+            [
+              { text: 'Add as new', onPress: () => { onNotFound(data); onClose(); } },
+              { text: 'Scan again', onPress: () => { setLastScanned(null); cooldown.current = false; } },
+              { text: 'Cancel', style: 'cancel', onPress: onClose },
+            ]
+          );
+        }
       }
     } catch (e: any) {
       setLoading(false);
