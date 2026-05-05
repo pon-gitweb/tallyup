@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useRoute } from '@react-navigation/native';
 import { SupplierPortalService, CatalogueProduct } from '../../services/supplier/SupplierPortalService';
 import { useColours } from '../../context/ThemeContext';
+import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../../config/ai';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 
@@ -43,9 +44,10 @@ function SupplierCatalogueScreen() {
         reader.readAsDataURL(blob);
       });
       // Use the extract-inventory endpoint to parse catalogue
+      const token = await getAuth().currentUser?.getIdToken();
       const resp = await fetch(`${AI_BASE_URL}/api/extract-inventory`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ venueId: supplierId, fileBase64: base64, fileName: asset.name, mimeType: asset.mimeType || 'text/csv' }),
       });
       const data = await resp.json();

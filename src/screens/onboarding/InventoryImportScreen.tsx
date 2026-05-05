@@ -15,6 +15,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { useNavigation } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { AI_BASE_URL } from '../../config/ai';
@@ -94,9 +95,10 @@ function InventoryImportScreen() {
     try {
       const base64 = await readBase64(fileUri);
       setLoadingMsg('Claude is reading your inventory...');
+      const token = await getAuth().currentUser?.getIdToken();
       const resp = await fetch(EXTRACT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ venueId, fileBase64: base64, fileName, mimeType }),
       });
       if (!resp.ok) {
@@ -131,13 +133,15 @@ function InventoryImportScreen() {
     const allBatches: ExtractedProduct[][] = [];
     const total = capturedPages.length;
     try {
+      // Fetch token once — valid for 1 hour, sufficient for all batches
+      const token = await getAuth().currentUser?.getIdToken();
       for (let i = 0; i < total; i += BATCH_SIZE) {
         const batch = capturedPages.slice(i, i + BATCH_SIZE);
         setLoadingMsg(`Processing pages ${i + 1}–${Math.min(i + BATCH_SIZE, total)} of ${total}...`);
         const images: string[] = await Promise.all(batch.map(p => readBase64(p.uri)));
         const resp = await fetch(EXTRACT_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ venueId, images, mode: 'stocktake' }),
         });
         if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e?.error || `Batch ${i / BATCH_SIZE + 1} failed`); }
