@@ -737,12 +737,11 @@ app.post("/photo-count", async (req, res) => {
 });
 
 // ── Stripe ───────────────────────────────────────────────────────────────────
+// Initialised lazily — null when STRIPE_SECRET_KEY is not yet in Secret Manager.
+// All endpoints check for null and return 503 so pilots are unaffected.
 
-function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) throw new Error("STRIPE_SECRET_KEY not configured");
-  return new Stripe(key, { apiVersion: "2026-04-22.dahlia" as any });
-}
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2026-04-22.dahlia" as any }) : null;
 
 // POST /stripe/create-checkout-session
 app.post("/stripe/create-checkout-session", async (req, res) => {
@@ -754,7 +753,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       res.status(400).json({ ok: false, error: "Missing venueId, priceId, successUrl, or cancelUrl" });
       return;
     }
-    const stripe = getStripe();
+    if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     const db = admin.firestore();
     const venueSnap = await db.doc(`venues/${venueId}`).get();
     const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
@@ -778,16 +777,16 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
 
 // POST /stripe/webhook
 app.post("/stripe/webhook", async (req, res) => {
+  if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
   const sig = req.headers["stripe-signature"];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("[api/stripe/webhook] STRIPE_WEBHOOK_SECRET not configured");
-    res.status(500).json({ error: "Webhook secret not configured" });
+    res.status(503).json({ error: "Billing not yet configured" });
     return;
   }
   let event: any;
   try {
-    const stripe = getStripe();
     event = stripe.webhooks.constructEvent((req as any).rawBody || Buffer.from(JSON.stringify(req.body)), sig as string, webhookSecret);
   } catch (e: any) {
     console.error("[api/stripe/webhook] Signature verification failed", e?.message);
@@ -802,7 +801,7 @@ app.post("/stripe/webhook", async (req, res) => {
       if (venueId) {
         let subData: any = null;
         if (session.subscription) {
-          try { subData = await getStripe().subscriptions.retrieve(session.subscription as string); } catch {}
+          try { subData = await stripe.subscriptions.retrieve(session.subscription as string); } catch {}
         }
         await db.doc(`venues/${venueId}`).set({
           subscription: {
@@ -878,7 +877,7 @@ app.get("/stripe/portal", async (req, res) => {
       res.status(400).json({ ok: false, error: "No Stripe customer found for this venue" });
       return;
     }
-    const stripe = getStripe();
+    if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: returnUrl || "https://hostistock.com",
@@ -1287,7 +1286,7 @@ Never make up features. If you are unsure, suggest checking Settings or contacti
 
 export const api = functions
   .region("us-central1")
-  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"] })
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
   .https.onRequest(app);
 
 // ── Shared invoice parsing helpers ───────────────────────────────────────────
