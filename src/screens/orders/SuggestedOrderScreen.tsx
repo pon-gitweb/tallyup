@@ -564,7 +564,7 @@ export default function SuggestedOrderScreen(){
           <Text style={[S.segmentText,mode==='math'&&S.segmentTextActive]}>Math</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={()=>onToggleMode('ai')} style={[S.segmentBtn,mode==='ai'&&S.segmentActive]}>
-          <Text style={[S.segmentText,mode==='ai'&&S.segmentTextActive]}>AI (beta)</Text>
+          <Text style={[S.segmentText,mode==='ai'&&S.segmentTextActive]}>AI</Text>
         </TouchableOpacity>
       </View>
       {mode==='ai'&&!!aiMeter?.aiRemaining&&(
@@ -637,7 +637,7 @@ export default function SuggestedOrderScreen(){
               {mode === 'ai' ? 'AI snapshot context' : 'Math snapshot context'}
             </Text>
             <Text style={S.metaText}>
-              Engine: {mode === 'ai' ? 'AI + recent history (beta)' : 'PAR-based maths'}
+              Engine: {mode === 'ai' ? 'AI + recent history' : 'PAR-based maths'}
             </Text>
             <Text style={S.metaText}>
               Suppliers: {meta.suppliersWithLines ?? 0} · Lines: {meta.totalLines ?? 0}

@@ -627,9 +627,6 @@ export default function ReportsIndexScreen() {
             >
               <View style={styles.suiteeBtnTop}>
                 <Text style={styles.suiteeBtnTitle}>📊 Ask Suitee</Text>
-                <View style={styles.suiteeBadge}>
-                  <Text style={styles.suiteeBadgeText}>Beta</Text>
-                </View>
               </View>
               <Text style={styles.suiteeBtnSub}>Ask anything about your venue data</Text>
             </TouchableOpacity>
@@ -868,9 +865,6 @@ function SuiteeModal({
             <View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={sStyles.title}>📊 Suitee</Text>
-                <View style={sStyles.badge}>
-                  <Text style={sStyles.badgeText}>BETA</Text>
-                </View>
               </View>
               <Text style={sStyles.subtitle}>Your venue intelligence</Text>
             </View>

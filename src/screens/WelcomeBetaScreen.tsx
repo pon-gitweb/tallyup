@@ -43,7 +43,6 @@ export default function BetaWelcomeScreen() {
       <ScrollView contentContainerStyle={S.scroll} bounces={false}>
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
-          <Text style={S.betaPill}>BETA</Text>
           <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti-Stock</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
@@ -125,13 +124,13 @@ export default function BetaWelcomeScreen() {
         </View>
 
         <View style={S.footer}>
-          <Text style={S.footerTitle}>We’re in BETA – and serious</Text>
+          <Text style={S.footerTitle}>We’re serious about this</Text>
           <Text style={S.footerText}>
-            This build is for real venues. If it saves you time, cuts wastage, or helps
+            This is built for real venues. If it saves you time, cuts wastage, or helps
             your GP, we want you to feel confident paying for it.
           </Text>
           <Text style={S.footerTextDim}>
-            Feedback from pilots directly shapes what ships next.
+            Your feedback directly shapes what ships next.
           </Text>
         </View>
 

@@ -81,7 +81,7 @@ export default function AiExplainButton({
         {loading ? (
           <ActivityIndicator />
         ) : (
-          <Text style={S.btnText}>{label || '🤖 Explain variance (AI beta)'}</Text>
+          <Text style={S.btnText}>{label || '🤖 Explain variance'}</Text>
         )}
       </TouchableOpacity>
 

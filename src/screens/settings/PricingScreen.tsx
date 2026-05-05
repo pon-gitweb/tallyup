@@ -17,7 +17,7 @@ function PlanLabel({ status, plan }: { status: string | null; plan: string | nul
   if (!status || !['active', 'trialing'].includes(status)) {
     return (
       <View style={[styles.planBadge, { backgroundColor: colours.surface, borderColor: '#38bdf8' }]}>
-        <Text style={[styles.planBadgeText, { color: '#38bdf8' }]}>Beta Access — Complimentary</Text>
+        <Text style={[styles.planBadgeText, { color: '#38bdf8' }]}>Complimentary Access</Text>
       </View>
     );
   }

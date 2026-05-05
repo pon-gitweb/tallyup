@@ -85,6 +85,7 @@ service cloud.firestore {
     match /venues/{venueId} {
 
       allow read: if isVenueMember(venueId);
+      allow delete: if hasVenueRole(venueId, ['owner']);
 
       allow update: if hasVenueRole(venueId, ['manager','owner'])
         && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])

@@ -213,7 +213,7 @@ export default function DashboardScreen() {
             <Text style={styles.headerTitle}>Dashboard</Text>
             <Text style={styles.headerSub}>Hi {friendly}</Text>
             <Text style={styles.headerHint}>
-              This is your BETA home base. Start a stocktake, manage orders, and check reports from here.
+              This is your home base. Start a stocktake, manage orders, and check reports from here.
             </Text>
           </View>
           {theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
@@ -363,7 +363,7 @@ export default function DashboardScreen() {
           <Text style={styles.cardTitle}>Control & reports</Text>
           <Text style={styles.cardSub}>
             Keep your products and suppliers organised, and review variance and performance reports. Use Settings
-            for venue-level controls and BETA options.
+            for venue-level controls and options.
           </Text>
           <View style={styles.rowButtons}>
             <TouchableOpacity style={[styles.buttonSmall, styles.muted]} onPress={onOpenStockControl}>
@@ -379,7 +379,7 @@ export default function DashboardScreen() {
         </View>
 
         <Text style={styles.footerHint}>
-          You can revisit the BETA overview from Settings → About (coming soon for pilot venues).
+          You can find app info from Settings → About.
         </Text>
       </ScrollView>
     </SafeAreaView>

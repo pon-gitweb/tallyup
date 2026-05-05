@@ -20,6 +20,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { AI_BASE_URL } from '../../config/ai';
 import { resetAllDepartmentsStockTake } from '../../services/reset';
 
 import LocalThemeGate from '../../theme/LocalThemeGate';
@@ -133,6 +134,7 @@ export default function SettingsScreen() {
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [resettingCycle, setResettingCycle] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   useEffect(() => {
     let unsubMember: any;
@@ -169,20 +171,79 @@ export default function SettingsScreen() {
     }
   }
 
-  // STUB: Setup wizard will be rebuilt for BETA
   function doSetupWizardStub() {
     Alert.alert(
-      'Setup Wizard (BETA)',
-      'We are refreshing the setup flow for this BETA. For now, use Stock Control to manage suppliers and products.'
+      'Setup Wizard',
+      'We are refreshing the setup flow. For now, use Stock Control to manage suppliers and products.'
     );
   }
 
-  // STUB: Nuclear reset is disabled until post-BETA
   function doFullResetStub() {
     Alert.alert(
-      'Full Reset (stub)',
-      'The full venue-wide stock-take reset is disabled for BETA. Use per-department long-press reset from the Departments screen.'
+      'Full Reset',
+      'The full venue-wide stock-take reset is not available here. Use per-department long-press reset from the Departments screen.'
     );
+  }
+
+  async function doDeleteAccount() {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    // Step 1 — initial confirmation
+    const step1 = await new Promise<boolean>(resolve =>
+      Alert.alert(
+        'Delete your account?',
+        'This will permanently delete your account and remove you from all venues. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Delete Account', style: 'destructive', onPress: () => resolve(true) },
+        ],
+        { cancelable: false }
+      )
+    );
+    if (!step1) return;
+
+    // Step 2 — extra warning if user is venue owner
+    if (venueId) {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', venueId));
+        const ownerUid = (venueSnap.data() as any)?.ownerUid;
+        if (ownerUid === currentUser.uid) {
+          const step2 = await new Promise<boolean>(resolve =>
+            Alert.alert(
+              `You are the owner of ${venueName || 'this venue'}`,
+              `Deleting your account will also delete this venue and all its data including stocktakes, products, orders and reports.\n\nAre you absolutely sure?`,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Yes, delete everything', style: 'destructive', onPress: () => resolve(true) },
+              ],
+              { cancelable: false }
+            )
+          );
+          if (!step2) return;
+        }
+      } catch {}
+    }
+
+    // Step 3 — execute deletion via backend
+    setDeletingAccount(true);
+    try {
+      const idToken = await currentUser.getIdToken();
+      const resp = await fetch(`${AI_BASE_URL}/api/account`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error || 'Account deletion failed');
+      }
+      Alert.alert('Account deleted', 'Your account has been permanently deleted.');
+      await auth.signOut();
+    } catch (e: any) {
+      Alert.alert('Deletion failed', e?.message || 'Please try again or contact support at hello@hostistock.com.');
+    } finally {
+      setDeletingAccount(false);
+    }
   }
 
   async function doResetCycle() {
@@ -605,7 +666,21 @@ export default function SettingsScreen() {
             style={[styles.btn, styles.aboutBtn]}
             onPress={openAbout}
           >
-            <Text style={styles.btnText}>About Hosti-Stock (BETA)</Text>
+            <Text style={styles.btnText}>About Hosti-Stock</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Account</Text></View>
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: themeColours.danger, opacity: deletingAccount ? 0.6 : 1 }]}
+            onPress={doDeleteAccount}
+            disabled={deletingAccount}
+          >
+            {deletingAccount
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={styles.btnText}>Delete Account</Text>
+            }
           </TouchableOpacity>
         </View>
 
@@ -639,15 +714,15 @@ export default function SettingsScreen() {
               >
                 <View style={styles.aboutCard}>
                   <Text style={styles.aboutLabel}>Build</Text>
-                  <Text style={styles.aboutValue}>Hosti-STOCK BETA</Text>
+                  <Text style={styles.aboutValue}>Hosti-Stock</Text>
                   <Text style={styles.aboutSub}>
-                    This pilot build is designed for real NZ hospitality venues to run live stocktakes,
+                    Hosti-Stock is designed for real NZ hospitality venues to run live stocktakes,
                     orders and invoice workflows.
                   </Text>
                 </View>
 
                 <View style={styles.aboutCard}>
-                  <Text style={styles.aboutHeading}>What’s in this BETA</Text>
+                  <Text style={styles.aboutHeading}>What’s included</Text>
                   <Text style={styles.aboutBullet}>• Department → area → item stocktakes with expected quantities.</Text>
                   <Text style={styles.aboutBullet}>• Supplier and product management with prep for CSV/catalog imports.</Text>
                   <Text style={styles.aboutBullet}>• Suggested orders and ordering flows per supplier.</Text>
@@ -657,22 +732,22 @@ export default function SettingsScreen() {
                 </View>
 
                 <View style={styles.aboutCard}>
-                  <Text style={styles.aboutHeading}>Data & privacy (BETA)</Text>
+                  <Text style={styles.aboutHeading}>Data & privacy</Text>
                   <Text style={styles.aboutBody}>
                     Your data is stored in secure, venue-scoped collections in Firebase (Auth, Firestore and
                     Storage). Each venue only sees its own data, and sensitive actions are limited to owners
                     or managers according to the Truth Document rules.
                   </Text>
                   <Text style={styles.aboutBody}>
-                    This BETA is focused on getting real-world workflows right. Formal legal wording and full
-                    policy links will ship alongside the production release.
+                    Hosti-Stock is focused on getting real-world workflows right. Formal legal wording and full
+                    policy links are available in Terms of Service.
                   </Text>
                 </View>
 
                 <View style={styles.aboutCard}>
-                  <Text style={styles.aboutHeading}>Feedback & pilots</Text>
+                  <Text style={styles.aboutHeading}>Feedback</Text>
                   <Text style={styles.aboutBody}>
-                    Pilot feedback directly decides what ships next: stocktake UX, suggested orders, invoice
+                    Your feedback directly decides what ships next: stocktake UX, suggested orders, invoice
                     matching, Craft-It recipes and reporting.
                   </Text>
                   <Text style={styles.aboutBody}>
@@ -685,7 +760,7 @@ export default function SettingsScreen() {
                   <Text style={styles.aboutHeading}>Revisit the overview</Text>
                   <Text style={styles.aboutBody}>
                     You can come back to this screen any time from Settings → About to remind yourself what’s
-                    included in the BETA and how we treat your data.
+                    included in Hosti-Stock and how we treat your data.
                   </Text>
                 </View>
               </ScrollView>

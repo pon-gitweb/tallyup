@@ -73,7 +73,7 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
     <View style={{ flex:1, padding:16, backgroundColor:'#fff' }}>
       <Text style={{ fontSize:18, fontWeight:'900', marginBottom:8 }}>Sales Report Import (CSV)</Text>
       <Text style={{ color:'#6B7280', marginBottom:12 }}>
-        Export a CSV sales report from your POS and upload it here. PDF sales imports are coming after the BETA run.
+        Export a CSV sales report from your POS and upload it here. PDF sales imports are coming soon.
       </Text>
 
       <TouchableOpacity

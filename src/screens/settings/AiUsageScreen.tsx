@@ -33,7 +33,7 @@ const PLAN_LIMITS: Record<string, number> = {
 };
 
 const PLAN_LABELS: Record<string, string> = {
-  beta: 'Beta — Unlimited',
+  beta: 'Unlimited',
   core: 'Core — 200/month',
   core_plus: 'Core Plus — Unlimited',
 };
@@ -141,9 +141,9 @@ function AiUsageScreen() {
           {/* Beta notice */}
           {plan === 'beta' && (
             <View style={{ backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
-              <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 4 }}>Beta — full access</Text>
+              <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 4 }}>Full access</Text>
               <Text style={{ color: '#166534', fontSize: 13 }}>
-                All AI features are unlimited during the pilot. Usage is tracked so we can right-size plans before launch. Your data helps us build fair pricing.
+                All AI features are unlimited on your current plan. Usage is tracked so we can right-size plans. Your data helps us build fair pricing.
               </Text>
             </View>
           )}

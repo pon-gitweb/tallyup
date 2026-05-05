@@ -448,8 +448,8 @@ export default function StockControlScreen() {
             <Text style={styles.sectionLabel}>Setup</Text>
             <Text style={styles.sectionHelp}>
               Start by adding your suppliers and products. You can enter items one-by-one or later use Supplier
-              Tools in Products to link price lists and catalogues. For BETA pilots, we recommend loading at least
-              your main suppliers and top-selling items first.
+              Tools in Products to link price lists and catalogues. We recommend loading at least your main
+              suppliers and top-selling items first.
             </Text>
           </View>
 

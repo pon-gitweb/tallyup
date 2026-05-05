@@ -895,6 +895,87 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
 });
 
+// ── DELETE /account ───────────────────────────────────────────────────────────
+// Deletes all venue data if user is owner, removes from member lists,
+// deletes user Firestore doc, and removes the Firebase Auth account.
+app.delete("/account", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const db = admin.firestore();
+
+    // Resolve user's venue
+    const userSnap = await db.doc(`users/${uid}`).get();
+    const venueId: string | null = userSnap.exists ? (userSnap.data() as any)?.venueId ?? null : null;
+
+    if (venueId) {
+      const venueSnap = await db.doc(`venues/${venueId}`).get();
+      const ownerUid: string | null = venueSnap.exists ? (venueSnap.data() as any)?.ownerUid ?? null : null;
+
+      if (ownerUid === uid) {
+        // Owner — delete everything under this venue
+        await deleteVenueAllData(db, venueId);
+      } else {
+        // Member — remove from members subcollection only
+        await db.doc(`venues/${venueId}/members/${uid}`).delete().catch(() => {});
+      }
+    }
+
+    // Delete user Firestore doc
+    await db.doc(`users/${uid}`).delete().catch(() => {});
+
+    // Delete Firebase Auth account
+    await admin.auth().deleteUser(uid);
+
+    console.log("[api/account] DELETE OK", { uid, venueId });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/account] DELETE ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Account deletion failed" });
+  }
+});
+
+async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string): Promise<void> {
+  // Departments → areas → items (recursive structure)
+  const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+  for (const dept of deptsSnap.docs) {
+    const areasSnap = await db.collection(`venues/${venueId}/departments/${dept.id}/areas`).get();
+    for (const area of areasSnap.docs) {
+      await deleteDocs(db, `venues/${venueId}/departments/${dept.id}/areas/${area.id}/items`);
+      await area.ref.delete();
+    }
+    await deleteDocs(db, `venues/${venueId}/departments/${dept.id}/reports`);
+    await dept.ref.delete();
+  }
+
+  // All other top-level venue subcollections
+  const topCols = [
+    "members", "products", "orders", "suppliers", "invoices", "budgets",
+    "salesReports", "salesReportMatches", "salesReportUnknowns", "slowMovers",
+    "processedInvoices", "processedSalesReports", "processedStocktakes", "aiUsage",
+    "importJobs", "orderLocks", "orderCounters", "counters_orders",
+    "reconciliations", "fastReceives", "deliveries", "shelfScanJobs", "ocrJobs",
+    "stockTakes", "sessions", "reports", "computed", "areas", "items",
+    "recipes", "aiContext", "photoCountCorrections", "recipeSalesAttribution",
+    "productNotes", "invites",
+  ];
+  for (const col of topCols) {
+    await deleteDocs(db, `venues/${venueId}/${col}`);
+  }
+
+  await db.doc(`venues/${venueId}`).delete();
+}
+
+async function deleteDocs(db: admin.firestore.Firestore, colPath: string): Promise<void> {
+  const snap = await db.collection(colPath).limit(200).get();
+  if (snap.empty) return;
+  const batch = db.batch();
+  snap.docs.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+  if (snap.docs.length >= 200) await deleteDocs(db, colPath);
+}
+
 // ── POST /suitee ──────────────────────────────────────────────────────────────
 app.post("/suitee", async (req, res) => {
   try {

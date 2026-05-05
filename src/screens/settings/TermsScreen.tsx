@@ -46,8 +46,8 @@ function TermsScreen() {
         You agree not to use Hosti-Stock to store false information, attempt to access other venues data, reverse engineer the app, or use the service for any unlawful purpose.
       </Section>
 
-      <Section title="6. Beta Period">
-        During the beta period the service is provided free of charge. We reserve the right to introduce pricing with reasonable notice. Current beta users will receive at least 30 days notice before any charges apply.
+      <Section title="6. Free Access Period">
+        During any complimentary access period the service is provided free of charge. We reserve the right to introduce pricing with reasonable notice. Users on complimentary access will receive at least 30 days notice before any charges apply.
       </Section>
 
       <Section title="7. Supplier Portal">

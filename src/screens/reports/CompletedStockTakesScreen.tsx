@@ -96,7 +96,7 @@ export default function CompletedStockTakesScreen() {
   const onLongPressRow = () => {
     Alert.alert(
       'Deeper insights coming soon',
-      'This is a beta view of completed stock takes. In a future update, you’ll be able to drill into full variance, GP impact, and history per cycle.',
+      ‘Deeper insights are coming in a future update — drill into full variance, GP impact, and history per cycle.’,
       [{ text: 'OK' }],
     );
   };
