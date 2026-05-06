@@ -57,42 +57,74 @@ function extractLines(text: string): ParsedLine[] {
 // Input: { venueId, imageBase64 }
 // Output: { lines, supplierName?, invoiceNumber?, deliveryDate?, rawText }
 
-// ── Claude-powered invoice line extraction ───────────────────────
-async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: string; qty: number; unitPrice?: number }>> {
+// ── Claude-powered full invoice extraction ───────────────────────
+// Returns supplierName, invoice metadata, AND line items in one call.
+async function extractInvoiceWithClaude(rawText: string): Promise<{
+  supplierName: string | null;
+  invoiceNumber: string | null;
+  deliveryDate: string | null;
+  totalAmount: number | null;
+  gstAmount: number | null;
+  lines: Array<{ name: string; qty: number; unitPrice?: number }>;
+}> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
   const system = [
-    "You are an expert at reading NZ hospitality supplier invoices (Bidfood, Gilmours, Hancocks, etc).",
-    "Extract ALL line items from the invoice text.",
-    "Return ONLY valid JSON array, no markdown, no explanation:",
-    '[{ "name": "product name", "qty": 3, "unitPrice": 12.50 }]',
-    "Rules:",
-    "- name: clean product name without codes or extra whitespace",
+    "You are an expert at reading NZ hospitality supplier invoices (Bidfood, Gilmours, Hancocks, Bidfresh, Lion, DB, Frucor, etc).",
+    "Extract the following from this invoice text and return ONLY valid JSON, no markdown:",
+    '{"supplierName":"...","invoiceNumber":"...","invoiceDate":"...","totalAmount":0,"gstAmount":0,"lines":[{"name":"...","qty":1,"unitPrice":0}]}',
+    "",
+    "CRITICAL — supplierName rules:",
+    "- supplierName is the VENDOR who ISSUED this invoice (the seller/supplier company).",
+    "- It is the large company name or logo printed at the TOP of the invoice.",
+    "- Examples: Gilmours, Bidfresh, Hancocks, Lion, DB Breweries, Bidfood, Frucor.",
+    "- It is NOT the delivery address, NOT the customer name, NOT the venue or restaurant.",
+    "- On a Gilmours invoice: supplierName = 'Gilmours'",
+    "- On a Bidfresh invoice: supplierName = 'Bidfresh'",
+    "- The bar, restaurant, or hotel receiving the delivery is the CUSTOMER, not the supplier.",
+    "",
+    "Line item rules:",
+    "- name: clean product name without item codes or extra whitespace",
     "- qty: numeric quantity ordered",
     "- unitPrice: price per unit in NZD, null if not found",
-    "- Skip header rows, totals, GST lines, delivery charges",
-    "- Expand abbreviations where obvious (e.g. Sav Blanc = Sauvignon Blanc)",
+    "- Skip header rows, totals, GST lines, freight/delivery charges",
+    "- Expand abbreviations (e.g. Sav Blanc = Sauvignon Blanc)",
   ].join("\n");
+
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 2048,
+      max_tokens: 3000,
       system,
-      messages: [{ role: "user", content: "Extract line items from this invoice:\n\n" + rawText.slice(0, 8000) }],
+      messages: [{ role: "user", content: "Extract invoice data from this text:\n\n" + rawText.slice(0, 8000) }],
     }),
   });
-  if (!resp.ok) throw new Error("Claude OCR error: " + resp.status);
+
+  if (!resp.ok) throw new Error("Claude invoice error: " + resp.status);
   const data = await resp.json() as any;
-  const text = data?.content?.[0]?.text || "[]";
-  const match = text.match(/\[[\s\S]*\]/);
-  const lines = match ? JSON.parse(match[0]) : [];
-  return lines.filter((l: any) => l && l.name && l.qty > 0).map((l: any) => ({
-    name: String(l.name).trim(),
-    qty: Number(l.qty),
-    unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
-  }));
+  const text = data?.content?.[0]?.text || "{}";
+  const match = text.match(/\{[\s\S]*\}/);
+  const parsed = match ? JSON.parse(match[0]) : {};
+
+  const lines = Array.isArray(parsed.lines)
+    ? parsed.lines.filter((l: any) => l && l.name && Number(l.qty) > 0).map((l: any) => ({
+        name: String(l.name).trim(),
+        qty: Number(l.qty),
+        unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
+      }))
+    : [];
+
+  return {
+    supplierName: parsed.supplierName ? String(parsed.supplierName).trim() : null,
+    invoiceNumber: parsed.invoiceNumber ? String(parsed.invoiceNumber).trim() : null,
+    deliveryDate: parsed.invoiceDate ? String(parsed.invoiceDate).trim() : null,
+    totalAmount: Number.isFinite(Number(parsed.totalAmount)) ? Number(parsed.totalAmount) : null,
+    gstAmount: Number.isFinite(Number(parsed.gstAmount)) ? Number(parsed.gstAmount) : null,
+    lines,
+  };
 }
 
 export const ocrInvoicePhoto = functions
@@ -149,25 +181,28 @@ export const ocrInvoicePhoto = functions
       };
     }
 
-    const invoiceNumber = extractPo(text);
-    // Try Claude-powered extraction, fall back to regex
-    let lines = [];
+    // Claude extracts supplier name, invoice metadata, and line items in one call
+    let invoiceData: Awaited<ReturnType<typeof extractInvoiceWithClaude>> | null = null;
     try {
-      lines = await extractLinesWithClaude(text);
-      if (!lines.length) throw new Error('Claude returned no lines');
-    } catch {
-      lines = extractLines(text);
+      invoiceData = await extractInvoiceWithClaude(text);
+    } catch (e: any) {
+      console.log("[ocrInvoicePhoto] Claude extraction failed, falling back to regex", e?.message);
     }
 
+    const lines = invoiceData?.lines?.length
+      ? invoiceData.lines
+      : extractLines(text);
+
     const payload = {
-      supplierName: null as string | null,
-      invoiceNumber: invoiceNumber,
-      deliveryDate: null as string | null,
+      supplierName: invoiceData?.supplierName ?? null,
+      invoiceNumber: invoiceData?.invoiceNumber ?? extractPo(text),
+      deliveryDate: invoiceData?.deliveryDate ?? null,
       lines,
       rawText: text,
     };
 
     console.log("[ocrInvoicePhoto] payload", {
+      supplierName: payload.supplierName,
       invoiceNumber: payload.invoiceNumber,
       linesCount: payload.lines.length,
     });

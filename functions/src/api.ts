@@ -466,12 +466,27 @@ app.post("/extract-inventory", async (req, res) => {
         'Return as JSON array: [{"name":"...","brand":"...","size":"...","category":"..."}]. ' +
         "If you cannot identify a product clearly, omit it. Return only valid JSON, no preamble.";
     } else if (mode === "product-photo") {
-      systemPrompt =
-        "These are photos of a single product — front and possibly back. " +
-        "Extract: name, brand, size (ml or L), category (spirits/wine/beer/cider/non-alcoholic/food/other), " +
-        "barcode number if visible, and unit (e.g. bottle, can, kg). " +
-        'Return as JSON object: {"name":"...","brand":"...","size":"...","category":"...","barcode":"...","unit":"..."}. ' +
-        "Return only valid JSON, no preamble.";
+      if (imageBase64Back) {
+        // Two photos: front label + back label of the SAME bottle
+        systemPrompt =
+          "You are looking at TWO photos of the SAME product. " +
+          "Photo 1 is the FRONT label — it shows the product name and brand. " +
+          "Photo 2 is the BACK label — it shows the barcode, size, ABV, country of origin, and importer details. " +
+          "Extract ONE product by combining information from BOTH photos. " +
+          "NEVER return an array. Return exactly ONE JSON object: " +
+          '{"name":"...","brand":"...","size":"...","category":"...","barcode":"...","unit":"...","abv":"...","countryOfOrigin":"...","importerName":"..."}. ' +
+          "category must be one of: spirits/wine/beer/cider/non-alcoholic/food/other. " +
+          "barcode: read the numeric barcode digits from the back label. " +
+          "Return only valid JSON, no preamble.";
+      } else {
+        // Single photo: extract what is visible
+        systemPrompt =
+          "Extract product details from this single label photo. " +
+          "NEVER return an array. Return exactly ONE JSON object: " +
+          '{"name":"...","brand":"...","size":"...","category":"...","barcode":"...","unit":"...","abv":"..."}. ' +
+          "category must be one of: spirits/wine/beer/cider/non-alcoholic/food/other. " +
+          "Return only valid JSON, no preamble.";
+      }
     } else if (mode === "catalogue") {
       systemPrompt =
         "This is a supplier product catalogue page. Extract all products visible. " +
@@ -499,7 +514,8 @@ app.post("/extract-inventory", async (req, res) => {
       }
       const promptText =
         mode === "shelf-scan" ? "Identify all products visible on this shelf." :
-        mode === "product-photo" ? "Extract all product details from these photos." :
+        mode === "product-photo" && imageBase64Back ? "These two photos are the front and back of the same product. Return one combined JSON object." :
+        mode === "product-photo" ? "Extract all product details from this photo. Return one JSON object." :
         mode === "catalogue" ? "Extract all products from this catalogue page." :
         "Extract all items from this stocktake sheet.";
       imageContent.push({ type: "text", text: promptText });
@@ -585,9 +601,12 @@ app.post("/extract-inventory", async (req, res) => {
           category: String(parsed.category || "other").trim(),
           barcode: String(parsed.barcode || "").trim(),
           unit: String(parsed.unit || "bottle").trim(),
+          abv: String(parsed.abv || "").trim(),
+          countryOfOrigin: String(parsed.countryOfOrigin || "").trim(),
+          importerName: String(parsed.importerName || "").trim(),
         };
       } catch {}
-      console.log("[api/extract-inventory] product-photo OK", { uid, name: product.name });
+      console.log("[api/extract-inventory] product-photo OK", { uid, name: product.name, hasBarcode: !!product.barcode, dualPhoto: !!imageBase64Back });
       res.json({ ok: true, product, lines: [] });
     } else if (mode === "catalogue") {
       let products: any[] = [];
