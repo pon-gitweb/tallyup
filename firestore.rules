@@ -538,7 +538,9 @@ service cloud.firestore {
           && resource.data.status == 'draft'
           && request.resource.data.updatedAt is timestamp
           && (request.resource.data.status in ['draft','confirmed']);
-        allow delete: if false;
+        allow delete: if isVenueMember(venueId)
+          && (resource.data.status == 'draft'
+              || hasVenueRole(venueId, ['manager','owner']));
       }
 
       match /orders/{orderId} {
