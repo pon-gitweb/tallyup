@@ -608,24 +608,42 @@ app.post("/extract-inventory", async (req, res) => {
       console.log("[api/extract-inventory] catalogue OK", { uid, count: products.length });
       res.json({ ok: true, products, lines: [] });
     } else {
-      // Default: stocktake sheet
+      // Default: stocktake sheet — returns ExtractionResult format matching client type
       let items: any[] = [];
       try {
         const m = rawText.match(/\[[\s\S]*\]/);
         items = m ? JSON.parse(m[0]) : [];
       } catch { items = []; }
 
-      const lines = items
+      const products = items
         .filter((l: any) => l && typeof l.name === "string" && l.name.trim().length > 0)
         .map((l: any) => ({
           name: String(l.name).trim(),
-          quantity: Number.isFinite(Number(l.quantity)) ? Number(l.quantity) : 0,
           unit: l.unit ? String(l.unit).trim() : null,
+          category: l.category ? String(l.category).trim() : null,
           area: l.area ? String(l.area).trim() : "General",
+          department: l.department ? String(l.department).trim() : null,
+          costPrice: Number.isFinite(Number(l.costPrice)) ? Number(l.costPrice) : null,
+          parLevel: Number.isFinite(Number(l.quantity)) && Number(l.quantity) > 0 ? Number(l.quantity) : null,
+          confidence: "medium",
         }));
 
-      console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", linesCount: lines.length });
-      res.json({ ok: true, lines });
+      const inferredAreas = [...new Set(products.map((p: any) => p.area).filter(Boolean))] as string[];
+      const inferredDepartments = [...new Set(products.map((p: any) => p.department).filter(Boolean))] as string[];
+      const hasPricing = products.some((p: any) => p.costPrice != null);
+      const hasStructure = products.some((p: any) => (p.area && p.area !== "General") || p.department);
+
+      console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", count: products.length });
+      res.json({
+        ok: true,
+        products,
+        inferredAreas,
+        inferredDepartments,
+        hasPricing,
+        hasStructure,
+        summary: `Found ${products.length} product${products.length !== 1 ? "s" : ""}`,
+        warnings: [],
+      });
     }
 
   } catch (e: any) {

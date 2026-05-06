@@ -64,7 +64,17 @@ export const onInviteCreated = functions
     const { venueId, inviteId } = ctx.params as { venueId: string; inviteId: string };
     const data = snap.data() as any;
 
-    if (!data || data.status !== 'pending') return;
+    console.log('[onInviteCreated] triggered', {
+      venueId, inviteId,
+      status: data?.status,
+      email: data?.email,
+      hasApiKey: !!process.env.RESEND_API_KEY,
+    });
+
+    if (!data || data.status !== 'pending') {
+      console.log('[onInviteCreated] skipping — status not pending:', data?.status);
+      return;
+    }
 
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {

@@ -59,7 +59,6 @@ function FileTypeButton({ icon, label, sublabel, onPress, themeColours }: any) {
 }
 
 const MAX_PAGES = 40;
-const BATCH_SIZE = 5;
 
 type CapturedPage = { uri: string };
 
@@ -94,6 +93,7 @@ function InventoryImportScreen() {
     setLoadingMsg('Reading your file...');
     try {
       const base64 = await readBase64(fileUri);
+      console.log('[extract-inventory] processFile:', { fileName, mimeType, base64Len: base64?.length, preview: base64?.slice(0, 60) });
       setLoadingMsg('Hosti Intelligence is reading your inventory...');
       const token = await getAuth().currentUser?.getIdToken();
       const resp = await fetch(EXTRACT_URL, {
@@ -133,19 +133,20 @@ function InventoryImportScreen() {
     const allBatches: ExtractedProduct[][] = [];
     const total = capturedPages.length;
     try {
-      // Fetch token once — valid for 1 hour, sufficient for all batches
+      // Fetch token once — valid for 1 hour, sufficient for all pages
       const token = await getAuth().currentUser?.getIdToken();
-      for (let i = 0; i < total; i += BATCH_SIZE) {
-        const batch = capturedPages.slice(i, i + BATCH_SIZE);
-        setLoadingMsg(`Processing pages ${i + 1}–${Math.min(i + BATCH_SIZE, total)} of ${total}...`);
-        const images: string[] = await Promise.all(batch.map(p => readBase64(p.uri)));
+      for (let i = 0; i < total; i++) {
+        setLoadingMsg(`Processing page ${i + 1} of ${total}...`);
+        const imageBase64 = await readBase64(capturedPages[i].uri);
+        console.log(`[extract-inventory] page ${i + 1}/${total}: base64Len=${imageBase64?.length}, ok=${imageBase64?.length > 0}`);
         const resp = await fetch(EXTRACT_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ venueId, images, mode: 'stocktake' }),
+          body: JSON.stringify({ venueId, imageBase64, mimeType: 'image/jpeg', mode: 'stocktake' }),
         });
-        if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e?.error || `Batch ${i / BATCH_SIZE + 1} failed`); }
+        if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e?.error || `Page ${i + 1} failed`); }
         const batchResult: ExtractionResult = await resp.json();
+        console.log(`[extract-inventory] page ${i + 1} result: products=${batchResult.products?.length ?? 0}`);
         allBatches.push(batchResult.products || []);
       }
       const { products, dupeCount } = dedupProducts(allBatches);
