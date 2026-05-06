@@ -37,6 +37,11 @@ export { api } from "./api";
 // === Weekly summary email (scheduled, Monday 8am venue local time) ===
 export { weeklySummaryEmail } from "./weeklySummary";
 
+// === Pilot analytics — writes to venues/{venueId}/analyticsEvents ===
+// Stream analyticsEvents to BigQuery via:
+//   firebase ext:install firebase/firestore-bigquery-export
+export { onStocktakeCompleted, onOrderSubmitted, onAiFeatureUsed } from "./analytics";
+
 // === Legacy functions — deployed directly, must remain exported to avoid deletion ===
 export {
   processInvoicesCsv,

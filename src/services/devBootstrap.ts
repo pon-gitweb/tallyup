@@ -10,7 +10,9 @@ const EXTRA: any =
   ((Constants as any)?.manifest2?.extra as any) ??
   {};
 const DEV_VENUE_ID: string | null = (EXTRA.EXPO_PUBLIC_DEV_VENUE_ID as string) || null;
-const DEV_EMAILS = new Set<string>(['test@example.com']);
+const DEV_EMAILS = new Set<string>(
+  [process.env.EXPO_PUBLIC_DEV_EMAIL ?? ''].filter(Boolean)
+);
 
 function isDevEmail(email: string | null | undefined) {
   return !!email && DEV_EMAILS.has(email.toLowerCase());
