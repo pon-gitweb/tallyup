@@ -16,7 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, addDoc, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
 import {
@@ -65,6 +65,11 @@ export default function SuppliersScreen() {
   const [scanBusy, setScanBusy] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [catalogueBusy, setCatalogueBusy] = useState(false);
+
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [directoryRows, setDirectoryRows] = useState<any[]>([]);
+  const [directorySearch, setDirectorySearch] = useState('');
+  const [directoryLoading, setDirectoryLoading] = useState(false);
 
   async function load() {
     if (!venueId) {
@@ -377,6 +382,22 @@ export default function SuppliersScreen() {
     }
   }
 
+  async function loadDirectory() {
+    try {
+      setDirectoryLoading(true);
+      const db = getFirestore();
+      const snap = await getDocs(collection(db, 'global_suppliers'));
+      const rows: any[] = [];
+      snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
+      rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setDirectoryRows(rows);
+    } catch (e: any) {
+      console.log('[SuppliersScreen] loadDirectory error', e?.message);
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }
+
   // NEW: Upload supplier catalogue via server function (CSV only, no Blob)
   async function uploadSupplierCsv() {
     try {
@@ -548,6 +569,15 @@ export default function SuppliersScreen() {
                 </Text>
               </TouchableOpacity>
 
+              {/* Hosti Directory lookup */}
+              <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 8, marginBottom: 4 }}>Or look up from directory</Text>
+              <TouchableOpacity
+                style={[styles.capturePill, { alignSelf: 'flex-start', backgroundColor: '#1b4f72' }]}
+                onPress={() => { setDirectorySearch(''); loadDirectory(); setDirectoryOpen(true); }}
+              >
+                <Text style={styles.capturePillText}>🌏 Hosti Directory</Text>
+              </TouchableOpacity>
+
               <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 8, marginBottom: 4 }}>Catalogue upload</Text>
               <View style={styles.captureRow}>
                 <TouchableOpacity
@@ -688,6 +718,66 @@ export default function SuppliersScreen() {
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Hosti Directory modal */}
+      <Modal visible={directoryOpen} animationType="slide" onRequestClose={() => setDirectoryOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>Hosti Directory</Text>
+            <TouchableOpacity onPress={() => setDirectoryOpen(false)}>
+              <Text style={{ color: '#6B7280', fontWeight: '700' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>
+            Select a supplier to pre-fill your form. You can edit any details before saving.
+          </Text>
+          <TextInput
+            value={directorySearch}
+            onChangeText={setDirectorySearch}
+            placeholder="Search suppliers…"
+            autoCapitalize="none"
+            style={{ borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', marginBottom: 10 }}
+          />
+          {directoryLoading ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator />
+              <Text style={{ marginTop: 8, color: '#6B7280' }}>Loading directory…</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={directoryRows.filter(r => !directorySearch.trim() || (r.name || '').toLowerCase().includes(directorySearch.toLowerCase()))}
+              keyExtractor={(r, i) => r.id || String(i)}
+              ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                  onPress={() => {
+                    if (item.name && !name.trim()) setName(item.name);
+                    else if (item.name) setName(item.name);
+                    if (item.phone && !phone.trim()) setPhone(item.phone);
+                    if (item.email && !email.trim()) setEmail(item.email);
+                    if (item.website && !portalUrl.trim()) setPortalUrl(item.website);
+                    setDirectoryOpen(false);
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '700' }}>{item.name}</Text>
+                    <Text style={{ opacity: 0.7, marginTop: 2, fontSize: 12 }}>
+                      {[item.phone, item.category].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+                  <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Use →</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 20 }}>
+                  {directorySearch.trim() ? 'No suppliers match your search.' : 'No suppliers in directory yet.'}
+                </Text>
+              }
+            />
+          )}
         </View>
       </Modal>
     </View>

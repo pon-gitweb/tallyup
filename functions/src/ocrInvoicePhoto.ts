@@ -2,92 +2,153 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { trackPriceChanges } from "./priceTracking";
+import { contributeToGlobalDirectory } from "./globalSuppliers";
 
 const vision = new ImageAnnotatorClient();
 
-type ParsedLine = { name: string; qty: number; unitPrice?: number };
+type ParsedLine = {
+  name: string;
+  qty: number;
+  unitPrice?: number;
+  code?: string;
+  total?: number;
+  unit?: string;
+};
 
-// Extract a PO / invoice-ish identifier from free text
-function extractPo(text: string): string | null {
-  const patterns = [
-    /PO\s*#\s*([A-Z0-9\-]{3,})/i,
-    /P\.?O\.?\s*[:#]?\s*([A-Z0-9\-]{3,})/i,
-    /\bPO\s*([A-Z0-9\-]{3,})\b/i,
-  ];
-  for (const rx of patterns) {
-    const m = text.match(rx);
-    if (m?.[1]) return m[1].toUpperCase().slice(0, 64);
-  }
-  return null;
-}
-
-// Very simple line extraction: "NAME ... 3 12.34"
+// Regex fallback for line items when Claude fails
 function extractLines(text: string): ParsedLine[] {
   const out: ParsedLine[] = [];
-  const lines = text
-    .split(/\r?\n/)
-    .map(s => s.trim())
-    .filter(Boolean);
-
+  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   for (const raw of lines) {
     const qtyMatch = raw.match(/\b(\d{1,4})\s*(?:x|@)?\b/i);
     const priceMatch = raw.match(/\$?\s*(\d{1,5}(?:\.\d{1,2})?)\s*$/);
     const qty = qtyMatch ? Number(qtyMatch[1]) : NaN;
     const price = priceMatch ? Number(priceMatch[1]) : NaN;
-
     if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(price) && price > 0) {
       const name = raw.replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "").trim();
       if (name.length >= 3) out.push({ name, qty, unitPrice: price });
     }
-
-    if (out.length >= 80) break; // hard cap to keep payload small
+    if (out.length >= 80) break;
   }
-
-  // Fallback: just take first few non-empty lines as qty=1 items
   if (out.length === 0) {
     for (const raw of lines.slice(0, 20)) {
       if (raw.length >= 3) out.push({ name: raw, qty: 1 });
     }
   }
-
   return out;
 }
 
-// Dedicated photo-invoice OCR callable.
-// Input: { venueId, imageBase64 }
-// Output: { lines, supplierName?, invoiceNumber?, deliveryDate?, rawText }
+// ── Invoice age helpers ────────────────────────────────────────────────────
 
-// ── Claude-powered full invoice extraction ───────────────────────
-// Returns supplierName, invoice metadata, AND line items in one call.
-async function extractInvoiceWithClaude(rawText: string): Promise<{
+function invoiceAgeDays(dateStr: string | null): number | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return Math.floor((Date.now() - d.getTime()) / 86400000);
+  } catch {
+    return null;
+  }
+}
+
+type AgeCategory = "current" | "late" | "historical" | "old" | "very_old" | "unknown";
+
+function categorizeAge(days: number | null): AgeCategory {
+  if (days === null) return "unknown";
+  if (days < 30)   return "current";
+  if (days < 90)   return "late";
+  if (days < 365)  return "historical";
+  if (days < 1095) return "old";
+  return "very_old";
+}
+
+function buildHistoricalExplanation(
+  category: AgeCategory,
+  supplierName: string | null,
+  invoiceDateStr: string | null,
+  lineCount: number,
+  ageDays: number | null,
+): string | null {
+  if (category === "current" || category === "late" || category === "unknown") return null;
+
+  const supplier = supplierName || "Supplier";
+  const dateLabel = invoiceDateStr || "an earlier date";
+  const monthsAgo = ageDays ? Math.round(ageDays / 30) : null;
+  const ageDesc = monthsAgo
+    ? monthsAgo >= 12
+      ? `${Math.round(monthsAgo / 12)} year${Math.round(monthsAgo / 12) !== 1 ? "s" : ""} old`
+      : `${monthsAgo} month${monthsAgo !== 1 ? "s" : ""} old`
+    : "older than 3 months";
+
+  let explanation = `📄 ${supplier} — ${dateLabel}\n\nThis invoice is ${ageDesc} so we won't add it as received stock.\n\nBut we've captured some useful things:\n`;
+
+  explanation += `✓ Supplier set up: ${supplier} with contact details\n`;
+  if (lineCount > 0) explanation += `✓ ${lineCount} products added to your catalogue\n`;
+  explanation += `✓ Historical pricing recorded\n`;
+  explanation += `✓ Invoice number saved for your records\n\n`;
+
+  explanation += `Your current stock won't be affected — but your supplier and product records are ready to go.\n\n`;
+  explanation += `Next time a ${supplier} invoice arrives we'll recognise it instantly. 🤝`;
+
+  if (category === "old") {
+    explanation += `\n\nPrices may have changed since this invoice. We've noted the historical prices for reference.`;
+  }
+
+  return explanation;
+}
+
+// ── Claude-powered full invoice extraction ────────────────────────────────
+
+type InvoiceExtraction = {
   supplierName: string | null;
+  supplierPhone: string | null;
+  supplierEmail: string | null;
+  supplierAddress: string | null;
+  purchaseOrderNumber: string | null;
   invoiceNumber: string | null;
+  invoiceDate: string | null;
   deliveryDate: string | null;
   totalAmount: number | null;
   gstAmount: number | null;
-  lines: Array<{ name: string; qty: number; unitPrice?: number }>;
-}> {
+  lines: ParsedLine[];
+};
+
+async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtraction> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
   const system = [
     "You are an expert at reading NZ hospitality supplier invoices (Bidfood, Gilmours, Hancocks, Bidfresh, Lion, DB, Frucor, etc).",
     "Extract the following from this invoice text and return ONLY valid JSON, no markdown:",
-    '{"supplierName":"...","invoiceNumber":"...","invoiceDate":"...","totalAmount":0,"gstAmount":0,"lines":[{"name":"...","qty":1,"unitPrice":0}]}',
+    JSON.stringify({
+      supplierName: "string — the VENDOR who issued this invoice (large company name/logo at top)",
+      supplierPhone: "string or null",
+      supplierEmail: "string or null",
+      supplierAddress: "string or null — supplier address, NOT delivery address",
+      purchaseOrderNumber: "string or null — may be labelled PO#, PO Number, Order No, Our Order, Reference, Ref, Your Order. This is the BUYER's order number.",
+      invoiceNumber: "string or null — the supplier's invoice number",
+      invoiceDate: "string or null — YYYY-MM-DD format preferred",
+      deliveryDate: "string or null — delivery date if different from invoice date",
+      totalAmount: "number or null — total inc GST",
+      gstAmount: "number or null",
+      lines: [{ name: "product name", code: "item code", qty: 1, unitPrice: 0, total: 0, unit: "ea" }],
+    }),
     "",
     "CRITICAL — supplierName rules:",
     "- supplierName is the VENDOR who ISSUED this invoice (the seller/supplier company).",
-    "- It is the large company name or logo printed at the TOP of the invoice.",
+    "- It is the large company name or logo at the TOP of the invoice.",
     "- Examples: Gilmours, Bidfresh, Hancocks, Lion, DB Breweries, Bidfood, Frucor.",
-    "- It is NOT the delivery address, NOT the customer name, NOT the venue or restaurant.",
-    "- On a Gilmours invoice: supplierName = 'Gilmours'",
-    "- On a Bidfresh invoice: supplierName = 'Bidfresh'",
+    "- NOT the delivery address, NOT the customer name, NOT the venue or restaurant.",
+    "- On a Gilmours invoice: supplierName = 'Gilmours'. On a Bidfresh invoice: supplierName = 'Bidfresh'.",
     "- The bar, restaurant, or hotel receiving the delivery is the CUSTOMER, not the supplier.",
     "",
     "Line item rules:",
-    "- name: clean product name without item codes or extra whitespace",
+    "- name: clean product name without extra whitespace",
+    "- code: supplier item code/SKU if visible, null otherwise",
     "- qty: numeric quantity ordered",
     "- unitPrice: price per unit in NZD, null if not found",
+    "- total: line total in NZD, null if not found",
+    "- unit: unit of measure (ea, kg, L, case) if shown",
     "- Skip header rows, totals, GST lines, freight/delivery charges",
     "- Expand abbreviations (e.g. Sav Blanc = Sauvignon Blanc)",
   ].join("\n");
@@ -109,23 +170,93 @@ async function extractInvoiceWithClaude(rawText: string): Promise<{
   const match = text.match(/\{[\s\S]*\}/);
   const parsed = match ? JSON.parse(match[0]) : {};
 
-  const lines = Array.isArray(parsed.lines)
+  const lines: ParsedLine[] = Array.isArray(parsed.lines)
     ? parsed.lines.filter((l: any) => l && l.name && Number(l.qty) > 0).map((l: any) => ({
         name: String(l.name).trim(),
         qty: Number(l.qty),
         unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
+        code: l.code ? String(l.code).trim() : undefined,
+        total: l.total != null ? Number(l.total) : undefined,
+        unit: l.unit ? String(l.unit).trim() : undefined,
       }))
     : [];
 
   return {
     supplierName: parsed.supplierName ? String(parsed.supplierName).trim() : null,
+    supplierPhone: parsed.supplierPhone ? String(parsed.supplierPhone).trim() : null,
+    supplierEmail: parsed.supplierEmail ? String(parsed.supplierEmail).trim() : null,
+    supplierAddress: parsed.supplierAddress ? String(parsed.supplierAddress).trim() : null,
+    purchaseOrderNumber: parsed.purchaseOrderNumber ? String(parsed.purchaseOrderNumber).trim() : null,
     invoiceNumber: parsed.invoiceNumber ? String(parsed.invoiceNumber).trim() : null,
-    deliveryDate: parsed.invoiceDate ? String(parsed.invoiceDate).trim() : null,
+    invoiceDate: parsed.invoiceDate ? String(parsed.invoiceDate).trim() : null,
+    deliveryDate: parsed.deliveryDate ? String(parsed.deliveryDate).trim() : null,
     totalAmount: Number.isFinite(Number(parsed.totalAmount)) ? Number(parsed.totalAmount) : null,
     gstAmount: Number.isFinite(Number(parsed.gstAmount)) ? Number(parsed.gstAmount) : null,
     lines,
   };
 }
+
+// ── PO → Order matching ────────────────────────────────────────────────────
+
+async function findAndLinkOrder(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  poNumber: string,
+): Promise<{ orderId: string; orderNumber: string } | null> {
+  if (!poNumber.trim()) return null;
+
+  const ordersCol = db.collection(`venues/${venueId}/orders`);
+
+  // Try exact match on poNumber field first
+  for (const field of ["poNumber", "supplierReference", "orderNumber"]) {
+    try {
+      const snap = await ordersCol.where(field, "==", poNumber.trim()).limit(1).get();
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        const data = d.data() as any;
+        await d.ref.update({
+          status: "invoiced",
+          invoicedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log("[ocrInvoicePhoto] matched order", { orderId: d.id, field, poNumber });
+        return { orderId: d.id, orderNumber: data.poNumber || data.orderNumber || poNumber };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+// ── Historical invoice storage ─────────────────────────────────────────────
+
+async function storeHistoricalInvoice(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  invoice: InvoiceExtraction,
+  rawText: string,
+  ageDays: number | null,
+): Promise<string> {
+  const ref = await db.collection(`venues/${venueId}/historicalInvoices`).add({
+    supplierName: invoice.supplierName,
+    supplierPhone: invoice.supplierPhone,
+    supplierEmail: invoice.supplierEmail,
+    supplierAddress: invoice.supplierAddress,
+    purchaseOrderNumber: invoice.purchaseOrderNumber,
+    invoiceNumber: invoice.invoiceNumber,
+    invoiceDate: invoice.invoiceDate,
+    deliveryDate: invoice.deliveryDate,
+    totalAmount: invoice.totalAmount,
+    gstAmount: invoice.gstAmount,
+    lineCount: invoice.lines.length,
+    lines: invoice.lines.slice(0, 200),
+    ageDays,
+    rawText: rawText.slice(0, 4000),
+    importedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return ref.id;
+}
+
+// ── Main callable ─────────────────────────────────────────────────────────
 
 export const ocrInvoicePhoto = functions
   .region("us-central1")
@@ -138,29 +269,20 @@ export const ocrInvoicePhoto = functions
     const venueId = String(data?.venueId || "");
     const imageBase64 = String(data?.imageBase64 || "");
 
-    if (!venueId) {
-      throw new functions.https.HttpsError("invalid-argument", "venueId is required.");
-    }
-    if (!imageBase64) {
-      throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
-    }
+    if (!venueId) throw new functions.https.HttpsError("invalid-argument", "venueId is required.");
+    if (!imageBase64) throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
 
-    // Optional: security check – user must be a member of the venue
     const db = admin.firestore();
-    const memberRef = db.doc(`venues/${venueId}/members/${uid}`);
-    const memberSnap = await memberRef.get();
+
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
     if (!memberSnap.exists) {
-      throw new functions.https.HttpsError(
-        "permission-denied",
-        "Not a member of this venue."
-      );
+      throw new functions.https.HttpsError("permission-denied", "Not a member of this venue.");
     }
 
     let buf: Buffer;
     try {
       buf = Buffer.from(imageBase64, "base64");
     } catch (e: any) {
-      console.error("[ocrInvoicePhoto] invalid base64", e?.message || e);
       throw new functions.https.HttpsError("invalid-argument", "Invalid imageBase64.");
     }
 
@@ -171,43 +293,79 @@ export const ocrInvoicePhoto = functions
       "";
 
     if (!text.trim()) {
-      console.log("[ocrInvoicePhoto] OCR returned no text");
-      return {
-        supplierName: null,
-        invoiceNumber: null,
-        deliveryDate: null,
-        lines: [],
-        rawText: "",
-      };
+      return { supplierName: null, invoiceNumber: null, deliveryDate: null, lines: [], rawText: "" };
     }
 
-    // Claude extracts supplier name, invoice metadata, and line items in one call
-    let invoiceData: Awaited<ReturnType<typeof extractInvoiceWithClaude>> | null = null;
+    // Claude extracts everything in one call
+    let invoice: InvoiceExtraction | null = null;
     try {
-      invoiceData = await extractInvoiceWithClaude(text);
+      invoice = await extractInvoiceWithClaude(text);
     } catch (e: any) {
       console.log("[ocrInvoicePhoto] Claude extraction failed, falling back to regex", e?.message);
     }
 
-    const lines = invoiceData?.lines?.length
-      ? invoiceData.lines
-      : extractLines(text);
+    const lines = invoice?.lines?.length ? invoice.lines : extractLines(text);
 
-    const payload = {
-      supplierName: invoiceData?.supplierName ?? null,
-      invoiceNumber: invoiceData?.invoiceNumber ?? extractPo(text),
-      deliveryDate: invoiceData?.deliveryDate ?? null,
+    // Determine invoice age
+    const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
+    const ageCategory = categorizeAge(ageDays);
+
+    // Build payload
+    const payload: any = {
+      supplierName:        invoice?.supplierName ?? null,
+      supplierPhone:       invoice?.supplierPhone ?? null,
+      supplierEmail:       invoice?.supplierEmail ?? null,
+      supplierAddress:     invoice?.supplierAddress ?? null,
+      purchaseOrderNumber: invoice?.purchaseOrderNumber ?? null,
+      invoiceNumber:       invoice?.invoiceNumber ?? null,
+      invoiceDate:         invoice?.invoiceDate ?? null,
+      deliveryDate:        invoice?.deliveryDate ?? null,
+      totalAmount:         invoice?.totalAmount ?? null,
+      gstAmount:           invoice?.gstAmount ?? null,
       lines,
       rawText: text,
+      invoiceAgeCategory: ageCategory,
+      historicalExplanation: null as string | null,
+      matchedOrderId: null as string | null,
+      matchedOrderNumber: null as string | null,
     };
 
-    console.log("[ocrInvoicePhoto] payload", {
-      supplierName: payload.supplierName,
-      invoiceNumber: payload.invoiceNumber,
-      linesCount: payload.lines.length,
-    });
+    // PO → Order matching (non-blocking on error)
+    if (payload.purchaseOrderNumber) {
+      try {
+        const match = await findAndLinkOrder(db, venueId, payload.purchaseOrderNumber);
+        if (match) {
+          payload.matchedOrderId = match.orderId;
+          payload.matchedOrderNumber = match.orderNumber;
+        }
+      } catch (e: any) {
+        console.log("[ocrInvoicePhoto] order matching error", e?.message);
+      }
+    }
 
-    // Track price changes against existing products (non-blocking)
+    // Historical routing — invoices > 3 months old go to historicalInvoices, not stock
+    if (ageCategory === "historical" || ageCategory === "old" || ageCategory === "very_old") {
+      try {
+        await storeHistoricalInvoice(db, venueId, invoice ?? { ...payload, lines }, text, ageDays);
+      } catch (e: any) {
+        console.log("[ocrInvoicePhoto] historicalInvoice store error", e?.message);
+      }
+      payload.historicalExplanation = buildHistoricalExplanation(
+        ageCategory, payload.supplierName, payload.invoiceDate, lines.length, ageDays
+      );
+    }
+
+    // Contribute supplier to global directory (best-effort)
+    if (payload.supplierName) {
+      contributeToGlobalDirectory(db, payload.supplierName, {
+        phone: payload.supplierPhone,
+        email: payload.supplierEmail,
+        address: payload.supplierAddress,
+        addedByVenue: venueId,
+      }).catch(() => {});
+    }
+
+    // Track price changes (best-effort)
     trackPriceChanges({
       venueId,
       lines,
@@ -216,7 +374,14 @@ export const ocrInvoicePhoto = functions
       invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
     }).catch((e: any) => console.log("[ocrInvoicePhoto] price tracking error", e?.message));
 
-    // onCall will wrap this as { result: payload } for HTTPS; our RN client
-    // supports both {result: ...} and plain object.
+    console.log("[ocrInvoicePhoto]", {
+      supplierName: payload.supplierName,
+      invoiceNumber: payload.invoiceNumber,
+      purchaseOrderNumber: payload.purchaseOrderNumber,
+      matchedOrderId: payload.matchedOrderId,
+      ageCategory,
+      linesCount: lines.length,
+    });
+
     return payload;
   });

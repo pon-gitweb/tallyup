@@ -66,10 +66,17 @@ service cloud.firestore {
     // ========= Root collections =========
     match /global_suppliers/{id} {
       allow read: if isSignedIn();
-      allow write: if false;
+      // Any signed-in user may contribute public supplier data.
+      // Private fields (accountNumber, pricing, privateNotes) are blocked.
+      allow create, update: if isSignedIn()
+        && !('accountNumber' in request.resource.data)
+        && !('pricing' in request.resource.data)
+        && !('privateNotes' in request.resource.data);
+      allow delete: if false;
       match /items/{itemId} {
         allow read: if isSignedIn();
-        allow write: if false;
+        allow create, update: if isSignedIn();
+        allow delete: if false;
       }
     }
 

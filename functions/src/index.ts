@@ -37,6 +37,9 @@ export { api } from "./api";
 // === Weekly summary email (scheduled, Monday 8am venue local time) ===
 export { weeklySummaryEmail } from "./weeklySummary";
 
+// === Global supplier directory — seed + contribute from invoice scans ===
+export { seedGlobalSuppliers } from "./globalSuppliers";
+
 // === Pilot analytics — writes to venues/{venueId}/analyticsEvents ===
 // Stream analyticsEvents to BigQuery via:
 //   firebase ext:install firebase/firestore-bigquery-export
