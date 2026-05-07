@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { trackPriceChanges } from "./priceTracking";
 import { contributeToGlobalDirectory } from "./globalSuppliers";
+import { filterInvoiceLines } from "./invoiceFilter";
 
 const vision = new ImageAnnotatorClient();
 
@@ -149,7 +150,10 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
     "- unitPrice: price per unit in NZD, null if not found",
     "- total: line total in NZD, null if not found",
     "- unit: unit of measure (ea, kg, L, case) if shown",
-    "- Skip header rows, totals, GST lines, freight/delivery charges",
+    "- SKIP: header rows, totals, GST lines, freight, delivery charges, surcharges, account fees",
+    "- SKIP: lines where name is a date, a bare number, or a dollar amount",
+    "- SKIP: lines with qty <= 0 or qty > 10000",
+    "- Only include actual purchasable products with a name and qty",
     "- Expand abbreviations (e.g. Sav Blanc = Sauvignon Blanc)",
   ].join("\n");
 
@@ -304,7 +308,8 @@ export const ocrInvoicePhoto = functions
       console.log("[ocrInvoicePhoto] Claude extraction failed, falling back to regex", e?.message);
     }
 
-    const lines = invoice?.lines?.length ? invoice.lines : extractLines(text);
+    const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
+    const lines = filterInvoiceLines(rawLines);
 
     // Determine invoice age
     const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);

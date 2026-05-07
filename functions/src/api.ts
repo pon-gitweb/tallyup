@@ -4,6 +4,7 @@ import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
 import { trackPriceChanges } from "./priceTracking";
+import { filterInvoiceLines } from "./invoiceFilter";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -685,7 +686,10 @@ async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: st
     "- name: clean product name without codes or extra whitespace",
     "- qty: numeric quantity ordered",
     "- unitPrice: price per unit in NZD, null if not found",
-    "- Skip header rows, totals, GST lines, delivery charges",
+    "- SKIP: header rows, totals, GST lines, delivery/freight charges, surcharges, account fees",
+    "- SKIP: lines where name is a date, a bare number, or a dollar amount",
+    "- SKIP: lines with qty <= 0 or qty > 10000",
+    "- Only include actual purchasable products with a real name and positive qty",
     "- Expand abbreviations where obvious (e.g. Sav Blanc = Sauvignon Blanc)",
   ].join("\n");
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1577,7 +1581,7 @@ app.post("/process-invoices-csv", async (req, res) => {
     const [fileBuffer] = await bucket.file(storagePath).download();
     const csvText = fileBuffer.toString("utf-8");
 
-    const lines = parseCsvText(csvText);
+    const lines = filterInvoiceLines(parseCsvText(csvText));
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items could be parsed from this CSV.");
 
@@ -1643,6 +1647,7 @@ app.post("/process-invoices-pdf", async (req, res) => {
           console.log('[api/process-invoices-pdf] Claude extraction failed, using regex fallback', claudeErr && claudeErr.message);
           lines = extractLinesFromText(text);
         }
+        lines = filterInvoiceLines(lines);
 
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items detected — please review manually.");

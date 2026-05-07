@@ -23,10 +23,12 @@ import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
 import { updateDoc } from 'firebase/firestore';
 
 const NUDGE_KEYS = {
-  noProducts:   'tallyup_nudge_no_products_v1',
-  noSuppliers:  'tallyup_nudge_no_suppliers_v1',
-  unassigned:   'tallyup_nudge_unassigned_v1',
-  noStocktake:  'tallyup_nudge_no_stocktake_v1',
+  invoiceFirst:       'tallyup_nudge_invoice_first_v1',
+  noProducts:         'tallyup_nudge_no_products_v1',
+  noSuppliers:        'tallyup_nudge_no_suppliers_v1',
+  unassigned:         'tallyup_nudge_unassigned_v1',
+  noStocktake:        'tallyup_nudge_no_stocktake_v1',
+  firstStocktakeDone: 'tallyup_nudge_first_stocktake_done_v1',
 };
 
 function ContextNudge({ message, cta, onCta, onDismiss, c }) {
@@ -277,7 +279,16 @@ export default function DashboardScreen() {
           </View>
         )}
         {/* ── Graduated contextual nudges ──────────────────────────────── */}
-        {productCount === 0 && !nudgeDismissed.noProducts && (
+        {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
+          <ContextNudge
+            c={colours}
+            message="Scan a supplier invoice to build your product list automatically — no manual entry needed."
+            cta="Scan invoice →"
+            onCta={() => nav.navigate('Orders')}
+            onDismiss={() => dismissNudge('invoiceFirst')}
+          />
+        )}
+        {supplierCount > 0 && productCount === 0 && !nudgeDismissed.noProducts && (
           <ContextNudge
             c={colours}
             message="Add products to run your first stocktake and unlock AI reorder suggestions."
@@ -311,6 +322,15 @@ export default function DashboardScreen() {
             cta="Start stocktake →"
             onCta={() => nav.navigate('DepartmentSelection')}
             onDismiss={() => dismissNudge('noStocktake')}
+          />
+        )}
+        {stocktakeCount === 1 && !nudgeDismissed.firstStocktakeDone && (
+          <ContextNudge
+            c={colours}
+            message="First stocktake done! View your Stock Holding Report to see what you have on hand by category."
+            cta="View report →"
+            onCta={() => nav.navigate('StockHolding')}
+            onDismiss={() => dismissNudge('firstStocktakeDone')}
           />
         )}
         {/* ─────────────────────────────────────────────────────────────── */}

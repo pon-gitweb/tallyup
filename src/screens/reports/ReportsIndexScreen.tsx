@@ -345,7 +345,39 @@ export default function ReportsIndexScreen() {
                 <Text style={styles.ctaBtnText}>Start a stocktake</Text>
               </TouchableOpacity>
             </View>
-            {isManager && <SecondaryNav nav={nav} />}
+            {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
+          </ScrollView>
+        </View>
+      </LocalThemeGate>
+    );
+  }
+
+  // ── First stocktake done — show Stock Holding CTA before variance unlocks ─
+  if (data?.hasCountData && !data?.hasPrevCycleData) {
+    return (
+      <LocalThemeGate>
+        <View style={styles.root}>
+          <ScreenHeader />
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+            <View style={[styles.emptyCard, { borderColor: '#14B8A6', borderWidth: 1.5 }]}>
+              <Text style={styles.emptyTitle}>First stocktake complete 🎉</Text>
+              <Text style={styles.emptyBody}>
+                Your stock baseline is set. View your stock holding report — what you have on hand, by category, with total value.
+              </Text>
+              <TouchableOpacity
+                style={styles.ctaBtn}
+                onPress={() => nav.navigate('StockHolding')}
+              >
+                <Text style={styles.ctaBtnText}>View Stock Holding Report</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.ctaBtn, { marginTop: 10, backgroundColor: 'transparent', borderWidth: 1, borderColor: '#4B5563' }]}
+                onPress={() => nav.navigate('DepartmentSelection')}
+              >
+                <Text style={[styles.ctaBtnText, { color: '#94A3B8' }]}>Start next stocktake</Text>
+              </TouchableOpacity>
+            </View>
+            {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
           </ScrollView>
         </View>
       </LocalThemeGate>
@@ -408,8 +440,8 @@ export default function ReportsIndexScreen() {
             </View>
           )}
 
-          {/* ── LANE 1: WHERE IT LEAKED ── */}
-          {isManager && (
+          {/* ── LANE 1: WHERE IT LEAKED (only after 2+ stocktakes) ── */}
+          {isManager && data.hasPrevCycleData && (
             <Lane label="WHERE IT LEAKED">
               {data.topShortages.length === 0 ? (
                 <Text style={styles.laneEmpty}>
@@ -633,7 +665,7 @@ export default function ReportsIndexScreen() {
           )}
 
           {/* ── Secondary nav (owner/manager only) ── */}
-          {isManager && <SecondaryNav nav={nav} />}
+          {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
         </ScrollView>
 
         {/* ── AI Insights modal ── */}
@@ -721,13 +753,18 @@ function ScreenHeader() {
   );
 }
 
-function SecondaryNav({ nav }: { nav: any }) {
+function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: boolean }) {
   return (
     <View style={styles.secondaryNav}>
       <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
-      <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
-      <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
-      <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
+      <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
+      {hasPrevCycleData && (
+        <>
+          <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
+          <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
+          <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
+        </>
+      )}
       <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
       <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
     </View>

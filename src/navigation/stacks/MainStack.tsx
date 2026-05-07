@@ -43,6 +43,7 @@ import FreshStartScreen from '../../screens/onboarding/FreshStartScreen';
 import BringYourDataScreen from '../../screens/onboarding/BringYourDataScreen';
 import { FEATURES } from '../../config/features';
 import StocktakeSummaryScreen from '../../screens/stock/StocktakeSummaryScreen';
+import StockHoldingScreen from '../../screens/stock/StockHoldingScreen';
 import SupplierDashboardScreen from '../../screens/supplier/SupplierDashboardScreen';
 import SupplierCatalogueScreen from '../../screens/supplier/SupplierCatalogueScreen';
 import SupplierOrdersScreen from '../../screens/supplier/SupplierOrdersScreen';
@@ -145,6 +146,7 @@ export default function MainStack() {
       <Stack.Screen name="OnboardingFreshStart" component={FreshStartScreen} options={{ title: 'Fresh Start' }} />
       <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
+      <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />
       {/* SUPPLIER PORTAL — unlocked when FEATURES.SUPPLIER_PORTAL = true */}
       {FEATURES.SUPPLIER_PORTAL && (
         <>
