@@ -352,38 +352,6 @@ export default function ReportsIndexScreen() {
     );
   }
 
-  // ── First stocktake done — show Stock Holding CTA before variance unlocks ─
-  if (data?.hasCountData && !data?.hasPrevCycleData) {
-    return (
-      <LocalThemeGate>
-        <View style={styles.root}>
-          <ScreenHeader />
-          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-            <View style={[styles.emptyCard, { borderColor: '#14B8A6', borderWidth: 1.5 }]}>
-              <Text style={styles.emptyTitle}>First stocktake complete 🎉</Text>
-              <Text style={styles.emptyBody}>
-                Your stock baseline is set. View your stock holding report — what you have on hand, by category, with total value.
-              </Text>
-              <TouchableOpacity
-                style={styles.ctaBtn}
-                onPress={() => nav.navigate('StockHolding')}
-              >
-                <Text style={styles.ctaBtnText}>View Stock Holding Report</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.ctaBtn, { marginTop: 10, backgroundColor: 'transparent', borderWidth: 1, borderColor: '#4B5563' }]}
-                onPress={() => nav.navigate('DepartmentSelection')}
-              >
-                <Text style={[styles.ctaBtnText, { color: '#94A3B8' }]}>Start next stocktake</Text>
-              </TouchableOpacity>
-            </View>
-            {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
-          </ScrollView>
-        </View>
-      </LocalThemeGate>
-    );
-  }
-
   // ── Full briefing view ────────────────────────────────────────────────────
 
   const netVariance = data.shortfallDollars - data.excessDollars;
@@ -440,8 +408,21 @@ export default function ReportsIndexScreen() {
             </View>
           )}
 
-          {/* ── LANE 1: WHERE IT LEAKED (only after 2+ stocktakes) ── */}
-          {isManager && data.hasPrevCycleData && (
+          {/* ── Stock Holding CTA — first cycle only ── */}
+          {isManager && !data.hasPrevCycleData && (
+            <TouchableOpacity
+              style={[styles.anchorCard, { borderWidth: 1.5, borderColor: '#14B8A6', marginBottom: 12 }]}
+              onPress={() => nav.navigate('StockHolding')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.anchorLabel}>STOCK HOLDING REPORT</Text>
+              <Text style={[styles.anchorValue, { color: '#14B8A6', fontSize: 22 }]}>View your stock on hand</Text>
+              <Text style={styles.anchorMeta}>Products by category with quantities and value →</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* ── LANE 1: WHERE IT LEAKED ── */}
+          {isManager && (
             <Lane label="WHERE IT LEAKED">
               {data.topShortages.length === 0 ? (
                 <Text style={styles.laneEmpty}>
@@ -758,13 +739,9 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
     <View style={styles.secondaryNav}>
       <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
       <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
-      {hasPrevCycleData && (
-        <>
-          <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
-          <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
-          <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
-        </>
-      )}
+      <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
+      <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
+      <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
       <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
       <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
     </View>
