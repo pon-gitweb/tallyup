@@ -64,6 +64,11 @@ service cloud.firestore {
     }
 
     // ========= Root collections =========
+    match /global_products/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /global_suppliers/{id} {
       allow read: if isSignedIn();
       // Any signed-in user may contribute public supplier data.
