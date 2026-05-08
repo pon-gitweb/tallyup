@@ -70,9 +70,21 @@ SETTINGS
 - Reset stocktake cycle (manager/owner only)
 - Delete account
 
+BARCODE SCANNER
+- Tap 📷 Scan in the stocktake area header to open the barcode camera
+- Point camera at any barcode on a bottle or product
+- If found in your venue or Hosti catalogue it appears instantly
+- If it's a new product, photograph front and back to add it
+- Every scan helps build the NZ hospitality product catalogue
+
+BLUETOOTH SCALES
+- Long press any product during stocktake to connect a Bluetooth scale
+- Supported models are shown in the scale settings screen (Settings → Bluetooth Scale)
+- Once connected the scale weight is read automatically
+
 IZZY
 - Ask Izzy anything about how to use the app
-- Available on every screen via the ✦ button
+- Available on every screen via the ✦ button in the header
 
 SUITEE (manager/owner only)
 - Ask Suitee questions about your venue data
@@ -81,11 +93,9 @@ SUITEE (manager/owner only)
 
   planned: `
 FEATURES PLANNED FOR FUTURE UPDATES:
-- Barcode scanning to identify products instantly
 - Voice counting (say the number out loud, count is recorded)
 - POS integration (Lightspeed, Square, Wizbang Onetap, BEPOZ, Impos)
 - Xero accounting integration
-- Bluetooth scale integration
 - Photo counting (count bottles visible in a photo)
 - Gamification and staff performance tracking
 - Supplier scorecards

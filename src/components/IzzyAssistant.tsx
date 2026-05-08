@@ -24,6 +24,11 @@ const HIDDEN_ON = new Set([
 
 type Message = { role: 'user' | 'assistant' | 'system'; text: string };
 
+// Module-level trigger so header buttons across all screens can open Izzy
+// without prop drilling or context.
+let _openIzzy: (() => void) | null = null;
+export function openIzzy() { _openIzzy?.(); }
+
 export default function IzzyAssistant() {
   const [routeName, setRouteName] = useState('');
   const [open, setOpen] = useState(false);
@@ -31,6 +36,11 @@ export default function IzzyAssistant() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const flatRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    _openIzzy = () => setOpen(true);
+    return () => { _openIzzy = null; };
+  }, []);
 
   useEffect(() => {
     const update = () => {
@@ -85,10 +95,6 @@ export default function IzzyAssistant() {
 
   return (
     <>
-      <TouchableOpacity onPress={() => setOpen(true)} style={styles.fab} activeOpacity={0.85}>
-        <Text style={styles.fabIcon}>✦</Text>
-      </TouchableOpacity>
-
       <Modal visible={open} animationType="slide" transparent onRequestClose={onClose}>
         <KeyboardAvoidingView
           style={styles.modalWrap}
@@ -158,24 +164,6 @@ export default function IzzyAssistant() {
 }
 
 const styles = StyleSheet.create({
-  fab: {
-    position: 'absolute',
-    bottom: 80,
-    left: 16,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#1b4f72',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 6,
-    zIndex: 999,
-  },
-  fabIcon: { fontSize: 20, color: '#fff' },
   modalWrap: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.25)' },
   sheet: {

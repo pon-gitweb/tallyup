@@ -1,9 +1,9 @@
 // @ts-nocheck
 import OrderEditorScreen from '../../screens/orders/OrderEditorScreen';
 import React from 'react';
-import { View } from 'react-native';
+import { View, TouchableOpacity, Text } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import IzzyAssistant from '../../components/IzzyAssistant';
+import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
 
 // Core
 import DashboardScreen from '../../screens/DashboardScreen';
@@ -70,7 +70,15 @@ const Stack = createNativeStackNavigator();
 export default function MainStack() {
   return (
     <View style={{ flex: 1 }}>
-    <Stack.Navigator>
+    <Stack.Navigator
+      screenOptions={{
+        headerRight: () => (
+          <TouchableOpacity onPress={openIzzy} style={{ marginRight: 16, padding: 4 }}>
+            <Text style={{ color: '#1b4f72', fontSize: 18, fontWeight: '600' }}>✦</Text>
+          </TouchableOpacity>
+        ),
+      }}
+    >
       {/* Home */}
       <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
 

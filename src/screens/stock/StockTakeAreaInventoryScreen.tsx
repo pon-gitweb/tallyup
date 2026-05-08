@@ -7,6 +7,7 @@ import ShelfPhotoModal from "./components/ShelfPhotoModal";
 import ShelfScanModal from "../../components/stocktake/ShelfScanModal";
 import ProductPhotoModal from "../../components/stocktake/ProductPhotoModal";
 import VenueProductSearchModal from "../../components/stocktake/VenueProductSearchModal";
+import BarcodeScannerModal from "../../components/stocktake/BarcodeScannerModal";
 import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPhoto";
 import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
 import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
@@ -37,6 +38,7 @@ import * as Sharing from 'expo-sharing';
 
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
+import { openIzzy } from '../../components/IzzyAssistant';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 import { useColours } from '../../context/ThemeContext';
 
@@ -311,6 +313,27 @@ function StockTakeAreaInventoryScreen() {
 
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
 
+  // Header: 📷 Scan + ✦ Izzy — set once, stable ref avoids stale closure on setOptions
+  const openBarcodeRef = useRef(() => setBarcodeScanOpen(true));
+  useEffect(() => { openBarcodeRef.current = () => setBarcodeScanOpen(true); });
+  useEffect(() => {
+    nav.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 4 }}>
+          <TouchableOpacity
+            onPress={() => openBarcodeRef.current()}
+            style={{ paddingVertical: 6, paddingHorizontal: 10 }}
+          >
+            <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '700' }}>📷 Scan</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={openIzzy} style={{ paddingVertical: 6, paddingHorizontal: 10 }}>
+            <Text style={{ color: '#1b4f72', fontSize: 18, fontWeight: '600' }}>✦</Text>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [nav]);
+
   // Current user and label (for area locking)
   const auth = getAuth();
   const uid = auth.currentUser?.uid;
@@ -469,6 +492,8 @@ function StockTakeAreaInventoryScreen() {
   const [captureShelfOpen, setCaptureShelfOpen] = useState(false);
   const [captureProductOpen, setCaptureProductOpen] = useState(false);
   const [venueSearchOpen, setVenueSearchOpen] = useState(false);
+  const [barcodeScanOpen, setBarcodeScanOpen] = useState(false);
+  const [photoModalBarcode, setPhotoModalBarcode] = useState<string | null>(null);
 
   // Persist/restore view prefs
   useEffect(() => { (async () => {
@@ -1399,6 +1424,7 @@ const openHistory = throttleAction(async (item: Item) => {
         Add your first products to start counting
       </Text>
       {[
+        { icon: '📱', title: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: () => setBarcodeScanOpen(true) },
         { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
         { icon: '📸', title: 'Add product by photo', desc: 'Photo the front of a bottle — AI identifies it', onPress: () => setCaptureProductOpen(true) },
         { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
@@ -2213,11 +2239,22 @@ const openHistory = throttleAction(async (item: Item) => {
         onConfirm={handleShelfScanConfirm}
       />
       <ProductPhotoModal
-        visible={captureProductOpen}
-        onClose={() => setCaptureProductOpen(false)}
+        visible={captureProductOpen || photoModalBarcode !== null}
+        onClose={() => { setCaptureProductOpen(false); setPhotoModalBarcode(null); }}
         venueId={venueId}
         areaName={areaName}
+        initialBarcode={photoModalBarcode ?? undefined}
         onConfirm={handleProductPhotoConfirm}
+      />
+      <BarcodeScannerModal
+        visible={barcodeScanOpen}
+        onClose={() => setBarcodeScanOpen(false)}
+        venueId={venueId}
+        departmentId={departmentId}
+        areaId={areaId}
+        areaItems={items}
+        onProductAddedToArea={() => { /* onSnapshot auto-refreshes items */ }}
+        onOpenPhotoModal={(barcode) => { setPhotoModalBarcode(barcode); }}
       />
       <VenueProductSearchModal
         visible={venueSearchOpen}

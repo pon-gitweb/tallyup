@@ -34,6 +34,7 @@ type Props = {
   onClose: () => void;
   venueId: string | null | undefined;
   areaName?: string;
+  initialBarcode?: string;
   onConfirm: (product: ProductDetails, count: number) => Promise<void>;
 };
 
@@ -41,7 +42,7 @@ type Step = 'front-prompt' | 'back-prompt' | 'processing' | 'review' | 'count' |
 
 const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', barcode: '', unit: 'bottle' };
 
-export default function ProductPhotoModal({ visible, onClose, venueId, areaName, onConfirm }: Props) {
+export default function ProductPhotoModal({ visible, onClose, venueId, areaName, initialBarcode, onConfirm }: Props) {
   const [step, setStep] = useState<Step>('front-prompt');
   const [frontB64, setFrontB64] = useState<string | null>(null);
   const [product, setProduct] = useState<ProductDetails>(BLANK);
@@ -52,11 +53,18 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const reset = () => {
     setStep('front-prompt');
     setFrontB64(null);
-    setProduct(BLANK);
+    setProduct(initialBarcode ? { ...BLANK, barcode: initialBarcode } : BLANK);
     setCount('1');
     setConfirming(false);
     setFailMsg('');
   };
+
+  // Re-apply initial barcode when modal opens
+  React.useEffect(() => {
+    if (visible && initialBarcode) {
+      setProduct(prev => ({ ...prev, barcode: initialBarcode }));
+    }
+  }, [visible, initialBarcode]);
 
   const handleClose = () => { reset(); onClose(); };
 
