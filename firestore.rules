@@ -89,7 +89,7 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create, update: if request.auth != null
         && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['venueId','createdAt','email','touchedAt']);
+        && request.resource.data.keys().hasOnly(['venueId','createdAt','email','touchedAt','displayName']);
       allow delete: if false;
     }
 
@@ -107,6 +107,13 @@ service cloud.firestore {
         && hasOnlyFields(request.resource.data, ['cycleResetAt','updatedAt'])
         && (request.resource.data.cycleResetAt is timestamp)
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
+
+      // Venue name (owner only)
+      allow update: if hasVenueRole(venueId, ['owner'])
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 100;
 
       // Venue-level preferences (managers/owners only)
       allow update: if hasVenueRole(venueId, ['manager','owner'])

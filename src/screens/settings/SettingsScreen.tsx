@@ -4,6 +4,7 @@ import { FEATURES } from '../../config/features';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   TouchableOpacity,
   Alert,
@@ -17,7 +18,7 @@ import {
 } from 'react-native';
 import { HintService } from '../../services/hints/HintService';
 import { useNavigation } from '@react-navigation/native';
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { AI_BASE_URL } from '../../config/ai';
@@ -53,6 +54,26 @@ export default function SettingsScreen() {
   const venueId = useVenueId();
 
   const [isManager, setIsManager] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+
+  // Inline edit — display name
+  const [editingDisplayName, setEditingDisplayName] = useState(false);
+  const [displayNameInput, setDisplayNameInput] = useState('');
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
+
+  // Inline edit — venue name
+  const [editingVenueName, setEditingVenueName] = useState(false);
+  const [venueNameInput, setVenueNameInput] = useState('');
+  const [savingVenueName, setSavingVenueName] = useState(false);
+
+  // Success toast
+  const [toast, setToast] = React.useState<string | null>(null);
+  const toastTimer = React.useRef<any>(null);
+  function showToast(msg: string) {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2500);
+  }
 
   const [weeklySummaryOn, setWeeklySummaryOn] = useState(false);
   const [venueTimezone, setVenueTimezone] = useState('Pacific/Auckland');
@@ -146,20 +167,59 @@ export default function SettingsScreen() {
         if (ownerUid && ownerUid === u.uid) {
           if (__DEV__) console.log('[Settings] role=owner', { uid: u.uid, venueId });
           setIsManager(true);
+          setIsOwner(true);
           return;
         }
         unsubMember = onSnapshot(doc(db, 'venues', venueId, 'members', u.uid), (snap) => {
           const md = snap.data() as MemberDoc | undefined;
           if (__DEV__) console.log('[Settings] member role snapshot', { role: md?.role, uid: u.uid, venueId });
           setIsManager(md?.role === 'manager' || md?.role === 'owner');
+          setIsOwner(md?.role === 'owner');
         });
       } catch (e:any) {
         if (__DEV__) console.log('[Settings] role check error', e?.message);
         setIsManager(false);
+        setIsOwner(false);
       }
     });
     return () => { unsubAuth(); unsubMember && unsubMember(); };
   }, [venueId]);
+
+  async function saveDisplayName() {
+    const name = displayNameInput.trim();
+    if (name.length < 2) { Alert.alert('Name too short', 'Please enter at least 2 characters.'); return; }
+    if (name.length > 50) { Alert.alert('Name too long', 'Maximum 50 characters.'); return; }
+    setSavingDisplayName(true);
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('Not signed in');
+      await updateProfile(currentUser, { displayName: name });
+      await updateDoc(doc(db, 'users', currentUser.uid), { displayName: name });
+      setEditingDisplayName(false);
+      showToast('Name updated ✓');
+    } catch (e: any) {
+      Alert.alert('Could not save name', e?.message || 'Please try again.');
+    } finally {
+      setSavingDisplayName(false);
+    }
+  }
+
+  async function saveVenueName() {
+    if (!venueId) return;
+    const name = venueNameInput.trim();
+    if (name.length < 2) { Alert.alert('Name too short', 'Please enter at least 2 characters.'); return; }
+    if (name.length > 100) { Alert.alert('Name too long', 'Maximum 100 characters.'); return; }
+    setSavingVenueName(true);
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { name });
+      setEditingVenueName(false);
+      showToast('Venue name updated ✓');
+    } catch (e: any) {
+      Alert.alert('Could not save venue name', e?.message || 'Please try again.');
+    } finally {
+      setSavingVenueName(false);
+    }
+  }
 
   async function doSignOut() {
     try {
@@ -328,11 +388,123 @@ export default function SettingsScreen() {
         {/* Identity summary */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
-          <Text>
-            Signed in as: <Text style={styles.bold}>{friendly}</Text>
+
+          {/* Toast */}
+          {toast ? (
+            <View style={{ backgroundColor: '#dcfce7', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10 }}>
+              <Text style={{ color: '#15803d', fontWeight: '700', fontSize: 13 }}>{toast}</Text>
+            </View>
+          ) : null}
+
+          {/* Email — read only */}
+          <Text style={{ color: themeColours.textSecondary, fontSize: 13, marginBottom: 12 }}>
+            Email: {user?.email || '—'}
           </Text>
-          <Text>Email: {user?.email || '—'}</Text>
-          <Text>Venue: {venueName || '—'}</Text>
+
+          {/* Display name */}
+          <View style={{ marginBottom: 12 }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+              Display name
+            </Text>
+            {editingDisplayName ? (
+              <View>
+                <TextInput
+                  value={displayNameInput}
+                  onChangeText={setDisplayNameInput}
+                  autoFocus
+                  maxLength={50}
+                  placeholder="Your name"
+                  placeholderTextColor={themeColours.textSecondary}
+                  style={{
+                    borderWidth: 1, borderColor: themeColours.primary, borderRadius: 8,
+                    paddingHorizontal: 10, paddingVertical: 8,
+                    fontSize: 15, color: themeColours.text,
+                    backgroundColor: themeColours.background,
+                  }}
+                />
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={saveDisplayName}
+                    disabled={savingDisplayName}
+                    style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                  >
+                    {savingDisplayName
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setEditingDisplayName(false)}
+                    style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                  >
+                    <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                onPress={() => { setDisplayNameInput(user?.displayName || ''); setEditingDisplayName(true); }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              >
+                <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                  {user?.displayName || 'Not set'}
+                </Text>
+                <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Venue name */}
+          <View>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+              Venue
+            </Text>
+            {isOwner && editingVenueName ? (
+              <View>
+                <TextInput
+                  value={venueNameInput}
+                  onChangeText={setVenueNameInput}
+                  autoFocus
+                  maxLength={100}
+                  placeholder="Venue name"
+                  placeholderTextColor={themeColours.textSecondary}
+                  style={{
+                    borderWidth: 1, borderColor: themeColours.primary, borderRadius: 8,
+                    paddingHorizontal: 10, paddingVertical: 8,
+                    fontSize: 15, color: themeColours.text,
+                    backgroundColor: themeColours.background,
+                  }}
+                />
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={saveVenueName}
+                    disabled={savingVenueName}
+                    style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                  >
+                    {savingVenueName
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setEditingVenueName(false)}
+                    style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                  >
+                    <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                  {venueName || '—'}
+                </Text>
+                {isOwner ? (
+                  <TouchableOpacity onPress={() => { setVenueNameInput(venueName || ''); setEditingVenueName(true); }}>
+                    <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
+          </View>
         </View>
 
         {/* Primary actions */}
