@@ -1,8 +1,9 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Modal,
   ScrollView,
@@ -12,7 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById } from '../../services/products';
@@ -167,6 +168,29 @@ function PathCard({
   );
 }
 
+// ─── Unassigned check (non-critical, silent-fail) ────────────────────────────
+
+async function fetchAssignedProductIds(venueId: string): Promise<{ ids: Set<string>; names: Set<string> }> {
+  const db = getFirestore();
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  try {
+    const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+    await Promise.all(deptsSnap.docs.map(async deptDoc => {
+      const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+      await Promise.all(areasSnap.docs.map(async areaDoc => {
+        const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'));
+        itemsSnap.docs.forEach(d => {
+          const item = d.data() as any;
+          if (item.productId) ids.add(item.productId);
+          if (item.name) names.add((item.name as string).toLowerCase().trim());
+        });
+      }));
+    }));
+  } catch {}
+  return { ids, names };
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ProductsScreen() {
@@ -188,11 +212,54 @@ export default function ProductsScreen() {
   // Barcode scanner
   const [barcodeOpen, setBarcodeOpen] = useState(false);
 
-  async function load() {
+  // Unassigned products
+  const [unassignedIds, setUnassignedIds] = useState<string[]>([]);
+  const [unassignedLoading, setUnassignedLoading] = useState(false);
+  const [unassignedDismissed, setUnassignedDismissed] = useState(false);
+  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
+
+  // Import toast
+  const [importToast, setImportToast] = useState<string | null>(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef<any>(null);
+  const prevRowCount = useRef<number>(-1);
+
+  function showImportToast(msg: string) {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setImportToast(msg);
+    toastAnim.setValue(0);
+    Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    toastTimer.current = setTimeout(() => {
+      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setImportToast(null));
+    }, 4000);
+  }
+
+  async function runUnassignedCheck(products: any[]) {
+    if (!venueId || products.length === 0) { setUnassignedIds([]); return; }
+    setUnassignedLoading(true);
+    try {
+      const { ids, names } = await fetchAssignedProductIds(venueId);
+      const unassigned = products
+        .filter(p => !ids.has(p.id) && !names.has((p.name || '').toLowerCase().trim()))
+        .map(p => p.id);
+      setUnassignedIds(unassigned);
+    } catch {}
+    finally { setUnassignedLoading(false); }
+  }
+
+  async function load(opts?: { silent?: boolean }) {
     if (!venueId) { setRows([]); setLoading(false); return; }
+    if (!opts?.silent) setLoading(true);
     try {
       const data = await listProducts(venueId);
+      // Detect newly added products (from navigation-based imports)
+      if (prevRowCount.current >= 0 && data.length > prevRowCount.current) {
+        const added = data.length - prevRowCount.current;
+        showImportToast(`${added} product${added !== 1 ? 's' : ''} added to your venue. Find them in any area by searching during your stocktake.`);
+      }
+      prevRowCount.current = data.length;
       setRows(data);
+      runUnassignedCheck(data);
     } catch (e: any) {
       Alert.alert('Load Failed', e?.message || 'Unknown error');
     } finally {
@@ -201,6 +268,13 @@ export default function ProductsScreen() {
   }
 
   useEffect(() => { load(); }, [venueId]);
+
+  // Reload when screen comes back into focus (catches navigation-based imports)
+  useFocusEffect(
+    useCallback(() => {
+      if (prevRowCount.current >= 0) load({ silent: true });
+    }, [venueId])
+  );
 
   // Pre-load global suppliers so Card 3 can show "no catalogues" hint immediately
   useEffect(() => {
@@ -235,10 +309,9 @@ export default function ProductsScreen() {
               });
               setCatalogueOpen(false);
               await load();
-              Alert.alert(
-                'Done',
-                `Added ${summary.created} products, updated ${summary.updated}.`
-              );
+              if (summary.created > 0) {
+                showImportToast(`${summary.created} product${summary.created !== 1 ? 's' : ''} added to your venue. Find them in any area by searching during your stocktake.`);
+              }
             } catch (e: any) {
               Alert.alert('Failed', e?.message || 'Could not import catalogue.');
             } finally {
@@ -314,9 +387,14 @@ export default function ProductsScreen() {
   }
 
   const filtered = useMemo(() => {
+    let base = rows;
+    if (showOnlyUnassigned) {
+      const idSet = new Set(unassignedIds);
+      base = base.filter((p: any) => idSet.has(p.id));
+    }
     const needle = q.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((p: any) => {
+    if (!needle) return base;
+    return base.filter((p: any) => {
       const name = (p.name || '').toLowerCase();
       const sku = p.sku ? String(p.sku).toLowerCase() : '';
       const unit = p.unit ? String(p.unit).toLowerCase() : '';
@@ -328,7 +406,7 @@ export default function ProductsScreen() {
         supplier.includes(needle)
       );
     });
-  }, [rows, q]);
+  }, [rows, q, showOnlyUnassigned, unassignedIds]);
 
   if (loading) {
     return (
@@ -344,6 +422,40 @@ export default function ProductsScreen() {
 
   const listHeader = (
     <View style={S.listHeader}>
+      {/* Unassigned products card */}
+      {!unassignedDismissed && unassignedIds.length > 0 && (
+        <View style={S.unassignedCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <Text style={{ fontSize: 20 }}>📦</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={S.unassignedTitle}>
+                {unassignedIds.length} product{unassignedIds.length !== 1 ? 's' : ''} not in a stocktake area yet
+              </Text>
+              <Text style={S.unassignedBody}>
+                Find them during your stocktake by searching in any area — they'll appear ready to add.
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowOnlyUnassigned(v => !v);
+                  if (showOnlyUnassigned) setQ('');
+                }}
+                style={S.unassignedBtn}
+              >
+                <Text style={S.unassignedBtnText}>
+                  {showOnlyUnassigned ? '← Show all products' : 'View unassigned products'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => { setUnassignedDismissed(true); setShowOnlyUnassigned(false); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={{ fontSize: 16, color: '#94a3b8', fontWeight: '600' }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <Text style={S.pageTitle}>Add Products</Text>
       <Text style={S.pageSub}>Choose how you'd like to get your products in</Text>
 
@@ -392,7 +504,11 @@ export default function ProductsScreen() {
       </View>
 
       <View style={S.searchSection}>
-        <Text style={S.searchLabel}>Or search existing products</Text>
+        <Text style={S.searchLabel}>
+          {showOnlyUnassigned
+            ? `Unassigned products (${unassignedIds.length})`
+            : 'Or search existing products'}
+        </Text>
         <TextInput
           value={q}
           onChangeText={setQ}
@@ -402,12 +518,33 @@ export default function ProductsScreen() {
           clearButtonMode="while-editing"
           placeholderTextColor="#9ca3af"
         />
+        {showOnlyUnassigned && (
+          <TouchableOpacity
+            onPress={() => { setShowOnlyUnassigned(false); setQ(''); }}
+            style={{ marginTop: 8, alignSelf: 'flex-start' }}
+          >
+            <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '600' }}>← Show all products</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
 
   return (
     <View style={S.wrap}>
+      {/* Import toast */}
+      {importToast ? (
+        <Animated.View
+          style={[S.importToast, {
+            opacity: toastAnim,
+            transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+          }]}
+          pointerEvents="none"
+        >
+          <Text style={S.importToastText}>{importToast}</Text>
+        </Animated.View>
+      ) : null}
+
       <FlatList
         data={filtered}
         keyExtractor={p => p.id}
@@ -596,6 +733,59 @@ const S = StyleSheet.create({
     fontSize: 14,
     paddingVertical: 24,
     paddingHorizontal: 32,
+  },
+
+  // Unassigned card
+  unassignedCard: {
+    backgroundColor: '#f0fdfa',
+    borderWidth: 1.5,
+    borderColor: '#14b8a6',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 20,
+  },
+  unassignedTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f766e',
+    marginBottom: 4,
+  },
+  unassignedBody: {
+    fontSize: 13,
+    color: '#115e59',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  unassignedBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ccfbf1',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  unassignedBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f766e',
+  },
+
+  // Import toast
+  importToast: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    zIndex: 999,
+    backgroundColor: '#1b4f72',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  importToastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
   },
 });
 
