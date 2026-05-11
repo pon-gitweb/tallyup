@@ -14,6 +14,7 @@ import {
   TextInput,
   FlatList,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
@@ -78,6 +79,7 @@ function NavTile({
 export default function ReportsIndexScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<BriefingData | null>(null);
@@ -345,8 +347,30 @@ export default function ReportsIndexScreen() {
                 <Text style={styles.ctaBtnText}>Start a stocktake</Text>
               </TouchableOpacity>
             </View>
+            {isManager && (
+              <TouchableOpacity
+                style={styles.suiteeBtn}
+                onPress={() => setSuiteeOpen(true)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.suiteeBtnTop}>
+                  <Text style={styles.suiteeBtnTitle}>📊 Ask Suitee</Text>
+                </View>
+                <Text style={styles.suiteeBtnSub}>Ask anything about your venue data</Text>
+              </TouchableOpacity>
+            )}
             {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
           </ScrollView>
+          <SuiteeModal
+            visible={suiteeOpen}
+            messages={suiteeMessages}
+            input={suiteeInput}
+            loading={suiteeLoading}
+            hasData={false}
+            onInputChange={setSuiteeInput}
+            onSend={handleSuiteeSend}
+            onClose={handleSuiteeClose}
+          />
         </View>
       </LocalThemeGate>
     );
@@ -361,7 +385,7 @@ export default function ReportsIndexScreen() {
     <LocalThemeGate>
       <View style={styles.root}>
         <ScreenHeader />
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 
           {/* ── ANCHOR METRIC (owner/manager only) ── */}
           {isManager && (
@@ -631,8 +655,8 @@ export default function ReportsIndexScreen() {
             </TouchableOpacity>
           )}
 
-          {/* ── SUITEE button (owner/manager only, after stocktake) ── */}
-          {isManager && data.hasCountData && (
+          {/* ── SUITEE button (owner/manager only) ── */}
+          {isManager && (
             <TouchableOpacity
               style={styles.suiteeBtn}
               onPress={() => setSuiteeOpen(true)}
@@ -665,6 +689,7 @@ export default function ReportsIndexScreen() {
           messages={suiteeMessages}
           input={suiteeInput}
           loading={suiteeLoading}
+          hasData={data?.hasCountData ?? false}
           onInputChange={setSuiteeInput}
           onSend={handleSuiteeSend}
           onClose={handleSuiteeClose}
@@ -852,6 +877,7 @@ function SuiteeModal({
   messages,
   input,
   loading,
+  hasData,
   onInputChange,
   onSend,
   onClose,
@@ -860,14 +886,16 @@ function SuiteeModal({
   messages: { role: string; text: string }[];
   input: string;
   loading: boolean;
+  hasData: boolean;
   onInputChange: (v: string) => void;
   onSend: () => void;
   onClose: () => void;
 }) {
   const flatRef = React.useRef<FlatList>(null);
+  const noDataMessage = "I don't have any stocktake data to work with yet.\n\nComplete your first stocktake and I'll be able to answer questions about your venue — variance, stock value, slow movers, price changes and more.\n\nOnce you have data I'm here to help you understand it.";
   const displayMessages = messages.length
     ? messages
-    : [{ role: 'assistant', text: 'I have access to your venue data. Ask me anything about stocktake variance, stock holding value, slow movers, or supplier performance.' }];
+    : [{ role: 'assistant', text: hasData ? 'I have access to your venue data. Ask me anything about stocktake variance, stock holding value, slow movers, or supplier performance.' : noDataMessage }];
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>

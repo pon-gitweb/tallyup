@@ -2,8 +2,9 @@
 import React from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
-  StyleSheet, SafeAreaView,
+  StyleSheet,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useColours } from '../context/ThemeContext';
 import IdentityBadge from '../components/IdentityBadge';

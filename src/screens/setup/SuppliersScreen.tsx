@@ -336,7 +336,7 @@ export default function SuppliersScreen() {
     const supplierLabel = (name || '').trim() || 'Uploaded Catalogue';
     try {
       setCatalogueBusy(true);
-      const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      const res = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', '*/*'], copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.length) return;
       const uri = res.assets[0].uri;
       const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });

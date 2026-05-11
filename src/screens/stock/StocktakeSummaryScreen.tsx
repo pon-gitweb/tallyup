@@ -8,7 +8,7 @@
  * When autoSuggestPar is enabled: shows PAR review for items below their level.
  */
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
@@ -170,23 +170,41 @@ function StocktakeSummaryScreen() {
 
   const c = themeColours;
 
+  const isFirst = !baselineLoading && baseline?.isFirstCycle === true;
+
+  const handleShareReport = async () => {
+    try {
+      await Share.share({
+        message: `Stocktake complete at ${venueId ? 'our venue' : departmentName}. ${itemsCounted} products counted. ${totalValue > 0 ? `Stock value: $${totalValue.toFixed(2)}.` : ''}`,
+        title: 'Stocktake Report',
+      });
+    } catch {}
+  };
+
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: '#f5f3ee' }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Hero */}
-      <View style={{ backgroundColor: c.primary, borderRadius: 16, padding: 24, alignItems: 'center', gap: 8 }}>
-        <Text style={{ fontSize: 48 }}>✅</Text>
-        <Text style={{ fontSize: 24, fontWeight: '900', color: c.primaryText }}>Stocktake complete!</Text>
+      <View style={{ backgroundColor: isFirst ? '#1b4f72' : '#0B132B', borderRadius: 16, padding: 24, alignItems: 'center', gap: 8 }}>
+        <Text style={{ fontSize: 48 }}>{isFirst ? '🎉' : '✅'}</Text>
+        <Text style={{ fontSize: 24, fontWeight: '900', color: '#fff' }}>
+          {isFirst ? 'First stocktake complete!' : 'Stocktake complete'}
+        </Text>
         {windowHours > 0 && (
           <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999, marginTop: 4 }}>
-            <Text style={{ color: c.primaryText, fontWeight: '900', fontSize: 18 }}>
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 18 }}>
               ⏱ Done in {formatDuration(windowHours)}
             </Text>
           </View>
         )}
-        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, marginTop: 4 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 14, marginTop: 4 }}>
           {departmentName} · {new Date(submittedAt).toLocaleString('en-NZ')}
         </Text>
+        {isFirst && (
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, textAlign: 'center', marginTop: 4 }}>
+            Well done — your stock is now on record for the first time.
+          </Text>
+        )}
       </View>
 
       {/* Quick stats */}
@@ -194,9 +212,9 @@ function StocktakeSummaryScreen() {
         {[
           { label: 'Items counted', value: itemsCounted, colour: c.success },
           { label: 'Not counted', value: itemsMissed, colour: itemsMissed > 0 ? c.warning : c.success },
-          { label: 'Duration', value: formatDuration(windowHours), colour: c.accent, small: true },
+          { label: 'Duration', value: formatDuration(windowHours), colour: '#1b4f72', small: true },
         ].map((stat, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: c.surface, borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: c.border }}>
+          <View key={i} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' }}>
             <Text style={{ fontSize: stat.small ? 16 : 28, fontWeight: '900', color: stat.colour }}>{stat.value}</Text>
             <Text style={{ color: c.textSecondary, fontSize: 11, textAlign: 'center', marginTop: 2 }}>{stat.label}</Text>
           </View>
@@ -332,25 +350,46 @@ function StocktakeSummaryScreen() {
         </View>
       )}
 
-      {/* What's next */}
-      <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border }}>
-        <Text style={{ fontWeight: '900', color: c.text, marginBottom: 12 }}>What would you like to do next?</Text>
-        {[
-          { icon: '📊', label: 'View variance report', desc: 'See what changed since last stocktake', route: 'Reports' },
-          { icon: '📦', label: 'Place an order', desc: 'AI will suggest what to reorder', route: 'SuggestedOrders' },
-          { icon: '🏠', label: 'Back to dashboard', desc: null, route: 'Dashboard' },
-        ].map((item, i) => (
-          <TouchableOpacity key={i} onPress={() => nav.navigate(item.route as never)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12,
-              borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}>
-            <Text style={{ fontSize: 22 }}>{item.icon}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: '800', color: c.text }}>{item.label}</Text>
-              {item.desc && <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>{item.desc}</Text>}
-            </View>
-            <Text style={{ color: c.textSecondary, fontSize: 18 }}>›</Text>
+      {/* What's next — context-aware CTAs */}
+      <View style={{ gap: 10 }}>
+        {isFirst ? (
+          <TouchableOpacity
+            style={{ backgroundColor: '#1b4f72', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center' }}
+            onPress={() => nav.navigate('StockHolding' as never)}
+          >
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>View stock report →</Text>
           </TouchableOpacity>
-        ))}
+        ) : (
+          <>
+            <TouchableOpacity
+              style={{ backgroundColor: '#1b4f72', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center' }}
+              onPress={() => nav.navigate('Reports' as never)}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>View variance report →</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ backgroundColor: '#fff', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' }}
+              onPress={handleShareReport}
+            >
+              <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 15 }}>Share report</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        <TouchableOpacity
+          style={{ backgroundColor: '#fff', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' }}
+          onPress={handleNewCycle}
+          disabled={resetting}
+        >
+          <Text style={{ color: '#374151', fontWeight: '700', fontSize: 15 }}>
+            {resetting ? 'Resetting…' : 'Start next stocktake'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={{ paddingVertical: 10, alignItems: 'center' }}
+          onPress={() => nav.navigate('Dashboard' as never)}
+        >
+          <Text style={{ color: '#6B7280', fontSize: 13 }}>Back to dashboard</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ height: 20 }} />

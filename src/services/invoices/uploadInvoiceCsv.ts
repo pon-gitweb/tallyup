@@ -7,7 +7,7 @@ import { ensureDevMembership } from '../devBootstrap';
 export async function uploadInvoiceCsv(orderId: string): Promise<{ fullPath: string; downloadURL: string } | null> {
   try {
     const pick = await DocumentPicker.getDocumentAsync({
-      type: 'text/csv',
+      type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', '*/*'],
       multiple: false,
       copyToCacheDirectory: true,
     });

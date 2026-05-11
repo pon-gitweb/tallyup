@@ -15,7 +15,7 @@ export async function pickParseAndUploadProductsCsv(venueId:string): Promise<Upl
   // 1) Pick a file (only .csv)
   const pick = await DocumentPicker.getDocumentAsync({
     multiple: false,
-    type: 'text/csv',
+    type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', '*/*'],
     copyToCacheDirectory: true,
   });
 

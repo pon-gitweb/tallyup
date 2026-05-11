@@ -12,8 +12,8 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';

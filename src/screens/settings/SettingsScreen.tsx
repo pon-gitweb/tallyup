@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import Constants from 'expo-constants';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
 import { FEATURES } from '../../config/features';
 import {
@@ -37,6 +39,7 @@ type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
   const themeColours = useColours();
+  const insets = useSafeAreaInsets();
   const styles = makeStyles(themeColours);
   const onShare = React.useCallback(async () => {
     try {
@@ -877,7 +880,13 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={{ marginTop: 12 }}>
+        <View style={{ marginTop: 12, alignItems: 'center' }}>
+          <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>
+            Hosti v{Constants.expoConfig?.version ?? '—'}
+          </Text>
+        </View>
+
+        <View style={{ marginTop: 8 }}>
           <LegalFooter />
         </View>
 
@@ -974,7 +983,7 @@ export default function SettingsScreen() {
 function makeStyles(c: ReturnType<typeof useColours>) {
   return StyleSheet.create({
     scrollRoot: { flex: 1, backgroundColor: c.background },
-    wrap: { padding: 16, gap: 12, paddingBottom: 40 },
+    wrap: { padding: 16, gap: 12, paddingBottom: 40 + insets.bottom },
     headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { color: c.text, fontSize: 22, fontWeight: '800', marginBottom: 4 },
     card: { backgroundColor: c.surface, padding: 12, borderRadius: 12, gap: 6, borderWidth: 1, borderColor: c.border },

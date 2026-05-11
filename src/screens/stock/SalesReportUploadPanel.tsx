@@ -31,7 +31,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
   const upload = useCallback(async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv'],
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', '*/*'],
         multiple: false,
         copyToCacheDirectory: true,
       });

@@ -36,6 +36,8 @@ type DeptRow = {
   startedAt?: any;
   completedAt?: any;
   status?: 'idle' | 'inprog' | 'done';
+  areasTotal?: number;
+  areasCompleted?: number;
 };
 
 // Derive department-level status from its areas
@@ -67,21 +69,24 @@ async function enrichDepartmentsWithAreaStatus(
 
         let anyStarted = false;
         let allCompleted = true;
+        let areasTotal = 0;
+        let areasCompleted = 0;
 
         snap.forEach((d) => {
           const a: any = d.data();
           const started = !!a.startedAt;
           const completed = !!a.completedAt;
-
+          areasTotal++;
           if (started) anyStarted = true;
           if (!completed) allCompleted = false;
+          if (completed) areasCompleted++;
         });
 
         let derived: 'idle' | 'inprog' | 'done' = 'idle';
         if (allCompleted) derived = 'done';
         else if (anyStarted) derived = 'inprog';
 
-        return { ...row, status: derived };
+        return { ...row, status: derived, areasTotal, areasCompleted };
       } catch (e: any) {
         if (__DEV__) {
           console.log(
@@ -377,6 +382,11 @@ function DepartmentSelectionScreen() {
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+            {item.areasTotal != null && item.areasTotal > 0 && (
+              <Text style={{ fontSize: 11, color: colours.textSecondary }}>
+                {item.areasCompleted ?? 0} of {item.areasTotal} areas complete
+              </Text>
+            )}
           </View>
         </TouchableOpacity>
         {isManager && (

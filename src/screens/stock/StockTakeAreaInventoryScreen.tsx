@@ -1782,7 +1782,8 @@ const openHistory = throttleAction(async (item: Item) => {
       }}>
         {[
           { icon: '➕', label: 'Add', onPress: () => setMoreOpen(true) },
-          { icon: '📷', label: 'Scan', onPress: () => setBarcodeScanOpen(true) },
+          { icon: '📷', label: 'Barcode', onPress: () => setBarcodeScanOpen(true) },
+          { icon: '📸', label: 'Shelf', onPress: () => setCaptureShelfOpen(true) },
           {
             icon: '🎤', label: 'Voice', onPress: () =>
               Alert.alert('Voice counting coming soon!', "You'll be able to say the count out loud and we'll record it automatically. 🎤", [{ text: 'Got it' }])

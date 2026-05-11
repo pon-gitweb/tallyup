@@ -225,7 +225,11 @@ export default function StockHoldingScreen() {
       html += `</table></body></html>`;
 
       const { uri } = await Print.printToFileAsync({ html, base64: false });
-      await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Stock Holding Report' });
+      const safeName = (venueName || 'venue').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+      const isoDate = new Date().toISOString().slice(0, 10);
+      const pdfDest = (FileSystem.cacheDirectory ?? '') + `${safeName}-stocktake-${isoDate}.pdf`;
+      await FileSystem.moveAsync({ from: uri, to: pdfDest }).catch(() => {});
+      await Sharing.shareAsync(pdfDest.startsWith('file') ? pdfDest : uri, { mimeType: 'application/pdf', dialogTitle: 'Stock Holding Report' });
     } catch (e: any) {
       Alert.alert('Export failed', e?.message ?? 'Could not generate PDF');
     } finally {
@@ -253,7 +257,8 @@ export default function StockHoldingScreen() {
           ].join(',') + '\n';
         }
       }
-      const path = FileSystem.cacheDirectory + `stock_holding_${dateStr}.csv`;
+      const safeName = (venueName || 'venue').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+      const path = FileSystem.cacheDirectory + `${safeName}-stocktake-${dateStr}.csv`;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Stock Holding CSV' });
     } catch (e: any) {

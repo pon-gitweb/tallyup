@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
@@ -36,6 +36,8 @@ export default function SignInScreen() {
   };
 
   return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+    <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
     <View style={{ flex:1, padding: 20, justifyContent:'center' }}>
       <Text style={{ fontSize: 24, fontWeight: '700', marginBottom: 16 }}>Hosti</Text>
 
@@ -79,5 +81,7 @@ export default function SignInScreen() {
         Dev prefill is enabled. Change in src/config/devAuth.ts
       </Text>
     </View>
+    </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

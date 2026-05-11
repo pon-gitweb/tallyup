@@ -7,7 +7,7 @@ import { ensureDevMembership } from '../devBootstrap';
 export async function uploadInvoicePdf(orderId: string): Promise<{ fullPath: string; downloadURL: string } | null> {
   try {
     const pick = await DocumentPicker.getDocumentAsync({
-      type: 'application/pdf',
+      type: ['application/pdf', '*/*'],
       multiple: false,
       copyToCacheDirectory: true,
     });

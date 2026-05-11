@@ -170,7 +170,7 @@ export default function OrderDetailScreen() {
   /** CSV: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickCsvAndProcess = useCallback(async ()=>{
     try{
-      const res = await DocumentPicker.getDocumentAsync({ type: 'text/csv', multiple: false, copyToCacheDirectory: true });
+      const res = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', '*/*'], multiple: false, copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       const uri = a.uri || a.file || '';
@@ -267,7 +267,7 @@ export default function OrderDetailScreen() {
   /** PDF: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickPdfAndUpload = useCallback(async ()=>{
     try{
-      const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', multiple: false, copyToCacheDirectory: true });
+      const res = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', '*/*'], multiple: false, copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       const uri = a.uri || a.file || '';
