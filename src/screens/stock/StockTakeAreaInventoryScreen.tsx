@@ -467,8 +467,6 @@ function StockTakeAreaInventoryScreen() {
   const [learnOpen, setLearnOpen] = useState(false);
 
   const [items, setItems] = useState<Item[]>([]);
-  const [filter, setFilter] = useState('');
-  const filterDebounced = useDebouncedValue(filter, 200);
 
   // View prefs (per-area)
   const prefKey = (k: string) => `view:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}:${k}`;
@@ -480,8 +478,12 @@ function StockTakeAreaInventoryScreen() {
   const [showSteppers, setShowSteppers] = useState(true);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
 
-  // More menu
+  // More menu (settings only)
   const [moreOpen, setMoreOpen] = useState(false);
+  // Add product sheet
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  // Quick add manual sub-modal
+  const [quickAddSheetOpen, setQuickAddSheetOpen] = useState(false);
 
   // Smart Shelf Count (existing)
   const [shelfOpen, setShelfOpen] = useState(false);
@@ -718,9 +720,9 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const filteredBase = useMemo(() => {
-    const n = (filterDebounced || '').trim().toLowerCase();
+    const n = (unifiedSearch || '').trim().toLowerCase();
     return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
-  }, [items, filterDebounced]);
+  }, [items, unifiedSearch]);
 
   const filtered = useMemo(() => {
     let rows = filteredBase;
@@ -1699,7 +1701,7 @@ const openHistory = throttleAction(async (item: Item) => {
           />
         )}
         ListHeaderComponent={
-                    <AreaInvHeader
+          <AreaInvHeader
             areaName={areaName}
             isCompact={isCompact}
             dens={dens}
@@ -1708,22 +1710,8 @@ const openHistory = throttleAction(async (item: Item) => {
             offline={offline}
             legendDismissed={legendDismissed}
             dismissLegend={dismissLegend}
-            showExpected={showExpected}
-            setShowExpected={setShowExpected}
-            filter={filter}
-            setFilter={setFilter}
-            addingName={addingName}
-            setAddingName={setAddingName}
-            addingUnit={addingUnit}
-            setAddingUnit={setAddingUnit}
-            addingSupplier={addingSupplier}
-            setAddingSupplier={setAddingSupplier}
-            addingQty={addingQty}                 
-            setAddingQty={setAddingQty}           
-            onAddQuickItem={addQuickItem}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
             onOpenMore={() => setMoreOpen(true)}
-            nameInputRef={nameInputRef}
           />
         }
         ListFooterComponent={<ListFooter />}
@@ -1781,7 +1769,7 @@ const openHistory = throttleAction(async (item: Item) => {
         paddingHorizontal: 4,
       }}>
         {[
-          { icon: '➕', label: 'Add', onPress: () => setMoreOpen(true) },
+          { icon: '➕', label: 'Add', onPress: () => setAddSheetOpen(true) },
           { icon: '📷', label: 'Barcode', onPress: () => setBarcodeScanOpen(true) },
           { icon: '📸', label: 'Shelf', onPress: () => setCaptureShelfOpen(true) },
           {
@@ -2373,13 +2361,12 @@ const openHistory = throttleAction(async (item: Item) => {
         </View>
       </Modal>
 
-      {/* ⋯ More action sheet */}
+      {/* ⋯ More action sheet — view settings only */}
       <Modal visible={moreOpen} animationType="fade" transparent onRequestClose={()=>setMoreOpen(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
-            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>More</Text>
+            <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>View settings</Text>
 
-            {/* Density toggle — global */}
             <TouchableOpacity onPress={()=>setDensity('comfortable')} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>
                 {isCompact ? 'Density: Comfortable' : 'Density: Comfortable ✓'}
@@ -2397,13 +2384,10 @@ const openHistory = throttleAction(async (item: Item) => {
               </Text>
             </TouchableOpacity>
 
-            {/* Standardized export labels */}
-            <TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — Current view</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={exportCsvChangesOnly} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DBEAFE', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Changes only</Text>
+            <TouchableOpacity onPress={()=>setShowExpected(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F1F8E9', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#14532D' }}>
+                {showExpected ? '✓ Show expected (on)' : 'Show expected (off)'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={()=>setCompactCounted(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
@@ -2418,17 +2402,11 @@ const openHistory = throttleAction(async (item: Item) => {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>setShowExpected(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F1F8E9', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#14532D' }}>
-                {showExpected ? '✓ Show expected (on)' : 'Show expected (off)'}
-              </Text>
+            <TouchableOpacity onPress={exportCsvAll} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EFF6FF', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#1D4ED8' }}>Export CSV — Current view</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F0FFF4', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#14532D' }}>📷 Photograph this shelf</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMoreOpen(false); setTimeout(()=>setCaptureProductOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
-              <Text style={{ fontWeight:'800', color:'#92400E' }}>📸 Add product by photo</Text>
+            <TouchableOpacity onPress={exportCsvChangesOnly} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#DBEAFE', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#1E40AF' }}>Export CSV — Changes only</Text>
             </TouchableOpacity>
 
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
@@ -2436,6 +2414,106 @@ const openHistory = throttleAction(async (item: Item) => {
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ➕ Add Product options sheet */}
+      <Modal visible={addSheetOpen} animationType="slide" transparent onRequestClose={()=>setAddSheetOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
+            <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:4 }}>Add a product</Text>
+            <Text style={{ fontSize:13, color:'#64748b', marginBottom:16 }}>Choose how you want to add to this area</Text>
+
+            {[
+              { icon: '🔍', label: 'Search venue products', desc: 'Find a product already in your venue', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setVenueSearchOpen(true), 0); } },
+              { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
+              { icon: '📸', label: 'Photograph product', desc: 'Photo the front of a bottle — AI identifies it', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureProductOpen(true), 0); } },
+              { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
+              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setQuickAddSheetOpen(true); }, 0); } },
+            ].map(opt => (
+              <TouchableOpacity
+                key={opt.label}
+                onPress={opt.onPress}
+                activeOpacity={0.75}
+                style={{ flexDirection:'row', alignItems:'center', gap:12, paddingVertical:12, borderTopWidth:1, borderTopColor:'#f1f5f9' }}
+              >
+                <View style={{ width:40, height:40, borderRadius:20, backgroundColor:'#f0f9ff', alignItems:'center', justifyContent:'center' }}>
+                  <Text style={{ fontSize:18 }}>{opt.icon}</Text>
+                </View>
+                <View style={{ flex:1 }}>
+                  <Text style={{ fontSize:14, fontWeight:'700', color:'#0f172a' }}>{opt.label}</Text>
+                  <Text style={{ fontSize:12, color:'#64748b', marginTop:1 }}>{opt.desc}</Text>
+                </View>
+                <Text style={{ fontSize:18, color:'#cbd5e1' }}>›</Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity onPress={()=>setAddSheetOpen(false)} style={{ marginTop:12, paddingVertical:12, backgroundColor:'#f1f5f9', borderRadius:12, alignItems:'center' }}>
+              <Text style={{ fontWeight:'700', color:'#374151' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ✏️ Quick Add manual sub-modal */}
+      <Modal visible={quickAddSheetOpen} animationType="slide" transparent onRequestClose={()=>setQuickAddSheetOpen(false)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
+            <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
+
+            <TextInput
+              ref={nameInputRef}
+              value={addingName}
+              onChangeText={setAddingName}
+              placeholder="Product name (required)"
+              autoFocus
+              style={{
+                borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                paddingHorizontal:12, paddingVertical:10, fontSize:15,
+                color:'#0f172a', marginBottom:10,
+              }}
+              returnKeyType="next"
+              blurOnSubmit={false}
+            />
+
+            <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+              <TextInput
+                value={addingUnit}
+                onChangeText={setAddingUnit}
+                placeholder="Unit (e.g. bottles)"
+                style={{
+                  flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                  paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
+                }}
+                returnKeyType="next"
+                blurOnSubmit={false}
+              />
+              <TextInput
+                value={addingQty}
+                onChangeText={setAddingQty}
+                placeholder="Count now"
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                style={{
+                  flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                  paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
+                }}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
+              />
+            </View>
+
+            <TouchableOpacity
+              onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
+              style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
+            >
+              <Text style={{ color:'#fff', fontWeight:'800', fontSize:15 }}>Add to area</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>setQuickAddSheetOpen(false)} style={{ paddingVertical:12, alignItems:'center' }}>
+              <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

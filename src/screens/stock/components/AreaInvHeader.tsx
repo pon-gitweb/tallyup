@@ -1,9 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity } from 'react-native';
-import SearchBarDebounced from '../../../components/SearchBarDebounced';
-import ProductSearchAdd from './ProductSearchAdd';
-import BarcodeScannerModal from './BarcodeScannerModal';
+import { View, Text, TouchableOpacity } from 'react-native';
 
 type Stats = {
   countedCount: number;
@@ -25,36 +22,9 @@ type Props = {
   legendDismissed: boolean;
   dismissLegend: () => void;
 
-  showExpected: boolean;
-  setShowExpected: (v: boolean) => void;
-
-  filter: string;
-  setFilter: (s: string) => void;
-
-  addingName: string;
-  setAddingName: (s: string) => void;
-  addingUnit: string;
-  setAddingUnit: (s: string) => void;
-  addingSupplier: string;
-  setAddingSupplier: (s: string) => void;
-
-  // NEW: qty on quick add
-  addingQty: string;
-  setAddingQty: (s: string) => void;
-
-  onAddQuickItem: () => void;
-  onSelectProduct?: (product: any) => void;
-  onAddNewProduct?: (name: string) => void;
-  venueId?: string | null;
-  onOpenBatchModal?: () => void;
-  onOpenBarcodeScanner?: () => void;
-
   stats: Stats;
   onOpenMore: () => void;
 
-  nameInputRef: any;
-
-  // New: live presence summary, e.g. "Also here: Chris + 1 other"
   presenceLabel?: string | null;
 };
 
@@ -69,27 +39,8 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
   offline,
   legendDismissed,
   dismissLegend,
-  showExpected,
-  setShowExpected,
-  filter,
-  setFilter,
-  addingName,
-  setAddingName,
-  addingUnit,
-  setAddingUnit,
-  addingSupplier,
-  setAddingSupplier,
-  addingQty,
-  setAddingQty,
-  onAddQuickItem,
-  onSelectProduct,
-  onAddNewProduct,
-  venueId,
-  onOpenBatchModal,
-  onOpenBarcodeScanner,
   stats,
   onOpenMore,
-  nameInputRef,
   presenceLabel,
 }: Props) {
   return (
@@ -165,7 +116,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
           </View>
         </View>
 
-        {/* Presence pill when other users are also in this area */}
+        {/* Presence pill */}
         {presenceLabel ? (
           <View
             style={{
@@ -177,18 +128,13 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
               backgroundColor: '#EEF2FF',
             }}
           >
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '700',
-                color: '#3730A3',
-              }}
-            >
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#3730A3' }}>
               {presenceLabel}
             </Text>
           </View>
         ) : null}
 
+        {/* Offline banner */}
         {offline ? (
           <View
             style={{
@@ -206,6 +152,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
           </View>
         ) : null}
 
+        {/* Tip legend */}
         {!legendDismissed ? (
           <View
             style={{
@@ -218,7 +165,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
           >
             <Text style={{ color: '#1E3A8A', fontWeight: '700' }}>Tip</Text>
             <Text style={{ color: '#1E3A8A' }}>
-              “Expected” is our guidance based on last count and movements. Type
+              "Expected" is our guidance based on last count and movements. Type
               your Count and press Save (or Approve now).
             </Text>
             <TouchableOpacity
@@ -232,165 +179,10 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
                 borderRadius: 8,
               }}
             >
-              <Text style={{ color: '#1E3A8A', fontWeight: '700' }}>
-                Got it
-              </Text>
+              <Text style={{ color: '#1E3A8A', fontWeight: '700' }}>Got it</Text>
             </TouchableOpacity>
           </View>
         ) : null}
-
-        {/* Search + toggle */}
-        <View
-          style={{
-            flexDirection: 'row',
-            gap: 8,
-            alignItems: 'center',
-            flexWrap: 'wrap',
-          }}
-        >
-          <View style={{ flex: 1 }}>
-            <SearchBarDebounced
-              value={filter}
-              onChangeText={setFilter}
-              onDebouncedChange={setFilter}
-              placeholder="Search items…"
-              debounceMs={200}
-            />
-          </View>
-          <TouchableOpacity
-            onPress={() => setShowExpected(!showExpected)}
-            style={{
-              paddingVertical: dens(8),
-              paddingHorizontal: dens(12),
-              borderRadius: 10,
-              backgroundColor: '#F1F8E9',
-            }}
-          >
-            <Text style={{ color: '#558B2F', fontWeight: '700' }}>
-              {showExpected ? 'Hide expected' : 'Show expected'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Quick Add */}
-        <View style={{ gap: 8 }}>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <TextInput
-              ref={nameInputRef}
-              value={addingName}
-              onChangeText={setAddingName}
-              placeholder="Quick add item name"
-              style={{
-                flex: 1,
-                paddingVertical: dens(8),
-                paddingHorizontal: dens(12),
-                borderWidth: 1,
-                borderColor: '#ccc',
-                borderRadius: 12,
-                height: Math.max(40, dens(40)),
-              }}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              onSubmitEditing={onAddQuickItem}
-            />
-            <TouchableOpacity
-              onPress={onAddQuickItem}
-              style={{
-                backgroundColor: '#0A84FF',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 12,
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800' }}>Add</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onOpenBatchModal}
-              style={{
-                backgroundColor: '#7C3AED',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 12,
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800' }}>Batch</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onOpenBarcodeScanner}
-              style={{
-                backgroundColor: '#065F46',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 12,
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800' }}>📷</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TextInput
-              value={addingUnit}
-              onChangeText={setAddingUnit}
-              placeholder="Unit (e.g. bottles, kg)"
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderWidth: 1,
-                borderColor: '#ddd',
-                borderRadius: 10,
-              }}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              onSubmitEditing={onAddQuickItem}
-            />
-            <TextInput
-              value={addingSupplier}
-              onChangeText={setAddingSupplier}
-              placeholder="Supplier"
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderWidth: 1,
-                borderColor: '#ddd',
-                borderRadius: 10,
-              }}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              onSubmitEditing={onAddQuickItem}
-            />
-          </View>
-
-          {/* Qty for quick-add */}
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TextInput
-              value={addingQty}
-              onChangeText={setAddingQty}
-              placeholder="Current count (optional)"
-              keyboardType="decimal-pad"
-              inputMode="decimal"
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderWidth: 1,
-                borderColor: '#ddd',
-                borderRadius: 10,
-              }}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              onSubmitEditing={onAddQuickItem}
-            />
-          </View>
-        </View>
       </View>
     </View>
   );
