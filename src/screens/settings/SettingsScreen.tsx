@@ -39,7 +39,7 @@ type MemberDoc = { role?: string };
 
 export default function SettingsScreen() {
   const themeColours = useColours();
-  const insets = useSafeAreaInsets();
+  const insets = useSafeAreaInsets() ?? { bottom: 0, top: 0 };
   const styles = makeStyles(themeColours);
   const onShare = React.useCallback(async () => {
     try {
@@ -379,7 +379,7 @@ export default function SettingsScreen() {
       >
       <ScrollView
         style={styles.scrollRoot}
-        contentContainerStyle={styles.wrap}
+        contentContainerStyle={[styles.wrap, { paddingBottom: 40 + (insets?.bottom ?? 0) }]}
         keyboardShouldPersistTaps="handled"
       >
         {/* Header with badge */}
@@ -983,7 +983,7 @@ export default function SettingsScreen() {
 function makeStyles(c: ReturnType<typeof useColours>) {
   return StyleSheet.create({
     scrollRoot: { flex: 1, backgroundColor: c.background },
-    wrap: { padding: 16, gap: 12, paddingBottom: 40 + insets.bottom },
+    wrap: { padding: 16, gap: 12, paddingBottom: 40 },
     headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { color: c.text, fontSize: 22, fontWeight: '800', marginBottom: 4 },
     card: { backgroundColor: c.surface, padding: 12, borderRadius: 12, gap: 6, borderWidth: 1, borderColor: c.border },
