@@ -7,25 +7,19 @@ import React, {
   useState,
 } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  TextInput,
-  RefreshControl,
-  ActivityIndicator,
-  Alert,
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  TextInput, RefreshControl, ActivityIndicator, Alert,
+  Modal, Pressable,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import { db } from '../../services/firebase';
 import {
-  collection,
-  onSnapshot,
-  getDocs,
+  collection, onSnapshot, getDocs,
+  addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
@@ -116,6 +110,72 @@ function DepartmentSelectionScreen() {
   const [departments, setDepartments] = useState<DeptRow[]>([]);
   const [q, setQ] = useState('');
   const dq = useDebouncedValue(q, 150);
+
+  // Role gate
+  const [isManager, setIsManager] = useState(false);
+  useEffect(() => {
+    const uid = getAuth().currentUser?.uid;
+    if (!venueId || !uid) return;
+    (async () => {
+      try {
+        const { getDoc: gd } = await import('firebase/firestore');
+        const venueSnap = await gd(doc(db, 'venues', venueId));
+        const ownerUid = (venueSnap.data() as any)?.ownerUid;
+        if (ownerUid === uid) { setIsManager(true); return; }
+        const memberSnap = await gd(doc(db, 'venues', venueId, 'members', uid));
+        const role = (memberSnap.data() as any)?.role;
+        setIsManager(role === 'manager' || role === 'owner');
+      } catch {}
+    })();
+  }, [venueId]);
+
+  // CRUD modal state
+  const [showEdit, setShowEdit] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  function openCreate() { setEditId(null); setEditName(''); setShowEdit(true); }
+  function openRename(d: DeptRow) { setEditId(d.id); setEditName(d.name || ''); setShowEdit(true); }
+
+  async function onSave() {
+    const name = editName.trim();
+    if (!name) { Alert.alert('Name required', 'Enter a department name.'); return; }
+    setSaving(true);
+    try {
+      if (editId) {
+        await updateDoc(doc(db, 'venues', venueId, 'departments', editId), { name, updatedAt: serverTimestamp() });
+      } else {
+        const now = serverTimestamp();
+        await addDoc(collection(db, 'venues', venueId, 'departments'), { name, createdAt: now, updatedAt: now });
+      }
+      setShowEdit(false);
+    } catch (e: any) {
+      Alert.alert('Save failed', e?.message ?? 'Unknown error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onDelete(d: DeptRow) {
+    await new Promise<void>(resolve =>
+      Alert.alert(
+        `Delete ${d.name}?`,
+        'This will remove all areas inside it.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: resolve },
+          { text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'venues', venueId, 'departments', d.id));
+            } catch (e: any) {
+              Alert.alert('Delete failed', e?.message ?? 'Unknown error');
+            }
+            resolve();
+          }},
+        ]
+      )
+    );
+  }
 
   // Ensure we only try to seed once per mount to avoid loops
   const seedTriedRef = useRef(false);
@@ -306,28 +366,39 @@ function DepartmentSelectionScreen() {
         : styles.pillIdle;
 
     return (
-      <TouchableOpacity
-        style={styles.row}
-        onPress={() => openDepartment(item)}
-        onLongPress={() => resetDept(item)}
-        delayLongPress={500}
-        activeOpacity={0.9}
-      >
-        <View style={{ flex: 1, paddingRight: 10 }}>
+      <View style={[styles.row, { paddingRight: 8 }]}>
+        <TouchableOpacity
+          style={{ flex: 1, paddingRight: 8 }}
+          onPress={() => openDepartment(item)}
+          onLongPress={() => isManager ? openRename(item) : resetDept(item)}
+          delayLongPress={500}
+          activeOpacity={0.9}
+        >
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              marginTop: 4,
-            }}
-          >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
+        {isManager && (
+          <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+            <TouchableOpacity
+              onPress={() => openRename(item)}
+              style={{ padding: 8 }}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onDelete(item)}
+              style={{ padding: 8 }}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+            </TouchableOpacity>
+          </View>
+        )}
         <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -351,11 +422,21 @@ function DepartmentSelectionScreen() {
     <View style={styles.wrap}>
       {/* Header */}
       <View style={styles.headerRow}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.title}>Departments</Text>
           <Text style={styles.sub}>Choose a department to start counting</Text>
         </View>
-        <IdentityBadge />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isManager && (
+            <TouchableOpacity
+              onPress={openCreate}
+              style={{ backgroundColor: colours.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+            >
+              <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>+ Add</Text>
+            </TouchableOpacity>
+          )}
+          <IdentityBadge />
+        </View>
       </View>
 
       {/* Search */}
@@ -401,6 +482,35 @@ function DepartmentSelectionScreen() {
           contentContainerStyle={{ paddingBottom: 40 }}
         />
       )}
+
+      {/* Add / Rename modal */}
+      <Modal visible={showEdit} transparent animationType="fade" onRequestClose={() => setShowEdit(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setShowEdit(false)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 14, padding: 20, width: '100%', gap: 12 }} onPress={() => {}}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+              {editId ? 'Rename department' : 'New department'}
+            </Text>
+            <TextInput
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Department name"
+              placeholderTextColor="#94a3b8"
+              autoFocus
+              style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: '#0f172a' }}
+              returnKeyType="done"
+              onSubmitEditing={onSave}
+            />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: '#f1f5f9', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }} onPress={() => setShowEdit(false)}>
+                <Text style={{ fontWeight: '700', color: '#374151' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: '#1b4f72', borderRadius: 10, paddingVertical: 12, alignItems: 'center', opacity: saving ? 0.6 : 1 }} onPress={onSave} disabled={saving}>
+                <Text style={{ fontWeight: '700', color: '#fff' }}>{saving ? 'Saving…' : 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

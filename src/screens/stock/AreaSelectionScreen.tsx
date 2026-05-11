@@ -74,6 +74,51 @@ function AreaSelectionInner() {
   const [adding, setAdding] = useState(false);
   const didAlertRef = useRef(false);
 
+  // Role gate
+  const [isManager, setIsManager] = useState(false);
+  useEffect(() => {
+    if (!venueId || !uid) return;
+    (async () => {
+      try {
+        const { getDoc: gd } = await import('firebase/firestore');
+        const venueSnap = await gd(doc(db, 'venues', venueId));
+        const ownerUid = (venueSnap.data() as any)?.ownerUid;
+        if (ownerUid === uid) { setIsManager(true); return; }
+        const memberSnap = await gd(doc(db, 'venues', venueId, 'members', uid));
+        const role = (memberSnap.data() as any)?.role;
+        setIsManager(role === 'manager' || role === 'owner');
+      } catch {}
+    })();
+  }, [venueId, uid]);
+
+  // Rename state
+  const [showRename, setShowRename] = useState(false);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renaming, setRenaming] = useState(false);
+
+  function openRename(area: AreaRow) {
+    setRenameId(area.id);
+    setRenameName(area.name || '');
+    setShowRename(true);
+  }
+
+  async function doRename() {
+    const name = renameName.trim();
+    if (!name) { Alert.alert('Name required', 'Enter an area name.'); return; }
+    setRenaming(true);
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', renameId!), {
+        name, updatedAt: serverTimestamp(),
+      });
+      setShowRename(false);
+    } catch (e: any) {
+      Alert.alert('Rename failed', e?.message || 'Unknown error');
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   // If nav is broken or missing params, show a safe fallback instead of crashing
   const paramsMissing = !venueId || !departmentId;
 
@@ -138,19 +183,23 @@ function AreaSelectionInner() {
     nav.navigate('AreaInventory', { venueId, departmentId, areaId: area.id });
   }, [nav, venueId, departmentId, uid]);
 
-  const deleteArea = useCallback(async (id: string) => {
-    Alert.alert('Delete area?', 'This removes the area and its items.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
-          } catch (e:any) {
-            Alert.alert('Delete failed', e?.message || 'Unknown error');
+  const deleteArea = useCallback(async (id: string, name: string) => {
+    Alert.alert(
+      `Delete ${name}?`,
+      'Any counted stock in this area will be lost.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
+            } catch (e:any) {
+              Alert.alert('Delete failed', e?.message || 'Unknown error');
+            }
           }
         }
-      }
-    ]);
+      ]
+    );
   }, [venueId, departmentId]);
 
   async function addArea() {
@@ -229,44 +278,36 @@ function AreaSelectionInner() {
     const lockedByMe = !!lockUid && lockUid === uid;
 
     return (
-      <TouchableOpacity
-        style={[
-          styles.row,
-          lockedByOther && { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' },
-        ]}
-        onPress={() => openArea(item)}
-        onLongPress={() => deleteArea(item.id)}
-        disabled={lockedByOther}
-      >
-        <View style={{ flex: 1, paddingRight: 10 }}>
+      <View style={[styles.row, lockedByOther && { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
+        <TouchableOpacity
+          style={{ flex: 1, paddingRight: 8 }}
+          onPress={() => openArea(item)}
+          disabled={lockedByOther}
+        >
           <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              marginTop: 4,
-              flexWrap: 'wrap',
-            }}
-          >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
             <Stars status={status} />
             <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
-
             {lockedByOther && status !== 'done' && (
-              <Text style={[styles.pill, styles.pillLocked]}>
-                In use by {lockName || 'another user'}
-              </Text>
+              <Text style={[styles.pill, styles.pillLocked]}>In use by {lockName || 'another user'}</Text>
             )}
-
             {lockedByMe && status !== 'done' && (
-              <Text style={[styles.pill, styles.pillMine]}>
-                You are in this area
-              </Text>
+              <Text style={[styles.pill, styles.pillMine]}>You are in this area</Text>
             )}
           </View>
-        </View>
+        </TouchableOpacity>
+        {isManager && (
+          <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
+            <TouchableOpacity onPress={() => openRename(item)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+              <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => deleteArea(item.id, item.name || item.id)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+              <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+            </TouchableOpacity>
+          </View>
+        )}
         <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -339,12 +380,11 @@ function AreaSelectionInner() {
           returnKeyType="search"
           blurOnSubmit={false}
         />
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => setShowAdd(true)}>
-          <Text style={styles.primaryText}>Add Area</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.smallBtn} onPress={fixLegacyNulls}>
-          <Text style={styles.smallText}>Fix</Text>
-        </TouchableOpacity>
+        {isManager && (
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => setShowAdd(true)}>
+            <Text style={styles.primaryText}>+ Add</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* List */}
@@ -381,6 +421,7 @@ function AreaSelectionInner() {
               autoCorrect={false}
               autoCapitalize="words"
               returnKeyType="done"
+              onSubmitEditing={addArea}
             />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
               <TouchableOpacity style={styles.secondaryBtn} disabled={adding} onPress={() => setShowAdd(false)}>
@@ -388,6 +429,35 @@ function AreaSelectionInner() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.primaryBtn} disabled={adding} onPress={addArea}>
                 <Text style={styles.primaryText}>{adding ? 'Adding…' : 'Add'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Rename Modal */}
+      <Modal visible={showRename} transparent animationType="fade" onRequestClose={() => setShowRename(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowRename(false)}>
+          <Pressable style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Rename Area</Text>
+            <TextInput
+              value={renameName}
+              onChangeText={setRenameName}
+              placeholder="Area name"
+              placeholderTextColor="#94A3B8"
+              style={styles.modalInput}
+              autoCorrect={false}
+              autoCapitalize="words"
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={doRename}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity style={styles.secondaryBtn} disabled={renaming} onPress={() => setShowRename(false)}>
+                <Text style={styles.secondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.primaryBtn} disabled={renaming} onPress={doRename}>
+                <Text style={styles.primaryText}>{renaming ? 'Saving…' : 'Save'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
