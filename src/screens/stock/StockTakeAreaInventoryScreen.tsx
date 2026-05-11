@@ -163,6 +163,8 @@ const Row = React.memo(function Row({
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
         backgroundColor: hasLocalEntry ? '#FFFFFF' : '#F9FAFB',
+        borderLeftWidth: hasLocalEntry ? 3 : 0,
+        borderLeftColor: '#1b4f72',
       }}
     >
       {/* Single row: product info left (flex:1) + count controls right */}
@@ -495,6 +497,20 @@ function StockTakeAreaInventoryScreen() {
   const [barcodeScanOpen, setBarcodeScanOpen] = useState(false);
   const [photoModalBarcode, setPhotoModalBarcode] = useState<string | null>(null);
 
+  // Unified search
+  const [unifiedSearch, setUnifiedSearch] = useState('');
+  const [venueProducts, setVenueProducts] = useState<any[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const bannerAnim = useRef(new Animated.Value(0)).current;
+
+  // Load venue products once for tier-2 search
+  useEffect(() => {
+    if (!venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+      setVenueProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    }).catch(() => {});
+  }, [venueId]);
+
   // Persist/restore view prefs
   useEffect(() => { (async () => {
     if (!AS) return;
@@ -728,6 +744,21 @@ function StockTakeAreaInventoryScreen() {
   const flaggedCount = items.filter((it)=>!!it.flagRecount).length;
   const progressPct = items.length ? Math.round((countedCount / items.length) * 100) : 0;
 
+  // Completion banner
+  const allCounted = items.length > 0 && countedCount === items.length;
+  const showBanner = allCounted && !bannerDismissed;
+  useEffect(() => {
+    Animated.timing(bannerAnim, {
+      toValue: showBanner ? 1 : 0,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }, [showBanner]);
+  useEffect(() => {
+    // Reset dismiss when items change (user adds more uncounted products)
+    if (!allCounted) setBannerDismissed(false);
+  }, [allCounted]);
+
   const lastActivityDate: Date | null = useMemo(() => {
     let last: Date | null = null;
     for (const it of items) {
@@ -941,12 +972,13 @@ const qty = parseFloat(typed);
     console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
     Alert.alert('Added', `”${nm}” was added to this area.`);
 
-    // Clear only the name & qty so the user can keep their preferred unit/supplier
+    // Clear name, qty, supplier — keep unit (user likely counting same type of product)
     setAddingName('');
     setAddingQty('');
+    setAddingSupplier('');
 
-    // Remember their preferred unit / supplier locally for next adds
-    rememberQuickAdd(unit, supplier);
+    // Persist unit preference only
+    rememberQuickAdd(unit, '');
 
     hapticSuccess?.();
   } catch (e: any) {
@@ -1523,13 +1555,127 @@ const openHistory = throttleAction(async (item: Item) => {
     </View>
   );
 
+  // Unified search tiers
+  const uTerm = unifiedSearch.trim().toLowerCase();
+  const uTier1 = uTerm ? items.filter(it => (it.name || '').toLowerCase().includes(uTerm)) : [];
+  const areaItemIds = new Set(items.map(it => it.id));
+  const areaItemNames = new Set(items.map(it => (it.name || '').toLowerCase()));
+  const uTier2 = uTerm
+    ? venueProducts.filter(
+        p => (p.name || '').toLowerCase().includes(uTerm) &&
+             !areaItemIds.has(p.id) &&
+             !areaItemNames.has((p.name || '').toLowerCase())
+      ).slice(0, 5)
+    : [];
+
+  async function addTier2ToArea(product: any) {
+    if (!venueId || !departmentId || !areaId) return;
+    try {
+      const iRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', product.id);
+      await setDoc(iRef, {
+        name: product.name,
+        unit: product.unit ?? null,
+        costPrice: product.costPrice ?? null,
+        productId: product.id,
+        lastCount: null,
+        lastCountAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      setUnifiedSearch('');
+    } catch (e: any) {
+      Alert.alert('Could not add', e?.message || 'Please try again.');
+    }
+  }
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <HintBubble id="stocktake_save_indicator" style={{ marginHorizontal: 12, marginTop: 8 }} />
+
+      {/* Unified search bar + dropdown */}
+      <View style={{ marginHorizontal: 12, marginBottom: 2, zIndex: 200 }}>
+        <TextInput
+          value={unifiedSearch}
+          onChangeText={setUnifiedSearch}
+          placeholder="Find or add a product…"
+          placeholderTextColor="#94a3b8"
+          style={{
+            backgroundColor: '#f8fafc', borderRadius: 10, paddingHorizontal: 12,
+            paddingVertical: 9, fontSize: 14, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a',
+          }}
+          clearButtonMode="while-editing"
+          returnKeyType="search"
+        />
+        {unifiedSearch.trim().length > 0 && (
+          <View style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 300,
+            backgroundColor: '#fff', borderRadius: 10, marginTop: 4,
+            borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 300,
+            shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, elevation: 8,
+          }}>
+            {/* Tier 1 — In this area */}
+            {uTier1.length > 0 && (
+              <>
+                <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748b', textTransform: 'uppercase', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>In this area</Text>
+                {uTier1.slice(0, 5).map(it => (
+                  <TouchableOpacity
+                    key={it.id}
+                    onPress={() => {
+                      setUnifiedSearch('');
+                      const idx = filtered.findIndex(x => x.id === it.id);
+                      if (idx >= 0) listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+                    }}
+                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                  >
+                    <Text style={{ fontWeight: '600', color: '#0f172a' }}>{it.name}</Text>
+                    {it.unit ? <Text style={{ fontSize: 11, color: '#94a3b8' }}>{it.unit}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            {/* Tier 2 — In venue, not in this area */}
+            {uTier2.length > 0 && (
+              <>
+                <Text style={{ fontSize: 10, fontWeight: '800', color: '#1b4f72', textTransform: 'uppercase', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>Add to this area</Text>
+                {uTier2.map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    onPress={() => addTier2ToArea(p)}
+                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <View>
+                      <Text style={{ fontWeight: '600', color: '#0f172a' }}>{p.name}</Text>
+                      {p.unit ? <Text style={{ fontSize: 11, color: '#94a3b8' }}>{p.unit}</Text> : null}
+                    </View>
+                    <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>+ Add</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            {/* Tier 3 — Not found */}
+            {uTier1.length === 0 && uTier2.length === 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  const term = unifiedSearch.trim();
+                  setUnifiedSearch('');
+                  setAddingName(term);
+                  setTimeout(() => nameInputRef.current?.focus(), 100);
+                }}
+                style={{ paddingHorizontal: 12, paddingVertical: 12 }}
+              >
+                <Text style={{ color: '#1b4f72', fontWeight: '700' }}>+ Add "{unifiedSearch.trim()}" as new product</Text>
+                <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Opens quick add with name pre-filled</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </View>
+
       <FlatList
         ref={listRef}
         data={filtered}
         keyExtractor={(item) => item.id}
+        style={{ flex: 1 }}
         renderItem={({ item }) => (
           <Row
             item={item}
@@ -1592,6 +1738,68 @@ const openHistory = throttleAction(async (item: Item) => {
           }
         }}
       />
+
+      {/* Completion banner */}
+      <Animated.View style={{
+        transform: [{ translateY: bannerAnim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }],
+        opacity: bannerAnim,
+        backgroundColor: '#1b4f72',
+        borderTopLeftRadius: 14, borderTopRightRadius: 14,
+        paddingHorizontal: 16, paddingVertical: 12,
+        display: showBanner ? 'flex' : 'none',
+      }}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15, marginBottom: 2 }}>
+          ✓ {areaName || 'Area'} looking complete
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, marginBottom: 10 }}>
+          {countedCount} product{countedCount !== 1 ? 's' : ''} counted
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: '#fff', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+            onPress={openReview}
+            disabled={submittingArea}
+          >
+            <Text style={{ color: '#1b4f72', fontWeight: '800', fontSize: 13 }}>
+              {submittingArea ? 'Submitting…' : 'Submit this area'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+            onPress={() => setBannerDismissed(true)}
+          >
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '600', fontSize: 13 }}>Keep counting</Text>
+          </TouchableOpacity>
+        </View>
+      </Animated.View>
+
+      {/* Anchored bottom bar */}
+      <View style={{
+        flexDirection: 'row', backgroundColor: '#f5f3ee',
+        borderTopWidth: 1, borderTopColor: '#e5e1d8',
+        paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 8 : 12,
+        paddingHorizontal: 4,
+      }}>
+        {[
+          { icon: '➕', label: 'Add', onPress: () => setMoreOpen(true) },
+          { icon: '📷', label: 'Scan', onPress: () => setBarcodeScanOpen(true) },
+          {
+            icon: '🎤', label: 'Voice', onPress: () =>
+              Alert.alert('Voice counting coming soon!', "You'll be able to say the count out loud and we'll record it automatically. 🎤", [{ text: 'Got it' }])
+          },
+          { icon: '⚡', label: 'Scale', onPress: () => nav.navigate('ScaleSettings' as never) },
+        ].map(btn => (
+          <TouchableOpacity
+            key={btn.label}
+            onPress={btn.onPress}
+            activeOpacity={0.7}
+            style={{ flex: 1, alignItems: 'center', paddingVertical: 4 }}
+          >
+            <Text style={{ fontSize: 20 }}>{btn.icon}</Text>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: '#1b4f72', marginTop: 2 }}>{btn.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>

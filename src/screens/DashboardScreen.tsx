@@ -16,10 +16,8 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
-import IdentityBadge from '../components/IdentityBadge';
-import { friendlyIdentity, useVenueInfo } from '../hooks/useIdentityLabels';
 import { updateDoc } from 'firebase/firestore';
 
 const NUDGE_KEYS = {
@@ -64,13 +62,35 @@ export default function DashboardScreen() {
   const currentUid = auth.currentUser?.uid ?? null;
   const user = auth.currentUser;
   const venueId = useVenueId();
-  const { name: venueName } = useVenueInfo(venueId);
-  const friendly = useMemo(() => {
-    return friendlyIdentity(
-      { displayName: user?.displayName ?? null, email: user?.email ?? null, uid: user?.uid ?? null },
-      { name: venueName ?? null, venueId: venueId ?? null }
-    );
-  }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
+
+  // Live display name — read from users/{uid} so updates in Settings reflect immediately
+  const [liveDisplayName, setLiveDisplayName] = React.useState<string>(
+    user?.displayName || ''
+  );
+  React.useEffect(() => {
+    if (!user?.uid) return;
+    const db = getFirestore();
+    const unsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+      if (snap.exists()) {
+        const dn = snap.data()?.displayName || user?.displayName || '';
+        setLiveDisplayName(dn);
+      }
+    });
+    return () => unsub();
+  }, [user?.uid]);
+
+  // Live venue name — read from venues/{venueId}
+  const [liveVenueName, setLiveVenueName] = React.useState<string>('');
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    const unsub = onSnapshot(doc(db, 'venues', venueId), (snap) => {
+      if (snap.exists()) setLiveVenueName(snap.data()?.name || '');
+    });
+    return () => unsub();
+  }, [venueId]);
+
+  const venueName = liveVenueName;
 
   const [busy, setBusy] = useState(false);
   const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string;startedAt?:number;lockedBy?:string|null} | null>(null);
@@ -192,7 +212,7 @@ export default function DashboardScreen() {
     ? `Good afternoon`
     : `Good evening`;
 
-  const firstName = user?.displayName?.split(' ')[0] || friendly || '';
+  const firstName = (liveDisplayName || user?.email || '').split(' ')[0] || '';
 
   // Primary action card state
   const primaryState: 'none' | 'inProgress' | 'done' =
@@ -246,7 +266,6 @@ export default function DashboardScreen() {
             {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
           </View>
           {theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
-          <IdentityBadge />
         </View>
 
         <OfflineBanner />

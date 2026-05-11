@@ -729,7 +729,6 @@ function ScreenHeader() {
         <Text style={styles.headerTitle}>Briefing</Text>
         <Text style={styles.headerSub}>What happened. What it means. What to do.</Text>
       </View>
-      <IdentityBadge align="right" />
     </View>
   );
 }

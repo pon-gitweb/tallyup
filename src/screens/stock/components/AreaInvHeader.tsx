@@ -374,7 +374,7 @@ const AreaInvHeader = React.memo(function AreaInvHeader({
             <TextInput
               value={addingQty}
               onChangeText={setAddingQty}
-              placeholder="Qty now (optional)"
+              placeholder="Current count (optional)"
               keyboardType="decimal-pad"
               inputMode="decimal"
               style={{
