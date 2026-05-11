@@ -128,7 +128,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         Sales Reports (CSV Import)
       </Text>
       <Text style={{ color: '#6B7280', marginBottom: 16, lineHeight: 20 }}>
-        Import a POS sales report as CSV. Once saved, Hosti-Stock uses this data for
+        Import a POS sales report as CSV. Once saved, Hosti uses this data for
         GP calculations, variance reports and suggested orders.
       </Text>
 

@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * XeroService — Hosti-Stock × Xero Integration
+ * XeroService — Hosti × Xero Integration
  *
  * Architecture:
  * - OAuth2 connection stored per venue in Firestore

@@ -27,23 +27,23 @@ function TermsScreen() {
       </View>
 
       <Section title="1. Acceptance">
-        By using Hosti-Stock you agree to these terms. If you do not agree, please do not use the app. These terms apply to all users including venue operators and supplier accounts.
+        By using Hosti you agree to these terms. If you do not agree, please do not use the app. These terms apply to all users including venue operators and supplier accounts.
       </Section>
 
       <Section title="2. Service Description">
-        Hosti-Stock provides inventory management, stocktake, and ordering tools for hospitality venues. AI-powered features are provided as guidance only and should not be relied upon as the sole basis for purchasing or business decisions.
+        Hosti provides inventory management, stocktake, and ordering tools for hospitality venues. AI-powered features are provided as guidance only and should not be relied upon as the sole basis for purchasing or business decisions.
       </Section>
 
       <Section title="3. Your Data">
-        You own your data. We store it securely in Google Firebase (us-central1). We do not sell your data to third parties. You can request deletion of your data at any time by contacting hello@hosti.co.nz.
+        You own your data. We store it securely in Google Firebase (us-central1). We do not sell your data to third parties. You can request deletion of your data at any time by contacting office@hosti.co.nz.
       </Section>
 
       <Section title="4. AI Features">
-        AI-generated suggestions, variance explanations and order recommendations are based on the data you provide. Accuracy improves over time with more stocktake data. Hosti-Stock is not liable for purchasing decisions made based on AI suggestions.
+        AI-generated suggestions, variance explanations and order recommendations are based on the data you provide. Accuracy improves over time with more stocktake data. Hosti is not liable for purchasing decisions made based on AI suggestions.
       </Section>
 
       <Section title="5. Acceptable Use">
-        You agree not to use Hosti-Stock to store false information, attempt to access other venues data, reverse engineer the app, or use the service for any unlawful purpose.
+        You agree not to use Hosti to store false information, attempt to access other venues data, reverse engineer the app, or use the service for any unlawful purpose.
       </Section>
 
       <Section title="6. Free Access Period">
@@ -55,7 +55,7 @@ function TermsScreen() {
       </Section>
 
       <Section title="8. Limitation of Liability">
-        Hosti-Stock is provided as-is. We are not liable for any loss of data, incorrect stock counts, or business losses arising from use of the app. Maximum liability is limited to fees paid in the preceding 3 months.
+        Hosti is provided as-is. We are not liable for any loss of data, incorrect stock counts, or business losses arising from use of the app. Maximum liability is limited to fees paid in the preceding 3 months.
       </Section>
 
       <Section title="9. Privacy">
@@ -67,7 +67,7 @@ function TermsScreen() {
       </Section>
 
       <Section title="11. Contact">
-        For any questions about these terms contact us at hello@hosti.co.nz or visit https://www.hosti.co.nz
+        For any questions about these terms contact us at office@hosti.co.nz or visit https://www.hosti.co.nz
       </Section>
 
       <View style={{ height: 30 }} />

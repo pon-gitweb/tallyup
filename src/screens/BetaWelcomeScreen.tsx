@@ -30,7 +30,7 @@ export default function BetaWelcomeScreen() {
       <ScrollView contentContainerStyle={S.scroll} bounces={false}>
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
-          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti-Stock</Text>
+          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.

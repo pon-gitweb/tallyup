@@ -184,14 +184,42 @@ export default function DashboardScreen() {
   const onOpenReports = () => nav.navigate('Reports');
   const onOpenSettings = () => nav.navigate('Settings');
 
+  // Time-based greeting
+  const hour = new Date().getHours();
+  const greeting = hour < 12
+    ? `Good morning ☀️`
+    : hour < 17
+    ? `Good afternoon`
+    : `Good evening`;
+
+  const firstName = user?.displayName?.split(' ')[0] || friendly || '';
+
+  // Primary action card state
+  const primaryState: 'none' | 'inProgress' | 'done' =
+    lastArea ? 'inProgress' :
+    stocktakeCount === 0 ? 'none' : 'done';
+
   const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: colours.background },
-    container: { flex: 1 },
-    content: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 32 },
+    scroll: { flex: 1 },
+    content: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 40 },
     headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
-    headerTitle: { fontSize: 22, fontWeight: '800', color: colours.navy },
-    headerSub: { color: colours.textSecondary, marginTop: 2, fontSize: 14 },
-    headerHint: { color: colours.textSecondary, marginTop: 6, fontSize: 12, lineHeight: 16, maxWidth: 260 },
+    greeting: { fontSize: 22, fontWeight: '800', color: colours.navy },
+    venueName: { color: colours.textSecondary, marginTop: 2, fontSize: 14, fontWeight: '500' },
+    primaryCard: { backgroundColor: colours.navy, borderRadius: 16, padding: 16, marginBottom: 16 },
+    primaryIcon: { fontSize: 28, marginBottom: 8 },
+    primaryTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
+    primarySub: { fontSize: 13, color: 'rgba(255,255,255,0.75)', marginBottom: 14, lineHeight: 18 },
+    primaryBtn: { backgroundColor: '#fff', borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
+    primaryBtnText: { color: colours.navy, fontWeight: '800', fontSize: 14 },
+    primarySecBtn: { borderRadius: 999, paddingVertical: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+    primarySecBtnText: { color: 'rgba(255,255,255,0.85)', fontWeight: '600', fontSize: 13 },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+    gridCard: { backgroundColor: colours.surface, borderRadius: 14, padding: 14, flex: 1, minWidth: '45%', borderWidth: 1, borderColor: colours.border },
+    gridIcon: { fontSize: 22, marginBottom: 6 },
+    gridLabel: { fontSize: 13, fontWeight: '700', color: colours.navy },
+    gridCount: { fontSize: 22, fontWeight: '800', color: colours.primary, marginTop: 2 },
+    gridSub: { fontSize: 11, color: colours.textSecondary, marginTop: 1 },
     card: { backgroundColor: colours.surface, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: colours.border },
     cardTitle: { fontSize: 16, fontWeight: '700', color: colours.navy, marginBottom: 4 },
     cardSub: { fontSize: 13, color: colours.textSecondary, marginBottom: 12, lineHeight: 18 },
@@ -209,46 +237,76 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+
+        {/* ── Header ────────────────────────────────────────────────────── */}
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Dashboard</Text>
-            <Text style={styles.headerSub}>Hi {friendly}</Text>
-            <Text style={styles.headerHint}>
-              This is your home base. Start a stocktake, manage orders, and check reports from here.
-            </Text>
+            <Text style={styles.greeting}>{greeting}{firstName ? `, ${firstName}` : ''}</Text>
+            {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
           </View>
           {theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
           <IdentityBadge />
         </View>
+
         <OfflineBanner />
-        {lastArea && (
-          <TouchableOpacity
-            onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
-            style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: colours.navy, borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={{ fontSize: 20 }}>▶️</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colours.primaryText, fontWeight: '900', fontSize: 15 }}>
-                {lastArea.lockedBy && lastArea.lockedBy !== currentUid ? 'Stocktake in progress' : 'Continue stocktake'}
+
+        {/* ── Primary action card ───────────────────────────────────────── */}
+        <View style={styles.primaryCard}>
+          {primaryState === 'none' && (
+            <>
+              <Text style={styles.primaryIcon}>📦</Text>
+              <Text style={styles.primaryTitle}>Start your first stocktake</Text>
+              <Text style={styles.primarySub}>Takes about 20 minutes. We'll show you exactly what to do.</Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={onOpenStockTake} disabled={busy}>
+                {busy ? <ActivityIndicator color={colours.navy} /> : <Text style={styles.primaryBtnText}>Start now →</Text>}
+              </TouchableOpacity>
+            </>
+          )}
+          {primaryState === 'inProgress' && lastArea && (
+            <>
+              <Text style={styles.primaryIcon}>📦</Text>
+              <Text style={styles.primaryTitle}>Stocktake in progress</Text>
+              <Text style={styles.primarySub}>
+                {lastArea.deptName} → {lastArea.areaName}
+                {lastArea.startedAt ? ` · Started ${new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{lastArea.lockedBy && lastArea.lockedBy !== currentUid ? 'Another user is counting — ' : ''}{lastArea.deptName} → {lastArea.areaName}{lastArea.startedAt ? ' · Started ' + new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</Text>
-            </View>
-            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}>›</Text>
-          </TouchableOpacity>)
-        }
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+              >
+                <Text style={styles.primaryBtnText}>Continue →</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {primaryState === 'done' && (
+            <>
+              <Text style={styles.primaryIcon}>✓</Text>
+              <Text style={styles.primaryTitle}>
+                {stocktakeCount} stocktake{stocktakeCount !== 1 ? 's' : ''} completed
+              </Text>
+              <Text style={styles.primarySub}>Your AI improves with every count.</Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={onOpenStockTake} disabled={busy}>
+                {busy ? <ActivityIndicator color={colours.navy} /> : <Text style={styles.primaryBtnText}>Start new stocktake →</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.primarySecBtn} onPress={onOpenReports}>
+                <Text style={styles.primarySecBtnText}>View reports</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
         {onboardingRoad === null && !onboardingDismissed && (
           <View style={{
-            marginHorizontal: 12, marginBottom: 12,
-            backgroundColor: '#FFF8F0', borderRadius: 14, padding: 14,
+            backgroundColor: '#FFF8F0', borderRadius: 14, padding: 14, marginBottom: 12,
             borderWidth: 1.5, borderColor: colours.amber,
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
-                  Ready to set up your venue?
-                </Text>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>Ready to set up your venue?</Text>
                 <Text style={{ fontSize: 13, color: colours.textSecondary, lineHeight: 18, marginBottom: 12 }}>
-                  Two minutes now sets up your stock structure, PAR levels, and suppliers. Pick your path:
+                  Two minutes now sets up your stock structure, PAR levels, and suppliers.
                 </Text>
               </View>
               <TouchableOpacity onPress={dismissOnboarding} style={{ padding: 4, marginLeft: 8 }}>
@@ -256,147 +314,70 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity
-                style={{
-                  flex: 1, backgroundColor: colours.primary, borderRadius: 999,
-                  paddingVertical: 10, alignItems: 'center',
-                }}
-                onPress={() => nav.navigate('OnboardingFreshStart')}
-              >
+              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.primary, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }} onPress={() => nav.navigate('OnboardingFreshStart')}>
                 <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Fresh start</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  flex: 1, backgroundColor: colours.surface, borderRadius: 999,
-                  paddingVertical: 10, alignItems: 'center',
-                  borderWidth: 1, borderColor: colours.border,
-                }}
-                onPress={() => nav.navigate('OnboardingBringData')}
-              >
+              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.surface, borderRadius: 999, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colours.border }} onPress={() => nav.navigate('OnboardingBringData')}>
                 <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 13 }}>Bring my data</Text>
               </TouchableOpacity>
             </View>
           </View>
         )}
-        {/* ── Graduated contextual nudges ──────────────────────────────── */}
-        {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
-          <ContextNudge
-            c={colours}
-            message="Scan a supplier invoice to build your product list automatically — no manual entry needed."
-            cta="Scan invoice →"
-            onCta={() => nav.navigate('Orders')}
-            onDismiss={() => dismissNudge('invoiceFirst')}
-          />
-        )}
-        {supplierCount > 0 && productCount === 0 && !nudgeDismissed.noProducts && (
-          <ContextNudge
-            c={colours}
-            message="Add products to run your first stocktake and unlock AI reorder suggestions."
-            cta="Add products →"
-            onCta={() => nav.navigate('Products')}
-            onDismiss={() => dismissNudge('noProducts')}
-          />
-        )}
-        {productCount > 0 && supplierCount === 0 && !nudgeDismissed.noSuppliers && (
-          <ContextNudge
-            c={colours}
-            message="Add a supplier to unlock ordering, AI reorder suggestions, and invoice matching."
-            cta="Add supplier →"
-            onCta={() => nav.navigate('Suppliers')}
-            onDismiss={() => dismissNudge('noSuppliers')}
-          />
-        )}
-        {productCount > 0 && supplierCount > 0 && unassignedCount > 0 && !nudgeDismissed.unassigned && (
-          <ContextNudge
-            c={colours}
-            message={`${unassignedCount} product${unassignedCount !== 1 ? 's' : ''} ${unassignedCount !== 1 ? 'have' : 'has'} no supplier — assign one to improve ordering and variance accuracy.`}
-            cta="Review products →"
-            onCta={() => nav.navigate('Products')}
-            onDismiss={() => dismissNudge('unassigned')}
-          />
-        )}
-        {productCount > 0 && stocktakeCount === 0 && !nudgeDismissed.noStocktake && (
-          <ContextNudge
-            c={colours}
-            message="Complete your first stocktake to unlock variance reports, usage trends, and smart reorder levels."
-            cta="Start stocktake →"
-            onCta={() => nav.navigate('DepartmentSelection')}
-            onDismiss={() => dismissNudge('noStocktake')}
-          />
-        )}
-        {stocktakeCount === 1 && !nudgeDismissed.firstStocktakeDone && (
-          <ContextNudge
-            c={colours}
-            message="First stocktake done! View your Stock Holding Report to see what you have on hand by category."
-            cta="View report →"
-            onCta={() => nav.navigate('StockHolding')}
-            onDismiss={() => dismissNudge('firstStocktakeDone')}
-          />
-        )}
-        {/* ─────────────────────────────────────────────────────────────── */}
-        <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
-        {stocktakeCount > 0 && (
-          <View style={{ marginHorizontal: 12, marginBottom: 4, backgroundColor: colours.primaryLight, borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colours.border }}>
-            <Text style={{ fontSize: 16 }}>🧠</Text>
-            <Text style={{ color: colours.primary, fontSize: 12, flex: 1, fontWeight: '600' }}>
-              Your AI has learned from {stocktakeCount} stocktake{stocktakeCount > 1 ? 's' : ''} — suggestions improve over time
-            </Text>
-          </View>
-        )}
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Run your stocktake</Text>
-          <Text style={styles.cardSub}>
-            Stocktake by department and area with expected quantities and full history. You can return to an
-            in-progress stocktake at any time.
-          </Text>
-          <TouchableOpacity
-            style={[styles.button, styles.primary]}
-            onPress={onOpenStockTake}
-            disabled={busy}
-          >
-            {busy ? (
-              <ActivityIndicator color={colours.primaryText} />
-            ) : (
-              <Text style={styles.buttonText}>Start / Return Stock Take</Text>
-            )}
+        {/* ── 2×2 quick access grid ─────────────────────────────────────── */}
+        <View style={styles.grid}>
+          <TouchableOpacity style={styles.gridCard} onPress={onOpenOrders} activeOpacity={0.75}>
+            <Text style={styles.gridIcon}>📋</Text>
+            <Text style={styles.gridLabel}>Orders</Text>
+            <Text style={styles.gridSub}>Manage deliveries</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.gridCard} onPress={onOpenReports} activeOpacity={0.75}>
+            <Text style={styles.gridIcon}>📊</Text>
+            <Text style={styles.gridLabel}>Reports</Text>
+            <Text style={styles.gridSub}>Variance & trends</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.gridCard} onPress={() => nav.navigate('Products')} activeOpacity={0.75}>
+            <Text style={styles.gridIcon}>🏪</Text>
+            <Text style={styles.gridLabel}>Products</Text>
+            {productCount !== null ? <Text style={styles.gridCount}>{productCount}</Text> : null}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.gridCard} onPress={() => nav.navigate('Suppliers')} activeOpacity={0.75}>
+            <Text style={styles.gridIcon}>🚚</Text>
+            <Text style={styles.gridLabel}>Suppliers</Text>
+            {supplierCount !== null ? <Text style={styles.gridCount}>{supplierCount}</Text> : null}
           </TouchableOpacity>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Ordering & invoices</Text>
-          <Text style={styles.cardSub}>
-            Use suggested orders to build supplier orders from your stock and sales, and manage open orders and
-            deliveries. Invoice upload and receiving flows live under Orders.
-          </Text>
-          <View style={styles.rowButtons}>
-            <TouchableOpacity style={[styles.buttonSmall, styles.dark]} onPress={onOpenSuggestedOrders}>
-              <Text style={styles.buttonSmallText}>Suggested Orders</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.buttonSmall, styles.dark]} onPress={onOpenOrders}>
-              <Text style={styles.buttonSmallText}>Orders</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        {/* ── Contextual nudges ─────────────────────────────────────────── */}
+        {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
+          <ContextNudge c={colours} message="💡 Tip: Scan an invoice to set up suppliers and products in one step — before your first stocktake." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
+        )}
+        {supplierCount > 0 && productCount === 0 && !nudgeDismissed.noProducts && (
+          <ContextNudge c={colours} message="Add products to run your first stocktake and unlock AI reorder suggestions." cta="Add products →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('noProducts')} />
+        )}
+        {productCount > 0 && supplierCount === 0 && !nudgeDismissed.noSuppliers && (
+          <ContextNudge c={colours} message="Add a supplier to unlock ordering, AI suggestions, and invoice matching." cta="Add supplier →" onCta={() => nav.navigate('Suppliers')} onDismiss={() => dismissNudge('noSuppliers')} />
+        )}
+        {productCount > 0 && supplierCount > 0 && unassignedCount > 0 && !nudgeDismissed.unassigned && (
+          <ContextNudge c={colours} message={`${unassignedCount} product${unassignedCount !== 1 ? 's have' : ' has'} no supplier — assign one to improve ordering accuracy.`} cta="Review →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('unassigned')} />
+        )}
+        {productCount > 0 && stocktakeCount === 0 && !nudgeDismissed.noStocktake && (
+          <ContextNudge c={colours} message="Complete your first stocktake to unlock variance reports, usage trends, and smart reorder levels." cta="Start →" onCta={() => nav.navigate('DepartmentSelection')} onDismiss={() => dismissNudge('noStocktake')} />
+        )}
+        {stocktakeCount === 1 && !nudgeDismissed.firstStocktakeDone && (
+          <ContextNudge c={colours} message="First stocktake done! View your Stock Holding Report to see what you have on hand by category." cta="View report →" onCta={() => nav.navigate('StockHolding')} onDismiss={() => dismissNudge('firstStocktakeDone')} />
+        )}
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Control & reports</Text>
-          <Text style={styles.cardSub}>
-            Keep your products and suppliers organised, and review variance and performance reports. Use Settings
-            for venue-level controls and options.
-          </Text>
-          <View style={styles.rowButtons}>
-            <TouchableOpacity style={[styles.buttonSmall, styles.muted]} onPress={onOpenStockControl}>
-              <Text style={styles.buttonSmallTextDark}>Stock Control</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.buttonSmall, styles.muted]} onPress={onOpenReports}>
-              <Text style={styles.buttonSmallTextDark}>Reports</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.buttonSmall, styles.muted]} onPress={onOpenSettings}>
-              <Text style={styles.buttonSmallTextDark}>Settings</Text>
-            </TouchableOpacity>
+        <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
+
+        {stocktakeCount > 0 && (
+          <View style={{ backgroundColor: colours.primaryLight, borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colours.border, marginTop: 4 }}>
+            <Text style={{ fontSize: 16 }}>🧠</Text>
+            <Text style={{ color: colours.primary, fontSize: 12, flex: 1, fontWeight: '600' }}>
+              AI has learned from {stocktakeCount} stocktake{stocktakeCount > 1 ? 's' : ''} — suggestions improve over time
+            </Text>
           </View>
-        </View>
+        )}
 
         <Text style={styles.footerHint}>
           You can find app info from Settings → About.

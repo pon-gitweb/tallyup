@@ -35,7 +35,7 @@ export default function SetupGuideBanner({ onNavigate }: Props) {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: '900', color: '#166534', fontSize: 15 }}>Setup complete!</Text>
-            <Text style={{ color: '#166534', fontSize: 13, marginTop: 2 }}>You are all set — Hosti-Stock is ready to go.</Text>
+            <Text style={{ color: '#166534', fontSize: 13, marginTop: 2 }}>You are all set — Hosti is ready to go.</Text>
           </View>
           <TouchableOpacity onPress={onDismissAll} style={{ padding: 8 }}>
             <Text style={{ color: '#166534', fontWeight: '700' }}>X</Text>

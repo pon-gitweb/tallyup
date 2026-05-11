@@ -33,7 +33,7 @@ function XeroScreen() {
     if (!venueId) return;
     Alert.alert(
       'Connect to Xero',
-      'You will be taken to Xero to authorise Hosti-Stock. Once connected, purchase orders and invoices will sync automatically.',
+      'You will be taken to Xero to authorise Hosti. Once connected, purchase orders and invoices will sync automatically.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Connect', onPress: async () => {
@@ -113,7 +113,7 @@ function XeroScreen() {
       <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
         <Text style={{ fontWeight: '900', color: themeColours.text, marginBottom: 12 }}>What syncs with Xero</Text>
         {[
-          { icon: '📋', title: 'Purchase Orders', desc: 'Orders placed in Hosti-Stock appear as Draft Bills in Xero' },
+          { icon: '📋', title: 'Purchase Orders', desc: 'Orders placed in Hosti appear as Draft Bills in Xero' },
           { icon: '🧾', title: 'Received Invoices', desc: 'Approved invoices are pushed to Xero as Approved Bills' },
           { icon: '🏢', title: 'Supplier Contacts', desc: 'Your Xero contacts are available when setting up suppliers' },
         ].map((item, i) => (

@@ -141,7 +141,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
           <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 12 }}>Camera permission needed</Text>
           <Text style={{ color: '#6B7280', textAlign: 'center', marginBottom: 24 }}>
-            Hosti-Stock needs camera access to scan barcodes.
+            Hosti needs camera access to scan barcodes.
           </Text>
           <TouchableOpacity onPress={requestPermission}
             style={{ backgroundColor: '#0A84FF', padding: 14, borderRadius: 12, marginBottom: 12 }}>

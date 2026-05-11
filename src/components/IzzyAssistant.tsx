@@ -91,7 +91,7 @@ export default function IzzyAssistant() {
 
   const displayMessages: Message[] = messages.length
     ? messages
-    : [{ role: 'system', text: "Hi! I'm Izzy. Ask me anything about using Hosti-Stock ✦" }];
+    : [{ role: 'system', text: "Hi! I'm Izzy. Ask me anything about using Hosti ✦" }];
 
   return (
     <>
@@ -105,7 +105,7 @@ export default function IzzyAssistant() {
             <View style={styles.header}>
               <View>
                 <Text style={styles.title}>✦ Izzy</Text>
-                <Text style={styles.subtitle}>Your Hosti-Stock guide</Text>
+                <Text style={styles.subtitle}>Your Hosti guide</Text>
               </View>
               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                 <Text style={styles.closeX}>✕</Text>

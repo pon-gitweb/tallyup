@@ -308,7 +308,7 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
 
     <div style="background:#0F172A;border-radius:16px 16px 0 0;padding:24px;text-align:center;">
       <div style="font-size:11px;color:#64748B;font-weight:700;letter-spacing:1px;
-                  text-transform:uppercase;">Hosti-Stock</div>
+                  text-transform:uppercase;">Hosti</div>
       <h1 style="margin:6px 0 2px;font-size:24px;font-weight:800;color:white;">Weekly Summary</h1>
       <div style="font-size:13px;color:#94A3B8;">${venueName} &middot; Week of ${weekOf}</div>
     </div>
@@ -327,13 +327,13 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
         <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">
           You're receiving this because weekly summaries are enabled for
           <strong>${venueName}</strong>.<br>
-          To unsubscribe, open <strong>Settings &rarr; Weekly Summary Email</strong> in Hosti-Stock.
+          To unsubscribe, open <strong>Settings &rarr; Weekly Summary Email</strong> in Hosti.
         </p>
       </div>
     </div>
 
     <p style="text-align:center;font-size:11px;color:#CBD5E1;margin-top:16px;">
-      Hosti-Stock
+      Hosti
     </p>
   </div>
 </body>
@@ -357,7 +357,7 @@ async function sendViaResend(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "Hosti-Stock <reports@hosti.co.nz>",
+      from: "Hosti <reports@hosti.co.nz>",
       to,
       subject,
       html,

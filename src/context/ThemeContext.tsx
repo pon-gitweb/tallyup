@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * ThemeContext — Hosti-Stock Design System
+ * ThemeContext — Hosti Design System
  * Single source of truth for colours, typography, spacing.
  * Stored in Firestore per venue — persists across sessions.
  * User-customisable from Settings → Appearance.

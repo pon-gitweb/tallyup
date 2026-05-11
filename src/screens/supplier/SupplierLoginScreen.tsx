@@ -49,7 +49,7 @@ function SupplierLoginScreen({ onLogin }: { onLogin: (supplierId: string) => voi
       <View style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 16 }}>
         <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 8 }}>
           <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>Supplier Portal</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 4 }}>Powered by Hosti-Stock</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.8)', marginTop: 4 }}>Powered by Hosti</Text>
         </View>
         <TextInput value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address"
           autoCapitalize="none" style={{ backgroundColor: themeColours.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: themeColours.border, color: themeColours.text }} />

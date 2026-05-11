@@ -237,7 +237,7 @@ function ScaleSettingsScreen() {
       <View style={{ backgroundColor: '#F0F9FF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BAE6FD', marginTop: 8 }}>
         <Text style={{ fontWeight: '800', color: '#0369A1', marginBottom: 4 }}>📶 About Bluetooth scales</Text>
         <Text style={{ color: '#0369A1', fontSize: 13 }}>
-          Hosti-Stock is built for Bluetooth scale integration. We support Decent Scale, SKALE, and generic BLE scales — and we're actively testing hardware to confirm compatibility.{'\n\n'}
+          Hosti is built for Bluetooth scale integration. We support Decent Scale, SKALE, and generic BLE scales — and we're actively testing hardware to confirm compatibility.{'\n\n'}
           If your scale works, we'd love to hear about it. If it doesn't, we're working on it — hardware verification partnerships are in progress.
         </Text>
       </View>

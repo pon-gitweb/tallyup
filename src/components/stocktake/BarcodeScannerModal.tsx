@@ -252,7 +252,7 @@ export default function BarcodeScannerModal({
       <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
         <View style={S.centred}>
           <Text style={S.permTitle}>Camera access needed</Text>
-          <Text style={S.permBody}>Hosti-Stock needs camera access to scan barcodes.</Text>
+          <Text style={S.permBody}>Hosti needs camera access to scan barcodes.</Text>
           <TouchableOpacity style={S.permBtn} onPress={requestPermission}>
             <Text style={S.permBtnText}>Grant permission</Text>
           </TouchableOpacity>

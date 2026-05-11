@@ -73,7 +73,7 @@ function AppearanceScreen() {
   }, [updateColours]);
 
   const onReset = useCallback(() => {
-    Alert.alert('Reset appearance', 'This will restore the default Hosti-Stock theme.', [
+    Alert.alert('Reset appearance', 'This will restore the default Hosti theme.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Reset', style: 'destructive', onPress: async () => { await resetTheme(); } },
     ]);
@@ -88,7 +88,7 @@ function AppearanceScreen() {
       <View>
         <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text }}>Appearance</Text>
         <Text style={{ color: colours.textSecondary, marginTop: 4, fontSize: 14 }}>
-          Customise how Hosti-Stock looks for your venue. Changes apply instantly.
+          Customise how Hosti looks for your venue. Changes apply instantly.
         </Text>
       </View>
 

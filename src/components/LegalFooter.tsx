@@ -9,7 +9,7 @@ export default function LegalFooter() {
       {/* Placeholder brand text (image removed to avoid bundling failure when asset is missing) */}
       <Text style={{ fontSize: 16, fontWeight: '800', color: tokens.colors.text }}>HOSTI-STOCK</Text>
       <Text style={{ color: tokens.colors.textMuted, fontSize: 12, textAlign: 'center' }}>
-        © {new Date().getFullYear()} Hosti Ltd — Hosti-Stock
+        © {new Date().getFullYear()} Hosti Ltd — Hosti
         {'\n'}
         By using this app you agree to the Terms of Use and Privacy Policy.
       </Text>

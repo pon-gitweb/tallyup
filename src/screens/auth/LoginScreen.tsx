@@ -106,7 +106,7 @@ function LoginScreenInner() {
           {/* Brand section */}
           <View style={S.brandSection}>
             <Image source={appIcon} style={S.logoImg} resizeMode="contain" />
-            <Text style={S.brandName}>Hosti-Stock</Text>
+            <Text style={S.brandName}>Hosti</Text>
           </View>
 
           {/* Form */}

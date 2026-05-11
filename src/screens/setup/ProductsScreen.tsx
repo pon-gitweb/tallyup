@@ -117,7 +117,7 @@ function PosModal({ visible, onClose }: { visible: boolean; onClose: () => void 
             Connect your POS to import products automatically.{'\n\n'}
             Coming soon: Lightspeed · Square · Wizbang Onetap · BEPOZ{'\n\n'}
             To request integration, contact your POS provider and mention
-            Hosti-Stock, or email us at hello@hostistock.com
+            Hosti, or email us at office@hosti.co.nz
           </Text>
           <TouchableOpacity style={pS.btn} onPress={onClose}>
             <Text style={pS.btnText}>Got it</Text>

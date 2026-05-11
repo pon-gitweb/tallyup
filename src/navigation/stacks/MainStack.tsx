@@ -4,6 +4,7 @@ import React from 'react';
 import { View, TouchableOpacity, Text } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
+import MainTabs from './MainTabs';
 
 // Core
 import DashboardScreen from '../../screens/DashboardScreen';
@@ -79,7 +80,9 @@ export default function MainStack() {
         ),
       }}
     >
-      {/* Home */}
+      {/* Root — bottom tab navigator */}
+      <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
+      {/* Legacy direct route kept for nav.navigate('Dashboard') calls */}
       <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
 
       {/* Stock-take */}

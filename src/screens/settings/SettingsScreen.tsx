@@ -41,8 +41,8 @@ export default function SettingsScreen() {
   const onShare = React.useCallback(async () => {
     try {
       await Share.share({
-        message: "I'm using Hosti-Stock to manage my venue inventory. Check it out at hostistock.com",
-        title: 'Hosti-Stock — Inventory for hospitality',
+        message: "I'm using Hosti to manage my venue inventory. Check it out at hostistock.com",
+        title: 'Hosti — Inventory for hospitality',
       });
     } catch (e: any) {
       Alert.alert('Could not share', e?.message || 'Please try again.');
@@ -300,7 +300,7 @@ export default function SettingsScreen() {
       Alert.alert('Account deleted', 'Your account has been permanently deleted.');
       await auth.signOut();
     } catch (e: any) {
-      Alert.alert('Deletion failed', e?.message || 'Please try again or contact support at hello@hostistock.com.');
+      Alert.alert('Deletion failed', e?.message || 'Please try again or contact support at office@hosti.co.nz.');
     } finally {
       setDeletingAccount(false);
     }
@@ -715,7 +715,7 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 onPress={() => Alert.alert(
                   `Connect ${label}`,
-                  `Connect ${label} to import products and sales data automatically. Contact your POS provider and mention Hosti-Stock to request integration.`
+                  `Connect ${label} to import products and sales data automatically. Contact your POS provider and mention Hosti to request integration.`
                 )}
               >
                 <Text style={{ color: themeColours.primary, fontWeight: '700', fontSize: 13 }}>Learn more</Text>
@@ -731,7 +731,7 @@ export default function SettingsScreen() {
           }]}>
             <Text style={{ color: themeColours.textSecondary, fontSize: 13, textAlign: 'center' }}>
               Using a different POS?{'\n'}Email us at{' '}
-              <Text style={{ color: themeColours.primary, fontWeight: '700' }}>hello@hostistock.com</Text>
+              <Text style={{ color: themeColours.primary, fontWeight: '700' }}>office@hosti.co.nz</Text>
             </Text>
           </View>
         </View>
@@ -790,7 +790,7 @@ export default function SettingsScreen() {
             style={styles.btn}
             onPress={onShare}
           >
-            <Text style={styles.btnText}>Share Hosti-Stock</Text>
+            <Text style={styles.btnText}>Share Hosti</Text>
           </TouchableOpacity>
         </View>
         {/* Reset Tips button */}
@@ -838,27 +838,44 @@ export default function SettingsScreen() {
             style={[styles.btn, styles.aboutBtn]}
             onPress={openAbout}
           >
-            <Text style={styles.btnText}>About Hosti-Stock</Text>
+            <Text style={styles.btnText}>About Hosti</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Account</Text></View>
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: themeColours.danger, opacity: deletingAccount ? 0.6 : 1 }]}
+            style={styles.btn}
+            onPress={() => Alert.alert(
+              'Sign out of Hosti?',
+              '',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign out', style: 'default', onPress: doSignOut },
+              ]
+            )}
+          >
+            <Text style={styles.btnText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Danger zone */}
+        <View style={{ marginHorizontal: 4, marginTop: 16, marginBottom: 8, borderRadius: 12, borderWidth: 1.5, borderColor: '#dc2626', padding: 14 }}>
+          <Text style={{ fontSize: 11, fontWeight: '800', color: '#dc2626', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 }}>Danger Zone</Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#fee2e2', borderRadius: 10, paddingVertical: 12, alignItems: 'center', opacity: deletingAccount ? 0.6 : 1 }}
             onPress={doDeleteAccount}
             disabled={deletingAccount}
           >
             {deletingAccount
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <Text style={styles.btnText}>Delete Account</Text>
+              ? <ActivityIndicator color="#dc2626" size="small" />
+              : <>
+                  <Text style={{ color: '#dc2626', fontWeight: '800', fontSize: 14 }}>Delete Account</Text>
+                  <Text style={{ color: '#dc2626', fontSize: 11, marginTop: 2, opacity: 0.8 }}>Permanently removes your account and data</Text>
+                </>
             }
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity style={styles.signOut} onPress={doSignOut}>
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
 
         <View style={{ marginTop: 12 }}>
           <LegalFooter />
@@ -876,7 +893,7 @@ export default function SettingsScreen() {
                 <TouchableOpacity onPress={closeAbout}>
                   <Text style={styles.aboutBack}>‹ Settings</Text>
                 </TouchableOpacity>
-                <Text style={styles.aboutTitle}>About Hosti-Stock</Text>
+                <Text style={styles.aboutTitle}>About Hosti</Text>
                 <View style={{ width: 60 }} />
               </View>
 
@@ -886,9 +903,9 @@ export default function SettingsScreen() {
               >
                 <View style={styles.aboutCard}>
                   <Text style={styles.aboutLabel}>Build</Text>
-                  <Text style={styles.aboutValue}>Hosti-Stock</Text>
+                  <Text style={styles.aboutValue}>Hosti</Text>
                   <Text style={styles.aboutSub}>
-                    Hosti-Stock is designed for real NZ hospitality venues to run live stocktakes,
+                    Hosti is designed for real NZ hospitality venues to run live stocktakes,
                     orders and invoice workflows.
                   </Text>
                 </View>
@@ -911,7 +928,7 @@ export default function SettingsScreen() {
                     or managers according to the Truth Document rules.
                   </Text>
                   <Text style={styles.aboutBody}>
-                    Hosti-Stock is focused on getting real-world workflows right. Formal legal wording and full
+                    Hosti is focused on getting real-world workflows right. Formal legal wording and full
                     policy links are available in Terms of Service.
                   </Text>
                 </View>
@@ -932,7 +949,7 @@ export default function SettingsScreen() {
                   <Text style={styles.aboutHeading}>Revisit the overview</Text>
                   <Text style={styles.aboutBody}>
                     You can come back to this screen any time from Settings → About to remind yourself what’s
-                    included in Hosti-Stock and how we treat your data.
+                    included in Hosti and how we treat your data.
                   </Text>
                 </View>
               </ScrollView>

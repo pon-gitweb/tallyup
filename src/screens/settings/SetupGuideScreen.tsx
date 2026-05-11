@@ -39,7 +39,7 @@ function SetupGuideScreen() {
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <View>
         <Text style={{ fontSize: 24, fontWeight: '900' }}>Setup Guide</Text>
-        <Text style={{ color: '#6B7280', marginTop: 4 }}>Follow these steps to get Hosti-Stock working for your venue. You can come back anytime.</Text>
+        <Text style={{ color: '#6B7280', marginTop: 4 }}>Follow these steps to get Hosti working for your venue. You can come back anytime.</Text>
       </View>
 
       <View style={{ backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BFDBFE' }}>

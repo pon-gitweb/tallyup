@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * ScaleService — Bluetooth scale integration for Hosti-Stock
+ * ScaleService — Bluetooth scale integration for Hosti
  *
  * Supports three scale families out of the box:
  *  1. Decent Scale (decentespresso.com) — open BLE API

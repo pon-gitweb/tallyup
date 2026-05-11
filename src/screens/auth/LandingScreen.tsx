@@ -85,7 +85,7 @@ export default function LandingScreen() {
       {/* Brand */}
       <View style={S.brand}>
         <Image source={appIcon} style={S.icon} resizeMode="contain" />
-        <Text style={S.appName}>Hosti-Stock</Text>
+        <Text style={S.appName}>Hosti</Text>
         <Text style={S.tagline}>Know your stock. Know your numbers.</Text>
       </View>
 

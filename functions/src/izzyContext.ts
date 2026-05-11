@@ -106,6 +106,6 @@ FEATURES PLANNED FOR FUTURE UPDATES:
 
   unavailable: `
 IF ASKED ABOUT ANYTHING NOT IN THE ABOVE LISTS:
-Respond that the feature is not currently available and suggest contacting support at hello@hostistock.com.
+Respond that the feature is not currently available and suggest contacting support at office@hosti.co.nz.
 `,
 };

@@ -48,7 +48,7 @@ ${lineItems}
 ${totalLine}
 
 Please confirm receipt of this order.
-Sent via Hosti-Stock.`;
+Sent via Hosti.`;
 }
 
 export default function OrderDispatchModal({
@@ -261,7 +261,7 @@ export default function OrderDispatchModal({
             {/* Honest note */}
             <View style={{ backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E5E7EB' }}>
               <Text style={{ color: '#6B7280', fontSize: 12 }}>
-                All methods record this order in Hosti-Stock. When your invoice arrives, match it to PO {poNumber} for automatic reconciliation.
+                All methods record this order in Hosti. When your invoice arrives, match it to PO {poNumber} for automatic reconciliation.
               </Text>
             </View>
 

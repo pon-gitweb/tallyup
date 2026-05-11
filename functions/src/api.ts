@@ -221,7 +221,7 @@ app.post("/variance-explain", async (req, res) => {
     const attributionRecipe = ctx.attributionRecipe ?? null;
     const attributionPct = ctx.attributionPct ?? null;
     const systemPrompt = [
-      "You are an AI assistant for Hosti-Stock, a hospitality inventory management app for NZ bars, restaurants and cafes.",
+      "You are an AI assistant for Hosti, a hospitality inventory management app for NZ bars, restaurants and cafes.",
       "Explain stock variances in plain English a bar manager or chef would understand. Be concise and practical.",
       "If data is limited say so. Respond ONLY with valid JSON:",
       '{ "summary": "1-2 sentence explanation", "factors": ["factor 1"], "confidence": 0.0-1.0, "missing": ["helpful data"] }'
@@ -284,7 +284,7 @@ app.post("/suggest-orders", async (req, res) => {
       return sid + ": " + lines.length + " lines, est $" + total.toFixed(2);
     }).join("\n");
     const systemPrompt = [
-      "You are an AI ordering assistant for Hosti-Stock, a hospitality inventory app for NZ bars and restaurants.",
+      "You are an AI ordering assistant for Hosti, a hospitality inventory app for NZ bars and restaurants.",
       "Review suggested order baselines and add intelligent insights about quantities, timing and patterns.",
       "Consider: day of week patterns, seasonal demand, upcoming weekends, typical NZ hospitality trade flows.",
       req.body?.aiContext?.topSellingRecipes ? "Known top recipes: " + req.body.aiContext.topSellingRecipes.slice(0,3).map((r) => r.name).join(', ') : null,
@@ -323,7 +323,7 @@ app.post("/budget-suggest", async (req, res) => {
     const frequentShortages = Array.isArray(ctx.frequentShortages) ? ctx.frequentShortages : [];
     const topRecipes = Array.isArray(ctx.topSellingRecipes) ? ctx.topSellingRecipes : [];
     const systemPrompt = [
-      "You are an AI budget advisor for Hosti-Stock, a hospitality inventory app for NZ bars and restaurants.",
+      "You are an AI budget advisor for Hosti, a hospitality inventory app for NZ bars and restaurants.",
       "Analyse the venue spending patterns and suggest appropriate monthly budgets per supplier.",
       "Be practical and specific. Base suggestions on actual spend data when available.",
       "Consider NZ hospitality patterns: busy weekends, seasonal trade, typical GP margins.",
@@ -1296,7 +1296,7 @@ app.post("/suitee", async (req, res) => {
 
     const context = lines.join("\n");
 
-    const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti-Stock.
+    const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti.
 You have been given real data from this venue's stocktake and ordering history. Answer the operator's question using only this data — never invent numbers or make assumptions beyond what the data shows.
 
 You answer questions like:
@@ -1369,12 +1369,12 @@ app.post("/izzy", async (req, res) => {
     if (!question || typeof question !== "string") {
       res.status(400).json({ ok: false, error: "Missing question" }); return;
     }
-    const systemPrompt = `You are Izzy, the friendly in-app guide for Hosti-Stock.
+    const systemPrompt = `You are Izzy, the friendly in-app guide for Hosti.
 You help hospitality venue staff use the app confidently.
 You have a warm, experienced bartender tone — helpful, direct, never condescending.
 
-You only answer questions about Hosti-Stock.
-For any other topic say: "I'm only able to help with Hosti-Stock questions — ask me anything about the app!"
+You only answer questions about Hosti.
+For any other topic say: "I'm only able to help with Hosti questions — ask me anything about the app!"
 
 Use this exact feature knowledge to answer questions:
 
@@ -1387,7 +1387,7 @@ Planned features:
 ${IZZY_FEATURES.planned}
 
 When asked about something not on either list respond:
-"That feature isn't available at the moment. If it's something you'd find useful, contact our support team at hello@hostistock.com and we'll look into it for you."
+"That feature isn't available at the moment. If it's something you'd find useful, contact our support team at office@hosti.co.nz and we'll look into it for you."
 
 NEVER invent features that don't exist.
 NEVER suggest workflows that aren't in the available list.
