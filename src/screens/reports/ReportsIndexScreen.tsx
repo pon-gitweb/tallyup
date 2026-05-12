@@ -85,6 +85,7 @@ export default function ReportsIndexScreen() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [varianceExplained, setVarianceExplained] = useState(false);
   const [insightsModalVisible, setInsightsModalVisible] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsList, setInsightsList] = useState<AiInsight[]>([]);
@@ -119,9 +120,10 @@ export default function ReportsIndexScreen() {
         setData(d);
         setLoading(false);
 
-        // Fire AI insight async — non-blocking
+        // Fire AI insight async — non-blocking, once per mount
         const isOwnerOrManager = d.role === 'owner' || d.role === 'manager';
-        if (d.hasCountData && isOwnerOrManager) {
+        if (d.hasCountData && isOwnerOrManager && !varianceExplained) {
+          setVarianceExplained(true);
           setAiLoading(true);
           explainVariance({
             venueId,

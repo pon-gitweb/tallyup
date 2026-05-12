@@ -136,6 +136,11 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['onboardingDismissedAt']);
 
+      // Stocktake completion counter (incremented by any member on submit)
+      allow update: if isVenueMember(venueId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['totalStocktakesCompleted']);
+
       match /members/{uid} {
         allow read: if isVenueMember(venueId);
         allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);

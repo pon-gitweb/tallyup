@@ -1107,15 +1107,16 @@ try {
 
       // Trial decrement (TEMP local-only): count a FULL stocktake submission
       // NOTE: this is increment-on-submit, not on start.
-      try { await incrementFullStocktakeCompleted(); } catch {}
-
+      try { await incrementFullStocktakeCompleted(venueId!); } catch {}
 
       const submittedAt = new Date();
-      // Calculate total value
+      // Calculate total value + item count across all areas
       let totalValue = 0;
+      let totalItemsCount = 0;
       try {
         for (const areaDoc of snap.docs) {
           const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaDoc.id, 'items'));
+          totalItemsCount += itemsSnap.size;
           itemsSnap.forEach(d => {
             const data = d.data();
             const count = typeof data.lastCount === 'number' ? data.lastCount : 0;
@@ -1124,6 +1125,23 @@ try {
           });
         }
       } catch {}
+      // Write history record to stockTakes collection
+      try {
+        const uid = getAuth().currentUser?.uid ?? 'unknown';
+        await addDoc(collection(db, 'venues', venueId!, 'stockTakes'), {
+          completedAt: serverTimestamp(),
+          completedBy: uid,
+          departmentId,
+          areaCount: snap.docs.length,
+          totalItems: totalItemsCount,
+          durationMinutes: Math.round(windowHours * 60),
+          stockValue: totalValue,
+          venueId: venueId!,
+        });
+      } catch (e) {
+        console.warn('[stocktake] history write failed', e);
+      }
+
       const counted = items.filter(i => i.lastCountAt);
       const missed = items.filter(i => !i.lastCountAt);
       nav.navigate('StocktakeSummary' as never, {

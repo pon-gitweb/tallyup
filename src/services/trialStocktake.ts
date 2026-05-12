@@ -1,5 +1,10 @@
 // @ts-nocheck
-// Stub — trialStocktake
+import { doc, updateDoc, increment } from 'firebase/firestore';
+import { db } from './firebase';
+
 export async function incrementFullStocktakeCompleted(venueId: string): Promise<void> {
-  console.log('[trialStocktake] incrementFullStocktakeCompleted stub', { venueId });
+  if (!venueId) return;
+  await updateDoc(doc(db, 'venues', venueId), {
+    totalStocktakesCompleted: increment(1),
+  });
 }
