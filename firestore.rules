@@ -631,12 +631,10 @@ service cloud.firestore {
       }
 
       match /stockTakes/{stockTakeId} {
-        allow get, list: if isVenueMember(venueId);
-        allow create, update: if isVenueMember(venueId);
-        allow delete: if hasVenueRole(venueId, ['manager','owner']);
-        match /{sub=**} {
-          allow read: if isVenueMember(venueId);
-        }
+        allow read: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager', 'owner']);
+        allow delete: if hasVenueRole(venueId, ['owner']);
       }
 
       match /reports/{docId} {

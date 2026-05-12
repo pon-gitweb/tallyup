@@ -5,7 +5,9 @@
  * User can rename areas, move products, delete items before confirming.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { getFirestore, setDoc, collection, doc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, setDoc, addDoc, collection, doc, serverTimestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 import {
   ActivityIndicator, Alert, ScrollView,
   Text, TouchableOpacity, View,
@@ -69,13 +71,30 @@ function InventoryImportPreviewScreen() {
 
       await Promise.all(batch);
       await markStepComplete('products_loaded');
+
+      // Write baseline import record + increment cycle counter
+      try {
+        const uid = getAuth().currentUser?.uid ?? null;
+        await addDoc(collection(db, 'venues', venueId, 'stockTakes'), {
+          completedAt: serverTimestamp(),
+          source: 'inventory-import',
+          importedBy: uid,
+          cycleNumber: 1,
+          totalItems: products.length,
+          stockValue: 0,
+          venueId,
+          note: 'Imported from stocktake sheet',
+        });
+      } catch {}
+      try { await incrementFullStocktakeCompleted(venueId); } catch {}
+
       setImporting(false);
 
       Alert.alert(
-        `${products.length} products imported!`,
+        `✓ ${products.length} products imported!`,
         result.hasPricing
-          ? 'Your inventory is ready. Start your first stocktake now!'
-          : 'Your inventory is ready. Prices were not found in your file — you can add them later when you link suppliers.',
+          ? 'Your inventory is ready as your opening baseline.\n\nYour next stocktake will show variance against these counts.'
+          : 'Your inventory is ready as your opening baseline. Prices weren\'t found — add them when you link your suppliers.\n\nYour next stocktake will show variance against this baseline.',
         [
           { text: 'Start stocktake', onPress: () => nav.navigate('StockControl') },
           { text: 'Go to dashboard', onPress: () => nav.navigate('Dashboard') },

@@ -14,6 +14,7 @@ import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
+import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { parseCsv, toObjects } from '../../services/imports/csv';
@@ -396,7 +397,7 @@ export default function BringYourDataScreen() {
         createdSupplierName = invoiceSupplierName;
       }
 
-      // 3) Import products
+      // 3) Import products (+ baseline counts for photo/pdf mode)
       const allProducts = productsMode === 'csv' && productsCsv
         ? (() => {
             try {
@@ -415,19 +416,33 @@ export default function BringYourDataScreen() {
             costPrice: typeof l.unitPrice === 'number' ? l.unitPrice : null,
           })).filter((r) => r.name);
 
+      let importStockValue = 0;
+
       if (allProducts.length > 0) {
         const batch = writeBatch(fsdb);
         for (const r of allProducts) {
           const pref = doc(fsdb, 'venues', venueId, 'products', slugId(r.name));
+          // For photo/pdf imports, parLevel IS the scanned count — set as confirmed baseline.
+          // For CSV, parLevel is a user-defined reorder level, not a stocktake count.
+          const hasCount = productsMode !== 'csv' && r.parLevel != null && r.parLevel > 0;
           batch.set(pref, {
             name: r.name,
             ...(r.unit ? { unit: r.unit } : {}),
             ...(r.parLevel != null ? { parLevel: r.parLevel } : {}),
             ...(r.costPrice != null ? { costPrice: r.costPrice } : {}),
+            ...(hasCount ? {
+              confirmedCount: r.parLevel,
+              confirmedCountAt: serverTimestamp(),
+              lastCount: r.parLevel,
+              lastCountAt: serverTimestamp(),
+            } : {}),
             supplierId: createdSupplierId || null,
             supplierName: createdSupplierName || null,
             updatedAt: serverTimestamp(),
           }, { merge: true });
+          if (hasCount) {
+            importStockValue += r.parLevel * (r.costPrice ?? 0);
+          }
         }
         await batch.commit();
       }
@@ -460,7 +475,33 @@ export default function BringYourDataScreen() {
         });
       }
 
-      nav.navigate('Dashboard');
+      // Write stocktake history record + increment cycle counter
+      if (totalProductsCount > 0) {
+        try {
+          const uid = getAuth().currentUser?.uid ?? null;
+          await addDoc(collection(db, 'venues', venueId, 'stockTakes'), {
+            completedAt: serverTimestamp(),
+            source: 'imported',
+            importedBy: uid,
+            cycleNumber: 1,
+            totalItems: totalProductsCount,
+            stockValue: importStockValue,
+            venueId,
+            note: 'Imported from previous stocktake',
+          });
+        } catch {}
+        try { await incrementFullStocktakeCompleted(venueId); } catch {}
+      }
+
+      // Confirmation then navigate
+      const stockValueStr = importStockValue > 0
+        ? `\nStock value: $${importStockValue.toFixed(2)}`
+        : '';
+      Alert.alert(
+        '✓ Previous stocktake imported',
+        `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`,
+        [{ text: "Let's go →", onPress: () => nav.navigate('Dashboard') }],
+      );
     } catch (e: any) {
       Alert.alert('Setup failed', e?.message || 'Please try again.');
     } finally {
