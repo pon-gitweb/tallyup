@@ -44,13 +44,15 @@ export type Props = {
   areaItems: { id: string; name: string; productId?: string }[];
   onProductAddedToArea: () => void;   // tells parent to refresh
   onOpenPhotoModal: (barcode: string) => void;
+  // Optional: parent intercepts add to show counting unit picker
+  onBeforeAddToArea?: (product: VenueProduct & { caseSize?: number | null }, write: (extras: { countingUnit: string; caseSize: number | null }) => Promise<void>) => void;
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function BarcodeScannerModal({
   visible, onClose, venueId, departmentId, areaId,
-  areaItems, onProductAddedToArea, onOpenPhotoModal,
+  areaItems, onProductAddedToArea, onOpenPhotoModal, onBeforeAddToArea,
 }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>('scanning');
@@ -148,8 +150,7 @@ export default function BarcodeScannerModal({
 
   async function addVenueProductToArea(p: VenueProduct) {
     if (!venueId) return;
-    setAdding(true);
-    try {
+    const doWrite = async (extras: { countingUnit: string; caseSize: number | null }) => {
       const itemRef = doc(
         db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', p.id
       );
@@ -158,6 +159,8 @@ export default function BarcodeScannerModal({
         unit: p.unit ?? null,
         costPrice: p.costPrice ?? null,
         productId: p.id,
+        countingUnit: extras.countingUnit,
+        caseSize: extras.caseSize ?? null,
         lastCount: null,
         lastCountAt: null,
         createdAt: serverTimestamp(),
@@ -166,6 +169,16 @@ export default function BarcodeScannerModal({
       onProductAddedToArea();
       showToast(`✓ ${p.name} added — update the count below`);
       setTimeout(onClose, 1800);
+    };
+
+    if (onBeforeAddToArea) {
+      onBeforeAddToArea(p, doWrite);
+      return;
+    }
+
+    setAdding(true);
+    try {
+      await doWrite({ countingUnit: 'unit', caseSize: null });
     } catch (e: any) {
       Alert.alert('Could not add product', e?.message || 'Please try again.');
       setAdding(false);

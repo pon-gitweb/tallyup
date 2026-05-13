@@ -14,7 +14,7 @@ import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
+import { incrementFullStocktakeCompleted, hasExistingBaseline } from '../../services/trialStocktake';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { parseCsv, toObjects } from '../../services/imports/csv';
@@ -475,31 +475,38 @@ export default function BringYourDataScreen() {
         });
       }
 
-      // Write stocktake history record + increment cycle counter
+      // Write stocktake history record + increment cycle counter — first import only
+      let alreadyHasBaseline = false;
       if (totalProductsCount > 0) {
-        try {
-          const uid = getAuth().currentUser?.uid ?? null;
-          await addDoc(collection(db, 'venues', venueId, 'stockTakes'), {
-            completedAt: serverTimestamp(),
-            source: 'imported',
-            importedBy: uid,
-            cycleNumber: 1,
-            totalItems: totalProductsCount,
-            stockValue: importStockValue,
-            venueId,
-            note: 'Imported from previous stocktake',
-          });
-        } catch {}
-        try { await incrementFullStocktakeCompleted(venueId); } catch {}
+        try { alreadyHasBaseline = await hasExistingBaseline(venueId); } catch {}
+        if (!alreadyHasBaseline) {
+          try {
+            const uid = getAuth().currentUser?.uid ?? null;
+            await addDoc(collection(db, 'venues', venueId, 'stockTakes'), {
+              completedAt: serverTimestamp(),
+              source: 'imported',
+              importedBy: uid,
+              cycleNumber: 1,
+              totalItems: totalProductsCount,
+              stockValue: importStockValue,
+              venueId,
+              note: 'Imported from previous stocktake',
+            });
+          } catch {}
+          try { await incrementFullStocktakeCompleted(venueId); } catch {}
+        }
       }
 
       // Confirmation then navigate
       const stockValueStr = importStockValue > 0
         ? `\nStock value: $${importStockValue.toFixed(2)}`
         : '';
+      const baselineMsg = alreadyHasBaseline
+        ? `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} updated. Your baseline is unchanged — variance will continue from your existing baseline.`
+        : `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`;
       Alert.alert(
-        '✓ Previous stocktake imported',
-        `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`,
+        alreadyHasBaseline ? '✓ Products updated' : '✓ Opening baseline saved',
+        baselineMsg,
         [{ text: "Let's go →", onPress: () => nav.navigate('Dashboard') }],
       );
     } catch (e: any) {
@@ -556,6 +563,16 @@ export default function BringYourDataScreen() {
               Upload a product list or photograph your last stocktake sheet. Opening counts
               will be set from whatever you upload.
             </Text>
+
+            {/* Baseline info card */}
+            <View style={S.infoCard}>
+              <Text style={S.infoCardTitle}>📋 Your opening stock baseline</Text>
+              <Text style={S.infoCardBody}>
+                Importing a previous stocktake sets your baseline. This happens once only — your first import.{'\n\n'}
+                Future stocktakes will calculate variance against this baseline automatically.{'\n\n'}
+                If you import multiple files only the first counts as your baseline. Additional imports add products without changing your baseline.
+              </Text>
+            </View>
 
             {processingProducts ? (
               <View style={[S.uploadCard, S.uploadCardCentre]}>
@@ -639,6 +656,19 @@ export default function BringYourDataScreen() {
               Invoices tell us what came in the door — without them, variance is estimated.
               Upload a file or photograph a paper invoice.
             </Text>
+
+            {/* One-scan info card */}
+            <View style={S.infoCard}>
+              <Text style={S.infoCardTitle}>💡 One scan does it all</Text>
+              <Text style={S.infoCardBody}>
+                When you scan an invoice or upload a file we automatically extract:{'\n'}
+                {'✓'} Supplier details and contact information{'\n'}
+                {'✓'} Your product list with pricing{'\n'}
+                {'✓'} Purchase order matching{'\n'}
+                {'✓'} Price history tracking{'\n\n'}
+                You only need to scan each document once.
+              </Text>
+            </View>
 
             {!!lastStocktakeDate && (
               <View style={S.ctxCard}>
@@ -1006,6 +1036,12 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     },
     holdingTitle: { fontSize: 14, fontWeight: '800', color: c.navy, marginBottom: 4 },
     holdingText: { fontSize: 13, color: c.textSecondary, lineHeight: 19 },
+    infoCard: {
+      backgroundColor: '#F0F9FF', borderRadius: 12, padding: 14,
+      marginBottom: 16, borderWidth: 1, borderColor: '#BAE6FD',
+    },
+    infoCardTitle: { fontSize: 13, fontWeight: '800', color: '#0369A1', marginBottom: 6 },
+    infoCardBody: { fontSize: 12, color: '#0369A1', lineHeight: 18 },
     cta: {
       backgroundColor: c.primary, borderRadius: 999,
       paddingVertical: 16, alignItems: 'center', marginBottom: 8,

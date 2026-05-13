@@ -675,46 +675,111 @@ app.post("/extract-inventory", async (req, res) => {
 });
 
 // ── Claude-powered invoice line extraction ───────────────────────
-async function extractLinesWithClaude(rawText: string): Promise<Array<{ name: string; qty: number; unitPrice?: number }>> {
+
+// ── extractInvoiceComplete ─────────────────────────────────────────────────────
+// Single comprehensive Claude call that extracts supplier, customer, metadata
+// and product lines from invoice text in one pass.
+
+type CompleteInvoiceExtraction = {
+  supplier: {
+    name: string | null; phone: string | null; email: string | null;
+    address: string | null; website: string | null; accountNumber: string | null;
+  };
+  customer: { name: string | null; address: string | null; };
+  invoice: {
+    number: string | null; date: string | null; deliveryDate: string | null;
+    poNumber: string | null; total: number | null; gst: number | null; subtotal: number | null;
+  };
+  lines: Array<{
+    name: string; code: string | null; qty: number; unit: string | null;
+    unitPrice: number | null; lineTotal: number | null; caseSize: number | null;
+  }>;
+};
+
+async function extractInvoiceComplete(text: string): Promise<CompleteInvoiceExtraction> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
   const system = [
-    "You are an expert at reading NZ hospitality supplier invoices (Bidfood, Gilmours, Hancocks, etc).",
-    "Extract ALL line items from the invoice text.",
-    "Return ONLY valid JSON array, no markdown, no explanation:",
-    '[{ "name": "product name", "qty": 3, "unitPrice": 12.50 }]',
-    "Rules:",
-    "- name: clean product name without codes or extra whitespace",
-    "- qty: numeric quantity ordered",
-    "- unitPrice: price per unit in NZD, null if not found",
-    "- SKIP: header rows, totals, GST lines, delivery/freight charges, surcharges, account fees",
-    "- SKIP: lines where name is a date, a bare number, or a dollar amount",
-    "- SKIP: lines with qty <= 0 or qty > 10000",
-    "- Only include actual purchasable products with a real name and positive qty",
-    "- Expand abbreviations where obvious (e.g. Sav Blanc = Sauvignon Blanc)",
+    "Analyse this invoice completely and extract ALL of the following in one pass:",
+    "",
+    "1. SUPPLIER (vendor who ISSUED this invoice):",
+    "   name, address, phone, email, website, accountNumber (customer's account with supplier)",
+    "",
+    "2. CUSTOMER (who the invoice is addressed TO):",
+    "   name, address (for wrong-venue detection)",
+    "",
+    "3. INVOICE METADATA:",
+    "   invoiceNumber, invoiceDate, deliveryDate, purchaseOrderNumber, totalAmount, gstAmount, subtotal",
+    "",
+    "4. PRODUCT LINES (physical products only):",
+    "   name, code, quantity, unit, unitPrice, lineTotal, caseSize (if mentioned)",
+    "   SKIP: dates, totals, GST, freight, reference numbers, document labels",
+    "",
+    'Return as single JSON object: {"supplier":{"name":null,"phone":null,"email":null,"address":null,"website":null,"accountNumber":null},"customer":{"name":null,"address":null},"invoice":{"number":null,"date":null,"deliveryDate":null,"poNumber":null,"total":null,"gst":null,"subtotal":null},"lines":[{"name":"","code":null,"qty":1,"unit":null,"unitPrice":null,"lineTotal":null,"caseSize":null}]}',
+    "",
+    "IMPORTANT:",
+    "- supplier is the VENDOR (large logo/name at top of invoice, the company sending the invoice)",
+    "- customer is the RECIPIENT (delivery address or bill-to — the bar/restaurant receiving goods)",
+    "- Only include physical product lines with a real product name and positive qty",
+    "- Return ONE JSON object, no arrays at top level",
   ].join("\n");
+
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 2048,
+      max_tokens: 4000,
       system,
-      messages: [{ role: "user", content: "Extract line items from this invoice:\n\n" + rawText.slice(0, 8000) }],
+      messages: [{ role: "user", content: "Extract all invoice data:\n\n" + text.slice(0, 12000) }],
     }),
   });
-  if (!resp.ok) throw new Error("Claude OCR error: " + resp.status);
+  if (!resp.ok) throw new Error("Claude invoice-complete error: " + resp.status);
   const data = await resp.json() as any;
-  const text = data?.content?.[0]?.text || "[]";
-  const match = text.match(/\[[\s\S]*\]/);
-  const lines = match ? JSON.parse(match[0]) : [];
-  return lines.filter((l: any) => l && l.name && l.qty > 0).map((l: any) => ({
-    name: String(l.name).trim(),
-    qty: Number(l.qty),
-    unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
-  }));
-}
+  const rawText = data?.content?.[0]?.text || "{}";
+  const match = rawText.match(/\{[\s\S]*\}/);
+  const p = match ? JSON.parse(match[0]) : {};
 
+  const lines = Array.isArray(p.lines)
+    ? p.lines
+        .filter((l: any) => l && l.name && Number(l.qty) > 0)
+        .map((l: any) => ({
+          name: String(l.name).trim(),
+          code: l.code ? String(l.code).trim() : null,
+          qty: Number(l.qty),
+          unit: l.unit ? String(l.unit).trim() : null,
+          unitPrice: l.unitPrice != null ? Number(l.unitPrice) : null,
+          lineTotal: l.lineTotal != null ? Number(l.lineTotal) : null,
+          caseSize: l.caseSize != null ? Number(l.caseSize) : null,
+        }))
+    : [];
+
+  return {
+    supplier: {
+      name: p.supplier?.name ? String(p.supplier.name).trim() : null,
+      phone: p.supplier?.phone ? String(p.supplier.phone).trim() : null,
+      email: p.supplier?.email ? String(p.supplier.email).trim() : null,
+      address: p.supplier?.address ? String(p.supplier.address).trim() : null,
+      website: p.supplier?.website ? String(p.supplier.website).trim() : null,
+      accountNumber: p.supplier?.accountNumber ? String(p.supplier.accountNumber).trim() : null,
+    },
+    customer: {
+      name: p.customer?.name ? String(p.customer.name).trim() : null,
+      address: p.customer?.address ? String(p.customer.address).trim() : null,
+    },
+    invoice: {
+      number: p.invoice?.number ? String(p.invoice.number).trim() : null,
+      date: p.invoice?.date ? String(p.invoice.date).trim() : null,
+      deliveryDate: p.invoice?.deliveryDate ? String(p.invoice.deliveryDate).trim() : null,
+      poNumber: p.invoice?.poNumber ? String(p.invoice.poNumber).trim() : null,
+      total: Number.isFinite(Number(p.invoice?.total)) ? Number(p.invoice.total) : null,
+      gst: Number.isFinite(Number(p.invoice?.gst)) ? Number(p.invoice.gst) : null,
+      subtotal: Number.isFinite(Number(p.invoice?.subtotal)) ? Number(p.invoice.subtotal) : null,
+    },
+    lines,
+  };
+}
 
 // ── POST /photo-count ─────────────────────────────────────────────────
 // Body: { venueId, imageBase64, productHint?, unit? }
@@ -1677,24 +1742,26 @@ app.post("/process-invoices-pdf", async (req, res) => {
     const pdfData = await pdfParse(fileBuffer);
     const text = pdfData.text || "";
 
-    const poNumber = extractPo(text);
-    const invoiceNumber = extractInvoiceNumber(text);
-    const deliveryDate = extractDeliveryDate(text);
-    const supplierName = guessSupplierName(text);
-    // Try Claude-powered extraction first, fall back to regex
-        let lines = [];
-        try {
-          lines = await extractLinesWithClaude(text);
-          if (!lines.length) throw new Error('Claude returned no lines');
-        } catch (claudeErr) {
-          console.log('[api/process-invoices-pdf] Claude extraction failed, using regex fallback', claudeErr && claudeErr.message);
-          lines = extractLinesFromText(text);
-        }
-        lines = filterInvoiceLines(lines);
+    // Single comprehensive Claude extraction — supplier + customer + metadata + lines
+    let invoiceData: CompleteInvoiceExtraction | null = null;
+    let lines: any[] = [];
+    try {
+      invoiceData = await extractInvoiceComplete(text);
+      lines = filterInvoiceLines(invoiceData.lines);
+      if (!lines.length) throw new Error("No lines extracted");
+    } catch (claudeErr: any) {
+      console.log("[api/process-invoices-pdf] extractInvoiceComplete failed, using regex fallback", claudeErr?.message);
+      lines = filterInvoiceLines(extractLinesFromText(text));
+    }
+
+    // Fall back to regex metadata extraction if Claude didn't get them
+    const poNumber = invoiceData?.invoice.poNumber ?? extractPo(text);
+    const invoiceNumber = invoiceData?.invoice.number ?? extractInvoiceNumber(text);
+    const deliveryDate = invoiceData?.invoice.deliveryDate ?? extractDeliveryDate(text);
+    const supplierName = invoiceData?.supplier.name ?? guessSupplierName(text);
 
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items detected — please review manually.");
-    warnings.push("PDF parsed using text extraction (beta).");
 
     const payload = {
       ok: true,
@@ -1703,11 +1770,19 @@ app.post("/process-invoices-pdf", async (req, res) => {
         storagePath,
         poNumber: poNumber ?? null,
         invoiceNumber: invoiceNumber ?? null,
+        invoiceDate: invoiceData?.invoice.date ?? null,
         deliveryDate: deliveryDate ?? null,
         supplierName: supplierName ?? null,
+        supplierPhone: invoiceData?.supplier.phone ?? null,
+        supplierEmail: invoiceData?.supplier.email ?? null,
+        supplierAddress: invoiceData?.supplier.address ?? null,
+        supplierAccountNumber: invoiceData?.supplier.accountNumber ?? null,
+        customerName: invoiceData?.customer.name ?? null,
+        totalAmount: invoiceData?.invoice.total ?? null,
+        gstAmount: invoiceData?.invoice.gst ?? null,
       },
       lines,
-      confidence: lines.length > 0 ? 0.6 : 0.2,
+      confidence: lines.length > 0 ? 0.8 : 0.2,
       warnings,
     };
 

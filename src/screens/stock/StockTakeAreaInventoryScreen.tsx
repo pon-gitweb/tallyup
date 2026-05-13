@@ -8,6 +8,7 @@ import ShelfScanModal from "../../components/stocktake/ShelfScanModal";
 import ProductPhotoModal from "../../components/stocktake/ProductPhotoModal";
 import VenueProductSearchModal from "../../components/stocktake/VenueProductSearchModal";
 import BarcodeScannerModal from "../../components/stocktake/BarcodeScannerModal";
+import CountingUnitModal, { CountingUnitConfig } from "../../components/stocktake/CountingUnitModal";
 import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPhoto";
 import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
 import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
@@ -54,6 +55,10 @@ type Item = {
   // Induction flags (quick-add / other partial items)
   inductionStatus?: 'pending' | 'complete';
   inductionSource?: string | null;
+
+  // Counting unit config
+  countingUnit?: 'unit' | 'case' | 'both';
+  caseSize?: number | null;
 };
 type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
 type MemberDoc = { role?: string };
@@ -210,7 +215,62 @@ const Row = React.memo(function Row({
           </View>
         </View>
 
-        {/* RIGHT — count controls: [−] [input] [+] */}
+        {/* RIGHT — count controls */}
+        {item.countingUnit === 'both' ? (
+          /* Both mode: cases + loose dual inputs */
+          <View style={{ alignItems: 'flex-end', gap: 3 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text style={{ fontSize: 10, color: '#64748b', width: 34, textAlign: 'right' }}>Cases</Text>
+              {showSteppers && (
+                <TouchableOpacity onPress={() => adjustTyped(-1)} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontWeight: '900', fontSize: 18 }}>-</Text>
+                </TouchableOpacity>
+              )}
+              <TextInput
+                ref={(el) => { inputRefs.current[item.id] = el; }}
+                value={localQty[item.id] ?? ''}
+                onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
+                placeholder="0"
+                keyboardType="decimal-pad"
+                maxLength={6}
+                onFocus={() => setFocusedInputId(item.id)}
+                onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
+                style={{ width: 52, paddingVertical: 6, paddingHorizontal: 4, borderWidth: 2, borderColor: (localQty[item.id] ?? '').trim() ? '#4CAF50' : '#d1d5db', borderRadius: 8, height: 36, backgroundColor: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' }}
+              />
+              {showSteppers && (
+                <TouchableOpacity onPress={() => adjustTyped(1)} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontWeight: '900', fontSize: 18 }}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text style={{ fontSize: 10, color: '#64748b', width: 34, textAlign: 'right' }}>Loose</Text>
+              {showSteppers && (
+                <TouchableOpacity onPress={() => setLocalQty(m => { const v = Math.max(0, parseFloat(m[item.id + '_loose'] || '0') - 1); return { ...m, [item.id + '_loose']: String(v) }; })} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontWeight: '900', fontSize: 18 }}>-</Text>
+                </TouchableOpacity>
+              )}
+              <TextInput
+                value={localQty[item.id + '_loose'] ?? ''}
+                onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id + '_loose']: t }))}
+                placeholder="0"
+                keyboardType="decimal-pad"
+                maxLength={6}
+                style={{ width: 52, paddingVertical: 6, paddingHorizontal: 4, borderWidth: 2, borderColor: (localQty[item.id + '_loose'] ?? '').trim() ? '#4CAF50' : '#d1d5db', borderRadius: 8, height: 36, backgroundColor: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' }}
+              />
+              {showSteppers && (
+                <TouchableOpacity onPress={() => setLocalQty(m => { const v = parseFloat(m[item.id + '_loose'] || '0') + 1; return { ...m, [item.id + '_loose']: String(v) }; })} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontWeight: '900', fontSize: 18 }}>+</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {item.caseSize && (
+              <Text style={{ fontSize: 10, color: '#6b7280' }}>
+                = {((parseFloat(localQty[item.id] || '0') * (item.caseSize ?? 1)) + parseFloat(localQty[item.id + '_loose'] || '0')).toFixed(0)} units
+              </Text>
+            )}
+          </View>
+        ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           {showSteppers && (
             <TouchableOpacity
@@ -223,38 +283,47 @@ const Row = React.memo(function Row({
                 justifyContent: 'center', alignItems: 'center',
               }}
             >
-              <Text style={{ fontWeight: '900', fontSize: 20 }}>−</Text>
+              <Text style={{ fontWeight: '900', fontSize: 20 }}>-</Text>
             </TouchableOpacity>
           )}
 
-          <TextInput
-            ref={(el) => { inputRefs.current[item.id] = el; }}
-            value={localQty[item.id] ?? ''}
-            onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
-            placeholder="0"
-            keyboardType="decimal-pad"
-            inputMode="decimal"
-            maxLength={10}
-            returnKeyType="done"
-            blurOnSubmit={false}
-            editable={true}
-            onFocus={() => setFocusedInputId(item.id)}
-            onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
-            onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
-            style={{
-              width: 80,
-              paddingVertical: Math.max(8, dens(6)),
-              paddingHorizontal: 6,
-              borderWidth: 2,
-              borderColor: hasLocalEntry ? '#4CAF50' : '#d1d5db',
-              borderRadius: 10,
-              height: Math.max(44, dens(40)),
-              backgroundColor: '#fff',
-              fontSize: 18,
-              fontWeight: '700',
-              textAlign: 'center',
-            }}
-          />
+          <View style={{ alignItems: 'center' }}>
+            <TextInput
+              ref={(el) => { inputRefs.current[item.id] = el; }}
+              value={localQty[item.id] ?? ''}
+              onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
+              placeholder="0"
+              keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={10}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              editable={true}
+              onFocus={() => setFocusedInputId(item.id)}
+              onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
+              onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
+              style={{
+                width: 80,
+                paddingVertical: Math.max(8, dens(6)),
+                paddingHorizontal: 6,
+                borderWidth: 2,
+                borderColor: hasLocalEntry ? '#4CAF50' : '#d1d5db',
+                borderRadius: 10,
+                height: Math.max(44, dens(40)),
+                backgroundColor: '#fff',
+                fontSize: 18,
+                fontWeight: '700',
+                textAlign: 'center',
+              }}
+            />
+            {item.countingUnit === 'case' && item.caseSize && (
+              <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
+                {hasLocalEntry
+                  ? `= ${(parseFloat(localQty[item.id] || '0') * (item.caseSize ?? 1)).toFixed(0)} units`
+                  : 'cases'}
+              </Text>
+            )}
+          </View>
 
           {showSteppers && (
             <TouchableOpacity
@@ -267,10 +336,11 @@ const Row = React.memo(function Row({
                 justifyContent: 'center', alignItems: 'center',
               }}
             >
-              <Text style={{ fontWeight: '900', fontSize: 20 }}>＋</Text>
+              <Text style={{ fontWeight: '900', fontSize: 20 }}>+</Text>
             </TouchableOpacity>
           )}
         </View>
+        )}
       </View>
 
       {/* Manager inline approve */}
@@ -587,6 +657,15 @@ function StockTakeAreaInventoryScreen() {
 
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
+  // Counting unit picker — shown before writing any new product to the area
+  const [countingUnitVisible, setCountingUnitVisible] = useState(false);
+  const [countingUnitPending, setCountingUnitPending] = useState<{
+    name: string; unit?: string; supplierId?: string; supplierName?: string;
+    productId?: string; costPrice?: number; caseSize?: number | null;
+    write: (extras: CountingUnitConfig) => Promise<void>;
+  } | null>(null);
+  const [countingUnitForItem, setCountingUnitForItem] = useState<Item | null>(null);
+
   const [editFor, setEditFor] = useState<Item | null>(null);
   const [editName, setEditName] = useState('');
   const [editUnit, setEditUnit] = useState('');
@@ -828,7 +907,18 @@ function StockTakeAreaInventoryScreen() {
   };
 
   const saveCount = async (item: Item, overrideQty?: number, forceReplace?: boolean) => {
-    const qty = overrideQty ?? parseFloat(String(localQtyRef.current[item.id] ?? '0'));
+    let qty: number;
+    if (overrideQty != null) {
+      qty = overrideQty;
+    } else if (item.countingUnit === 'case' && item.caseSize) {
+      qty = parseFloat(String(localQtyRef.current[item.id] ?? '0')) * item.caseSize;
+    } else if (item.countingUnit === 'both' && item.caseSize) {
+      const cases = parseFloat(String(localQtyRef.current[item.id] ?? '0'));
+      const loose = parseFloat(String(localQtyRef.current[item.id + '_loose'] ?? '0'));
+      qty = cases * item.caseSize + loose;
+    } else {
+      qty = parseFloat(String(localQtyRef.current[item.id] ?? '0'));
+    }
     console.log('[SaveCount] called item:', item.id, 'qty:', qty, 'localQtyRef:', localQtyRef.current[item.id], 'localQty:', localQty[item.id]);
     const existingCount = typeof item.lastCount === 'number' ? item.lastCount : null;
     const doSave = async (finalQty: number) => {
@@ -1531,12 +1621,22 @@ const openHistory = throttleAction(async (item: Item) => {
     const already = items.find(it => it.name?.toLowerCase() === (product.name || '').toLowerCase());
     if (already) { Alert.alert('Already here', `${product.name} is already in this area.`); return; }
     await ensureAreaStarted();
-    await addDoc(
-      collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-      { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
-    );
-    hapticSuccess();
-    Alert.alert('Added', `${product.name} added to this area.`);
+    setCountingUnitPending({
+      name: product.name || '',
+      unit: product.unit || undefined,
+      supplierName: product.supplierName || undefined,
+      productId: product.id || undefined,
+      costPrice: product.costPrice || undefined,
+      caseSize: product.caseSize || null,
+      write: async ({ countingUnit, caseSize }) => {
+        await addDoc(
+          collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+          { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, countingUnit, caseSize: caseSize ?? null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+        );
+        hapticSuccess();
+      },
+    });
+    setCountingUnitVisible(true);
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1672,22 +1772,34 @@ const openHistory = throttleAction(async (item: Item) => {
 
   async function addTier2ToArea(product: any) {
     if (!venueId || !departmentId || !areaId) return;
-    try {
-      const iRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', product.id);
-      await setDoc(iRef, {
-        name: product.name,
-        unit: product.unit ?? null,
-        costPrice: product.costPrice ?? null,
-        productId: product.id,
-        lastCount: null,
-        lastCountAt: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      setUnifiedSearch('');
-    } catch (e: any) {
-      Alert.alert('Could not add', e?.message || 'Please try again.');
-    }
+    setCountingUnitPending({
+      name: product.name,
+      unit: product.unit || undefined,
+      productId: product.id,
+      costPrice: product.costPrice || undefined,
+      caseSize: product.caseSize || null,
+      write: async ({ countingUnit, caseSize }) => {
+        try {
+          const iRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', product.id);
+          await setDoc(iRef, {
+            name: product.name,
+            unit: product.unit ?? null,
+            costPrice: product.costPrice ?? null,
+            productId: product.id,
+            countingUnit,
+            caseSize: caseSize ?? null,
+            lastCount: null,
+            lastCountAt: null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+          setUnifiedSearch('');
+        } catch (e: any) {
+          Alert.alert('Could not add', e?.message || 'Please try again.');
+        }
+      },
+    });
+    setCountingUnitVisible(true);
   }
 
   return (
@@ -2077,6 +2189,9 @@ const openHistory = throttleAction(async (item: Item) => {
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setCaptureProductOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#92400E' }}>📸 Add product by photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); setTimeout(()=>{ setCountingUnitForItem(it); setCountingUnitVisible(true); }, 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EDE9FE', marginBottom:8 }}>
+              <Text style={{ fontWeight:'800', color:'#5B21B6' }}>Change counting unit</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openEditItem(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Edit item</Text>
@@ -2642,6 +2757,21 @@ const openHistory = throttleAction(async (item: Item) => {
         areaItems={items}
         onProductAddedToArea={() => { /* onSnapshot auto-refreshes items */ }}
         onOpenPhotoModal={(barcode) => { setPhotoModalBarcode(barcode); }}
+        onBeforeAddToArea={(product, write) => {
+          setBarcodeScanOpen(false);
+          setTimeout(() => {
+            setCountingUnitPending({
+              name: product.name,
+              unit: product.unit || undefined,
+              productId: product.id,
+              caseSize: product.caseSize ?? null,
+              write: async ({ countingUnit, caseSize }) => {
+                await write({ countingUnit, caseSize: caseSize ?? null });
+              },
+            });
+            setCountingUnitVisible(true);
+          }, 300);
+        }}
       />
       <VenueProductSearchModal
         visible={venueSearchOpen}
@@ -2649,6 +2779,41 @@ const openHistory = throttleAction(async (item: Item) => {
         venueId={venueId}
         areaName={areaName}
         onSelect={handleVenueProductSelected}
+      />
+
+      {/* Counting unit picker — for new products and changing existing */}
+      <CountingUnitModal
+        visible={countingUnitVisible}
+        productName={countingUnitForItem?.name ?? countingUnitPending?.name ?? ''}
+        areaName={areaName}
+        initialUnit={countingUnitForItem?.countingUnit as any ?? undefined}
+        initialCaseSize={countingUnitForItem?.caseSize ?? undefined}
+        suggestedCaseSize={countingUnitPending?.caseSize ?? undefined}
+        onSave={async (config) => {
+          setCountingUnitVisible(false);
+          if (countingUnitForItem) {
+            // Updating existing item's counting unit
+            try {
+              await updateDoc(
+                doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', countingUnitForItem.id),
+                { countingUnit: config.countingUnit, caseSize: config.caseSize ?? null, updatedAt: serverTimestamp() }
+              );
+            } catch (e: any) { Alert.alert('Could not update', e?.message || 'Please try again.'); }
+            setCountingUnitForItem(null);
+          } else if (countingUnitPending) {
+            try { await countingUnitPending.write(config); } catch {}
+            setCountingUnitPending(null);
+          }
+        }}
+        onCancel={() => {
+          setCountingUnitVisible(false);
+          // If pending add, save with default unit mode
+          if (countingUnitPending && !countingUnitForItem) {
+            countingUnitPending.write({ countingUnit: 'unit', caseSize: null }).catch(() => {});
+            setCountingUnitPending(null);
+          }
+          setCountingUnitForItem(null);
+        }}
       />
 
       <ShelfPhotoModal
