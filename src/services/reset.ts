@@ -15,19 +15,41 @@ function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, no
 export async function resetDepartment(venueId: string, departmentId: string) {
   if (!venueId || !departmentId) return;
   const now = serverTimestamp();
-  const batch = writeBatch(db);
-  const nestedAreasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
-  nestedAreasSnap.forEach((d) => {
-    resetAreaInBatch(batch, doc(db, 'venues', venueId, 'departments', departmentId, 'areas', d.id), now);
+
+  // Step 1: Reset area flags
+  const areaBatch = writeBatch(db);
+  const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
+  areasSnap.forEach((d) => {
+    resetAreaInBatch(areaBatch, doc(db, 'venues', venueId, 'departments', departmentId, 'areas', d.id), now);
   });
   try {
     const legacyQ = query(collection(db, 'venues', venueId, 'areas'), where('departmentId', '==', departmentId));
     const legacySnap = await getDocs(legacyQ);
     legacySnap.forEach((d) => {
-      resetAreaInBatch(batch, doc(db, 'venues', venueId, 'areas', d.id), now);
+      resetAreaInBatch(areaBatch, doc(db, 'venues', venueId, 'areas', d.id), now);
     });
   } catch {}
-  await batch.commit();
+  await areaBatch.commit();
+
+  // Step 2: Restore lastCount from confirmedCount on all items (separate batch per area)
+  for (const areaDoc of areasSnap.docs) {
+    const itemsSnap = await getDocs(
+      collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaDoc.id, 'items')
+    );
+    const itemBatch = writeBatch(db);
+    let hasRestores = false;
+    itemsSnap.forEach(itemDoc => {
+      const data = itemDoc.data();
+      if (typeof data.confirmedCount === 'number') {
+        itemBatch.update(itemDoc.ref, {
+          lastCount: data.confirmedCount,
+          lastCountAt: null,
+        });
+        hasRestores = true;
+      }
+    });
+    if (hasRestores) await itemBatch.commit();
+  }
 }
 
 export async function resetAllDepartmentsStockTake(venueId: string) {

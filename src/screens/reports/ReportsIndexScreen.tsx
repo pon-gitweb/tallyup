@@ -86,6 +86,8 @@ export default function ReportsIndexScreen() {
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [varianceExplained, setVarianceExplained] = useState(false);
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
+  const [availableDepts, setAvailableDepts] = useState<{ id: string; name: string; lastCycleAt: any }[]>([]);
   const [insightsModalVisible, setInsightsModalVisible] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsList, setInsightsList] = useState<AiInsight[]>([]);
@@ -212,6 +214,25 @@ export default function ReportsIndexScreen() {
       } catch {}
     }
     loadSlowMovers();
+    return () => { cancelled = true; };
+  }, [venueId]);
+
+  // ── Department list for selector ─────────────────────────────────────────
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        if (cancelled) return;
+        const depts = snap.docs.map(d => ({
+          id: d.id,
+          name: (d.data() as any).name || d.id,
+          lastCycleAt: (d.data() as any).lastCycleAt ?? null,
+        }));
+        setAvailableDepts(depts);
+      } catch {}
+    })();
     return () => { cancelled = true; };
   }, [venueId]);
 
@@ -388,6 +409,70 @@ export default function ReportsIndexScreen() {
       <View style={styles.root}>
         <ScreenHeader />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
+
+          {/* ── DEPARTMENT SELECTOR ── */}
+          {availableDepts.length > 1 && (
+            <View style={{ marginBottom: 14 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {[{ id: null, name: 'All departments' }, ...availableDepts].map(dept => {
+                    const selected = dept.id === selectedDeptId;
+                    return (
+                      <TouchableOpacity
+                        key={dept.id ?? '__all'}
+                        onPress={() => setSelectedDeptId(dept.id)}
+                        style={{
+                          paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
+                          backgroundColor: selected ? '#1b4f72' : '#f1f5f9',
+                          borderWidth: 1, borderColor: selected ? '#1b4f72' : '#e2e8f0',
+                        }}
+                      >
+                        <Text style={{ fontWeight: '700', fontSize: 13, color: selected ? '#fff' : '#374151' }}>
+                          {dept.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+              {/* Alignment warning when "All departments" but not all completed within 7 days */}
+              {selectedDeptId === null && (() => {
+                const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+                const cutoff = Date.now() - SEVEN_DAYS_MS;
+                const allAligned = availableDepts.every(d => {
+                  const ms = d.lastCycleAt?.toMillis?.() ?? d.lastCycleAt?.toDate?.()?.getTime?.() ?? 0;
+                  return ms > cutoff;
+                });
+                if (allAligned) return null;
+                const notDone = availableDepts.filter(d => {
+                  const ms = d.lastCycleAt?.toMillis?.() ?? d.lastCycleAt?.toDate?.()?.getTime?.() ?? 0;
+                  return ms <= cutoff;
+                });
+                return (
+                  <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#fde68a' }}>
+                    <Text style={{ color: '#92400e', fontSize: 12, fontWeight: '700' }}>
+                      Venue-wide report unavailable
+                    </Text>
+                    <Text style={{ color: '#92400e', fontSize: 12, marginTop: 2 }}>
+                      {notDone.map(d => d.name).join(', ')} {notDone.length === 1 ? 'hasn\'t' : 'haven\'t'} completed a stocktake in the last 7 days.
+                      Select a department to view its individual report.
+                    </Text>
+                  </View>
+                );
+              })()}
+              {/* Department-specific note */}
+              {selectedDeptId !== null && (
+                <View style={{ backgroundColor: '#eff6ff', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                  <Text style={{ color: '#1e40af', fontSize: 12, fontWeight: '700' }}>
+                    Viewing {availableDepts.find(d => d.id === selectedDeptId)?.name ?? 'department'} only
+                  </Text>
+                  <Text style={{ color: '#1e40af', fontSize: 12, marginTop: 2 }}>
+                    Department-level filtering is coming soon. Select "All departments" to see the venue-wide report.
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* ── ANCHOR METRIC (owner/manager only) ── */}
           {isManager && (

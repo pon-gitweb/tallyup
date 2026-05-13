@@ -166,6 +166,12 @@ service cloud.firestore {
         allow create, update: if hasVenueRole(venueId, ['manager','owner']);
         allow delete: if hasVenueRole(venueId, ['owner']);
 
+        // Any member can update cycle tracking fields (set by staff when completing areas)
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['totalCyclesCompleted', 'lastCycleAt', 'lastCycleCompletedBy',
+                         'lastStockTakeAt', 'lastStockTakeWindowHours']);
+
         match /areas/{areaId} {
           allow read: if isVenueMember(venueId);
 
@@ -353,6 +359,13 @@ service cloud.firestore {
 
             allow delete: if isVenueMember(venueId) && areaOpen();
           }
+        }
+
+        match /cycles/{cycleId} {
+          allow read: if isVenueMember(venueId);
+          allow create: if isVenueMember(venueId);
+          allow update: if hasVenueRole(venueId, ['manager', 'owner']);
+          allow delete: if hasVenueRole(venueId, ['owner']);
         }
 
         match /reports/{docId} {

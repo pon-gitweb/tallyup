@@ -1069,14 +1069,25 @@ app.post("/suitee", async (req, res) => {
     let excessDollars = 0;
     let stockHoldingValue = 0;
     let hasCountData = false;
+    const deptContextLines: string[] = [];
 
     try {
       const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
       for (const deptDoc of deptsSnap.docs) {
-        const deptName: string = (deptDoc.data().name as string) || deptDoc.id;
+        const deptData = deptDoc.data();
+        const deptName: string = (deptData.name as string) || deptDoc.id;
+        const totalCycles: number = typeof deptData.totalCyclesCompleted === "number" ? deptData.totalCyclesCompleted : 0;
+        const lastCycleStr: string | null = deptData.lastCycleAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || null;
+
         const areasSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas`).get();
+        let deptAreasTotal = 0, deptAreasCompleted = 0, deptActive = false;
         for (const areaDoc of areasSnap.docs) {
-          const areaName: string = (areaDoc.data().name as string) || areaDoc.id;
+          deptAreasTotal++;
+          const aData = areaDoc.data();
+          if (aData.completedAt) deptAreasCompleted++;
+          else if (aData.startedAt) deptActive = true;
+
+          const areaName: string = (aData.name as string) || areaDoc.id;
           const itemsSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas/${areaDoc.id}/items`).get();
           for (const itemDoc of itemsSnap.docs) {
             const d = itemDoc.data();
@@ -1117,6 +1128,12 @@ app.post("/suitee", async (req, res) => {
             }
           }
         }
+
+        // Collect per-department context for Suitee
+        const activeFlag = deptActive ? " (in progress)" : deptAreasCompleted === deptAreasTotal && deptAreasTotal > 0 ? " (complete)" : "";
+        deptContextLines.push(
+          `  ${deptName}: ${totalCycles} cycle${totalCycles !== 1 ? "s" : ""} completed, last ${lastCycleStr ?? "never"}, areas ${deptAreasCompleted}/${deptAreasTotal}${activeFlag}`
+        );
       }
     } catch {}
 
@@ -1269,6 +1286,11 @@ app.post("/suitee", async (req, res) => {
       `PRODUCTS IN SYSTEM: ${products.length}`,
       `SUPPLIERS: ${supplierNames.join(", ") || "None"}`,
     ];
+
+    if (deptContextLines.length > 0) {
+      lines.push("", "DEPARTMENTS (cycles completed, last cycle date, area progress):");
+      lines.push(...deptContextLines);
+    }
 
     if (slowMovers.length > 0) {
       lines.push("", "SLOW/UNCOUNTED PRODUCTS (30+ days without a count):");

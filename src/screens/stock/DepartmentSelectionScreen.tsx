@@ -38,7 +38,21 @@ type DeptRow = {
   status?: 'idle' | 'inprog' | 'done';
   areasTotal?: number;
   areasCompleted?: number;
+  totalCyclesCompleted?: number;
+  lastCycleAt?: any;
 };
+
+function fmtRelative(ms: number | null): string {
+  if (!ms) return '—';
+  const diff = Date.now() - ms;
+  const mins = Math.round(diff / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days !== 1 ? 's' : ''} ago`;
+}
 
 // Derive department-level status from its areas
 async function enrichDepartmentsWithAreaStatus(
@@ -353,61 +367,78 @@ function DepartmentSelectionScreen() {
 
   const renderDept = ({ item }: { item: DeptRow }) => {
     const status: 'idle' | 'inprog' | 'done' =
-      item.status ??
-      (item.completedAt ? 'done' : item.startedAt ? 'inprog' : 'idle');
+      item.status ?? (item.completedAt ? 'done' : item.startedAt ? 'inprog' : 'idle');
 
-    const statusLabel =
+    const lastCycleMs = item.lastCycleAt?.toMillis?.()
+      ?? item.lastCycleAt?.toDate?.()?.getTime?.()
+      ?? null;
+
+    const leftBorderColor =
+      status === 'done' ? '#065f46' :
+      status === 'inprog' ? '#b45309' : '#cbd5e1';
+
+    const statusSubtext =
       status === 'done'
-        ? 'Completed'
+        ? `✓ Cycle ${item.totalCyclesCompleted ?? 1} complete · ${fmtRelative(lastCycleMs)}`
         : status === 'inprog'
-        ? 'In progress'
+        ? `${item.areasCompleted ?? 0} of ${item.areasTotal ?? '?'} areas counted · In progress`
+        : lastCycleMs
+        ? `Last counted ${fmtRelative(lastCycleMs)} · Cycle ${item.totalCyclesCompleted ?? 0}`
         : 'Not started';
 
-    const pillStyle =
-      status === 'done'
-        ? styles.pillDone
-        : status === 'inprog'
-        ? styles.pillInProg
-        : styles.pillIdle;
+    const statusTextColor =
+      status === 'done' ? '#065f46' :
+      status === 'inprog' ? '#b45309' : colours.textSecondary;
 
     return (
-      <View style={[styles.row, { paddingRight: 8 }]}>
-        <TouchableOpacity
-          style={{ flex: 1, paddingRight: 8 }}
-          onPress={() => openDepartment(item)}
-          onLongPress={() => isManager ? openRename(item) : resetDept(item)}
-          delayLongPress={500}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-            <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
-            {item.areasTotal != null && item.areasTotal > 0 && (
-              <Text style={{ fontSize: 11, color: colours.textSecondary }}>
-                {item.areasCompleted ?? 0} of {item.areasTotal} areas complete
-              </Text>
-            )}
-          </View>
-        </TouchableOpacity>
-        {isManager && (
-          <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-            <TouchableOpacity
-              onPress={() => openRename(item)}
-              style={{ padding: 8 }}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => onDelete(item)}
-              style={{ padding: 8 }}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
-            </TouchableOpacity>
-          </View>
+      <View style={[styles.row, { borderLeftWidth: 4, borderLeftColor: leftBorderColor, flexDirection: 'column', alignItems: 'stretch', paddingRight: 8 }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={{ flex: 1, paddingRight: 8 }}
+            onPress={() => openDepartment(item)}
+            onLongPress={() => isManager ? openRename(item) : resetDept(item)}
+            delayLongPress={500}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.rowTitle}>{item.name || item.id}</Text>
+            <Text style={{ fontSize: 12, color: statusTextColor, marginTop: 4 }}>
+              {statusSubtext}
+            </Text>
+          </TouchableOpacity>
+          {isManager && (
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+              <TouchableOpacity
+                onPress={() => openRename(item)}
+                style={{ padding: 8 }}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onDelete(item)}
+                style={{ padding: 8 }}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
+          )}
+          <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
+        </View>
+        {status === 'done' && (
+          <TouchableOpacity
+            onPress={() => resetDept(item)}
+            style={{
+              marginTop: 10, alignSelf: 'flex-start',
+              backgroundColor: '#f0fdf4', paddingHorizontal: 12, paddingVertical: 6,
+              borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0',
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
+              Start next {item.name || 'department'} stocktake →
+            </Text>
+          </TouchableOpacity>
         )}
-        <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
       </View>
     );
   };

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
 import SmartShelfModal from "./components/SmartShelfModal";
@@ -1099,74 +1099,142 @@ try {
 
       if (!proceed) return;
 
-      const deptRef = doc(db, 'venues', venueId, 'departments', departmentId);
+      const uid = getAuth().currentUser?.uid ?? 'unknown';
+      const submittedAt = new Date();
+
+      // Read department for cycle number + name before incrementing
+      const deptRef = doc(db, 'venues', venueId!, 'departments', departmentId);
+      let deptCycleNumber = 1;
+      let deptName = departmentId;
+      try {
+        const deptSnap = await getDoc(deptRef);
+        const deptData = deptSnap.data() ?? {};
+        deptCycleNumber = (typeof deptData.totalCyclesCompleted === 'number' ? deptData.totalCyclesCompleted : 0) + 1;
+        deptName = deptData.name ?? departmentId;
+      } catch {}
+
+      // Calculate stats for this department only
+      let deptValue = 0;
+      let deptItemsCount = 0;
+      try {
+        for (const areaDoc of snap.docs) {
+          const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaDoc.id, 'items'));
+          deptItemsCount += itemsSnap.size;
+          itemsSnap.forEach(d => {
+            const data = d.data();
+            deptValue += (typeof data.lastCount === 'number' ? data.lastCount : 0)
+              * (typeof data.costPrice === 'number' ? data.costPrice : 0);
+          });
+        }
+      } catch {}
+
+      // Update department: timing + cycle counter (atomic increment)
       await updateDoc(deptRef, {
         lastStockTakeAt: serverTimestamp(),
         lastStockTakeWindowHours: roundedHours,
+        lastCycleAt: serverTimestamp(),
+        lastCycleCompletedBy: uid,
+        totalCyclesCompleted: increment(1),
       });
 
-      const submittedAt = new Date();
-      let totalValue = 0;
-      let totalItemsCount = 0;
+      // Write department-level cycle history document
+      try {
+        await addDoc(collection(db, 'venues', venueId!, 'departments', departmentId, 'cycles'), {
+          completedAt: serverTimestamp(),
+          completedBy: uid,
+          cycleNumber: deptCycleNumber,
+          totalItems: deptItemsCount,
+          stockValue: deptValue,
+          areaCount: snap.docs.length,
+          durationMinutes: Math.round(windowHours * 60),
+          venueId: venueId!,
+          departmentId,
+        });
+      } catch (e) {
+        console.warn('[stocktake] dept cycle write failed', e);
+      }
 
-      // Only write history + increment when ALL venue departments are complete.
-      // Treat the current department as done (we just wrote lastStockTakeAt above).
+      // Check if ALL departments completed within the last 7 days
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
       let allDeptsComplete = false;
       try {
         const allDeptsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments'));
-        allDeptsComplete = allDeptsSnap.docs.every(d =>
-          d.id === departmentId || !!d.data().lastStockTakeAt
-        );
+        const cutoff = Date.now() - SEVEN_DAYS_MS;
+        allDeptsComplete = allDeptsSnap.docs.every(d => {
+          if (d.id === departmentId) return true; // just completed now
+          const lc = d.data().lastCycleAt;
+          const ms = lc?.toMillis?.() ?? lc?.toDate?.()?.getTime?.() ?? 0;
+          return ms > cutoff;
+        });
       } catch {}
 
+      let venueValue = 0;
+      let venueItemsCount = 0;
+
       if (allDeptsComplete) {
-        // Aggregate stats across ALL departments for the single cycle record
+        // Aggregate stats across ALL departments for the venue-wide record
         try {
           const allDeptsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments'));
           await Promise.all(allDeptsSnap.docs.map(async deptDoc => {
             const areasSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', deptDoc.id, 'areas'));
             await Promise.all(areasSnap.docs.map(async areaDoc => {
               const itemsSnap = await getDocs(collection(db, 'venues', venueId!, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'));
-              totalItemsCount += itemsSnap.size;
+              venueItemsCount += itemsSnap.size;
               itemsSnap.forEach(d => {
                 const data = d.data();
-                totalValue += (typeof data.lastCount === 'number' ? data.lastCount : 0)
+                venueValue += (typeof data.lastCount === 'number' ? data.lastCount : 0)
                   * (typeof data.costPrice === 'number' ? data.costPrice : 0);
               });
             }));
           }));
         } catch {}
 
-        // ONE history record for the full venue cycle
+        // Write ONE venue-wide cycle history document
         try {
-          const uid = getAuth().currentUser?.uid ?? 'unknown';
           await addDoc(collection(db, 'venues', venueId!, 'stockTakes'), {
             completedAt: serverTimestamp(),
             completedBy: uid,
-            totalItems: totalItemsCount,
+            source: 'venue-wide-cycle',
+            totalItems: venueItemsCount,
             durationMinutes: Math.round(windowHours * 60),
-            stockValue: totalValue,
+            stockValue: venueValue,
             venueId: venueId!,
           });
         } catch (e) {
-          console.warn('[stocktake] history write failed', e);
+          console.warn('[stocktake] venue cycle write failed', e);
         }
 
-        // Increment cycle counter once per full venue cycle
+        // Increment venue-wide cycle counter once all depts are aligned
         try { await incrementFullStocktakeCompleted(venueId!); } catch {}
       }
 
       const counted = items.filter(i => i.lastCountAt);
       const missed = items.filter(i => !i.lastCountAt);
-      nav.navigate('StocktakeSummary' as never, {
-        departmentName: areaId || 'Department',
-        submittedAt: submittedAt.toISOString(),
-        itemsCounted: counted.length,
-        itemsMissed: missed.length,
-        totalValue,
-        windowHours: roundedHours,
-        items: counted.slice(0, 20).map(i => ({ name: i.name, counted: i.lastCount || 0, unit: i.unit, costPrice: i.costPrice })),
-      } as never);
+
+      if (allDeptsComplete) {
+        // All departments aligned — navigate to venue-wide summary
+        nav.navigate('StocktakeSummary' as never, {
+          departmentName: deptName,
+          submittedAt: submittedAt.toISOString(),
+          itemsCounted: counted.length,
+          itemsMissed: missed.length,
+          totalValue: venueValue,
+          windowHours: roundedHours,
+          items: counted.slice(0, 20).map(i => ({ name: i.name, counted: i.lastCount || 0, unit: i.unit, costPrice: i.costPrice })),
+        } as never);
+      } else {
+        // Department done, others still in progress — dept summary screen
+        nav.navigate('DepartmentSummary' as never, {
+          departmentId,
+          departmentName: deptName,
+          cycleNumber: deptCycleNumber,
+          totalItems: deptItemsCount,
+          stockValue: deptValue,
+          areaCount: snap.docs.length,
+          durationMinutes: Math.round(windowHours * 60),
+          submittedAt: submittedAt.toISOString(),
+        } as never);
+      }
     } catch (e: any) {
       if (__DEV__) {
         console.log('[StockTake] maybeFinalizeDepartment error', e?.message || e);
