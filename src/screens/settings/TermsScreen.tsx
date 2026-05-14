@@ -70,6 +70,21 @@ function TermsScreen() {
         For any questions about these terms contact us at office@hosti.co.nz or visit https://www.hosti.co.nz
       </Section>
 
+      <Section title="12. Fair Use Policy">
+        AI-powered features including invoice scanning, product photo identification, and shelf scanning are provided for normal venue operations.{'\n\n'}
+        Fair use means:{'\n'}
+        • Scanning invoices as they arrive from suppliers{'\n'}
+        • Photographing new products as they are ordered{'\n'}
+        • Periodic shelf checks during stocktake preparation{'\n\n'}
+        Fair use does not include:{'\n'}
+        • Bulk scanning of historical document archives{'\n'}
+        • Automated or scripted batch processing{'\n'}
+        • Scanning entire product catalogues in a single session{'\n'}
+        • Any usage designed to circumvent monthly limits{'\n\n'}
+        Hosti reserves the right to review usage that significantly exceeds normal operational patterns. Venues found to be misusing AI features may have their access reviewed or adjusted.{'\n\n'}
+        For questions about fair use contact: office@hosti.co.nz
+      </Section>
+
       <View style={{ height: 30 }} />
     </ScrollView>
   );

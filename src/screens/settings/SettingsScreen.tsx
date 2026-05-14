@@ -388,7 +388,10 @@ export default function SettingsScreen() {
           <IdentityBadge />
         </View>
 
-        {/* Identity summary */}
+        {/* ─── MY ACCOUNT ─── */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>My Account</Text></View>
+
+        {/* Identity card — display name + venue name editing */}
         <View style={styles.card}>
           <MaybeTText style={styles.heading}>Account</MaybeTText>
 
@@ -510,21 +513,39 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Primary actions */}
-        <View style={styles.row}>
-        </View>
-
-        {/* Single, unambiguous entry point to stock flows */}
+        {/* Sign out */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
-            onPress={() => nav.navigate('StockControl')}
+            onPress={() => Alert.alert(
+              'Sign out of Hosti?',
+              '',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign out', style: 'default', onPress: doSignOut },
+              ]
+            )}
           >
-            <Text style={styles.btnText}>Open Stock Control (Suppliers, Products & Orders)</Text>
+            <Text style={styles.btnText}>Sign Out</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Adjustments button (badge if manager/owner and count>0) */}
+        {/* ─── MY VENUE ─── */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>My Venue</Text></View>
+
+        {/* Team Members — owners and managers only */}
+        {isManager && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: themeColours.navy }]}
+              onPress={() => nav.navigate('TeamMembers')}
+            >
+              <Text style={styles.btnText}>Team Members</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Adjustments */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.primary }]}
@@ -545,136 +566,22 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* AI Usage button */}
+        {/* Budget Approvals */}
         <View style={styles.row}>
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: themeColours.primary }]}
-            onPress={() => nav.navigate('AiUsage')}
+            style={[styles.btn, { backgroundColor: themeColours.danger }]}
+            onPress={() => nav.navigate('BudgetApprovalInbox')}
           >
-            <Text style={styles.btnText}>AI Usage</Text>
-          </TouchableOpacity>
-        </View>
-        {/* Team Members — owners and managers only */}
-        {isManager && (
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={[styles.btn, { backgroundColor: themeColours.navy }]}
-              onPress={() => nav.navigate('TeamMembers')}
-            >
-              <Text style={styles.btnText}>Team Members</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Stocktake Management — managers/owners only */}
-        {isManager && (
-          <>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionHeaderText}>Stocktake Management</Text>
-            </View>
-            <View style={styles.row}>
-              <TouchableOpacity
-                style={[styles.btn, { backgroundColor: '#c47b2b', opacity: resettingCycle ? 0.6 : 1 }]}
-                onPress={doResetCycle}
-                disabled={resettingCycle}
-              >
-                {resettingCycle ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <>
-                    <Text style={styles.btnText}>Reset Stocktake Cycle</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 3, textAlign: 'center' }}>
-                      Starts a new stocktake cycle for all areas. This cannot be undone.
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-
-        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Operations</Text></View>
-        {/* Report Preferences button */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('ReportPreferences')}
-          >
-            <Text style={styles.btnText}>Report Preferences</Text>
+            <Text style={styles.btnText}>Budget Approvals</Text>
+            {isManager && budgetPendingCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{budgetPendingCount > 99 ? '99+' : budgetPendingCount}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         </View>
 
-        {/* Weekly Summary Email toggle — managers/owners only */}
-        {isManager && (
-          <View style={styles.row}>
-            <View style={[styles.btn, {
-              backgroundColor: themeColours.surface,
-              borderWidth: 1,
-              borderColor: themeColours.border,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 10,
-            }]}>
-              <View style={{ flex: 1, marginRight: 12 }}>
-                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Weekly Summary Email</Text>
-                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
-                  {weeklySummaryOn
-                    ? `Mondays 8am · ${venueTimezone}`
-                    : 'Disabled — sends to all managers'}
-                </Text>
-                {weeklySummaryOn && (
-                  <TouchableOpacity onPress={handleChangeTimezone} style={{ marginTop: 4 }}>
-                    <Text style={{ color: themeColours.primary, fontSize: 12, fontWeight: '700' }}>
-                      Change timezone
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              <Switch
-                value={weeklySummaryOn}
-                onValueChange={handleToggleWeeklySummary}
-                trackColor={{ false: themeColours.border, true: themeColours.primary }}
-                thumbColor="white"
-                ios_backgroundColor={themeColours.border}
-              />
-            </View>
-          </View>
-        )}
-
-        {/* Auto-suggest PAR toggle — managers/owners only */}
-        {isManager && (
-          <View style={styles.row}>
-            <View style={[styles.btn, {
-              backgroundColor: themeColours.surface,
-              borderWidth: 1,
-              borderColor: themeColours.border,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 10,
-            }]}>
-              <View style={{ flex: 1, marginRight: 12 }}>
-                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Auto-suggest PAR after each cycle</Text>
-                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
-                  {autoSuggestPar
-                    ? 'Enabled — PAR review shown after each stocktake'
-                    : 'Disabled — turn on to review PAR levels post-cycle'}
-                </Text>
-              </View>
-              <Switch
-                value={autoSuggestPar}
-                onValueChange={handleToggleAutoSuggestPar}
-                trackColor={{ false: themeColours.border, true: themeColours.primary }}
-                thumbColor="white"
-                ios_backgroundColor={themeColours.border}
-              />
-            </View>
-          </View>
-        )}
-
-        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Integrations</Text></View>
-        {/* Xero button */}
+        {/* Xero */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
@@ -684,7 +591,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* POS Integration section */}
+        {/* POS Integration */}
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>POS Integration</Text></View>
         {([
           { key: 'wizbang',    label: 'Wizbang Onetap' },
@@ -738,25 +645,7 @@ export default function SettingsScreen() {
             </Text>
           </View>
         </View>
-        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
-        {/* Appearance button */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('Appearance')}
-          >
-            <Text style={styles.btnText}>🎨 Appearance</Text>
-          </TouchableOpacity>
-        </View>
-        {/* Setup Guide button */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('SetupGuide')}
-          >
-            <Text style={styles.btnText}>Setup Guide</Text>
-          </TouchableOpacity>
-        </View>
+
         {/* Supplier Portal — only visible when feature flag is on */}
         {FEATURES.SUPPLIER_PORTAL && (
           <View style={styles.row}>
@@ -768,8 +657,151 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* ─── STOCK CONTROL ─── */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Stock Control</Text></View>
+
+        {/* Open Stock Control */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => nav.navigate('StockControl')}
+          >
+            <Text style={styles.btnText}>Open Stock Control (Suppliers, Products & Orders)</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Bluetooth scales */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => nav.navigate('ScaleSettings')}
+          >
+            <Text style={styles.btnText}>⚖️ Bluetooth Scale</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Cycle reset — manager/owner only */}
+        {isManager && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: '#c47b2b', opacity: resettingCycle ? 0.6 : 1 }]}
+              onPress={doResetCycle}
+              disabled={resettingCycle}
+            >
+              {resettingCycle ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.btnText}>Reset Stocktake Cycle</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 3, textAlign: 'center' }}>
+                    Starts a new stocktake cycle for all areas. This cannot be undone.
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Default counting preferences */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => nav.navigate('ReportPreferences')}
+          >
+            <Text style={styles.btnText}>Report Preferences</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Auto suggest PAR after each cycle — manager/owner only */}
+        {isManager && (
+          <View style={styles.row}>
+            <View style={[styles.btn, {
+              backgroundColor: themeColours.surface,
+              borderWidth: 1,
+              borderColor: themeColours.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 10,
+            }]}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Auto-suggest PAR after each cycle</Text>
+                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {autoSuggestPar
+                    ? 'Enabled — PAR review shown after each stocktake'
+                    : 'Disabled — turn on to review PAR levels post-cycle'}
+                </Text>
+              </View>
+              <Switch
+                value={autoSuggestPar}
+                onValueChange={handleToggleAutoSuggestPar}
+                trackColor={{ false: themeColours.border, true: themeColours.primary }}
+                thumbColor="white"
+                ios_backgroundColor={themeColours.border}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* ─── REPORTS ─── */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Reports</Text></View>
+
+        {/* Weekly summary email toggle — managers/owners only */}
+        {isManager && (
+          <View style={styles.row}>
+            <View style={[styles.btn, {
+              backgroundColor: themeColours.surface,
+              borderWidth: 1,
+              borderColor: themeColours.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 10,
+            }]}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={{ color: themeColours.text, fontWeight: '800' }}>Weekly Summary Email</Text>
+                <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {weeklySummaryOn
+                    ? `Mondays 8am · ${venueTimezone}`
+                    : 'Disabled — sends to all managers'}
+                </Text>
+                {weeklySummaryOn && (
+                  <TouchableOpacity onPress={handleChangeTimezone} style={{ marginTop: 4 }}>
+                    <Text style={{ color: themeColours.primary, fontSize: 12, fontWeight: '700' }}>
+                      Change timezone
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Switch
+                value={weeklySummaryOn}
+                onValueChange={handleToggleWeeklySummary}
+                trackColor={{ false: themeColours.border, true: themeColours.primary }}
+                thumbColor="white"
+                ios_backgroundColor={themeColours.border}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* ─── AI & USAGE ─── */}
+        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>AI & Usage</Text></View>
+
+        {/* AI usage dashboard */}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: themeColours.primary }]}
+            onPress={() => nav.navigate('AiUsage')}
+          >
+            <Text style={styles.btnText}>AI Usage</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ─── SUPPORT ─── */}
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Support</Text></View>
-        {/* Pricing button */}
+
+        {/* Pricing & Plans */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
@@ -778,7 +810,8 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>Pricing & Plans</Text>
           </TouchableOpacity>
         </View>
-        {/* Terms button */}
+
+        {/* Terms of Service */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.navy }]}
@@ -787,7 +820,8 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>Terms of Service</Text>
           </TouchableOpacity>
         </View>
-        {/* Share button */}
+
+        {/* Share Hosti */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
@@ -796,7 +830,8 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>Share Hosti</Text>
           </TouchableOpacity>
         </View>
-        {/* Reset Tips button */}
+
+        {/* Reset Tips & Hints */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.amber }]}
@@ -812,30 +847,8 @@ export default function SettingsScreen() {
             <Text style={styles.btnText}>Reset Tips & Hints</Text>
           </TouchableOpacity>
         </View>
-        {/* Bluetooth Scale button */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => nav.navigate('ScaleSettings')}
-          >
-            <Text style={styles.btnText}>⚖️ Bluetooth Scale</Text>
-          </TouchableOpacity>
-        </View>
-        {/* Budget Approvals button */}
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={[styles.btn, { backgroundColor: themeColours.danger }]}
-            onPress={() => nav.navigate('BudgetApprovalInbox')}
-          >
-            <Text style={styles.btnText}>Budget Approvals</Text>
-            {isManager && budgetPendingCount > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{budgetPendingCount > 99 ? '99+' : budgetPendingCount}</Text>
-              </View>
-            ) : null}
-          </TouchableOpacity>
-        </View>
-        {/* About / BETA overview */}
+
+        {/* About Hosti */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, styles.aboutBtn]}
@@ -845,24 +858,40 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Account</Text></View>
+        {/* Setup Guide */}
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
-            onPress={() => Alert.alert(
-              'Sign out of Hosti?',
-              '',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign out', style: 'default', onPress: doSignOut },
-              ]
-            )}
+            onPress={() => nav.navigate('SetupGuide')}
           >
-            <Text style={styles.btnText}>Sign Out</Text>
+            <Text style={styles.btnText}>Setup Guide</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Danger zone */}
+        {/* App version */}
+        <View style={{ marginTop: 12, alignItems: 'center' }}>
+          <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>
+            Hosti v{Constants.expoConfig?.version ?? '—'}
+          </Text>
+        </View>
+
+        {/* APPEARANCE — temporarily hidden, not working.
+            Restore when implemented. */}
+        {false && (
+          <>
+            <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
+            <View style={styles.row}>
+              <TouchableOpacity
+                style={styles.btn}
+                onPress={() => nav.navigate('Appearance')}
+              >
+                <Text style={styles.btnText}>🎨 Appearance</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* ─── DANGER ZONE ─── */}
         <View style={{ marginHorizontal: 4, marginTop: 16, marginBottom: 8, borderRadius: 12, borderWidth: 1.5, borderColor: '#dc2626', padding: 14 }}>
           <Text style={{ fontSize: 11, fontWeight: '800', color: '#dc2626', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 }}>Danger Zone</Text>
           <TouchableOpacity
@@ -880,17 +909,11 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={{ marginTop: 12, alignItems: 'center' }}>
-          <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>
-            Hosti v{Constants.expoConfig?.version ?? '—'}
-          </Text>
-        </View>
-
         <View style={{ marginTop: 8 }}>
           <LegalFooter />
         </View>
 
-        {/* About modal – scrollable BETA overview */}
+        {/* About modal – scrollable overview */}
         <Modal
           visible={aboutOpen}
           animationType="slide"
@@ -920,7 +943,7 @@ export default function SettingsScreen() {
                 </View>
 
                 <View style={styles.aboutCard}>
-                  <Text style={styles.aboutHeading}>What’s included</Text>
+                  <Text style={styles.aboutHeading}>What's included</Text>
                   <Text style={styles.aboutBullet}>• Department → area → item stocktakes with expected quantities.</Text>
                   <Text style={styles.aboutBullet}>• Supplier and product management with prep for CSV/catalog imports.</Text>
                   <Text style={styles.aboutBullet}>• Suggested orders and ordering flows per supplier.</Text>
@@ -957,7 +980,7 @@ export default function SettingsScreen() {
                 <View style={[styles.aboutCard, { marginBottom: 12 }]}>
                   <Text style={styles.aboutHeading}>Revisit the overview</Text>
                   <Text style={styles.aboutBody}>
-                    You can come back to this screen any time from Settings → About to remind yourself what’s
+                    You can come back to this screen any time from Settings → About to remind yourself what's
                     included in Hosti and how we treat your data.
                   </Text>
                 </View>
