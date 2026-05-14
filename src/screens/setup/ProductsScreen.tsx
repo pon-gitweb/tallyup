@@ -282,9 +282,9 @@ export default function ProductsScreen() {
       try {
         const db = getFirestore();
         const snap = await getDocs(collection(db, 'global_suppliers'));
-        setGlobalSuppliers(
-          snap.docs.map(d => ({ id: d.id, name: String(d.data().name || d.id) }))
-        );
+        const gSuppliers = snap.docs.map(d => ({ id: d.id, name: String(d.data().name || d.id) }));
+        gSuppliers.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+        setGlobalSuppliers(gSuppliers);
       } catch {
         setGlobalSuppliers([]);
       }

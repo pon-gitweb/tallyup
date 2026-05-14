@@ -30,6 +30,9 @@ export async function listSuppliers(venueId: string): Promise<Supplier[]> {
   const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
   const out: Supplier[] = [];
   snap.forEach((d) => out.push({ id: d.id, ...(d.data() as any) }));
+  out.sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' })
+  );
   return out;
 }
 

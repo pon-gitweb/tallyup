@@ -49,7 +49,11 @@ export default function VenueProductSearchModal({
       try {
         const db = getFirestore();
         const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
-        setProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        const loaded = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        loaded.sort((a, b) =>
+          (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' })
+        );
+        setProducts(loaded);
       } catch {
         setProducts([]);
       } finally {

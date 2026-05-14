@@ -193,6 +193,10 @@ export default function OrdersScreen(){
       });
       const ms=(x:any)=>x?.toMillis?.()??0;
       out.sort((a,b)=>{
+        // Primary: supplier name A-Z
+        const nameCmp = (a.supplierName||'').localeCompare(b.supplierName||'', 'en', { sensitivity: 'base' });
+        if (nameCmp !== 0) return nameCmp;
+        // Secondary: date descending within same supplier
         const ta = ms(a.receivedAt)||ms(a.submittedAt)||ms(a.createdAt)||a.createdAtClientMs||0;
         const tb = ms(b.receivedAt)||ms(b.submittedAt)||ms(b.createdAt)||b.createdAtClientMs||0;
         return tb - ta;
