@@ -15,6 +15,8 @@ import {
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../config/ai';
 import { navigationRef } from '../navigation/RootNavigator';
+import { useVenueId } from '../context/VenueProvider';
+import { handleAiLimitError } from '../utils/aiLimitError';
 
 const HIDDEN_ON = new Set([
   'OnboardingRoad',
@@ -30,6 +32,7 @@ let _openIzzy: (() => void) | null = null;
 export function openIzzy() { _openIzzy?.(); }
 
 export default function IzzyAssistant() {
+  const venueId = useVenueId();
   const [routeName, setRouteName] = useState('');
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -71,9 +74,11 @@ export default function IzzyAssistant() {
         },
         body: JSON.stringify({
           question: `[Current screen: ${routeName || 'Unknown'}] ${text}`,
+          venueId: venueId || undefined,
         }),
       });
       const json = await resp.json().catch(() => ({}));
+      if (handleAiLimitError(json)) { setLoading(false); return; }
       const answer = json?.answer || "I'm having trouble right now. Please try again.";
       setMessages(prev => [...prev, { role: 'assistant', text: answer }]);
     } catch {

@@ -1,11 +1,6 @@
 // @ts-nocheck
-/**
- * AiUsageScreen — Settings → AI Usage
- * Shows per-venue AI call usage for the current month.
- * Prepares for future billing tier enforcement.
- */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { doc, getDoc, getFirestore } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
@@ -18,29 +13,82 @@ type UsageData = {
   plan: string;
 };
 
-const CALL_LABELS: Record<string, string> = {
-  'variance-explain': 'Variance explanations',
-  'suggest-orders': 'Order suggestions',
-  'budget-suggest': 'Budget suggestions',
-  'photo-count': 'Photo counts',
-  'invoice-ocr': 'Invoice processing',
-};
-
-const PLAN_LIMITS: Record<string, number> = {
-  beta: 999999,
-  core: 200,
-  core_plus: 999999,
+const PLAN_LIMITS: Record<string, Record<string, number>> = {
+  beta: {
+    total: 300, invoice_ocr: 50, product_photo: 75, shelf_scan: 15,
+    stocktake_photo: 40, sales_report: 10, izzy: 150, suitee: 50,
+    ai_insights: 12, suggest_orders: 20, variance_explain: 12,
+  },
+  core: {
+    total: 200, invoice_ocr: 30, product_photo: 30, shelf_scan: 10,
+    stocktake_photo: 20, sales_report: 5, izzy: 100, suitee: 30,
+    ai_insights: 8, suggest_orders: 15, variance_explain: 8,
+  },
+  core_plus: {
+    total: 500, invoice_ocr: 80, product_photo: 100, shelf_scan: 30,
+    stocktake_photo: 60, sales_report: 15, izzy: 300, suitee: 100,
+    ai_insights: 20, suggest_orders: 40, variance_explain: 20,
+  },
 };
 
 const PLAN_LABELS: Record<string, string> = {
-  beta: 'Unlimited',
-  core: 'Core — 200/month',
-  core_plus: 'Core Plus — Unlimited',
+  beta: 'Beta (Pilot)',
+  core: 'Core',
+  core_plus: 'Core Plus',
 };
+
+const PHOTO_FEATURES = [
+  { key: 'invoice_ocr', label: 'Invoice scanning' },
+  { key: 'product_photo', label: 'Product photos' },
+  { key: 'shelf_scan', label: 'Shelf scanning' },
+  { key: 'stocktake_photo', label: 'Stocktake import' },
+];
+const ASSISTANT_FEATURES = [
+  { key: 'izzy', label: 'Izzy questions' },
+  { key: 'suitee', label: 'Suitee queries' },
+  { key: 'ai_insights', label: 'AI Insights' },
+  { key: 'suggest_orders', label: 'Order suggestions' },
+  { key: 'variance_explain', label: 'Variance explanations' },
+];
+
+function barColour(pct: number): string {
+  if (pct >= 100) return '#dc2626'; // red
+  if (pct >= 90) return '#dc2626';
+  if (pct >= 70) return '#d97706'; // amber
+  return '#16a34a'; // green
+}
+
+function FeatureRow({
+  label, used, limit, colours,
+}: { label: string; used: number; limit: number; colours: any }) {
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const atLimit = used >= limit;
+  const colour = barColour(pct);
+  return (
+    <View style={{ marginBottom: 14 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: colours.text }}>{label}</Text>
+          {atLimit && (
+            <View style={{ backgroundColor: '#fee2e2', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: '#dc2626' }}>AT LIMIT</Text>
+            </View>
+          )}
+        </View>
+        <Text style={{ fontSize: 12, color: atLimit ? '#dc2626' : colours.textSecondary, fontWeight: atLimit ? '800' : '600' }}>
+          {used}/{limit}
+        </Text>
+      </View>
+      <View style={{ height: 8, backgroundColor: colours.border, borderRadius: 4, overflow: 'hidden' }}>
+        <View style={{ height: 8, width: `${pct}%`, backgroundColor: colour, borderRadius: 4 }} />
+      </View>
+    </View>
+  );
+}
 
 function AiUsageScreen() {
   const venueId = useVenueId();
-  const themeColours = useColours();
+  const colours = useColours();
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -52,11 +100,9 @@ function AiUsageScreen() {
       const now = new Date();
       const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const snap = await getDoc(doc(db, 'venues', venueId, 'aiUsage', monthKey));
-      if (snap.exists()) {
-        setUsage(snap.data() as UsageData);
-      } else {
-        setUsage({ totalCalls: 0, breakdown: {}, resetAt: '', plan: 'beta' });
-      }
+      setUsage(snap.exists()
+        ? snap.data() as UsageData
+        : { totalCalls: 0, breakdown: {}, resetAt: '', plan: 'beta' });
     } catch (e) {
       console.log('[AiUsage] load error', e);
     } finally {
@@ -67,103 +113,101 @@ function AiUsageScreen() {
   useEffect(() => { load(); }, [load]);
 
   const plan = usage?.plan || 'beta';
-  const limit = PLAN_LIMITS[plan] ?? 999999;
-  const used = usage?.totalCalls || 0;
-  const remaining = Math.max(0, limit - used);
-  const pct = limit === 999999 ? 0 : Math.min(100, Math.round((used / limit) * 100));
-  const resetDate = usage?.resetAt ? new Date(usage.resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long' }) : '1st of next month';
+  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.beta;
+  const totalLimit = limits.total ?? 300;
+  const totalUsed = usage?.totalCalls || 0;
+  const breakdown = usage?.breakdown || {};
+  const totalPct = totalLimit > 0 ? Math.min(100, Math.round((totalUsed / totalLimit) * 100)) : 0;
 
-  const barColour = pct > 80 ? themeColours.error : pct > 60 ? themeColours.warning : themeColours.success;
+  const now = new Date();
+  const resetAt = usage?.resetAt
+    ? new Date(usage.resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' })
+    : new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const monthLabel = now.toLocaleDateString('en-NZ', { month: 'long', year: 'numeric' });
+
+  const anyAtLimit = [...PHOTO_FEATURES, ...ASSISTANT_FEATURES].some(f => (breakdown[f.key] || 0) >= (limits[f.key] || 999));
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-
-      <View>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: themeColours.text }}>AI Usage</Text>
-        <Text style={{ color: themeColours.textSecondary, marginTop: 4, fontSize: 14 }}>
-          Your AI call usage for this month. Resets on {resetDate}.
-        </Text>
-      </View>
+    <ScrollView style={{ flex: 1, backgroundColor: colours.background }} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      <Text style={{ fontSize: 22, fontWeight: '900', color: colours.text, marginBottom: 2 }}>AI Usage</Text>
+      <Text style={{ color: colours.textSecondary, fontSize: 14, marginBottom: 16 }}>
+        {monthLabel} · Resets {resetAt}
+      </Text>
 
       {loading ? (
-        <ActivityIndicator color={themeColours.accent} style={{ marginTop: 40 }} />
+        <ActivityIndicator color={colours.accent} style={{ marginTop: 40 }} />
       ) : (
         <>
-          {/* Plan badge */}
-          <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
+          {/* Plan + total */}
+          <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border, marginBottom: 16 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>This month</Text>
-              <View style={{ backgroundColor: themeColours.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-                <Text style={{ fontSize: 12, fontWeight: '800', color: themeColours.accent }}>{PLAN_LABELS[plan] || plan}</Text>
-              </View>
-            </View>
-
-            {/* Usage numbers */}
-            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
-              <View style={{ flex: 1, backgroundColor: themeColours.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                <Text style={{ fontSize: 36, fontWeight: '900', color: themeColours.text }}>{used}</Text>
-                <Text style={{ color: themeColours.textSecondary, fontSize: 12, fontWeight: '700' }}>AI calls used</Text>
-              </View>
-              <View style={{ flex: 1, backgroundColor: themeColours.background, borderRadius: 12, padding: 14, alignItems: 'center' }}>
-                <Text style={{ fontSize: 36, fontWeight: '900', color: limit === 999999 ? themeColours.success : barColour }}>
-                  {limit === 999999 ? '∞' : remaining}
-                </Text>
-                <Text style={{ color: themeColours.textSecondary, fontSize: 12, fontWeight: '700' }}>remaining</Text>
-              </View>
-            </View>
-
-            {/* Progress bar — only shown for limited plans */}
-            {limit !== 999999 && (
-              <View>
-                <View style={{ height: 8, backgroundColor: themeColours.border, borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
-                  <View style={{ height: 8, width: pct + '%', backgroundColor: barColour, borderRadius: 4 }} />
-                </View>
-                <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{pct}% of {limit} monthly calls used</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Breakdown */}
-          {usage?.breakdown && Object.keys(usage.breakdown).length > 0 && (
-            <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
-              <Text style={{ fontWeight: '900', color: themeColours.text, marginBottom: 12 }}>Breakdown by feature</Text>
-              {Object.entries(usage.breakdown).map(([key, count]) => (
-                <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: themeColours.border }}>
-                  <Text style={{ color: themeColours.text, fontWeight: '600' }}>{CALL_LABELS[key] || key}</Text>
-                  <View style={{ backgroundColor: themeColours.primaryLight, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 }}>
-                    <Text style={{ fontWeight: '800', color: themeColours.accent, fontSize: 13 }}>{count}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Beta notice */}
-          {plan === 'beta' && (
-            <View style={{ backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
-              <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 4 }}>Full access</Text>
-              <Text style={{ color: '#166534', fontSize: 13 }}>
-                All AI features are unlimited on your current plan. Usage is tracked so we can right-size plans. Your data helps us build fair pricing.
+              <Text style={{ fontWeight: '800', fontSize: 15, color: colours.text }}>Plan: {PLAN_LABELS[plan] || plan}</Text>
+              <Text style={{ fontSize: 13, color: colours.textSecondary }}>
+                {totalUsed}/{totalLimit} total calls
               </Text>
             </View>
+            <View style={{ height: 10, backgroundColor: colours.border, borderRadius: 5, overflow: 'hidden', marginBottom: 6 }}>
+              <View style={{ height: 10, width: `${totalPct}%`, backgroundColor: barColour(totalPct), borderRadius: 5 }} />
+            </View>
+            <Text style={{ fontSize: 12, color: colours.textSecondary }}>{totalPct}% of monthly total used</Text>
+          </View>
+
+          {anyAtLimit && (
+            <View style={{ backgroundColor: '#fef2f2', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#fecaca', marginBottom: 16 }}>
+              <Text style={{ fontWeight: '800', color: '#dc2626', marginBottom: 4 }}>Some limits reached</Text>
+              <Text style={{ color: '#dc2626', fontSize: 13 }}>
+                Some features have reached their monthly limit. They reset automatically on {resetAt}.{'\n\n'}
+                Contact office@hosti.co.nz if you need more.
+              </Text>
+              <TouchableOpacity onPress={() => Linking.openURL('mailto:office@hosti.co.nz')} style={{ marginTop: 8 }}>
+                <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Email us →</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
-          {/* Low remaining warning */}
-          {plan !== 'beta' && plan !== 'core_plus' && pct >= 80 && (
-            <View style={{ backgroundColor: '#FEF3C7', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#FDE68A' }}>
-              <Text style={{ fontWeight: '800', color: '#92400E', marginBottom: 4 }}>Running low</Text>
-              <Text style={{ color: '#92400E', fontSize: 13 }}>
-                You have {remaining} AI calls left this month. Upgrade to Core Plus for unlimited access.
+          {/* Photo features */}
+          <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border, marginBottom: 16 }}>
+            <Text style={{ fontWeight: '800', color: colours.text, marginBottom: 14, fontSize: 14 }}>PHOTO FEATURES</Text>
+            {PHOTO_FEATURES.map(f => (
+              <FeatureRow
+                key={f.key}
+                label={f.label}
+                used={breakdown[f.key] || 0}
+                limit={limits[f.key] || 999}
+                colours={colours}
+              />
+            ))}
+          </View>
+
+          {/* Assistant features */}
+          <View style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: colours.border, marginBottom: 16 }}>
+            <Text style={{ fontWeight: '800', color: colours.text, marginBottom: 14, fontSize: 14 }}>ASSISTANT FEATURES</Text>
+            {ASSISTANT_FEATURES.map(f => (
+              <FeatureRow
+                key={f.key}
+                label={f.label}
+                used={breakdown[f.key] || 0}
+                limit={limits[f.key] || 999}
+                colours={colours}
+              />
+            ))}
+          </View>
+
+          {plan === 'beta' && (
+            <View style={{ backgroundColor: '#f0fdf4', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#bbf7d0', marginBottom: 16 }}>
+              <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 4 }}>Pilot access</Text>
+              <Text style={{ color: '#166534', fontSize: 13 }}>
+                You're on the beta pilot plan with generous limits. Usage is tracked to help us build fair pricing.
               </Text>
             </View>
           )}
 
           <TouchableOpacity onPress={load} style={{ alignItems: 'center', padding: 12 }}>
-            <Text style={{ color: themeColours.textSecondary, fontSize: 13 }}>Refresh usage data</Text>
+            <Text style={{ color: colours.textSecondary, fontSize: 13 }}>Refresh</Text>
           </TouchableOpacity>
         </>
       )}
-      <View style={{ height: 20 }} />
     </ScrollView>
   );
 }

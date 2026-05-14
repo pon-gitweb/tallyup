@@ -3,6 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { AI_BASE_URL } from '../../config/ai';
+import { handleAiLimitError } from '../../utils/aiLimitError';
 import type { BriefingData } from './briefing';
 
 export type AiInsight = {
@@ -85,6 +86,11 @@ export async function fetchAiInsights(
     }),
   });
 
+  if (resp.status === 429) {
+    const json = await resp.json().catch(() => ({}));
+    handleAiLimitError(json);
+    return [];
+  }
   if (!resp.ok) throw new Error(`AI insights HTTP ${resp.status}`);
 
   const json = await resp.json().catch(() => ({}));

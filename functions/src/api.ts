@@ -26,11 +26,11 @@ async function verifyToken(req: express.Request): Promise<string | null> {
 
 
 // ── AI Usage Meter ────────────────────────────────────────────────────────────
-// Tracks AI calls per venue per month in Firestore.
-// Returns meter state to client on every AI response.
-// Prepares for future billing tier enforcement.
 
-type AiCallType = 'variance-explain' | 'suggest-orders' | 'budget-suggest' | 'photo-count' | 'invoice-ocr' | 'ai-insights' | 'extract-inventory';
+type AiCallType =
+  | 'invoice_ocr' | 'product_photo' | 'shelf_scan' | 'stocktake_photo'
+  | 'sales_report' | 'izzy' | 'suitee' | 'ai_insights'
+  | 'suggest_orders' | 'variance_explain' | 'budget_suggest' | 'photo_count';
 
 interface MeterState {
   aiUsed: number;
@@ -38,13 +38,68 @@ interface MeterState {
   aiLimit: number;
   resetAt: string;
   plan: 'beta' | 'core' | 'core_plus';
+  usageWarning?: { feature: string; used: number; limit: number; percentUsed: number; message: string } | null;
 }
 
-const AI_LIMITS: Record<string, number> = {
-  beta: 999999,   // Unlimited during beta
-  core: 200,      // 200 calls/month on core plan
-  core_plus: 999999, // Unlimited on core plus
+const PLAN_LIMITS: Record<string, Record<string, number>> = {
+  beta: {
+    total: 300, invoice_ocr: 50, product_photo: 75, shelf_scan: 15,
+    stocktake_photo: 40, sales_report: 10, izzy: 150, suitee: 50,
+    ai_insights: 12, suggest_orders: 20, variance_explain: 12,
+  },
+  core: {
+    total: 200, invoice_ocr: 30, product_photo: 30, shelf_scan: 10,
+    stocktake_photo: 20, sales_report: 5, izzy: 100, suitee: 30,
+    ai_insights: 8, suggest_orders: 15, variance_explain: 8,
+  },
+  core_plus: {
+    total: 500, invoice_ocr: 80, product_photo: 100, shelf_scan: 30,
+    stocktake_photo: 60, sales_report: 15, izzy: 300, suitee: 100,
+    ai_insights: 20, suggest_orders: 40, variance_explain: 20,
+  },
 };
+
+const FEATURE_LABELS: Record<string, string> = {
+  invoice_ocr: 'invoice scanning', product_photo: 'product photos',
+  shelf_scan: 'shelf scanning', stocktake_photo: 'stocktake import',
+  sales_report: 'sales report import', izzy: 'Izzy questions',
+  suitee: 'Suitee queries', ai_insights: 'AI insights',
+  suggest_orders: 'order suggestions', variance_explain: 'variance explanations',
+};
+
+function buildLimitMessage(feature: string, used: number, limit: number, resetAt: string): string {
+  const resetDate = new Date(resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long', year: 'numeric' });
+  const msgs: Record<string, string> = {
+    invoice_ocr: `You've scanned ${used} invoices this month — great work getting set up! Your scanning allowance resets on ${resetDate}. You can still add suppliers and products manually in the meantime.`,
+    product_photo: `You've photographed ${used} products this month. Your photo allowance resets on ${resetDate}. You can still add products by searching or entering details manually.`,
+    shelf_scan: `You've used your shelf scanning allowance for this month. Resets on ${resetDate}. Count products manually or use barcode scan.`,
+    stocktake_photo: `You've imported ${used} stocktake pages this month. Resets on ${resetDate}. You can still run manual stocktakes.`,
+    suitee: `Suitee has answered ${used} questions this month. Your allowance resets on ${resetDate}.`,
+    izzy: `Izzy has helped with ${used} questions this month. Check our help docs at office@hosti.co.nz for common questions.`,
+    ai_insights: `AI insights have run ${used} times this month. Resets on ${resetDate}.`,
+    suggest_orders: `AI order suggestions have been used ${used} times this month. Resets on ${resetDate}.`,
+    variance_explain: `Variance explanations have been used ${used} times this month. Resets on ${resetDate}.`,
+  };
+  const base = msgs[feature] || `You've reached your ${FEATURE_LABELS[feature] || feature} limit for this month. Resets on ${resetDate}.`;
+  return base + '\n\nNeed more? Contact us at office@hosti.co.nz';
+}
+
+async function resolveVenuePlan(db: admin.firestore.Firestore, venueId: string): Promise<{ plan: string; effectivePlan: string }> {
+  let plan = 'beta';
+  let venueCreatedAt: number | null = null;
+  try {
+    const snap = await db.doc(`venues/${venueId}`).get();
+    const d = snap.data();
+    plan = d?.billingPlan || 'beta';
+    venueCreatedAt = d?.createdAt?.toMillis?.() ?? null;
+  } catch {}
+  // Grace period: new 'core' venues get beta limits for 14 days
+  let effectivePlan = plan;
+  if (plan === 'core' && venueCreatedAt) {
+    if (Date.now() - venueCreatedAt < 14 * 24 * 60 * 60 * 1000) effectivePlan = 'beta';
+  }
+  return { plan, effectivePlan };
+}
 
 async function trackAiCall(venueId: string, callType: AiCallType): Promise<MeterState> {
   const db = admin.firestore();
@@ -52,32 +107,42 @@ async function trackAiCall(venueId: string, callType: AiCallType): Promise<Meter
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const resetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
-  // Get venue plan
-  let plan: string = 'beta';
-  try {
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
-    plan = venueSnap.data()?.billingPlan || 'beta';
-  } catch {}
-
-  const limit = AI_LIMITS[plan] ?? AI_LIMITS.beta;
+  const { plan, effectivePlan } = await resolveVenuePlan(db, venueId);
+  const limits = PLAN_LIMITS[effectivePlan] ?? PLAN_LIMITS.beta;
+  const totalLimit = limits.total ?? 300;
+  const featureLimit = limits[callType] ?? totalLimit;
   const usageRef = db.doc(`venues/${venueId}/aiUsage/${monthKey}`);
 
   let aiUsed = 0;
+  let featureUsedAfter = 0;
+  let usageWarning: MeterState['usageWarning'] = null;
   try {
     const snap = await usageRef.get();
     const data = snap.data() || {};
     aiUsed = (data.totalCalls || 0) + 1;
+    featureUsedAfter = (data.breakdown?.[callType] || 0) + 1;
 
     await usageRef.set({
       totalCalls: aiUsed,
       lastCallAt: admin.firestore.FieldValue.serverTimestamp(),
       resetAt,
-      plan,
-      breakdown: {
-        ...data.breakdown,
-        [callType]: ((data.breakdown?.[callType] || 0) + 1),
-      },
+      plan: effectivePlan,
+      breakdown: { ...data.breakdown, [callType]: featureUsedAfter },
     }, { merge: true });
+
+    // FIX 5: 80% warning
+    const pct = Math.round((featureUsedAfter / featureLimit) * 100);
+    if (pct >= 80 && pct < 100) {
+      const label = FEATURE_LABELS[callType] || callType;
+      const remaining = featureLimit - featureUsedAfter;
+      usageWarning = {
+        feature: callType,
+        used: featureUsedAfter,
+        limit: featureLimit,
+        percentUsed: pct,
+        message: `You've used ${pct}% of your monthly ${label} allowance (${featureUsedAfter} of ${featureLimit}). ${remaining} remaining this month.`,
+      };
+    }
   } catch (e) {
     console.log('[meter] tracking error', e);
     aiUsed = 1;
@@ -85,38 +150,62 @@ async function trackAiCall(venueId: string, callType: AiCallType): Promise<Meter
 
   return {
     aiUsed,
-    aiRemaining: Math.max(0, limit - aiUsed),
-    aiLimit: limit,
+    aiRemaining: Math.max(0, totalLimit - aiUsed),
+    aiLimit: totalLimit,
     resetAt,
     plan: plan as MeterState['plan'],
+    usageWarning,
   };
 }
 
-async function checkAiLimit(venueId: string): Promise<{ allowed: boolean; meter: MeterState }> {
+async function checkAiLimit(venueId: string, callType: AiCallType): Promise<{ allowed: boolean; meter: MeterState; limitError?: any }> {
   const db = admin.firestore();
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const resetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
-  let plan: string = 'beta';
-  try {
-    const venueSnap = await db.doc(`venues/${venueId}`).get();
-    plan = venueSnap.data()?.billingPlan || 'beta';
-  } catch {}
-
-  const limit = AI_LIMITS[plan] ?? AI_LIMITS.beta;
+  const { plan, effectivePlan } = await resolveVenuePlan(db, venueId);
+  const limits = PLAN_LIMITS[effectivePlan] ?? PLAN_LIMITS.beta;
+  const totalLimit = limits.total ?? 300;
+  const featureLimit = limits[callType] ?? totalLimit;
 
   let aiUsed = 0;
+  let featureUsed = 0;
   try {
     const snap = await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).get();
-    aiUsed = snap.data()?.totalCalls || 0;
+    const d = snap.data() || {};
+    aiUsed = d.totalCalls || 0;
+    featureUsed = d.breakdown?.[callType] || 0;
   } catch {}
 
-  const allowed = plan === 'beta' || plan === 'core_plus' || aiUsed < limit;
-  return {
-    allowed,
-    meter: { aiUsed, aiRemaining: Math.max(0, limit - aiUsed), aiLimit: limit, resetAt, plan: plan as MeterState['plan'] },
+  const baseMeter: MeterState = {
+    aiUsed, aiRemaining: Math.max(0, totalLimit - aiUsed), aiLimit: totalLimit, resetAt, plan: plan as any,
   };
+
+  if (aiUsed >= totalLimit) {
+    const resetDate = new Date(resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long' });
+    return {
+      allowed: false, meter: { ...baseMeter, aiRemaining: 0 },
+      limitError: {
+        error: 'limit_reached', feature: 'total', used: aiUsed, limit: totalLimit, plan,
+        resetsAt: resetAt, upgradeAvailable: plan !== 'core_plus',
+        message: `You've used all ${totalLimit} AI calls for this month. Resets on ${resetDate}.\n\nNeed more? Contact us at office@hosti.co.nz`,
+      },
+    };
+  }
+
+  if (featureUsed >= featureLimit) {
+    return {
+      allowed: false, meter: baseMeter,
+      limitError: {
+        error: 'limit_reached', feature: callType, used: featureUsed, limit: featureLimit, plan,
+        resetsAt: resetAt, upgradeAvailable: plan !== 'core_plus',
+        message: buildLimitMessage(callType, featureUsed, featureLimit, resetAt),
+      },
+    };
+  }
+
+  return { allowed: true, meter: baseMeter };
 }
 
 // ── POST /upload-file ────────────────────────────────────────────────────────
@@ -209,6 +298,11 @@ app.post("/variance-explain", async (req, res) => {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const ctx = req.body || {};
+    const venueIdForLimit: string = ctx.venueId || ctx.aiContext?.venueId || "";
+    if (venueIdForLimit) {
+      const lc = await checkAiLimit(venueIdForLimit, 'variance_explain');
+      if (!lc.allowed) { res.status(429).json(lc.limitError); return; }
+    }
     const productName = ctx.itemName || ctx.name || ctx.productId || "Product";
     const onHand = Number(ctx.counted ?? ctx.onHand ?? 0);
     const expected = Number(ctx.expected ?? ctx.par ?? 0);
@@ -277,6 +371,8 @@ app.post("/suggest-orders", async (req, res) => {
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, baseline, context: ctx } = req.body || {};
     if (!venueId || !baseline) { res.status(400).json({ ok: false, error: "Missing venueId or baseline" }); return; }
+    const lcSO = await checkAiLimit(venueId, 'suggest_orders');
+    if (!lcSO.allowed) { res.status(429).json(lcSO.limitError); return; }
     const buckets = baseline.buckets || {};
     const supplierSummaries = Object.entries(buckets).map(([sid, b]: any) => {
       const lines = Array.isArray(b?.lines) ? b.lines : [];
@@ -296,7 +392,7 @@ app.post("/suggest-orders", async (req, res) => {
     const raw = await callClaude(systemPrompt, userMsg);
     let parsed: any = {};
     try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = {}; }
-    const meter = await trackAiCall(venueId, 'suggest-orders');
+    const meter = await trackAiCall(venueId, 'suggest_orders');
     console.log("[api/suggest-orders] OK", { uid, venueId, meter });
     res.json({ ...baseline, insights: Array.isArray(parsed.insights) ? parsed.insights : [], adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [] });
   } catch (e: any) {
@@ -315,6 +411,8 @@ app.post("/budget-suggest", async (req, res) => {
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, aiContext } = req.body || {};
     if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    const lcBS = await checkAiLimit(venueId, 'suggest_orders');
+    if (!lcBS.allowed) { res.status(429).json(lcBS.limitError); return; }
     const ctx = aiContext || {};
     const supplierSpend = Array.isArray(ctx.supplierSpend) ? ctx.supplierSpend : [];
     const dataQuality = ctx.dataQuality || "low";
@@ -368,7 +466,7 @@ app.post("/budget-suggest", async (req, res) => {
       reasoning: String(s.reasoning || ""),
       confidence: Number.isFinite(s.confidence) ? s.confidence : 0.5,
     })) : [];
-    const meter = await trackAiCall(venueId, 'budget-suggest');
+    const meter = await trackAiCall(venueId, 'suggest_orders');
     console.log("[api/budget-suggest] OK", { uid, venueId, meter });
     res.json({ ok: true, meter, suggestions, overallNote: parsed.overallNote || null, dataQuality });
   } catch (e: any) {
@@ -388,6 +486,8 @@ app.post("/ai-insights", async (req, res) => {
 
     const { venueId, data, cacheKey } = req.body || {};
     if (!venueId || !data) { res.status(400).json({ ok: false, error: "Missing venueId or data" }); return; }
+    const lcAI = await checkAiLimit(venueId, 'ai_insights');
+    if (!lcAI.allowed) { res.status(429).json(lcAI.limitError); return; }
 
     // FIX 8: Supplier-aware AI insights prompt
     const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on patterns, trends, and opportunities — including supplier pricing opportunities (products where a cheaper alternative exists), approaching contract expiry dates, rebate thresholds close to being hit, and price increases from preferred suppliers. Return as JSON array: [{headline, observation, action}]`;
@@ -425,7 +525,7 @@ app.post("/ai-insights", async (req, res) => {
       }
     }
 
-    await trackAiCall(venueId, "ai-insights");
+    await trackAiCall(venueId, "ai_insights");
     console.log("[api/ai-insights] OK", { uid, venueId, count: cleaned.length });
     res.json({ ok: true, insights: cleaned });
   } catch (e: any) {
@@ -450,6 +550,15 @@ app.post("/extract-inventory", async (req, res) => {
     if (!rawBase64) {
       res.status(400).json({ ok: false, error: "Missing imageBase64, pdfBase64, or fileBase64" });
       return;
+    }
+
+    // Mode-aware limit check
+    if (venueId && mode !== 'catalogue') {
+      const callTypeForMode: AiCallType =
+        mode === 'shelf-scan' ? 'shelf_scan' :
+        mode === 'product-photo' ? 'product_photo' : 'stocktake_photo';
+      const lcEI = await checkAiLimit(venueId, callTypeForMode);
+      if (!lcEI.allowed) { res.status(429).json(lcEI.limitError); return; }
     }
 
     const isImage = !!(imageBase64) || (!!mimeType && mimeType.startsWith("image/"));
@@ -573,7 +682,12 @@ app.post("/extract-inventory", async (req, res) => {
     }
 
     // Track usage (best-effort, non-blocking)
-    if (venueId) trackAiCall(venueId, "extract-inventory").catch(() => {});
+    if (venueId && mode !== 'catalogue') {
+      const callTypeForMode: AiCallType =
+        mode === 'shelf-scan' ? 'shelf_scan' :
+        mode === 'product-photo' ? 'product_photo' : 'stocktake_photo';
+      trackAiCall(venueId, callTypeForMode).catch(() => {});
+    }
 
     // Parse response based on mode
     if (mode === "shelf-scan") {
@@ -791,6 +905,8 @@ app.post("/photo-count", async (req, res) => {
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, imageBase64, productHint, unit } = req.body || {};
     if (!venueId || !imageBase64) { res.status(400).json({ ok: false, error: "Missing venueId or imageBase64" }); return; }
+    const lcPC = await checkAiLimit(venueId, 'stocktake_photo');
+    if (!lcPC.allowed) { res.status(429).json(lcPC.limitError); return; }
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
     const systemPrompt = [
@@ -829,6 +945,7 @@ app.post("/photo-count", async (req, res) => {
     let parsed: any = {};
     try { parsed = match ? JSON.parse(match[0]) : {}; } catch { parsed = {}; }
     // Log correction data for learning (venueId + hint + result)
+    trackAiCall(venueId, 'stocktake_photo').catch(() => {});
     console.log("[api/photo-count] OK", { uid, venueId, productHint, estimatedCount: parsed.estimatedCount, confidence: parsed.confidence });
     res.json({
       ok: true,
@@ -1097,6 +1214,8 @@ app.post("/suitee", async (req, res) => {
     if (!venueId || typeof venueId !== "string") {
       res.status(400).json({ ok: false, error: "Missing venueId" }); return;
     }
+    const lcSU = await checkAiLimit(venueId, 'suitee');
+    if (!lcSU.allowed) { res.status(429).json(lcSU.limitError); return; }
 
     const db = admin.firestore();
 
@@ -1474,8 +1593,9 @@ ${context}`;
     const claudeData = await claudeResp.json() as any;
     const answer = claudeData?.content?.[0]?.text || "I'm having trouble accessing your data right now. Please try again.";
 
+    const suiteeMeter = await trackAiCall(venueId, 'suitee');
     console.log("[api/suitee] OK", { uid, venueId, questionLength: question.length });
-    res.json({ ok: true, answer });
+    res.json({ ok: true, answer, usageWarning: suiteeMeter.usageWarning ?? null });
 
   } catch (e: any) {
     console.error("[api/suitee] ERROR", e?.message || e);
@@ -1488,9 +1608,13 @@ app.post("/izzy", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { question } = req.body || {};
+    const { question, venueId: izzyVenueId } = req.body || {};
     if (!question || typeof question !== "string") {
       res.status(400).json({ ok: false, error: "Missing question" }); return;
+    }
+    if (izzyVenueId) {
+      const lcIZ = await checkAiLimit(izzyVenueId, 'izzy');
+      if (!lcIZ.allowed) { res.status(429).json(lcIZ.limitError); return; }
     }
     const systemPrompt = `You are Izzy, the friendly in-app guide for Hosti.
 You help hospitality venue staff use the app confidently.
@@ -1542,8 +1666,10 @@ Current screen context will be provided with each message. Use it to give contex
     }
     const data = await claudeResp.json() as any;
     const answer = data?.content?.[0]?.text || "I'm having trouble right now. Please try again.";
+    let izzyWarning = null;
+    if (izzyVenueId) izzyWarning = (await trackAiCall(izzyVenueId, 'izzy')).usageWarning ?? null;
     console.log("[api/izzy] OK", { uid, questionLength: question.length });
-    res.json({ ok: true, answer });
+    res.json({ ok: true, answer, usageWarning: izzyWarning });
   } catch (e: any) {
     console.error("[api/izzy] ERROR", e?.message || e);
     res.json({ ok: false, answer: "I'm having trouble right now. Please try again." });
@@ -1719,6 +1845,8 @@ app.post("/process-invoices-csv", async (req, res) => {
       res.status(400).json({ ok: false, error: "Missing venueId or storagePath" });
       return;
     }
+    const lcCSV = await checkAiLimit(venueId, 'invoice_ocr');
+    if (!lcCSV.allowed) { res.status(429).json(lcCSV.limitError); return; }
 
     // Download the file from Storage
     const bucket = admin.storage().bucket();
@@ -1737,6 +1865,7 @@ app.post("/process-invoices-csv", async (req, res) => {
       warnings,
     };
 
+    trackAiCall(venueId, 'invoice_ocr').catch(() => {});
     console.log("[api/process-invoices-csv] OK", { uid, venueId, storagePath, linesCount: lines.length });
     res.json(payload);
 
@@ -1768,6 +1897,8 @@ app.post("/process-invoices-pdf", async (req, res) => {
       res.status(400).json({ ok: false, error: "Missing venueId or storagePath" });
       return;
     }
+    const lcPDF = await checkAiLimit(venueId, 'invoice_ocr');
+    if (!lcPDF.allowed) { res.status(429).json(lcPDF.limitError); return; }
 
     // Download the PDF from Storage
     const bucket = admin.storage().bucket();
@@ -1822,6 +1953,7 @@ app.post("/process-invoices-pdf", async (req, res) => {
       warnings,
     };
 
+    trackAiCall(venueId, 'invoice_ocr').catch(() => {});
     console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName });
     res.json(payload);
 

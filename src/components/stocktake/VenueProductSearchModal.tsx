@@ -27,6 +27,7 @@ type Props = {
   venueId: string | null | undefined;
   areaName?: string;
   onSelect: (product: VenueProduct) => void;
+  onBatchSelect?: (products: VenueProduct[]) => void;
 };
 
 export default function VenueProductSearchModal({
@@ -35,12 +36,15 @@ export default function VenueProductSearchModal({
   venueId,
   areaName,
   onSelect,
+  onBatchSelect,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<VenueProduct[]>([]);
   const [q, setQ] = useState('');
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [toastText, setToastText] = useState('');
+  const [multiMode, setMultiMode] = useState(false);
+  const [selected, setSelected] = useState<Map<string, VenueProduct>>(new Map());
 
   useEffect(() => {
     if (!visible || !venueId) return;
@@ -79,18 +83,35 @@ export default function VenueProductSearchModal({
     setQ('');
     setAddedIds(new Set());
     setToastText('');
+    setMultiMode(false);
+    setSelected(new Map());
     onClose();
   };
 
   const handleSelect = (p: VenueProduct) => {
-    if (addedIds.has(p.id)) return; // already added this session
-    onSelect(p); // parent writes to Firestore
+    if (multiMode) {
+      setSelected(prev => {
+        const n = new Map(prev);
+        if (n.has(p.id)) n.delete(p.id); else n.set(p.id, p);
+        return n;
+      });
+      return;
+    }
+    if (addedIds.has(p.id)) return;
+    onSelect(p);
     setAddedIds(prev => {
       const n = new Set(prev);
       n.add(p.id);
       return n;
     });
     setToastText(`${p.name} added to ${areaName || 'area'}`);
+  };
+
+  const handleBatchDone = () => {
+    if (selected.size === 0) return;
+    const products = [...selected.values()];
+    handleClose();
+    if (onBatchSelect) onBatchSelect(products);
   };
 
   return (
@@ -102,11 +123,33 @@ export default function VenueProductSearchModal({
           <View style={S.header}>
             <View style={{ flex: 1 }}>
               <Text style={S.title}>Search venue products</Text>
-              <Text style={S.sub}>Tap products to add them to {areaName || 'this area'}</Text>
+              <Text style={S.sub}>
+                {multiMode
+                  ? `${selected.size} selected — tap Done to add`
+                  : `Tap to add to ${areaName || 'this area'}`}
+              </Text>
             </View>
-            <TouchableOpacity onPress={handleClose} style={S.doneBtn}>
-              <Text style={S.doneBtnText}>Done</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              {!!onBatchSelect && (
+                <TouchableOpacity
+                  onPress={() => { setMultiMode(v => !v); setSelected(new Map()); }}
+                  style={[S.doneBtn, { backgroundColor: multiMode ? '#0f172a' : '#e2e8f0' }]}
+                >
+                  <Text style={[S.doneBtnText, { color: multiMode ? '#fff' : '#374151' }]}>
+                    {multiMode ? 'Cancel' : 'Multi'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {multiMode && selected.size > 0 ? (
+                <TouchableOpacity onPress={handleBatchDone} style={S.doneBtn}>
+                  <Text style={S.doneBtnText}>Done ({selected.size})</Text>
+                </TouchableOpacity>
+              ) : !multiMode ? (
+                <TouchableOpacity onPress={handleClose} style={S.doneBtn}>
+                  <Text style={S.doneBtnText}>Done</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
           </View>
 
           {/* Search bar */}
@@ -136,13 +179,24 @@ export default function VenueProductSearchModal({
               contentContainerStyle={{ paddingBottom: toastText ? 60 : 32 }}
               renderItem={({ item }) => {
                 const wasAdded = addedIds.has(item.id);
+                const isSelected = selected.has(item.id);
                 return (
                   <TouchableOpacity
-                    style={[S.row, wasAdded && S.rowAdded]}
+                    style={[S.row, wasAdded && !multiMode && S.rowAdded, multiMode && isSelected && { backgroundColor: '#f0fdf4' }]}
                     onPress={() => handleSelect(item)}
                     activeOpacity={0.75}
-                    disabled={wasAdded}
+                    disabled={wasAdded && !multiMode}
                   >
+                    {multiMode && (
+                      <View style={{
+                        width: 22, height: 22, borderRadius: 5, borderWidth: 2, marginRight: 10,
+                        borderColor: isSelected ? '#10b981' : '#cbd5e1',
+                        backgroundColor: isSelected ? '#10b981' : '#fff',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {isSelected && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+                      </View>
+                    )}
                     <View style={{ flex: 1 }}>
                       <Text style={S.rowName}>{item.name}</Text>
                       <Text style={S.rowSub}>
@@ -151,11 +205,11 @@ export default function VenueProductSearchModal({
                         {typeof item.parLevel === 'number' ? ` · Par ${item.parLevel}` : ''}
                       </Text>
                     </View>
-                    {wasAdded ? (
+                    {!multiMode && wasAdded ? (
                       <Text style={S.checkmark}>✓</Text>
-                    ) : (
+                    ) : !multiMode ? (
                       <Text style={{ fontSize: 20, color: '#94a3b8' }}>›</Text>
-                    )}
+                    ) : null}
                   </TouchableOpacity>
                 );
               }}

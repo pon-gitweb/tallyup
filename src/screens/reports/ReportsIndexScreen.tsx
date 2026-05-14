@@ -26,6 +26,7 @@ import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
 import { AI_BASE_URL } from '../../config/ai';
+import { handleAiLimitError } from '../../utils/aiLimitError';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -306,6 +307,7 @@ export default function ReportsIndexScreen() {
         body: JSON.stringify({ question: text, venueId, history: suiteeMessages }),
       });
       const json = await resp.json().catch(() => ({}));
+      if (handleAiLimitError(json)) { setSuiteeLoading(false); return; }
       const answer = json?.answer || "I'm having trouble accessing your data right now. Please try again.";
       setSuiteeMessages([...newMessages, { role: 'assistant', text: answer }]);
     } catch {

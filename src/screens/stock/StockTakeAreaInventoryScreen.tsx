@@ -567,6 +567,7 @@ function StockTakeAreaInventoryScreen() {
   const [captureProductOpen, setCaptureProductOpen] = useState(false);
   const [venueSearchOpen, setVenueSearchOpen] = useState(false);
   const [barcodeScanOpen, setBarcodeScanOpen] = useState(false);
+  const [batchAddToast, setBatchAddToast] = useState<string | null>(null);
   const [photoModalBarcode, setPhotoModalBarcode] = useState<string | null>(null);
 
   // Unified search
@@ -1312,6 +1313,7 @@ try {
           windowHours: roundedHours,
           items: counted.slice(0, 20).map(i => ({ name: i.name, counted: i.lastCount || 0, unit: i.unit, costPrice: i.costPrice })),
         } as never);
+        return true;
       } else {
         // Department done, others still in progress — dept summary screen
         nav.navigate('DepartmentSummary' as never, {
@@ -1324,12 +1326,14 @@ try {
           durationMinutes: Math.round(windowHours * 60),
           submittedAt: submittedAt.toISOString(),
         } as never);
+        return true;
       }
     } catch (e: any) {
       if (__DEV__) {
         console.log('[StockTake] maybeFinalizeDepartment error', e?.message || e);
       }
     }
+    return false;
   };
 
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -1402,8 +1406,8 @@ try {
           doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
           { completedAt: serverTimestamp() }
         );
-        await maybeFinalizeDepartment();
-        nav.goBack();
+        const finalized = await maybeFinalizeDepartment();
+        if (!finalized) nav.goBack();
       } catch (e: any) {
         Alert.alert('Could not complete area', e?.message ?? String(e));
       } finally {
@@ -1634,6 +1638,53 @@ const openHistory = throttleAction(async (item: Item) => {
           { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, countingUnit, caseSize: caseSize ?? null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
         );
         hapticSuccess();
+      },
+    });
+    setCountingUnitVisible(true);
+  };
+
+  // Auto-dismiss batch toast after 3.5s
+  useEffect(() => {
+    if (!batchAddToast) return;
+    const t = setTimeout(() => setBatchAddToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [batchAddToast]);
+
+  // Batch add from VenueProductSearchModal multi-select
+  const handleBatchVenueProductsSelected = async (products: any[]) => {
+    if (!venueId || !departmentId || !areaId || !products.length) return;
+    const newProducts = products.filter(p =>
+      !items.find(it => it.name?.toLowerCase() === (p.name || '').toLowerCase())
+    );
+    if (!newProducts.length) {
+      Alert.alert('Already here', 'All selected products are already in this area.');
+      return;
+    }
+    await ensureAreaStarted();
+    setCountingUnitPending({
+      name: newProducts.length === 1 ? (newProducts[0].name || '') : `${newProducts.length} products`,
+      unit: undefined,
+      write: async ({ countingUnit, caseSize }) => {
+        const { writeBatch: wb } = await import('firebase/firestore');
+        const batch = wb(db);
+        for (const product of newProducts) {
+          const newRef = doc(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
+          batch.set(newRef, {
+            name: product.name || '',
+            unit: product.unit || null,
+            supplierName: product.supplierName || null,
+            productId: product.id || null,
+            countingUnit,
+            caseSize: caseSize ?? null,
+            inductionStatus: 'pending',
+            inductionSource: 'venue-search',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await batch.commit();
+        hapticSuccess();
+        setBatchAddToast(`✓ ${newProducts.length} product${newProducts.length !== 1 ? 's' : ''} added to ${areaName || 'area'}`);
       },
     });
     setCountingUnitVisible(true);
@@ -2779,7 +2830,15 @@ const openHistory = throttleAction(async (item: Item) => {
         venueId={venueId}
         areaName={areaName}
         onSelect={handleVenueProductSelected}
+        onBatchSelect={handleBatchVenueProductsSelected}
       />
+
+      {/* Batch add toast */}
+      {!!batchAddToast && (
+        <View pointerEvents="none" style={{ position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: '#10b981', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', zIndex: 999 }}>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{batchAddToast}</Text>
+        </View>
+      )}
 
       {/* Counting unit picker — for new products and changing existing */}
       <CountingUnitModal
