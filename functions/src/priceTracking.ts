@@ -149,5 +149,51 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     console.log("[trackPriceChanges] committed", { venueId, ops, changed, created, invoiceId });
   }
 
+  // FIX 3: Write supplier links to product/suppliers subcollection (best-effort)
+  if (supplierId && supplierId !== "") {
+    for (const line of priced) {
+      const unitPrice = line.unitPrice as number;
+      const matched = products.find(p => namesMatch(p.name || "", line.name));
+      if (!matched) continue;
+      const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
+      const unitCost = cs ? unitPrice / cs : unitPrice;
+      const supplierRef = db.doc(`venues/${venueId}/products/${matched.id}/suppliers/${supplierId}`);
+      try {
+        const snap = await supplierRef.get();
+        if (!snap.exists) {
+          const hasPreferred = !!(matched.primarySupplierId);
+          await supplierRef.set({
+            supplierId,
+            supplierName,
+            unitCost,
+            caseSize: cs,
+            caseCost: cs ? unitPrice : null,
+            isPreferred: !hasPreferred,
+            relationship: "alternative",
+            lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastInvoicePrice: unitPrice,
+            addedAt: admin.firestore.FieldValue.serverTimestamp(),
+            addedBy: "invoice-import",
+          });
+          if (!hasPreferred) {
+            await db.doc(`venues/${venueId}/products/${matched.id}`).update({
+              primarySupplierId: supplierId,
+              primarySupplierName: supplierName,
+            });
+          }
+        } else {
+          await supplierRef.update({
+            unitCost,
+            caseSize: cs,
+            lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastInvoicePrice: unitPrice,
+          });
+        }
+      } catch (e: any) {
+        console.log("[trackPriceChanges] supplier link error", matched.id, e?.message);
+      }
+    }
+  }
+
   return { changed, created };
 }

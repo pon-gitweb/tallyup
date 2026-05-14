@@ -22,6 +22,13 @@ import { useColours } from '../../context/ThemeContext';
 
 import * as svc from '../../services/products';
 import { listSuppliers, createSupplier, Supplier } from '../../services/suppliers';
+import {
+  listProductSuppliers,
+  upsertProductSupplier,
+  setPreferredProductSupplier,
+  removeProductSupplier,
+  ProductSupplierLink,
+} from '../../services/productSuppliers';
 const hasCreate = typeof svc.createProduct === 'function';
 const hasUpdate = typeof svc.updateProduct === 'function';
 const hasUpsert = typeof svc.upsertProduct === 'function';
@@ -115,6 +122,13 @@ export default function EditProductScreen() {
   const [newSupplierPhone, setNewSupplierPhone] = useState('');
   const [savingSupplier, setSavingSupplier] = useState(false);
 
+  // Multi-supplier section state (FIX 2 + FIX 6)
+  const [productSuppliers, setProductSuppliers] = useState<ProductSupplierLink[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [linkingToProduct, setLinkingToProduct] = useState(false);
+  const [relationshipPickerVisible, setRelationshipPickerVisible] = useState(false);
+  const [editingRelationshipLink, setEditingRelationshipLink] = useState<ProductSupplierLink | null>(null);
+
   const canSave = useMemo(() => {
     return clean(form.name).length > 0 && !!venueId;
   }, [form, venueId]);
@@ -126,6 +140,75 @@ export default function EditProductScreen() {
       .then((list) => setSuppliers(list.filter((s) => !s.isHoldingSupplier)))
       .catch(() => {});
   }, [venueId, showSupplierModal]);
+
+  // Load multi-supplier links when editing an existing product
+  useEffect(() => {
+    if (!editingId || !venueId) return;
+    setLoadingLinks(true);
+    listProductSuppliers(venueId, editingId)
+      .then(links => setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0))))
+      .catch(() => {})
+      .finally(() => setLoadingLinks(false));
+  }, [editingId, venueId]);
+
+  async function handleLinkSupplier(sup: Supplier) {
+    if (!editingId || !venueId) return;
+    const hasPreferred = productSuppliers.some(l => l.isPreferred);
+    try {
+      await upsertProductSupplier(venueId, editingId, sup.id!, {
+        supplierName: sup.name,
+        isPreferred: !hasPreferred,
+        relationship: 'alternative',
+        unitCost: null,
+      });
+      const links = await listProductSuppliers(venueId, editingId);
+      setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not link supplier.');
+    }
+  }
+
+  async function handleSetPreferred(supplierId: string) {
+    if (!editingId || !venueId) return;
+    try {
+      await setPreferredProductSupplier(venueId, editingId, supplierId);
+      const links = await listProductSuppliers(venueId, editingId);
+      setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
+    } catch (e: any) { Alert.alert('Error', e?.message); }
+  }
+
+  async function handleRemoveSupplierLink(supplierId: string) {
+    if (!editingId || !venueId) return;
+    Alert.alert('Remove supplier link?', 'This removes the link between this product and the supplier.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        try {
+          await removeProductSupplier(venueId, editingId, supplierId);
+          setProductSuppliers(prev => prev.filter(l => l.supplierId !== supplierId));
+        } catch (e: any) { Alert.alert('Error', e?.message); }
+      }},
+    ]);
+  }
+
+  async function handleSaveRelationship(relationship: string) {
+    if (!editingId || !venueId || !editingRelationshipLink) return;
+    try {
+      await upsertProductSupplier(venueId, editingId, editingRelationshipLink.supplierId, { relationship: relationship as any });
+      const links = await listProductSuppliers(venueId, editingId);
+      setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
+    } catch (e: any) { Alert.alert('Error', e?.message); }
+    setRelationshipPickerVisible(false);
+    setEditingRelationshipLink(null);
+  }
+
+  function relColour(r: string | undefined) {
+    switch (r) {
+      case 'contracted': return '#1b4f72';
+      case 'preferred': return '#065f46';
+      case 'emergency': return '#b91c1c';
+      default: return '#64748b';
+    }
+  }
 
   async function handleAddNewSupplier() {
     if (!venueId || !newSupplierName.trim()) return;
@@ -422,6 +505,75 @@ export default function EditProductScreen() {
           </View>
         ) : null}
 
+        {/* ---- Linked Suppliers (FIX 2 + FIX 6) ---- */}
+        {!!editingId && (
+          <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
+            <Text style={[styles.cardTitle, { color: colours.text }]}>
+              Suppliers ({productSuppliers.length})
+            </Text>
+            {loadingLinks ? (
+              <ActivityIndicator size="small" style={{ marginVertical: 8 }} />
+            ) : productSuppliers.length === 0 ? (
+              <Text style={[styles.hintDim, { color: colours.textSecondary, marginBottom: 8 }]}>
+                No supplier links yet. Link a supplier below to track pricing per supplier.
+              </Text>
+            ) : (
+              productSuppliers.map(link => (
+                <View key={link.supplierId} style={{ borderBottomWidth: 1, borderBottomColor: colours.border, paddingVertical: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    {link.isPreferred && <Text style={{ fontSize: 14 }}>⭐</Text>}
+                    <Text style={{ fontWeight: '700', color: colours.text, flex: 1 }}>{link.supplierName}</Text>
+                    <View style={{ backgroundColor: relColour(link.relationship), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff', textTransform: 'capitalize' }}>
+                        {link.relationship || 'alternative'}
+                      </Text>
+                    </View>
+                  </View>
+                  {link.unitCost != null && (
+                    <Text style={{ fontSize: 13, color: colours.textSecondary }}>
+                      ${link.unitCost.toFixed(2)}/unit
+                      {link.caseSize ? ` · Case of ${link.caseSize} · $${(link.caseCost ?? link.unitCost * link.caseSize).toFixed(2)}/case` : ''}
+                    </Text>
+                  )}
+                  {link.lastInvoicePrice != null && (
+                    <Text style={{ fontSize: 12, color: colours.textSecondary }}>
+                      Last invoice: ${link.lastInvoicePrice.toFixed(2)}
+                    </Text>
+                  )}
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                    {!link.isPreferred && (
+                      <TouchableOpacity
+                        onPress={() => handleSetPreferred(link.supplierId)}
+                        style={{ paddingVertical: 5, paddingHorizontal: 10, backgroundColor: '#f0fdf4', borderRadius: 8 }}
+                      >
+                        <Text style={{ fontSize: 12, color: '#0f766e', fontWeight: '700' }}>Set preferred</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => { setEditingRelationshipLink(link); setRelationshipPickerVisible(true); }}
+                      style={{ paddingVertical: 5, paddingHorizontal: 10, backgroundColor: '#f1f5f9', borderRadius: 8 }}
+                    >
+                      <Text style={{ fontSize: 12, color: '#374151', fontWeight: '700' }}>Relationship</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveSupplierLink(link.supplierId)}
+                      style={{ paddingVertical: 5, paddingHorizontal: 10, backgroundColor: '#fef2f2', borderRadius: 8 }}
+                    >
+                      <Text style={{ fontSize: 12, color: '#b91c1c', fontWeight: '700' }}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+            <TouchableOpacity
+              onPress={() => { setLinkingToProduct(true); setShowSupplierModal(true); }}
+              style={{ marginTop: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colours.border, borderRadius: 10 }}
+            >
+              <Text style={{ color: colours.primary, fontWeight: '700', fontSize: 14 }}>+ Link another supplier</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ---- Actions ---- */}
         <View style={{ height: 8 }} />
         <View style={styles.actions}>
@@ -513,8 +665,14 @@ export default function EditProductScreen() {
                     <TouchableOpacity
                       key={sup.id}
                       onPress={() => {
-                        setForm((p: any) => ({ ...p, supplierId: sup.id || null, supplierName: sup.name }));
-                        setShowSupplierModal(false);
+                        if (linkingToProduct) {
+                          setShowSupplierModal(false);
+                          setLinkingToProduct(false);
+                          handleLinkSupplier(sup);
+                        } else {
+                          setForm((p: any) => ({ ...p, supplierId: sup.id || null, supplierName: sup.name }));
+                          setShowSupplierModal(false);
+                        }
                       }}
                       style={{
                         paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
@@ -542,6 +700,45 @@ export default function EditProductScreen() {
                 </TouchableOpacity>
               </>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Relationship type picker (FIX 6) */}
+      <Modal
+        transparent
+        visible={relationshipPickerVisible}
+        animationType="fade"
+        onRequestClose={() => { setRelationshipPickerVisible(false); setEditingRelationshipLink(null); }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colours.surface }]}>
+            <Text style={[styles.modalTitle, { color: colours.text }]}>Relationship type</Text>
+            {(['preferred', 'contracted', 'alternative', 'emergency'] as const).map(r => (
+              <TouchableOpacity
+                key={r}
+                onPress={() => handleSaveRelationship(r)}
+                style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colours.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+              >
+                {editingRelationshipLink?.relationship === r && (
+                  <Text style={{ color: colours.primary, fontWeight: '800' }}>✓</Text>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', color: colours.text, textTransform: 'capitalize' }}>{r}</Text>
+                  <Text style={{ fontSize: 12, color: colours.textSecondary }}>
+                    {r === 'preferred' ? 'Your go-to supplier' :
+                     r === 'contracted' ? 'You have a supply agreement' :
+                     r === 'alternative' ? 'Backup option' : 'Last resort only'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={() => { setRelationshipPickerVisible(false); setEditingRelationshipLink(null); }}
+              style={{ paddingVertical: 12, alignItems: 'center', marginTop: 4 }}
+            >
+              <Text style={{ color: colours.textSecondary }}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

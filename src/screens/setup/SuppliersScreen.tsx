@@ -27,6 +27,7 @@ import {
   Supplier,
 } from '../../services/suppliers';
 import { findMatchingSupplier } from '../../services/matching';
+import { runSupplierMigration } from '../../services/productSuppliers';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 import { pickParseAndUploadProductsCsv } from '../../services/imports/pickAndUploadCsv';
 import { AI_BASE_URL } from '../../config/ai';
@@ -72,6 +73,12 @@ export default function SuppliersScreen() {
   const [directorySearch, setDirectorySearch] = useState('');
   const [directoryLoading, setDirectoryLoading] = useState(false);
 
+  // FIX 4: Supplier detail + linked products
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailSupplier, setDetailSupplier] = useState<Supplier | null>(null);
+  const [detailProducts, setDetailProducts] = useState<any[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+
   async function load() {
     if (!venueId) {
       setRows([]);
@@ -92,7 +99,25 @@ export default function SuppliersScreen() {
 
   useEffect(() => {
     load();
+    // FIX 1: Run one-time supplier migration silently on first visit per session
+    if (venueId) runSupplierMigration(venueId).catch(() => {});
   }, [venueId]);
+
+  async function showSupplierDetail(s: Supplier) {
+    setDetailSupplier(s);
+    setDetailOpen(true);
+    setDetailLoading(true);
+    try {
+      const db = getFirestore();
+      const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
+      const linked = snap.docs
+        .map(d => ({ id: d.id, ...(d.data() as any) }))
+        .filter((p: any) => p.supplierId === s.id || p.primarySupplierId === s.id);
+      linked.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' }));
+      setDetailProducts(linked);
+    } catch { setDetailProducts([]); }
+    finally { setDetailLoading(false); }
+  }
 
   function openNewForm() {
     setEditingId(null);
@@ -507,7 +532,7 @@ export default function SuppliersScreen() {
         keyExtractor={(s) => s.id!}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => (
-          <View style={styles.rowCard}>
+          <TouchableOpacity style={styles.rowCard} onPress={() => showSupplierDetail(item)} activeOpacity={0.8}>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{item.name}</Text>
               <Text style={styles.sub}>{item.email || item.phone || '-'}</Text>
@@ -534,7 +559,7 @@ export default function SuppliersScreen() {
             >
               <Text style={[styles.smallText, { color: 'white' }]}>Delete</Text>
             </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         )}
         ListEmptyComponent={
           <Text>
@@ -750,6 +775,83 @@ export default function SuppliersScreen() {
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* FIX 4: Supplier detail modal with linked products */}
+      <Modal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <Text style={{ fontSize: 20, fontWeight: '800' }}>{detailSupplier?.name}</Text>
+            <TouchableOpacity onPress={() => setDetailOpen(false)}>
+              <Text style={{ color: '#6B7280', fontWeight: '700' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+          {detailSupplier?.email && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.email}</Text>}
+          {detailSupplier?.phone && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.phone}</Text>}
+
+          <View style={{ marginTop: 16 }}>
+            <Text style={{ fontSize: 15, fontWeight: '800', marginBottom: 8 }}>
+              Products ({detailProducts.length})
+            </Text>
+            {detailLoading ? (
+              <View style={{ alignItems: 'center', padding: 24 }}>
+                <ActivityIndicator />
+                <Text style={{ color: '#6B7280', marginTop: 8 }}>Loading linked products…</Text>
+              </View>
+            ) : detailProducts.length === 0 ? (
+              <Text style={{ color: '#94A3B8', fontSize: 13 }}>
+                No products linked to this supplier yet. As invoices are processed or products are manually linked, they appear here.
+              </Text>
+            ) : (
+              <>
+                <View style={{ flexDirection: 'row', gap: 16, marginBottom: 12 }}>
+                  <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#1b4f72' }}>{detailProducts.length}</Text>
+                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Products</Text>
+                  </View>
+                  <View style={{ backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#065f46' }}>
+                      {detailProducts.filter((p: any) => p.primarySupplierId === detailSupplier?.id || (p.supplierId === detailSupplier?.id && !p.primarySupplierId)).length}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Preferred for</Text>
+                  </View>
+                  <View style={{ backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#92400E' }}>
+                      ${detailProducts.filter((p: any) => p.costPrice != null).reduce((sum: number, p: any) => sum + (p.costPrice || 0), 0).toFixed(0)}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Total cost</Text>
+                  </View>
+                </View>
+                <FlatList
+                  data={detailProducts}
+                  keyExtractor={(p) => p.id}
+                  ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+                  renderItem={({ item: p }) => (
+                    <View style={{ backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '700' }}>{p.name}</Text>
+                        <Text style={{ fontSize: 12, color: '#6B7280' }}>
+                          {p.unit || ''}
+                          {p.costPrice != null ? ` · $${Number(p.costPrice).toFixed(2)}` : ''}
+                        </Text>
+                      </View>
+                      {(p.primarySupplierId === detailSupplier?.id || (!p.primarySupplierId && p.supplierId === detailSupplier?.id)) && (
+                        <Text style={{ fontSize: 14 }}>⭐</Text>
+                      )}
+                    </View>
+                  )}
+                />
+              </>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.primary, { marginTop: 16 }]}
+            onPress={() => { setDetailOpen(false); openEditForm(detailSupplier!); }}
+          >
+            <Text style={styles.primaryText}>Edit supplier</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
 

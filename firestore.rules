@@ -558,8 +558,17 @@ service cloud.firestore {
         allow read: if isVenueMember(venueId);
         allow create: if isVenueMember(venueId);
         allow update: if hasVenueRole(venueId, ['manager','owner']) && (
-          request.resource.data.diff(resource.data).changedKeys().hasOnly(['par','parLevel','supplierId','supplierName','supplierUpdatedAt','updatedAt'])
+          request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'par','parLevel','supplierId','supplierName','supplierUpdatedAt',
+            'primarySupplierId','primarySupplierName','supplierCount','lowestUnitCost',
+            'updatedAt'
+          ])
         );
+        match /suppliers/{supplierLinkId} {
+          allow read: if isVenueMember(venueId);
+          allow create, update: if isVenueMember(venueId);
+          allow delete: if hasVenueRole(venueId, ['manager','owner']);
+        }
         match /prices/{supplierId} {
           allow read, write: if hasVenueRole(venueId, ['manager','owner']);
         }

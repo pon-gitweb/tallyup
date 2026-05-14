@@ -67,7 +67,9 @@ export default function NewOrderScreen() {
     return products
       .filter(p => {
         if (!supplierId) return false;
-        if ((p as any)?.supplierId !== supplierId) return false;
+        // FIX 5: match on primarySupplierId (new model) or supplierId (legacy)
+        const pSuppId = (p as any)?.primarySupplierId || (p as any)?.supplierId;
+        if (pSuppId !== supplierId) return false;
         if (!q) return true;
         const name = (p.name || '').toLowerCase();
         const sku  = (p.sku  || '').toLowerCase();
@@ -184,17 +186,26 @@ export default function NewOrderScreen() {
           <View style={styles.card}>
             <Text style={styles.label}>Products</Text>
             <View>
-              {filteredProducts.map((p) => (
-                <View key={p.id} style={[styles.row, { marginBottom: 8 }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName}>{p.name || p.sku}</Text>
-                    {!!(p as any)?.unit && <Text style={styles.sub}>Unit: {(p as any).unit}</Text>}
+              {filteredProducts.map((p) => {
+                const isPreferred = (p as any)?.primarySupplierId === supplierId || (!(p as any)?.primarySupplierId && (p as any)?.supplierId === supplierId);
+                return (
+                  <View key={p.id} style={[styles.row, { marginBottom: 8 }]}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        {isPreferred && <Text style={{ fontSize: 12 }}>⭐</Text>}
+                        <Text style={styles.itemName}>{p.name || p.sku}</Text>
+                      </View>
+                      {!!(p as any)?.unit && <Text style={styles.sub}>Unit: {(p as any).unit}</Text>}
+                      {(p as any)?.costPrice != null && (
+                        <Text style={styles.sub}>${Number((p as any).costPrice).toFixed(2)}/unit</Text>
+                      )}
+                    </View>
+                    <TouchableOpacity onPress={() => addProduct(p)} style={styles.addBtn}>
+                      <Text style={styles.addText}>Add</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity onPress={() => addProduct(p)} style={styles.addBtn}>
-                    <Text style={styles.addText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </View>
 

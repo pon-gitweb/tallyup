@@ -389,7 +389,8 @@ app.post("/ai-insights", async (req, res) => {
     const { venueId, data, cacheKey } = req.body || {};
     if (!venueId || !data) { res.status(400).json({ ok: false, error: "Missing venueId or data" }); return; }
 
-    const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on patterns, trends, and opportunities. Return as JSON array: [{headline, observation, action}]`;
+    // FIX 8: Supplier-aware AI insights prompt
+    const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on patterns, trends, and opportunities — including supplier pricing opportunities (products where a cheaper alternative exists), approaching contract expiry dates, rebate thresholds close to being hit, and price increases from preferred suppliers. Return as JSON array: [{headline, observation, action}]`;
 
     const userMessage = "Stocktake data for analysis:\n\n" + JSON.stringify(data, null, 2);
 
@@ -1125,6 +1126,31 @@ app.post("/suitee", async (req, res) => {
         .map(d => d.data().name || d.id);
     } catch {}
 
+    // FIX 7: Per-product supplier intelligence for top products
+    const productSupplierLines: string[] = [];
+    try {
+      const topByValue = [...products]
+        .filter(p => p.costPrice != null)
+        .sort((a, b) => (b.costPrice || 0) - (a.costPrice || 0))
+        .slice(0, 20);
+      for (const p of topByValue) {
+        const linksSnap = await db.collection(`venues/${venueId}/products/${p.id}/suppliers`).limit(10).get();
+        if (linksSnap.empty) continue;
+        const links = linksSnap.docs.map(d => d.data() as any);
+        const preferred = links.find(l => l.isPreferred);
+        const cheapest = links.reduce((a: any, b: any) => ((a.unitCost || 999) <= (b.unitCost || 999) ? a : b));
+        const parts = links.map((l: any) => {
+          const tag = l.isPreferred ? '⭐' : '';
+          const cost = l.unitCost != null ? `$${Number(l.unitCost).toFixed(2)}/unit` : 'no price';
+          return `${tag}${l.supplierName}(${l.relationship},${cost})`;
+        });
+        const cheaperNote = preferred && cheapest && preferred.supplierId !== cheapest.supplierId && preferred.unitCost && cheapest.unitCost
+          ? ` [cheaper alt: ${cheapest.supplierName} $${Number(cheapest.unitCost).toFixed(2)}]`
+          : '';
+        productSupplierLines.push(`${p.name}: ${parts.join(' | ')}${cheaperNote}`);
+      }
+    } catch {}
+
     // Variance data — traverse departments → areas → items (same logic as briefing service)
     const allShortages: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
     const allExcesses: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
@@ -1381,6 +1407,12 @@ app.post("/suitee", async (req, res) => {
       lines.push("", ...priceChangeLines);
     }
 
+    // FIX 7: Supplier intelligence per product
+    if (productSupplierLines.length > 0) {
+      lines.push("", "SUPPLIER PRICING (top products — ⭐=preferred, format: supplier(relationship,$cost/unit)):");
+      productSupplierLines.forEach(l => lines.push("  " + l));
+    }
+
     const context = lines.join("\n");
 
     const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti.
@@ -1394,6 +1426,10 @@ You answer questions like:
 - What are my slowest moving lines?
 - Which supplier has increased prices the most?
 - How much have price increases cost us?
+- Who is the cheapest supplier for Heineken?
+- Which products have multiple suppliers?
+- Where am I getting the best deals?
+- Which supplier should I order beer from?
 
 Your tone is direct, analytical, and honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
 
