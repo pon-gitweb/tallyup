@@ -429,10 +429,14 @@ export default function ProductsScreen() {
             <Text style={{ fontSize: 20 }}>📦</Text>
             <View style={{ flex: 1 }}>
               <Text style={S.unassignedTitle}>
-                {unassignedIds.length} product{unassignedIds.length !== 1 ? 's' : ''} not in a stocktake area yet
+                {showOnlyUnassigned
+                  ? `Showing ${unassignedIds.length} unassigned product${unassignedIds.length !== 1 ? 's' : ''}`
+                  : `${unassignedIds.length} product${unassignedIds.length !== 1 ? 's' : ''} not in a stocktake area yet`}
               </Text>
               <Text style={S.unassignedBody}>
-                Find them during your stocktake by searching in any area — they'll appear ready to add.
+                {showOnlyUnassigned
+                  ? 'Add these to a stocktake area by searching for them during your next stocktake.'
+                  : 'Find them in any area by searching during your stocktake.'}
               </Text>
               <TouchableOpacity
                 onPress={() => {
@@ -442,7 +446,7 @@ export default function ProductsScreen() {
                 style={S.unassignedBtn}
               >
                 <Text style={S.unassignedBtnText}>
-                  {showOnlyUnassigned ? '← Show all products' : 'View unassigned products'}
+                  {showOnlyUnassigned ? '← Show all products' : 'View unassigned products →'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -504,28 +508,30 @@ export default function ProductsScreen() {
       </View>
 
       <View style={S.searchSection}>
-        <Text style={S.searchLabel}>
-          {showOnlyUnassigned
-            ? `Unassigned products (${unassignedIds.length})`
-            : 'Or search existing products'}
-        </Text>
+        {showOnlyUnassigned ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ width: 4, height: 20, borderRadius: 2, backgroundColor: '#14b8a6' }} />
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f766e' }}>
+                Showing {unassignedIds.length} unassigned product{unassignedIds.length !== 1 ? 's' : ''}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => { setShowOnlyUnassigned(false); setQ(''); }}>
+              <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '700' }}>Show all →</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={S.searchLabel}>All products ({rows.length})</Text>
+        )}
         <TextInput
           value={q}
           onChangeText={setQ}
-          placeholder="Search by name, SKU, unit, or supplier"
+          placeholder={showOnlyUnassigned ? 'Filter unassigned…' : 'Search by name, SKU, unit, or supplier'}
           autoCapitalize="none"
           style={S.searchInput}
           clearButtonMode="while-editing"
           placeholderTextColor="#9ca3af"
         />
-        {showOnlyUnassigned && (
-          <TouchableOpacity
-            onPress={() => { setShowOnlyUnassigned(false); setQ(''); }}
-            style={{ marginTop: 8, alignSelf: 'flex-start' }}
-          >
-            <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '600' }}>← Show all products</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </View>
   );
@@ -554,18 +560,34 @@ export default function ProductsScreen() {
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => {
           const supplierName = item.supplierName ? String(item.supplierName) : '';
+          const isUnassigned = showOnlyUnassigned || new Set(unassignedIds).has(item.id);
           return (
-            <View style={S.rowCard}>
+            <TouchableOpacity
+              style={[
+                S.rowCard,
+                showOnlyUnassigned && { borderLeftWidth: 3, borderLeftColor: '#14b8a6', paddingLeft: 11 },
+              ]}
+              onPress={() => onEdit(item)}
+              activeOpacity={0.75}
+            >
               <View style={{ flex: 1 }}>
                 <Text style={S.rowName}>{item.name}</Text>
+                {item.category ? <Text style={S.rowSub}>{item.category}</Text> : null}
                 <Text style={S.rowSub}>
                   {item.sku ? `SKU ${item.sku} · ` : ''}
                   {item.unit || 'unit?'}
                   {typeof item.parLevel === 'number' ? ` · Par ${item.parLevel}` : ''}
                 </Text>
-                <Text style={[S.badge, supplierName ? S.badgeOk : S.badgeWarn]}>
-                  {supplierName ? `Preferred: ${supplierName}` : 'Needs supplier'}
-                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                  {showOnlyUnassigned && (
+                    <Text style={[S.badge, { backgroundColor: '#fef3c7', color: '#92400e' }]}>
+                      Not in any area
+                    </Text>
+                  )}
+                  <Text style={[S.badge, supplierName ? S.badgeOk : S.badgeWarn]}>
+                    {supplierName ? `Preferred: ${supplierName}` : 'Needs supplier'}
+                  </Text>
+                </View>
               </View>
               <TouchableOpacity style={S.editBtn} onPress={() => onEdit(item)}>
                 <Text style={S.editBtnText}>Edit</Text>
@@ -573,7 +595,7 @@ export default function ProductsScreen() {
               <TouchableOpacity style={S.deleteBtn} onPress={() => onDelete(item)}>
                 <Text style={S.deleteBtnText}>Delete</Text>
               </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           );
         }}
         ListEmptyComponent={

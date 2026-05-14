@@ -17,7 +17,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { findMatchingProduct, type ProductMatchResult } from '../../services/matching';
 import { AI_BASE_URL } from '../../config/ai';
 
 type ProductDetails = {
@@ -38,7 +39,7 @@ type Props = {
   onConfirm: (product: ProductDetails, count: number) => Promise<void>;
 };
 
-type Step = 'front-prompt' | 'back-prompt' | 'processing' | 'review' | 'count' | 'failed';
+type Step = 'front-prompt' | 'back-prompt' | 'processing' | 'match-check' | 'review' | 'count' | 'failed';
 
 const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', barcode: '', unit: 'bottle' };
 
@@ -49,6 +50,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const [count, setCount] = useState('1');
   const [confirming, setConfirming] = useState(false);
   const [failMsg, setFailMsg] = useState('');
+  const [matchResult, setMatchResult] = useState<ProductMatchResult | null>(null);
 
   const reset = () => {
     setStep('front-prompt');
@@ -57,6 +59,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
     setCount('1');
     setConfirming(false);
     setFailMsg('');
+    setMatchResult(null);
   };
 
   // Re-apply initial barcode when modal opens
@@ -154,14 +157,27 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
         setStep('failed');
         return;
       }
-      setProduct({
+      const extractedProduct: ProductDetails = {
         name: ext.name || '',
         brand: ext.brand || '',
         size: ext.size || '',
         category: ext.category || '',
         barcode: ext.barcode || '',
         unit: ext.unit || 'bottle',
-      });
+      };
+      setProduct(extractedProduct);
+
+      // Check for existing product match before showing review
+      if (venueId) {
+        try {
+          const mr = await findMatchingProduct(venueId, { name: ext.name, barcode: ext.barcode || '' });
+          if (mr.confidence >= 0.6 && mr.match) {
+            setMatchResult(mr);
+            setStep('match-check');
+            return;
+          }
+        } catch {}
+      }
       setStep('review');
     } catch {
       setFailMsg("We couldn't read the product details. Try better lighting or a closer shot.");
@@ -217,6 +233,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             {step === 'front-prompt' ? 'Photograph product' :
              step === 'back-prompt' ? 'Barcode photo (optional)' :
              step === 'processing' ? 'Reading product…' :
+             step === 'match-check' ? 'Already in your inventory?' :
              step === 'review' ? 'Confirm details' :
              step === 'count' ? 'Enter count' : 'Try again'}
           </Text>
@@ -283,6 +300,48 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             </TouchableOpacity>
             <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={handleClose}>
               <Text style={S.btnTextDark}>Add manually</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── MATCH CHECK ── */}
+        {step === 'match-check' && matchResult?.match && (
+          <View style={S.centered}>
+            <Text style={{ fontSize: 13, fontWeight: '800', color: '#0f766e', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+              {matchResult.confidence >= 0.95 ? '✓ Exact match found' : `Similar product found — ${Math.round(matchResult.confidence * 100)}% match`}
+            </Text>
+            <View style={{ backgroundColor: '#f0fdfa', borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: '#14b8a6', width: '100%', marginBottom: 20 }}>
+              <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>{matchResult.match.name}</Text>
+              {matchResult.match.brand ? <Text style={{ fontSize: 13, color: '#64748b' }}>{matchResult.match.brand}{matchResult.match.size ? ` · ${matchResult.match.size}` : ''}</Text> : null}
+              {matchResult.match.supplierName ? <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{matchResult.match.supplierName}</Text> : null}
+            </View>
+            <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, lineHeight: 19 }}>
+              Using the existing product avoids creating a duplicate in your inventory.
+            </Text>
+            <TouchableOpacity
+              style={[S.btn, { marginBottom: 10 }]}
+              onPress={() => {
+                // Use existing product data, skip to count
+                setProduct({
+                  name: matchResult.match!.name || '',
+                  brand: matchResult.match!.brand || '',
+                  size: matchResult.match!.size || '',
+                  category: matchResult.match!.category || '',
+                  barcode: matchResult.match!.barcode || '',
+                  unit: matchResult.match!.unit || 'bottle',
+                });
+                setStep('count');
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={S.btnText}>✓ Use existing product</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.btn, S.btnSecondary]}
+              onPress={() => { setMatchResult(null); setStep('review'); }}
+              activeOpacity={0.8}
+            >
+              <Text style={S.btnTextDark}>This is a different product →</Text>
             </TouchableOpacity>
           </View>
         )}

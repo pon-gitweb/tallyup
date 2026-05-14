@@ -15,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { incrementFullStocktakeCompleted, hasExistingBaseline } from '../../services/trialStocktake';
+import { findMatchingSupplier } from '../../services/matching';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { parseCsv, toObjects } from '../../services/imports/csv';
@@ -386,15 +387,22 @@ export default function BringYourDataScreen() {
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
 
-      // 2) Auto-create supplier from invoice if detected
+      // 2) Auto-create supplier from invoice if detected (check for existing first)
       if (invoiceSupplierName && invoiceLines.length > 0) {
-        const supRef = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
-          name: invoiceSupplierName, email: null, phone: null,
-          orderingMethod: 'email', importedFromInvoice: true,
-          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-        });
-        createdSupplierId = supRef.id;
-        createdSupplierName = invoiceSupplierName;
+        const supplierMatch = await findMatchingSupplier(venueId, { name: invoiceSupplierName });
+        if (supplierMatch.confidence >= 0.85 && supplierMatch.match) {
+          // Reuse existing supplier — update any empty fields silently
+          createdSupplierId = supplierMatch.match.id;
+          createdSupplierName = supplierMatch.match.name;
+        } else {
+          const supRef = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+            name: invoiceSupplierName, email: null, phone: null,
+            orderingMethod: 'email', importedFromInvoice: true,
+            createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          });
+          createdSupplierId = supRef.id;
+          createdSupplierName = invoiceSupplierName;
+        }
       }
 
       // 3) Import products (+ baseline counts for photo/pdf mode)

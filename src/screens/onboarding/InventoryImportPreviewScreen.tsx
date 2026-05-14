@@ -5,7 +5,8 @@
  * User can rename areas, move products, delete items before confirming.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { getFirestore, setDoc, addDoc, collection, doc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, setDoc, addDoc, collection, getDocs, doc, serverTimestamp } from 'firebase/firestore';
+import { matchProductInList } from '../../services/matching';
 import { getAuth } from 'firebase/auth';
 import { incrementFullStocktakeCompleted, hasExistingBaseline } from '../../services/trialStocktake';
 import {
@@ -52,9 +53,26 @@ function InventoryImportPreviewScreen() {
     setImporting(true);
     try {
       const productsCol = collection(db, 'venues', venueId, 'products');
-      const batch: Promise<void>[] = [];
+
+      // Load existing products once for deduplication matching
+      const existingSnap = await getDocs(productsCol);
+      const existingProducts = existingSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+      const toCreate: typeof products = [];
+      let skippedCount = 0;
 
       for (const product of products) {
+        const mr = matchProductInList(existingProducts, { name: product.name });
+        if (mr.confidence >= 0.95) {
+          // Exact match — skip creation to avoid duplicate
+          skippedCount++;
+        } else {
+          toCreate.push(product);
+        }
+      }
+
+      const batch: Promise<void>[] = [];
+      for (const product of toCreate) {
         const ref = doc(productsCol);
         batch.push(setDoc(ref, {
           name: product.name,
@@ -94,14 +112,15 @@ function InventoryImportPreviewScreen() {
 
       setImporting(false);
 
+      const dupNote = skippedCount > 0 ? `\n\n${skippedCount} product${skippedCount !== 1 ? 's' : ''} already existed and were skipped.` : '';
       const baselineNote = alreadyHasBaseline
-        ? 'Products added to your catalogue. Your existing baseline is unchanged.'
+        ? `Products added to your catalogue. Your existing baseline is unchanged.${dupNote}`
         : result.hasPricing
-          ? 'Your inventory is ready as your opening baseline.\n\nYour next stocktake will show variance against these counts.'
-          : 'Your inventory is ready as your opening baseline. Prices weren\'t found — add them when you link your suppliers.\n\nYour next stocktake will show variance against this baseline.';
+          ? `Your inventory is ready as your opening baseline.\n\nYour next stocktake will show variance against these counts.${dupNote}`
+          : `Your inventory is ready as your opening baseline. Prices weren't found — add them when you link your suppliers.${dupNote}`;
 
       Alert.alert(
-        alreadyHasBaseline ? `✓ ${products.length} products added` : `✓ ${products.length} products imported!`,
+        alreadyHasBaseline ? `✓ ${toCreate.length} products added` : `✓ ${toCreate.length} products imported!`,
         baselineNote,
         [
           { text: 'Start stocktake', onPress: () => nav.navigate('StockControl') },
