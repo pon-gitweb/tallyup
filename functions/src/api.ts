@@ -659,6 +659,20 @@ app.post("/extract-inventory", async (req, res) => {
       const pdfData = await pdfParse(buffer);
       const text = (pdfData.text || "").slice(0, 12000);
 
+      // Detect scanned vs digital PDF — scanned PDFs have very little extractable text
+      const pdfWordCount = text.trim().split(/\s+/).length;
+      const pdfHasContent = /\d/.test(text) || /[a-zA-Z]/.test(text);
+      if (pdfWordCount < 20 || !pdfHasContent) {
+        console.log("[api/extract-inventory] Scanned PDF detected — returning guidance");
+        res.json({
+          ok: false,
+          scannedPdf: true,
+          message: "This PDF appears to be a scanned image rather than a digital document. For best results: upload a CSV or digital PDF export from your POS or spreadsheet.",
+        });
+        return;
+      }
+      console.log("[api/extract-inventory] Digital PDF — processing as text");
+
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -1908,6 +1922,24 @@ app.post("/process-invoices-pdf", async (req, res) => {
     const pdfParse = require("pdf-parse");
     const pdfData = await pdfParse(fileBuffer);
     const text = pdfData.text || "";
+
+    // Detect scanned vs digital PDF
+    const isScannedPdf = (t: string): boolean => {
+      const wordCount = t.trim().split(/\s+/).length;
+      const hasNumbers = /\d/.test(t);
+      const hasLetters = /[a-zA-Z]/.test(t);
+      return wordCount < 20 || (!hasNumbers && !hasLetters);
+    };
+    if (isScannedPdf(text)) {
+      console.log("[api/process-invoices-pdf] Scanned PDF detected — returning guidance");
+      res.json({
+        ok: false,
+        scannedPdf: true,
+        message: "This PDF appears to be a scanned image rather than a digital document. For best results: take a photo using Invoice Scan, or ask your supplier for a digital PDF or CSV export.",
+      });
+      return;
+    }
+    console.log("[api/process-invoices-pdf] Digital PDF — processing as text");
 
     // Single comprehensive Claude extraction — supplier + customer + metadata + lines
     let invoiceData: CompleteInvoiceExtraction | null = null;

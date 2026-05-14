@@ -152,9 +152,22 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         isCsv ? 'text/csv' : 'application/pdf'
       );
 
-      const parsed = isCsv
+      const parsed: any = isCsv
         ? await processInvoicesCsv({ venueId, orderId: 'UNSET', storagePath: up.fullPath })
         : await processInvoicesPdf({ venueId, orderId: 'UNSET', storagePath: up.fullPath });
+
+      if (parsed?.scannedPdf) {
+        Alert.alert(
+          'Scanned PDF detected',
+          parsed.message || 'This PDF appears to be a scanned image. For best results: use a digital PDF or CSV from your supplier.',
+          [
+            { text: 'OK' },
+            { text: 'Upload different file', onPress: pickAndProcess },
+          ],
+        );
+        setBusy(false);
+        return;
+      }
 
       // Invoice deduplication check
       const invLines = parsed?.lines || [];
@@ -292,9 +305,21 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
             opacity: busy ? 0.85 : 1,
           }}
         >
-          <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-            {busy ? 'Processing…' : '📄 Upload CSV / PDF'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
+              {busy ? 'Processing…' : '📄 Upload CSV / PDF'}
+            </Text>
+            {!busy && (
+              <View style={{ backgroundColor: '#16a34a', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 10 }}>✓ Recommended</Text>
+              </View>
+            )}
+          </View>
+          {!busy && (
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, textAlign: 'center', marginTop: 2 }}>
+              Faster and more accurate than photos
+            </Text>
+          )}
         </TouchableOpacity>
 
         <Text style={{ color: '#6B7280', marginTop: 8 }}>{quickTip}</Text>

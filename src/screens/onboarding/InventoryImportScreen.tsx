@@ -106,6 +106,15 @@ function InventoryImportScreen() {
         throw new Error(err?.error || 'Could not read your file. Please try a different format.');
       }
       const result: ExtractionResult = await resp.json();
+      if ((result as any).scannedPdf) {
+        setLoading(false);
+        Alert.alert(
+          'Scanned PDF detected',
+          (result as any).message || 'For best results upload a digital PDF or CSV export from your POS or spreadsheet.',
+          [{ text: 'OK' }],
+        );
+        return;
+      }
       // Stocktake deduplication check
       if (venueId && (result.products?.length ?? 0) > 0) {
         const hash = stocktakeFingerprint(result.products);
@@ -232,8 +241,11 @@ function InventoryImportScreen() {
     );
   }
 
-  // Multi-page photo capture stage
-  if (photoStage === 'capturing') {
+  {/* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
+      Cost optimisation — PDF/CSV available instead.
+      Restore when photo API costs reduce or
+      unlimited plan is active. */}
+  if (false && photoStage === 'capturing') {
     return (
       <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
         <View style={{ backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BFDBFE' }}>
@@ -306,15 +318,25 @@ function InventoryImportScreen() {
       <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: themeColours.border }}>
         <Text style={{ fontWeight: '900', color: themeColours.text, marginBottom: 12, fontSize: 16 }}>What to upload</Text>
         {[
-          { icon: '📊', label: 'Excel or CSV', desc: 'Your existing stocktake spreadsheet' },
-          { icon: '📄', label: 'PDF', desc: 'A printed stocktake form or report' },
-          { icon: '📝', label: 'Word document', desc: 'A stocktake list in Word format' },
-          { icon: '📸', label: 'Photo (multi-page)', desc: 'Up to 40 pages of handwritten sheets' },
+          { icon: '📊', label: 'Excel or CSV', desc: 'Your existing stocktake spreadsheet', rec: true },
+          { icon: '📄', label: 'PDF', desc: 'A printed stocktake form or report', rec: true },
+          { icon: '📝', label: 'Word document', desc: 'A stocktake list in Word format', rec: false },
+          /* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
+             Cost optimisation — PDF/CSV available instead.
+             Restore when photo API costs reduce or
+             unlimited plan is active. */
         ].map((item, i) => (
-          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: i < 3 ? 10 : 0 }}>
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: i < 2 ? 10 : 0 }}>
             <Text style={{ fontSize: 20 }}>{item.icon}</Text>
-            <View>
-              <Text style={{ fontWeight: '700', color: themeColours.text }}>{item.label}</Text>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={{ fontWeight: '700', color: themeColours.text }}>{item.label}</Text>
+                {item.rec && (
+                  <View style={{ backgroundColor: '#dcfce7', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#166534' }}>✓ Recommended</Text>
+                  </View>
+                )}
+              </View>
               <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{item.desc}</Text>
             </View>
           </View>
@@ -323,10 +345,25 @@ function InventoryImportScreen() {
 
       <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>Choose your file</Text>
       <View style={{ gap: 10 }}>
-        <FileTypeButton icon="📁" label="Browse files" sublabel="PDF, Excel, CSV, Word" onPress={onPickDocument} themeColours={themeColours} />
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <FileTypeButton icon="📷" label="Take photo" sublabel="Camera — multi-page" onPress={() => addPhotoPage('camera')} themeColours={themeColours} />
-          <FileTypeButton icon="🖼️" label="Photo library" sublabel="From camera roll" onPress={() => addPhotoPage('library')} themeColours={themeColours} />
+        <FileTypeButton icon="📁" label="Upload PDF or CSV" sublabel="PDF, Excel, CSV, Word — Recommended" onPress={onPickDocument} themeColours={themeColours} />
+        {/* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
+            Cost optimisation — PDF/CSV available instead.
+            Restore when photo API costs reduce or
+            unlimited plan is active. */}
+        {false && (
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <FileTypeButton icon="📷" label="Take photo" sublabel="Camera — multi-page" onPress={() => addPhotoPage('camera')} themeColours={themeColours} />
+            <FileTypeButton icon="🖼️" label="Photo library" sublabel="From camera roll" onPress={() => addPhotoPage('library')} themeColours={themeColours} />
+          </View>
+        )}
+        <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#bfdbfe' }}>
+          <Text style={{ fontWeight: '800', color: '#1e40af', marginBottom: 6, fontSize: 14 }}>
+            📄 For best results upload your stocktake as a PDF or CSV file
+          </Text>
+          <Text style={{ color: '#1e40af', fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
+            Digital files are processed faster and more accurately than photos.{'\n\n'}
+            Tip: Export directly from your POS or spreadsheet for instant import.
+          </Text>
         </View>
       </View>
 

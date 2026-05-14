@@ -131,6 +131,11 @@ export default function BringYourDataScreen() {
         });
         if (!processRes.ok) throw new Error('Could not read PDF');
         const result = await processRes.json();
+        if (result.scannedPdf) {
+          Alert.alert('Scanned PDF detected', result.message || 'Upload a digital PDF or CSV for best results.');
+          setProductsMode(null);
+          return;
+        }
         const lines = (result.lines || []).filter((l: any) => l.name && l.name.length > 1);
         setProductsExtracted(lines);
         setProductsFileName(fileName);
@@ -202,6 +207,10 @@ export default function BringYourDataScreen() {
       });
       if (!processRes.ok) throw new Error('Processing failed');
       const result = await processRes.json();
+      if (result.scannedPdf) {
+        Alert.alert('Scanned PDF detected', result.message || 'Upload a digital PDF or CSV from your supplier for best results.');
+        return;
+      }
       // Deduplication check
       if (venueId) {
         const lines = result.lines || [];
@@ -621,11 +630,17 @@ export default function BringYourDataScreen() {
                     <Text style={S.uploadTypeBtnText}>PDF</Text>
                     <Text style={S.uploadTypeBtnSub}>Stocktake sheet</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={S.uploadTypeBtn} onPress={captureProductsPhoto}>
-                    <Text style={S.uploadTypeBtnIcon}>📷</Text>
-                    <Text style={S.uploadTypeBtnText}>Photo</Text>
-                    <Text style={S.uploadTypeBtnSub}>Paper sheet</Text>
-                  </TouchableOpacity>
+                  {/* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
+                      Cost optimisation — PDF/CSV available instead.
+                      Restore when photo API costs reduce or
+                      unlimited plan is active. */}
+                  {false && (
+                    <TouchableOpacity style={S.uploadTypeBtn} onPress={captureProductsPhoto}>
+                      <Text style={S.uploadTypeBtnIcon}>📷</Text>
+                      <Text style={S.uploadTypeBtnText}>Photo</Text>
+                      <Text style={S.uploadTypeBtnSub}>Paper sheet</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             )}
@@ -732,11 +747,17 @@ export default function BringYourDataScreen() {
                     <Text style={S.uploadTypeBtnIcon}>📄</Text>
                     <Text style={S.uploadTypeBtnText}>CSV</Text>
                     <Text style={S.uploadTypeBtnSub}>Exported file</Text>
+                    <View style={{ backgroundColor: '#dcfce7', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1, marginTop: 2 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: '#166534' }}>✓ Best</Text>
+                    </View>
                   </TouchableOpacity>
                   <TouchableOpacity style={S.uploadTypeBtn} onPress={pickInvoicesPdf}>
                     <Text style={S.uploadTypeBtnIcon}>📋</Text>
                     <Text style={S.uploadTypeBtnText}>PDF</Text>
                     <Text style={S.uploadTypeBtnSub}>Supplier invoice</Text>
+                    <View style={{ backgroundColor: '#dcfce7', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1, marginTop: 2 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: '#166534' }}>✓ Best</Text>
+                    </View>
                   </TouchableOpacity>
                   <TouchableOpacity style={S.uploadTypeBtn} onPress={captureInvoicePhoto}>
                     <Text style={S.uploadTypeBtnIcon}>📷</Text>

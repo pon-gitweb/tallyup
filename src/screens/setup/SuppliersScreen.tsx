@@ -590,20 +590,26 @@ export default function SuppliersScreen() {
             <View style={styles.captureCard}>
               <Text style={styles.captureTitle}>Fast add from photo</Text>
               <Text style={styles.captureHint}>
-                Take a photo of a business card or invoice and we’ll auto-fill
+                Take a photo of an invoice and we’ll auto-fill
                 what we can for this supplier.
               </Text>
 
               <View style={styles.captureRow}>
-                <TouchableOpacity
-                  style={[styles.capturePill, scanBusy && { opacity: 0.6 }]}
-                  disabled={scanBusy}
-                  onPress={() => scanFromPhoto('card')}
-                >
-                  <Text style={styles.capturePillText}>
-                    {scanBusy ? 'Scanning…' : 'Scan business card'}
-                  </Text>
-                </TouchableOpacity>
+                {/* BUSINESS_CARD_SCAN — temporarily hidden
+                    Cost optimisation — restore when photo
+                    API costs reduce. Code intact in
+                    functions/src/ocr/ocrSupplierCard.ts */}
+                {false && (
+                  <TouchableOpacity
+                    style={[styles.capturePill, scanBusy && { opacity: 0.6 }]}
+                    disabled={scanBusy}
+                    onPress={() => scanFromPhoto('card')}
+                  >
+                    <Text style={styles.capturePillText}>
+                      {scanBusy ? 'Scanning…' : 'Scan business card'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   style={[styles.capturePill, scanBusy && { opacity: 0.6 }]}
@@ -646,15 +652,20 @@ export default function SuppliersScreen() {
                     {catalogueBusy ? 'Reading…' : '📄 Upload PDF catalogue'}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.capturePill, catalogueBusy && { opacity: 0.6 }]}
-                  disabled={catalogueBusy}
-                  onPress={photographCataloguePage}
-                >
-                  <Text style={styles.capturePillText}>
-                    {catalogueBusy ? 'Reading…' : '📷 Photograph catalogue'}
-                  </Text>
-                </TouchableOpacity>
+                {/* CATALOGUE_PHOTO_SCAN — temporarily hidden
+                    Cost optimisation — PDF upload available instead.
+                    Restore when photo API costs reduce. */}
+                {false && (
+                  <TouchableOpacity
+                    style={[styles.capturePill, catalogueBusy && { opacity: 0.6 }]}
+                    disabled={catalogueBusy}
+                    onPress={photographCataloguePage}
+                  >
+                    <Text style={styles.capturePillText}>
+                      {catalogueBusy ? 'Reading…' : '📷 Photograph catalogue'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
 
