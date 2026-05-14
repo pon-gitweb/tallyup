@@ -14,9 +14,10 @@ import {
   View,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById } from '../../services/products';
+import { listSuppliers } from '../../services/suppliers';
 import { adoptGlobalCatalogToVenue } from '../../services/catalog/adoptGlobalCatalogToVenue';
 import BarcodeScannerModal from '../stock/components/BarcodeScannerModal';
 
@@ -218,6 +219,16 @@ export default function ProductsScreen() {
   const [unassignedDismissed, setUnassignedDismissed] = useState(false);
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
 
+  // Multi-select
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Supplier picker (for bulk assign)
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
+  const [venueSuppliers, setVenueSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [supplierQ, setSupplierQ] = useState('');
+  const [assigning, setAssigning] = useState(false);
+
   // Import toast
   const [importToast, setImportToast] = useState<string | null>(null);
   const toastAnim = useRef(new Animated.Value(0)).current;
@@ -386,6 +397,84 @@ export default function ProductsScreen() {
     }
   }
 
+  // ── Multi-select ──────────────────────────────────────────────────────────
+
+  function enterMultiSelect(firstId?: string) {
+    setMultiSelectMode(true);
+    setSelectedIds(firstId ? new Set([firstId]) : new Set());
+  }
+
+  function exitMultiSelect() {
+    setMultiSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelectedIds(new Set(filtered.map((p: any) => p.id)));
+  }
+
+  function selectAllUnassigned() {
+    setSelectedIds(new Set(unassignedIds));
+    setMultiSelectMode(true);
+  }
+
+  async function openSupplierPicker() {
+    if (!venueId) return;
+    try {
+      const data = await listSuppliers(venueId);
+      setVenueSuppliers(data.map((s: any) => ({ id: s.id!, name: s.name || '' })));
+    } catch { setVenueSuppliers([]); }
+    setSupplierQ('');
+    setSupplierPickerOpen(true);
+  }
+
+  function confirmAndAssign(supplier: { id: string; name: string }) {
+    const count = selectedIds.size;
+    Alert.alert(
+      'Assign supplier?',
+      `Assign ${count} product${count !== 1 ? 's' : ''} to ${supplier.name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Assign', onPress: () => doAssign(supplier) },
+      ]
+    );
+  }
+
+  async function doAssign(supplier: { id: string; name: string }) {
+    if (!venueId || selectedIds.size === 0) return;
+    setAssigning(true);
+    setSupplierPickerOpen(false);
+    try {
+      const db = getFirestore();
+      const batch = writeBatch(db);
+      const count = selectedIds.size;
+      selectedIds.forEach(id => {
+        batch.update(doc(db, 'venues', venueId, 'products', id), {
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          supplierUpdatedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      exitMultiSelect();
+      showImportToast(`✓ ${count} product${count !== 1 ? 's' : ''} assigned to ${supplier.name}`);
+      await load({ silent: true });
+    } catch (e: any) {
+      Alert.alert('Assignment failed', e?.message || 'Please try again.');
+    } finally {
+      setAssigning(false);
+    }
+  }
+
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyUnassigned) {
@@ -407,6 +496,12 @@ export default function ProductsScreen() {
       );
     });
   }, [rows, q, showOnlyUnassigned, unassignedIds]);
+
+  const filteredVenueSuppliers = useMemo(() => {
+    const needle = supplierQ.trim().toLowerCase();
+    if (!needle) return venueSuppliers;
+    return venueSuppliers.filter(s => s.name.toLowerCase().includes(needle));
+  }, [venueSuppliers, supplierQ]);
 
   if (loading) {
     return (
@@ -509,15 +604,25 @@ export default function ProductsScreen() {
 
       <View style={S.searchSection}>
         {showOnlyUnassigned ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={{ width: 4, height: 20, borderRadius: 2, backgroundColor: '#14b8a6' }} />
-              <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f766e' }}>
-                Showing {unassignedIds.length} unassigned product{unassignedIds.length !== 1 ? 's' : ''}
-              </Text>
+          <View style={{ marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ width: 4, height: 20, borderRadius: 2, backgroundColor: '#14b8a6' }} />
+                <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f766e' }}>
+                  Showing {unassignedIds.length} unassigned product{unassignedIds.length !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => { setShowOnlyUnassigned(false); setQ(''); }}>
+                <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '700' }}>Show all →</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => { setShowOnlyUnassigned(false); setQ(''); }}>
-              <Text style={{ color: '#1b4f72', fontSize: 13, fontWeight: '700' }}>Show all →</Text>
+            <TouchableOpacity
+              onPress={selectAllUnassigned}
+              style={{ alignSelf: 'flex-start', backgroundColor: '#ccfbf1', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f766e' }}>
+                Select all unassigned →
+              </Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -551,6 +656,28 @@ export default function ProductsScreen() {
         </Animated.View>
       ) : null}
 
+      {/* Multi-select action bar */}
+      {multiSelectMode && (
+        <View style={MS.bar}>
+          <TouchableOpacity onPress={exitMultiSelect} style={MS.cancelBtn}>
+            <Text style={MS.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
+            <Text style={MS.countText}>{selectedIds.size} selected</Text>
+            <TouchableOpacity onPress={selectAllVisible}>
+              <Text style={MS.selectAllText}>Select all ({filtered.length})</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            onPress={openSupplierPicker}
+            disabled={selectedIds.size === 0 || assigning}
+            style={[MS.assignBtn, (selectedIds.size === 0 || assigning) && MS.assignBtnDisabled]}
+          >
+            <Text style={MS.assignBtnText}>{assigning ? 'Assigning…' : 'Assign supplier'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <FlatList
         data={filtered}
         keyExtractor={p => p.id}
@@ -560,16 +687,24 @@ export default function ProductsScreen() {
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => {
           const supplierName = item.supplierName ? String(item.supplierName) : '';
-          const isUnassigned = showOnlyUnassigned || new Set(unassignedIds).has(item.id);
+          const isSelected = selectedIds.has(item.id);
           return (
             <TouchableOpacity
               style={[
                 S.rowCard,
-                showOnlyUnassigned && { borderLeftWidth: 3, borderLeftColor: '#14b8a6', paddingLeft: 11 },
+                !multiSelectMode && showOnlyUnassigned && { borderLeftWidth: 3, borderLeftColor: '#14b8a6', paddingLeft: 11 },
+                multiSelectMode && isSelected && { backgroundColor: '#f0fdfa', borderColor: '#14b8a6' },
               ]}
-              onPress={() => onEdit(item)}
+              onPress={() => multiSelectMode ? toggleSelected(item.id) : onEdit(item)}
+              onLongPress={() => { if (!multiSelectMode) enterMultiSelect(item.id); }}
+              delayLongPress={400}
               activeOpacity={0.75}
             >
+              {multiSelectMode && (
+                <View style={[MS.checkbox, isSelected && MS.checkboxSelected]}>
+                  {isSelected && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 16 }}>✓</Text>}
+                </View>
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={S.rowName}>{item.name}</Text>
                 {item.category ? <Text style={S.rowSub}>{item.category}</Text> : null}
@@ -589,12 +724,16 @@ export default function ProductsScreen() {
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity style={S.editBtn} onPress={() => onEdit(item)}>
-                <Text style={S.editBtnText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={S.deleteBtn} onPress={() => onDelete(item)}>
-                <Text style={S.deleteBtnText}>Delete</Text>
-              </TouchableOpacity>
+              {!multiSelectMode && (
+                <>
+                  <TouchableOpacity style={S.editBtn} onPress={() => onEdit(item)}>
+                    <Text style={S.editBtnText}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={S.deleteBtn} onPress={() => onDelete(item)}>
+                    <Text style={S.deleteBtnText}>Delete</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </TouchableOpacity>
           );
         }}
@@ -617,6 +756,61 @@ export default function ProductsScreen() {
       />
 
       <PosModal visible={posOpen} onClose={() => setPosOpen(false)} />
+
+      {/* Supplier picker — for bulk assign */}
+      <Modal visible={supplierPickerOpen} transparent animationType="slide" onRequestClose={() => setSupplierPickerOpen(false)}>
+        <View style={MS.pickerWrap}>
+          <TouchableOpacity style={MS.pickerBackdrop} onPress={() => setSupplierPickerOpen(false)} activeOpacity={1} />
+          <View style={MS.pickerSheet}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                  Assign {selectedIds.size} product{selectedIds.size !== 1 ? 's' : ''} to a supplier
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setSupplierPickerOpen(false)} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 18, color: '#64748b', fontWeight: '600' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+              <TextInput
+                value={supplierQ}
+                onChangeText={setSupplierQ}
+                placeholder="Search suppliers…"
+                placeholderTextColor="#94a3b8"
+                style={S.searchInput}
+                clearButtonMode="while-editing"
+                autoFocus={false}
+              />
+            </View>
+            <ScrollView contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+              {filteredVenueSuppliers.length === 0 ? (
+                <Text style={{ textAlign: 'center', color: '#94a3b8', padding: 24, fontSize: 14 }}>
+                  {supplierQ.trim() ? 'No suppliers match your search.' : 'No suppliers yet. Add one below.'}
+                </Text>
+              ) : (
+                filteredVenueSuppliers.map(s => (
+                  <TouchableOpacity
+                    key={s.id}
+                    onPress={() => { setSupplierPickerOpen(false); confirmAndAssign(s); }}
+                    style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: '#0f172a' }}>{s.name}</Text>
+                    <Text style={{ fontSize: 18, color: '#cbd5e1' }}>›</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+              <TouchableOpacity
+                onPress={() => { setSupplierPickerOpen(false); nav.navigate('Suppliers'); }}
+                style={{ margin: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#1b4f72' }}>+ Add new supplier</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* STUB — hidden until built: Scan UPC batch, Suggest PARs, AI normalize units */}
       <BarcodeScannerModal
@@ -875,6 +1069,58 @@ const cS = StyleSheet.create({
   },
   supplierName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#0f172a' },
   chev: { fontSize: 22, color: '#94a3b8' },
+});
+
+// Multi-select styles
+const MS = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  cancelBtn: { paddingVertical: 6, paddingHorizontal: 10 },
+  cancelText: { color: '#94a3b8', fontWeight: '700', fontSize: 13 },
+  countText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  selectAllText: { color: '#14b8a6', fontSize: 12, fontWeight: '600' },
+  assignBtn: {
+    backgroundColor: '#14b8a6',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  assignBtnDisabled: { backgroundColor: '#374151' },
+  assignBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  checkboxSelected: {
+    backgroundColor: '#14b8a6',
+    borderColor: '#14b8a6',
+  },
+  pickerWrap: { flex: 1, justifyContent: 'flex-end' },
+  pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+  pickerSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '75%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+  },
 });
 
 // POS modal styles

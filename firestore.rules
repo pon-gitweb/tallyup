@@ -552,7 +552,7 @@ service cloud.firestore {
         allow read: if isVenueMember(venueId);
         allow create: if isVenueMember(venueId);
         allow update: if hasVenueRole(venueId, ['manager','owner']) && (
-          request.resource.data.diff(resource.data).changedKeys().hasOnly(['par','parLevel','supplierId','supplierName','updatedAt'])
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['par','parLevel','supplierId','supplierName','supplierUpdatedAt','updatedAt'])
         );
         match /prices/{supplierId} {
           allow read, write: if hasVenueRole(venueId, ['manager','owner']);
