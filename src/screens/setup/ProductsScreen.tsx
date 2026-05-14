@@ -20,8 +20,10 @@ import { listProducts, deleteProductById } from '../../services/products';
 import { listSuppliers } from '../../services/suppliers';
 import { adoptGlobalCatalogToVenue } from '../../services/catalog/adoptGlobalCatalogToVenue';
 import BarcodeScannerModal from '../stock/components/BarcodeScannerModal';
+import CountingUnitModal, { CountingUnitConfig } from '../../components/stocktake/CountingUnitModal';
 
 type GlobalSupplier = { id: string; name: string };
+type DeptArea = { deptId: string; deptName: string; areas: { id: string; name: string }[] };
 
 // ─── Catalogue bottom-sheet modal (Task 2 fix) ────────────────────────────────
 
@@ -228,6 +230,14 @@ export default function ProductsScreen() {
   const [venueSuppliers, setVenueSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [supplierQ, setSupplierQ] = useState('');
   const [assigning, setAssigning] = useState(false);
+
+  // Area picker (for bulk assign to area)
+  const [areaPickerOpen, setAreaPickerOpen] = useState(false);
+  const [deptAreaList, setDeptAreaList] = useState<DeptArea[]>([]);
+  const [areaQ, setAreaQ] = useState('');
+  const [addingToArea, setAddingToArea] = useState(false);
+  const [pendingAreaAssign, setPendingAreaAssign] = useState<{ deptId: string; areaId: string; areaName: string } | null>(null);
+  const [countingUnitPickerOpen, setCountingUnitPickerOpen] = useState(false);
 
   // Import toast
   const [importToast, setImportToast] = useState<string | null>(null);
@@ -475,6 +485,75 @@ export default function ProductsScreen() {
     }
   }
 
+  async function openAreaPicker() {
+    if (!venueId) return;
+    try {
+      const db = getFirestore();
+      const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+      const depts = deptsSnap.docs.map(d => ({ id: d.id, name: (d.data().name || d.id) as string }));
+      depts.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+      const result: DeptArea[] = [];
+      await Promise.all(depts.map(async dept => {
+        const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dept.id, 'areas'));
+        const areas = areasSnap.docs
+          .map(d => ({ id: d.id, name: (d.data().name || d.id) as string }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+        if (areas.length > 0) result.push({ deptId: dept.id, deptName: dept.name, areas });
+      }));
+      result.sort((a, b) => a.deptName.localeCompare(b.deptName, 'en', { sensitivity: 'base' }));
+      setDeptAreaList(result);
+    } catch { setDeptAreaList([]); }
+    setAreaQ('');
+    setAreaPickerOpen(true);
+  }
+
+  function selectAreaAndPickUnit(deptId: string, areaId: string, areaName: string) {
+    setAreaPickerOpen(false);
+    setPendingAreaAssign({ deptId, areaId, areaName });
+    setCountingUnitPickerOpen(true);
+  }
+
+  async function doAddToArea(config: CountingUnitConfig) {
+    if (!venueId || !pendingAreaAssign || selectedIds.size === 0) return;
+    const { deptId, areaId, areaName } = pendingAreaAssign;
+    setCountingUnitPickerOpen(false);
+    setAddingToArea(true);
+    try {
+      const db = getFirestore();
+      const batch = writeBatch(db);
+      const count = selectedIds.size;
+      const productMap = new Map(rows.map((p: any) => [p.id, p]));
+      selectedIds.forEach(id => {
+        const p = productMap.get(id);
+        if (!p) return;
+        batch.set(
+          doc(db, 'venues', venueId, 'departments', deptId, 'areas', areaId, 'items', id),
+          {
+            name: p.name,
+            unit: p.unit || null,
+            supplierName: p.supplierName || null,
+            productId: p.id,
+            productName: p.name,
+            inductionStatus: 'complete',
+            inductionSource: 'bulk-assign',
+            countingUnit: config.countingUnit,
+            caseSize: config.caseSize ?? null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        );
+      });
+      await batch.commit();
+      exitMultiSelect();
+      showImportToast(`✓ ${count} product${count !== 1 ? 's' : ''} added to ${areaName}`);
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message || 'Could not add products to area.');
+    } finally {
+      setAddingToArea(false);
+      setPendingAreaAssign(null);
+    }
+  }
+
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyUnassigned) {
@@ -502,6 +581,20 @@ export default function ProductsScreen() {
     if (!needle) return venueSuppliers;
     return venueSuppliers.filter(s => s.name.toLowerCase().includes(needle));
   }, [venueSuppliers, supplierQ]);
+
+  const filteredDeptAreaList = useMemo(() => {
+    const needle = areaQ.trim().toLowerCase();
+    if (!needle) return deptAreaList;
+    return deptAreaList
+      .map(dept => ({
+        ...dept,
+        areas: dept.areas.filter(a =>
+          a.name.toLowerCase().includes(needle) ||
+          dept.deptName.toLowerCase().includes(needle)
+        ),
+      }))
+      .filter(dept => dept.areas.length > 0);
+  }, [deptAreaList, areaQ]);
 
   if (loading) {
     return (
@@ -668,13 +761,22 @@ export default function ProductsScreen() {
               <Text style={MS.selectAllText}>Select all ({filtered.length})</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            onPress={openSupplierPicker}
-            disabled={selectedIds.size === 0 || assigning}
-            style={[MS.assignBtn, (selectedIds.size === 0 || assigning) && MS.assignBtnDisabled]}
-          >
-            <Text style={MS.assignBtnText}>{assigning ? 'Assigning…' : 'Assign supplier'}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+            <TouchableOpacity
+              onPress={openSupplierPicker}
+              disabled={selectedIds.size === 0 || assigning || addingToArea}
+              style={[MS.assignBtn, (selectedIds.size === 0 || assigning || addingToArea) && MS.assignBtnDisabled]}
+            >
+              <Text style={MS.assignBtnText}>{assigning ? 'Assigning…' : 'Assign supplier'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={openAreaPicker}
+              disabled={selectedIds.size === 0 || addingToArea || assigning}
+              style={[MS.assignBtn, MS.areaBtnColor, (selectedIds.size === 0 || addingToArea || assigning) && MS.assignBtnDisabled]}
+            >
+              <Text style={MS.assignBtnText}>{addingToArea ? 'Adding…' : 'Add to area'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -811,6 +913,72 @@ export default function ProductsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Area picker — for bulk assign to area */}
+      <Modal visible={areaPickerOpen} transparent animationType="slide" onRequestClose={() => setAreaPickerOpen(false)}>
+        <View style={MS.pickerWrap}>
+          <TouchableOpacity style={MS.pickerBackdrop} onPress={() => setAreaPickerOpen(false)} activeOpacity={1} />
+          <View style={MS.pickerSheet}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                  Add {selectedIds.size} product{selectedIds.size !== 1 ? 's' : ''} to a stocktake area
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setAreaPickerOpen(false)} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 18, color: '#64748b', fontWeight: '600' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+              <TextInput
+                value={areaQ}
+                onChangeText={setAreaQ}
+                placeholder="Search areas…"
+                placeholderTextColor="#94a3b8"
+                style={S.searchInput}
+                clearButtonMode="while-editing"
+              />
+            </View>
+            <ScrollView contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+              {filteredDeptAreaList.length === 0 ? (
+                <Text style={{ textAlign: 'center', color: '#94a3b8', padding: 24, fontSize: 14 }}>
+                  {areaQ.trim() ? 'No areas match your search.' : 'No stocktake areas set up yet.'}
+                </Text>
+              ) : (
+                filteredDeptAreaList.map(dept => (
+                  <View key={dept.deptId}>
+                    <Text style={MS.areaSectionHeader}>{dept.deptName}</Text>
+                    {dept.areas.map(area => (
+                      <TouchableOpacity
+                        key={area.id}
+                        onPress={() => selectAreaAndPickUnit(dept.deptId, area.id, area.name)}
+                        style={{ paddingHorizontal: 24, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: '#0f172a' }}>{area.name}</Text>
+                        <Text style={{ fontSize: 18, color: '#cbd5e1' }}>›</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Counting unit picker for batch area assign */}
+      <CountingUnitModal
+        visible={countingUnitPickerOpen}
+        productName={
+          selectedIds.size > 1
+            ? `${selectedIds.size} products`
+            : (rows.find((p: any) => selectedIds.has(p.id))?.name || 'these products')
+        }
+        areaName={pendingAreaAssign?.areaName}
+        onSave={doAddToArea}
+        onCancel={() => { setCountingUnitPickerOpen(false); setPendingAreaAssign(null); }}
+      />
 
       {/* STUB — hidden until built: Scan UPC batch, Suggest PARs, AI normalize units */}
       <BarcodeScannerModal
@@ -1107,6 +1275,17 @@ const MS = StyleSheet.create({
   checkboxSelected: {
     backgroundColor: '#14b8a6',
     borderColor: '#14b8a6',
+  },
+  areaBtnColor: { backgroundColor: '#1b4f72' },
+  areaSectionHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94a3b8',
+    letterSpacing: 0.8,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 6,
+    textTransform: 'uppercase',
   },
   pickerWrap: { flex: 1, justifyContent: 'flex-end' },
   pickerBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },

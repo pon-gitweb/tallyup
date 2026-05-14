@@ -305,6 +305,7 @@ service cloud.firestore {
                 'name','unit','supplierName',
                 'productId','productName',
                 'inductionStatus','inductionSource',
+                'countingUnit','caseSize',
                 'lastCount','lastCountAt',
                 'createdAt','updatedAt'
               ])
@@ -312,11 +313,13 @@ service cloud.firestore {
               && request.resource.data.createdAt is timestamp
               && request.resource.data.updatedAt is timestamp
               && request.resource.data.inductionStatus in ['pending','complete']
-              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search']
+              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','bulk-assign']
               && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
               && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
               && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
-              && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string);
+              && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
+              && (!('countingUnit' in request.resource.data) || request.resource.data.countingUnit == null || request.resource.data.countingUnit is string)
+              && (!('caseSize' in request.resource.data) || request.resource.data.caseSize == null || request.resource.data.caseSize is number);
             }
             function isInductionUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly([
@@ -484,6 +487,7 @@ service cloud.firestore {
               'name','unit','supplierName',
               'productId','productName',
               'inductionStatus','inductionSource',
+              'countingUnit','caseSize',
               'lastCount','lastCountAt',
               'createdAt','updatedAt'
             ])
@@ -491,11 +495,13 @@ service cloud.firestore {
             && request.resource.data.createdAt is timestamp
             && request.resource.data.updatedAt is timestamp
             && request.resource.data.inductionStatus in ['pending','complete']
-            && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search']
+            && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','bulk-assign']
             && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
             && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
             && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
-            && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string);
+            && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
+            && (!('countingUnit' in request.resource.data) || request.resource.data.countingUnit == null || request.resource.data.countingUnit is string)
+            && (!('caseSize' in request.resource.data) || request.resource.data.caseSize == null || request.resource.data.caseSize is number);
           }
           function isInductionUpdate() {
             return request.resource.data.diff(resource.data).changedKeys().hasOnly([
