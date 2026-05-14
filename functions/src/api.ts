@@ -1707,7 +1707,7 @@ app.post("/process-invoices-csv", async (req, res) => {
     // Track price changes non-blocking
     trackPriceChanges({
       venueId,
-      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice })),
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
       supplierId: req.body?.supplierId || "",
       supplierName: req.body?.supplierName || "",
       invoiceId: `csv_${storagePath}`,
@@ -1792,7 +1792,7 @@ app.post("/process-invoices-pdf", async (req, res) => {
     // Track price changes non-blocking
     trackPriceChanges({
       venueId,
-      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice })),
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
       supplierId: req.body?.supplierId || "",
       supplierName: supplierName || req.body?.supplierName || "",
       invoiceId: poNumber || `pdf_${storagePath}`,
