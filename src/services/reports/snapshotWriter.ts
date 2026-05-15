@@ -4,6 +4,7 @@ import {
   collection, getDocs, doc, getDoc, setDoc,
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -19,6 +20,11 @@ export async function writeDepartmentSnapshot(
   cycleNumber: number,
 ): Promise<void> {
   try {
+    // Capture completing user before any async ops
+    const auth = getAuth();
+    const completedBy: string | null = auth.currentUser?.uid || null;
+    const completedByName: string | null = auth.currentUser?.displayName || null;
+
     // Read department name + previous cycle date
     const deptRef = doc(db, 'venues', venueId, 'departments', departmentId);
     const deptSnap = await getDoc(deptRef);
@@ -123,6 +129,11 @@ export async function writeDepartmentSnapshot(
         confidenceReason: openingCount == null
           ? 'No baseline — first cycle for this product'
           : 'Baseline exists',
+
+        // Who counted this item
+        lastCountBy: item.lastCountBy || null,
+        lastCountByName: item.lastCountByName || null,
+        lastCountAt: item.lastCountAt || null,
 
         // Internal helpers for matching — stripped before write
         _rawProductId: item.productId || null,
@@ -321,6 +332,8 @@ export async function writeDepartmentSnapshot(
       departmentName,
       cycleNumber,
       completedAt: serverTimestamp(),
+      completedBy,
+      completedByName,
       cycleStart: cycleStart ? Timestamp.fromDate(cycleStart) : null,
       cycleEnd: Timestamp.fromDate(cycleEnd),
       daysSinceLastCycle,

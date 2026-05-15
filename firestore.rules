@@ -256,7 +256,8 @@ service cloud.firestore {
             allow read: if isVenueMember(venueId);
 
             function isCountUpdate() {
-              return request.resource.data.diff(resource.data).changedKeys().hasOnly(['lastCount','lastCountAt'])
+              return request.resource.data.diff(resource.data).changedKeys()
+                .hasOnly(['lastCount','lastCountAt','lastCountBy','lastCountByName','updatedAt'])
                 || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
             }
             function isLinkUpdate() {

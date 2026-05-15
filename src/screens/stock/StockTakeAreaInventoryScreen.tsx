@@ -926,8 +926,15 @@ function StockTakeAreaInventoryScreen() {
     const doSave = async (finalQty: number) => {
       try {
         await ensureAreaStarted();
+        const cu = getAuth().currentUser;
         const iRef = doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId!, 'items', item.id);
-        await setDoc(iRef, { lastCount: finalQty, lastCountAt: serverTimestamp() }, { merge: true });
+        await setDoc(iRef, {
+          lastCount: finalQty,
+          lastCountAt: serverTimestamp(),
+          lastCountBy: cu?.uid ?? 'unknown',
+          lastCountByName: cu?.displayName || 'Unknown',
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
       } catch (e: any) { console.error('[SaveCount] FAILED:', e?.code, e?.message); Alert.alert('Save failed', e?.message ?? String(e)); }
     };
     if (!forceReplace && existingCount !== null && existingCount > 0 && qty > 0) {
@@ -1036,8 +1043,11 @@ const qty = parseFloat(typed);
 
   // If the user provided a starting quantity, save it as the current count
   if (qty != null) {
+    const _qcu = getAuth().currentUser;
     payload.lastCount = qty;
     payload.lastCountAt = nowTs;
+    payload.lastCountBy = _qcu?.uid ?? 'unknown';
+    payload.lastCountByName = _qcu?.displayName || 'Unknown';
   }
 
   const writePath = `venues/${venueId}/departments/${departmentId}/areas/${areaId}/items`;
@@ -1379,12 +1389,15 @@ try {
         await ensureAreaStarted();
 
         // Write all items from localQty — entered items use their value, unset items get 0
+        const _cu = getAuth().currentUser;
+        const _countBy = _cu?.uid ?? 'unknown';
+        const _countByName = _cu?.displayName || 'Unknown';
         await Promise.all(items.map((it) => {
           const raw = (localQty[it.id] ?? '').trim();
           const qty = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
           return setDoc(
             doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId!,'items',it.id),
-            { lastCount: qty, lastCountAt: serverTimestamp() },
+            { lastCount: qty, lastCountAt: serverTimestamp(), lastCountBy: _countBy, lastCountByName: _countByName, updatedAt: serverTimestamp() },
             { merge: true }
           );
         }));
@@ -1447,9 +1460,10 @@ try {
         await ensureAreaStarted();
         const toZero = items.filter((it) => !countedInThisCycle(it));
         if (toZero.length === 0) { Alert.alert('Nothing to do', 'Everything already has a count.'); return; }
+        const _zcu = getAuth().currentUser;
         await Promise.all(toZero.map((it) =>
           updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
-            { lastCount: 0, lastCountAt: serverTimestamp() })
+            { lastCount: 0, lastCountAt: serverTimestamp(), lastCountBy: _zcu?.uid ?? 'unknown', lastCountByName: _zcu?.displayName || 'Unknown', updatedAt: serverTimestamp() })
         ));
         hapticSuccess(); Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
       } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }

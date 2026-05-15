@@ -1406,34 +1406,53 @@ app.post("/suitee", async (req, res) => {
       return;
     }
 
-    // Read latest snapshots for richer cycle context
+    // Read last 6 snapshots per department for historical context
     const snapshotContextLines: string[] = [];
     try {
       const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
       for (const deptDoc of deptsSnap.docs) {
-        const latestSnap = await db
+        const histSnap = await db
           .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
           .orderBy('completedAt', 'desc')
-          .limit(1)
+          .limit(6)
           .get();
-        if (latestSnap.empty) continue;
-        const snap = latestSnap.docs[0].data() as any;
-        const s = snap.summary || {};
-        const dc = snap.dataCompleteness || {};
+        if (histSnap.empty) continue;
+
+        const snapDocs = histSnap.docs.map(d => d.data() as any);
+        const latest = snapDocs[0];
+        const s = latest.summary || {};
+        const dc = latest.dataCompleteness || {};
+
         const deptSnapLines = [
-          `  ${snap.departmentName}: Cycle ${snap.cycleNumber}, Tier ${dc.tier ?? 1}/4`,
-          `    Items: ${s.totalItemsCounted}, below PAR: ${s.itemsBelowPAR}, variance qty: ${s.totalVarianceQty}`,
-          s.totalVarianceDollars != null ? `    Variance value: $${(s.totalVarianceDollars as number).toFixed(2)}` : '    No cost prices set',
-          s.totalStockValue != null ? `    Stock value: $${(s.totalStockValue as number).toFixed(2)}` : null,
-          dc.hasInvoices ? '    Has invoice data for this cycle.' : '    No invoice data for this cycle.',
+          `  ${latest.departmentName}: ${snapDocs.length} cycle(s) on record, Tier ${dc.tier ?? 1}/4`,
+          `    Latest (Cycle ${latest.cycleNumber}): Items ${s.totalItemsCounted}, below PAR: ${s.itemsBelowPAR}, variance qty: ${s.totalVarianceQty}`,
+          s.totalVarianceDollars != null ? `    Latest variance value: $${(s.totalVarianceDollars as number).toFixed(2)}` : '    No cost prices set',
+          s.totalStockValue != null ? `    Latest stock value: $${(s.totalStockValue as number).toFixed(2)}` : null,
+          dc.hasInvoices ? '    Has invoice data.' : '    No invoice data for this cycle.',
         ].filter(Boolean) as string[];
         snapshotContextLines.push(...deptSnapLines);
-        const findings = snap.findings || {};
+
+        // Findings from latest cycle
+        const findings = latest.findings || {};
         if ((findings.likelyMissingInvoices || []).length > 0) {
-          snapshotContextLines.push(`    Missing invoices detected: ${findings.likelyMissingInvoices.map((f: any) => `${f.productName} +${f.unexplainedGainQty}`).join(', ')}`);
+          snapshotContextLines.push(`    Missing invoices: ${findings.likelyMissingInvoices.map((f: any) => `${f.productName} +${f.unexplainedGainQty}`).join(', ')}`);
         }
         if ((findings.poDiscrepancies || []).length > 0) {
           snapshotContextLines.push(`    PO shortfalls: ${findings.poDiscrepancies.map((f: any) => `${f.productName} (ordered ${f.orderedQty}, got ${f.receivedQty})`).join(', ')}`);
+        }
+
+        // Historical trend: stock value and variance across last N cycles
+        if (snapDocs.length > 1) {
+          snapshotContextLines.push(`    CYCLE HISTORY (last ${snapDocs.length}):`);
+          snapDocs.forEach((snap: any) => {
+            const ss = snap.summary || {};
+            const completedDateStr = snap.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || "unknown";
+            const completedBy = snap.completedByName ? ` by ${snap.completedByName}` : '';
+            const valStr = ss.totalStockValue != null ? `, stock $${ss.totalStockValue.toFixed(0)}` : '';
+            const varStr = ss.totalVarianceQty != null ? `, var qty ${ss.totalVarianceQty > 0 ? '+' : ''}${ss.totalVarianceQty}` : '';
+            const varDolStr = ss.totalVarianceDollars != null ? ` ($${ss.totalVarianceDollars.toFixed(0)})` : '';
+            snapshotContextLines.push(`      Cycle ${snap.cycleNumber} (${completedDateStr}${completedBy}): ${ss.totalItemsCounted ?? 0} items${valStr}${varStr}${varDolStr}`);
+          });
         }
       }
     } catch {}
