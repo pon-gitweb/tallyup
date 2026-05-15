@@ -1823,30 +1823,41 @@ const openHistory = throttleAction(async (item: Item) => {
 
   async function addTier2ToArea(product: any) {
     if (!venueId || !departmentId || !areaId) return;
+    await ensureAreaStarted();
     setCountingUnitPending({
-      name: product.name,
+      name: product.name || '',
       unit: product.unit || undefined,
+      supplierName: product.supplierName || undefined,
       productId: product.id,
       costPrice: product.costPrice || undefined,
       caseSize: product.caseSize || null,
       write: async ({ countingUnit, caseSize }) => {
+        const itemData = {
+          name: product.name || '',
+          unit: product.unit || null,
+          supplierName: product.supplierName || null,
+          productId: product.id || null,
+          countingUnit,
+          caseSize: caseSize ?? null,
+          inductionStatus: 'pending',
+          inductionSource: 'venue-search',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        console.log('[SearchBar] writing fields:', Object.keys(itemData));
         try {
-          const iRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', product.id);
-          await setDoc(iRef, {
-            name: product.name,
-            unit: product.unit ?? null,
-            costPrice: product.costPrice ?? null,
-            productId: product.id,
-            countingUnit,
-            caseSize: caseSize ?? null,
-            lastCount: null,
-            lastCountAt: null,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          }, { merge: true });
+          await addDoc(
+            collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items'),
+            itemData,
+          );
           setUnifiedSearch('');
-        } catch (e: any) {
-          Alert.alert('Could not add', e?.message || 'Please try again.');
+        } catch (error: any) {
+          console.error('[SearchBar] write failed:', error);
+          Alert.alert(
+            'Could not add product',
+            'There was a problem adding this product. Please try again.',
+            [{ text: 'OK' }]
+          );
         }
       },
     });
