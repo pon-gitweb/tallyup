@@ -19,6 +19,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
+import { useNavigation } from '@react-navigation/native';
 import {
   listSuppliers,
   deleteSupplierById,
@@ -43,6 +44,7 @@ function isValidHHmm(s: string) {
 
 export default function SuppliersScreen() {
   const venueId = useVenueId();
+  const nav = useNavigation<any>();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Supplier[]>([]);
@@ -857,12 +859,20 @@ export default function SuppliersScreen() {
             )}
           </View>
 
-          <TouchableOpacity
-            style={[styles.primary, { marginTop: 16 }]}
-            onPress={() => { setDetailOpen(false); openEditForm(detailSupplier!); }}
-          >
-            <Text style={styles.primaryText}>Edit supplier</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <TouchableOpacity
+              style={[styles.primary, { flex: 1 }]}
+              onPress={() => { setDetailOpen(false); openEditForm(detailSupplier!); }}
+            >
+              <Text style={styles.primaryText}>Edit supplier</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primary, { flex: 1, backgroundColor: '#065f46' }]}
+              onPress={() => { setDetailOpen(false); nav.navigate('SupplierSpend', { supplierId: detailSupplier?.id }); }}
+            >
+              <Text style={styles.primaryText}>📊 Spend report</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
 

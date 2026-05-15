@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { getFirestore, doc, setDoc, addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, addDoc, collection, serverTimestamp, updateDoc, Timestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import {
   View,
@@ -108,6 +108,13 @@ export default function EditProductScreen() {
 
     // activity
     active: typeof seed?.active === 'boolean' ? seed.active : true,
+
+    // expiry
+    expiryDate: seed?.expiryDate
+      ? (typeof seed.expiryDate.toDate === 'function'
+          ? seed.expiryDate.toDate().toISOString().slice(0, 10)
+          : String(seed.expiryDate).slice(0, 10))
+      : '',
   }));
 
   const [saving, setSaving] = useState(false);
@@ -282,6 +289,14 @@ export default function EditProductScreen() {
 
       active: !!form.active,
       updatedAt: (serverTimestamp ? serverTimestamp() : new Date()),
+
+      // Expiry date: convert YYYY-MM-DD string to Firestore Timestamp (or null)
+      expiryDate: (() => {
+        const raw = (form.expiryDate || '').trim();
+        if (!raw) return null;
+        const d = new Date(raw + 'T00:00:00.000Z');
+        return isNaN(d.getTime()) ? null : Timestamp.fromDate(d);
+      })(),
     };
 
     setSaving(true);
@@ -469,6 +484,20 @@ export default function EditProductScreen() {
               />
             </Field>
           </FieldRow>
+
+          <Field label="Expiry date (optional)">
+            <TextInput
+              value={form.expiryDate ?? ''}
+              onChangeText={(v) => setForm((p: any) => ({ ...p, expiryDate: v }))}
+              placeholder="YYYY-MM-DD — set if product expires"
+              autoCapitalize="none"
+              keyboardType="numbers-and-punctuation"
+              style={styles.input}
+            />
+            <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 3 }]}>
+              Used to detect expiry risk in Product Performance report
+            </Text>
+          </Field>
 
           <Field label="Supplier *">
             <TouchableOpacity

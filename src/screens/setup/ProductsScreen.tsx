@@ -648,6 +648,18 @@ export default function ProductsScreen() {
         </View>
       )}
 
+      <TouchableOpacity
+        onPress={() => nav.navigate('ProductPerformance')}
+        style={{ backgroundColor: '#0B132B', borderRadius: 12, padding: 14, marginBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#1E3A5F' }}
+      >
+        <Text style={{ fontSize: 20 }}>📈</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: '#F9FAFB', fontWeight: '700', fontSize: 14 }}>Product Performance Report</Text>
+          <Text style={{ color: '#64748B', fontSize: 12, marginTop: 2 }}>Velocity, PAR adequacy, expiry risk and dead stock</Text>
+        </View>
+        <Text style={{ color: '#475569', fontSize: 20 }}>›</Text>
+      </TouchableOpacity>
+
       <Text style={S.pageTitle}>Add Products</Text>
       <Text style={S.pageSub}>Choose how you'd like to get your products in</Text>
 

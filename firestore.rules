@@ -574,7 +574,7 @@ service cloud.firestore {
           request.resource.data.diff(resource.data).changedKeys().hasOnly([
             'par','parLevel','supplierId','supplierName','supplierUpdatedAt',
             'primarySupplierId','primarySupplierName','supplierCount','lowestUnitCost',
-            'updatedAt'
+            'updatedAt','expiryDate'
           ])
         );
         match /suppliers/{supplierLinkId} {

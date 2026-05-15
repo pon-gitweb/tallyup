@@ -1643,6 +1643,101 @@ app.post("/suitee", async (req, res) => {
       lines.push(...snapshotContextLines);
     }
 
+    // FIX 8: Velocity performance context derived from snapshot items (pure math, no AI)
+    const velocityLines: string[] = [];
+    try {
+      // Gather all snapshot items across all departments (latest snapshot per dept)
+      const productCycles = new Map<string, { velocities: number[]; lastStock: number; costPrice: number | null; parLevel: number | null }>();
+
+      const velDeptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+      for (const deptDoc of velDeptsSnap.docs) {
+        const snapHistSnap = await db
+          .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
+          .orderBy('completedAt', 'desc')
+          .limit(6)
+          .get();
+
+        for (const snapDoc of snapHistSnap.docs) {
+          const snap = snapDoc.data() as any;
+          const daysSince: number | null = snap.daysSinceLastCycle != null ? snap.daysSinceLastCycle : null;
+          const cycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
+
+          for (const item of (snap.items || [])) {
+            const key = (item.name || '').toLowerCase().trim();
+            if (!key) continue;
+            const openingCount = typeof item.openingCount === 'number' ? item.openingCount : null;
+            const actualClosing = typeof item.actualClosing === 'number' ? item.actualClosing : 0;
+            const receivedQty = typeof item.receivedQty === 'number' ? item.receivedQty : 0;
+            let velocity = 0;
+            if (openingCount != null && cycleWeeks != null && cycleWeeks > 0) {
+              velocity = (openingCount + receivedQty - actualClosing) / cycleWeeks;
+            }
+            const existing = productCycles.get(key);
+            if (existing) {
+              existing.velocities.push(velocity);
+              existing.lastStock = actualClosing;
+            } else {
+              productCycles.set(key, {
+                velocities: [velocity],
+                lastStock: actualClosing,
+                costPrice: typeof item.costPrice === 'number' ? item.costPrice : null,
+                parLevel: typeof item.parLevel === 'number' ? item.parLevel : null,
+              });
+            }
+          }
+        }
+      }
+
+      type VelItem = { name: string; avgVelocity: number; currentStock: number; daysToSell: number | null; status: string; costPrice: number | null; parLevel: number | null; belowPar: boolean };
+      const velItems: VelItem[] = [];
+      productCycles.forEach((data, name) => {
+        const validVel = data.velocities.filter(v => v !== 0);
+        const avgVelocity = validVel.length > 0 ? validVel.reduce((a, b) => a + b, 0) / validVel.length : 0;
+        const daysToSell = avgVelocity > 0 ? Math.round((data.lastStock / avgVelocity) * 7) : null;
+        let status = 'stagnant';
+        if (avgVelocity > 2) status = 'fast';
+        else if (avgVelocity >= 0.5) status = 'healthy';
+        else if (avgVelocity >= 0.1) status = 'slow';
+        const belowPar = data.parLevel != null ? data.lastStock < data.parLevel : false;
+        velItems.push({ name, avgVelocity, currentStock: data.lastStock, daysToSell, status, costPrice: data.costPrice, parLevel: data.parLevel, belowPar });
+      });
+
+      const fast = velItems.filter(v => v.status === 'fast').sort((a, b) => b.avgVelocity - a.avgVelocity).slice(0, 10);
+      const slow = velItems.filter(v => v.status === 'slow' || v.status === 'stagnant').sort((a, b) => a.avgVelocity - b.avgVelocity).slice(0, 10);
+      const belowPar = velItems.filter(v => v.belowPar).slice(0, 8);
+      const stagnant = velItems.filter(v => v.status === 'stagnant' && v.costPrice != null).sort((a, b) => (b.currentStock * (b.costPrice ?? 0)) - (a.currentStock * (a.costPrice ?? 0))).slice(0, 5);
+
+      if (fast.length > 0) {
+        velocityLines.push(`TOP FAST MOVERS (${fast.length}):`);
+        fast.forEach(v => velocityLines.push(`  - ${v.name}: ${v.avgVelocity.toFixed(1)}/wk, stock ${v.currentStock}${v.daysToSell != null ? `, ${v.daysToSell}d to sell` : ''}`));
+      }
+      if (slow.length > 0) {
+        velocityLines.push(`SLOW/STAGNANT PRODUCTS (${slow.length}):`);
+        slow.forEach(v => {
+          const deadCost = v.costPrice != null ? ` — $${(v.currentStock * v.costPrice).toFixed(0)} tied up` : '';
+          velocityLines.push(`  - ${v.name}: ${v.avgVelocity.toFixed(2)}/wk, stock ${v.currentStock}${deadCost}`);
+        });
+      }
+      if (belowPar.length > 0) {
+        velocityLines.push(`BELOW PAR (${belowPar.length} products):`);
+        belowPar.forEach(v => velocityLines.push(`  - ${v.name}: stock ${v.currentStock}, PAR ${v.parLevel}`));
+      }
+      if (stagnant.length > 0) {
+        velocityLines.push(`HIGHEST VALUE DEAD STOCK:`);
+        stagnant.forEach(v => {
+          const val = v.costPrice != null ? `$${(v.currentStock * v.costPrice).toFixed(0)}` : '';
+          velocityLines.push(`  - ${v.name}: ${v.currentStock} units${val ? ` (${val})` : ''}, no movement`);
+        });
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] velocity calc error", e?.message);
+    }
+
+    if (velocityLines.length > 0) {
+      lines.push("", "PRODUCT PERFORMANCE (calculated from stocktake cycles):");
+      lines.push(...velocityLines);
+    }
+
     // FIX 7: Supplier intelligence per product
     if (productSupplierLines.length > 0) {
       lines.push("", "SUPPLIER PRICING (top products — ⭐=preferred, format: supplier(relationship,$cost/unit)):");

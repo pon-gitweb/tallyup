@@ -31,6 +31,8 @@ import BudgetApprovalInboxScreen from '../../screens/orders/BudgetApprovalInboxS
 import StocktakeHistoryScreen from '../../screens/reports/StocktakeHistoryScreen';
 import StocktakeCycleDetailScreen from '../../screens/reports/StocktakeCycleDetailScreen';
 import CycleComparisonScreen from '../../screens/reports/CycleComparisonScreen';
+import ProductPerformanceScreen from '../../screens/reports/ProductPerformanceScreen';
+import SupplierSpendScreen from '../../screens/reports/SupplierSpendScreen';
 import ScaleSettingsScreen from '../../screens/settings/ScaleSettingsScreen';
 import SetupGuideScreen from '../../screens/settings/SetupGuideScreen';
 import AppearanceScreen from '../../screens/settings/AppearanceScreen';
@@ -151,6 +153,8 @@ export default function MainStack() {
       <Stack.Screen name="StocktakeHistory" component={StocktakeHistoryScreen} options={{ title: 'Stocktake History' }} />
       <Stack.Screen name="StocktakeCycleDetail" component={StocktakeCycleDetailScreen} options={{ title: 'Cycle Details' }} />
       <Stack.Screen name="CycleComparison" component={CycleComparisonScreen} options={{ title: 'Compare Cycles' }} />
+      <Stack.Screen name="ProductPerformance" component={ProductPerformanceScreen} options={{ title: 'Product Performance' }} />
+      <Stack.Screen name="SupplierSpend" component={SupplierSpendScreen} options={{ title: 'Supplier Spend' }} />
       <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
       <Stack.Screen name="InvoiceSummary" component={InvoiceSummaryScreen} options={{ title: 'Invoice Processed' }} />
       <Stack.Screen name="ScaleSettings" component={ScaleSettingsScreen} options={{ title: 'Bluetooth Scale' }} />
