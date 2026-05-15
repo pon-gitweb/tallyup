@@ -378,6 +378,16 @@ service cloud.firestore {
             allow read, write: if isVenueMember(venueId);
           }
         }
+
+        match /snapshots/{snapshotId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if isVenueMember(venueId);
+        }
+      }
+
+      match /latestSnapshot {
+        allow read: if isVenueMember(venueId);
+        allow write: if isVenueMember(venueId);
       }
 
       // ------- Areas + Items (venue-level legacy) -------

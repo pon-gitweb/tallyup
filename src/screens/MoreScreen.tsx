@@ -71,6 +71,7 @@ export default function MoreScreen() {
           <Row icon="📦" label="Products"  onPress={() => nav.navigate('Products')} />
           <Row icon="🚚" label="Suppliers" onPress={() => nav.navigate('Suppliers')} />
           <Row icon="📋" label="Orders"    onPress={() => nav.navigate('Orders')} />
+          <Row icon="🛒" label="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
           <Row icon="📊" label="Stock Control" onPress={() => nav.navigate('StockControl')} />
         </View>
 

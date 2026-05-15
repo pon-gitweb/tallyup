@@ -76,6 +76,13 @@ interface SlowMoverRow {
   costPrice: number | null;
 }
 
+interface SnapshotFinding {
+  productName: string;
+  unexplainedGainQty?: number;
+  orderedQty?: number;
+  receivedQty?: number;
+}
+
 interface VenueSummary {
   venueName: string;
   stocktakesCompleted: number;
@@ -86,6 +93,9 @@ interface VenueSummary {
   topItems: ItemRow[];       // highest counts in active areas
   slowMovers: SlowMoverRow[];
   lastStocktakeDate: Date | null;
+  // Snapshot intelligence
+  snapshotFindings: { likelyMissingInvoices: SnapshotFinding[]; poDiscrepancies: SnapshotFinding[] };
+  snapshotDataTier: number;
 }
 
 async function collectVenueSummary(
@@ -189,13 +199,43 @@ async function collectVenueSummary(
     });
   } catch {}
 
-  return { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate };
+  // Read latest snapshots for richer findings
+  const allMissingInvoices: SnapshotFinding[] = [];
+  const allPODiscrepancies: SnapshotFinding[] = [];
+  let snapshotDataTier = 1;
+  try {
+    for (const depDoc of depsSnap.docs) {
+      const latestSnap = await db
+        .collection(`venues/${venueId}/departments/${depDoc.id}/snapshots`)
+        .orderBy("completedAt", "desc")
+        .limit(1)
+        .get();
+      if (latestSnap.empty) continue;
+      const snap = latestSnap.docs[0].data() as any;
+      const tier = snap.dataCompleteness?.tier ?? 1;
+      if (tier > snapshotDataTier) snapshotDataTier = tier;
+      const findings = snap.findings || {};
+      (findings.likelyMissingInvoices || []).forEach((f: any) => {
+        allMissingInvoices.push({ productName: f.productName, unexplainedGainQty: f.unexplainedGainQty });
+      });
+      (findings.poDiscrepancies || []).forEach((f: any) => {
+        allPODiscrepancies.push({ productName: f.productName, orderedQty: f.orderedQty, receivedQty: f.receivedQty });
+      });
+    }
+  } catch {}
+
+  return {
+    venueName, stocktakesCompleted, areasCompleted,
+    reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate,
+    snapshotFindings: { likelyMissingInvoices: allMissingInvoices.slice(0, 5), poDiscrepancies: allPODiscrepancies.slice(0, 5) },
+    snapshotDataTier,
+  };
 }
 
 // ── Email HTML builder ────────────────────────────────────────────────────────
 
 function buildEmailHtml(data: VenueSummary, weekOf: string): string {
-  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate } = data;
+  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate, snapshotFindings, snapshotDataTier } = data;
 
   const section = (title: string, body: string) => `
     <div style="margin-bottom:28px;">
@@ -338,6 +378,19 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
       ${section("Top Counted Products", topBody)}
       ${section("Zero Stock", zeroBody)}
       ${section("Slow Moving Stock", slowMoversBody)}
+      ${(snapshotFindings.likelyMissingInvoices.length > 0 || snapshotFindings.poDiscrepancies.length > 0) ? section("⚠️ Needs Attention", [
+        snapshotFindings.likelyMissingInvoices.length > 0
+          ? `<p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#92400e;">Possible missing invoices</p>` +
+            snapshotFindings.likelyMissingInvoices.map(f =>
+              `<div style="font-size:13px;color:#374151;padding:3px 0;">${f.productName}: +${f.unexplainedGainQty ?? 0} units with no delivery recorded</div>`
+            ).join("") : "",
+        snapshotFindings.poDiscrepancies.length > 0
+          ? `<p style="margin:8px 0 4px;font-size:13px;font-weight:700;color:#7f1d1d;">Order shortfalls</p>` +
+            snapshotFindings.poDiscrepancies.map(f =>
+              `<div style="font-size:13px;color:#374151;padding:3px 0;">${f.productName}: ordered ${f.orderedQty ?? 0}, received ${f.receivedQty ?? 0}</div>`
+            ).join("") : "",
+      ].filter(Boolean).join("")) : ""}
+      ${snapshotDataTier < 2 ? section("💡 Improve Your Analysis", `<p style="font-size:13px;color:#374151;margin:0;">Your analysis is currently at Tier ${snapshotDataTier} of 4 (counts only). Add invoices to unlock variance explanation and missing invoice detection.</p>`) : ""}
 
       <div style="margin-top:24px;padding-top:20px;border-top:1px solid #F3F4F6;text-align:center;">
         <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.7;">

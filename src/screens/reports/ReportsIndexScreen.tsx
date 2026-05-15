@@ -21,7 +21,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import { db } from '../../services/firebase';
-import { collection, query, where, limit, getDocs, orderBy, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, where, limit, getDocs, orderBy, doc, updateDoc, Timestamp, getDoc } from 'firebase/firestore';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
@@ -104,6 +104,8 @@ export default function ReportsIndexScreen() {
   const [priceHistory, setPriceHistory] = useState<any[]>([]);
 
   const [slowMovers, setSlowMovers] = useState<any[]>([]);
+
+  const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -215,6 +217,32 @@ export default function ReportsIndexScreen() {
       } catch {}
     }
     loadSlowMovers();
+    return () => { cancelled = true; };
+  }, [venueId]);
+
+  // ── Latest snapshots (for findings + recommendations) ───────────────────
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const snaps: any[] = [];
+        await Promise.all(deptsSnap.docs.map(async deptDoc => {
+          try {
+            const latestSnap = await getDocs(
+              query(
+                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+                orderBy('completedAt', 'desc'),
+                limit(1),
+              ),
+            );
+            if (!latestSnap.empty) snaps.push({ deptId: deptDoc.id, ...latestSnap.docs[0].data() });
+          } catch {}
+        }));
+        if (!cancelled) setLatestSnapshots(snaps);
+      } catch {}
+    })();
     return () => { cancelled = true; };
   }, [venueId]);
 
@@ -729,6 +757,74 @@ export default function ReportsIndexScreen() {
             </Lane>
           )}
 
+          {/* ── CYCLE INTELLIGENCE (from snapshots) ── */}
+          {isManager && latestSnapshots.length > 0 && (() => {
+            const allFindings = latestSnapshots.flatMap(s =>
+              (s.findings?.likelyMissingInvoices || []).map((f: any) => ({ ...f, deptName: s.departmentName }))
+            );
+            const allPODisc = latestSnapshots.flatMap(s =>
+              (s.findings?.poDiscrepancies || []).map((f: any) => ({ ...f, deptName: s.departmentName }))
+            );
+            const allRecs = latestSnapshots.flatMap(s => (s.recommendations || []).slice(0, 3));
+            const tierMin = Math.min(...latestSnapshots.map(s => s.dataCompleteness?.tier ?? 1));
+            const unpricedTotal = latestSnapshots.reduce((sum, s) => sum + (s.summary?.itemsWithNoPrice ?? 0), 0);
+            if (!allFindings.length && !allPODisc.length && !allRecs.length) return null;
+            return (
+              <>
+                {(allFindings.length > 0 || allPODisc.length > 0) && (
+                  <Lane label="⚠️ NEEDS ATTENTION">
+                    {allFindings.slice(0, 4).map((f: any, i: number) => (
+                      <View key={i} style={styles.lineRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.lineRowName}>{f.productName}</Text>
+                          <Text style={styles.lineRowSub}>
+                            +{f.unexplainedGainQty} units — no invoice recorded · {f.deptName}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '700' }}>Missing invoice</Text>
+                      </View>
+                    ))}
+                    {allPODisc.slice(0, 2).map((f: any, i: number) => (
+                      <View key={`po-${i}`} style={styles.lineRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.lineRowName}>{f.productName}</Text>
+                          <Text style={styles.lineRowSub}>
+                            Ordered {f.orderedQty}, received {f.receivedQty} · {f.deptName}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 12, color: '#F87171', fontWeight: '700' }}>Shortfall</Text>
+                      </View>
+                    ))}
+                  </Lane>
+                )}
+
+                <Lane label="📊 DATA COMPLETENESS">
+                  <Text style={[styles.laneEmpty, { color: '#94A3B8', marginBottom: 8 }]}>
+                    Cycle intelligence: Tier {tierMin} of 4
+                    {tierMin === 1 ? ' · Counts only' : tierMin === 2 ? ' · Counts + invoices' : tierMin >= 3 ? ' · Counts + invoices + sales' : ''}
+                  </Text>
+                  {unpricedTotal > 0 && (
+                    <Text style={[styles.laneEmpty, { color: '#64748B' }]}>
+                      {unpricedTotal} product{unpricedTotal !== 1 ? 's' : ''} have no cost price — add prices to unlock dollar variance
+                    </Text>
+                  )}
+                </Lane>
+              </>
+            );
+          })()}
+
+          {/* ── SUGGESTED ORDERS CTA ── */}
+          {isManager && data.hasCountData && (
+            <TouchableOpacity
+              style={[styles.insightsBtn, { backgroundColor: '#065f46', marginBottom: 8 }]}
+              onPress={() => nav.navigate('SuggestedOrders')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.insightsBtnTitle}>📦 Suggested Orders</Text>
+              <Text style={styles.insightsBtnSub}>Generate an order based on current stock levels</Text>
+            </TouchableOpacity>
+          )}
+
           {/* ── GET AI INSIGHTS button (owner/manager only, after stocktake) ── */}
           {isManager && data.hasCountData && (
             <TouchableOpacity
@@ -856,6 +952,7 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
     <View style={styles.secondaryNav}>
       <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
       <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
+      <NavTile title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
       <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
       <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
       <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />

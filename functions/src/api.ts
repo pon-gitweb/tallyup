@@ -489,10 +489,46 @@ app.post("/ai-insights", async (req, res) => {
     const lcAI = await checkAiLimit(venueId, 'ai_insights');
     if (!lcAI.allowed) { res.status(429).json(lcAI.limitError); return; }
 
-    // FIX 8: Supplier-aware AI insights prompt
-    const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on patterns, trends, and opportunities — including supplier pricing opportunities (products where a cheaper alternative exists), approaching contract expiry dates, rebate thresholds close to being hit, and price increases from preferred suppliers. Return as JSON array: [{headline, observation, action}]`;
+    // Enrich data with snapshot intelligence before sending to Claude
+    let enrichedData = { ...data };
+    try {
+      const dbInst = admin.firestore();
+      const deptsSnap = await dbInst.collection(`venues/${venueId}/departments`).get();
+      const snapshotSummaries: any[] = [];
+      for (const deptDoc of deptsSnap.docs) {
+        const latestSnap = await dbInst
+          .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
+          .orderBy('completedAt', 'desc')
+          .limit(1)
+          .get();
+        if (!latestSnap.empty) {
+          const s = latestSnap.docs[0].data() as any;
+          snapshotSummaries.push({
+            department: s.departmentName,
+            cycleNumber: s.cycleNumber,
+            tier: s.dataCompleteness?.tier ?? 1,
+            summary: s.summary,
+            topLosses: (s.items || [])
+              .filter((i: any) => i.totalVarianceQty < 0)
+              .sort((a: any, b: any) => a.totalVarianceQty - b.totalVarianceQty)
+              .slice(0, 5)
+              .map((i: any) => ({ name: i.name, varianceQty: i.totalVarianceQty, varianceDollars: i.totalVarianceDollars })),
+            topGains: (s.items || [])
+              .filter((i: any) => i.totalVarianceQty > 0)
+              .sort((a: any, b: any) => b.totalVarianceQty - a.totalVarianceQty)
+              .slice(0, 5)
+              .map((i: any) => ({ name: i.name, varianceQty: i.totalVarianceQty, likelyMissingInvoice: i.likelyMissingInvoice })),
+            findings: s.findings,
+            recommendations: (s.recommendations || []).slice(0, 5),
+          });
+        }
+      }
+      if (snapshotSummaries.length > 0) enrichedData = { ...enrichedData, snapshotSummaries };
+    } catch {}
 
-    const userMessage = "Stocktake data for analysis:\n\n" + JSON.stringify(data, null, 2);
+    const systemPrompt = `You are a hospitality business advisor. You have been given stocktake variance data for a venue, including rich cycle snapshot data where available. Provide 2-4 concise, actionable insights based on this data. Each insight should have a short headline and 2-3 sentences. Be honest and direct. Never alarming. Always frame as 'consider this' not 'you must do this'. Focus on: significant variances by product, missing invoice patterns (gains without deliveries), items below PAR, supplier pricing opportunities, and what the data tier means for analysis quality. Be explicit about what data is and isn't available. Return as JSON array: [{headline, observation, action}]`;
+
+    const userMessage = "Stocktake data for analysis:\n\n" + JSON.stringify(enrichedData, null, 2);
 
     const raw = await callClaude(systemPrompt, userMessage);
 
@@ -1370,6 +1406,38 @@ app.post("/suitee", async (req, res) => {
       return;
     }
 
+    // Read latest snapshots for richer cycle context
+    const snapshotContextLines: string[] = [];
+    try {
+      const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+      for (const deptDoc of deptsSnap.docs) {
+        const latestSnap = await db
+          .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
+          .orderBy('completedAt', 'desc')
+          .limit(1)
+          .get();
+        if (latestSnap.empty) continue;
+        const snap = latestSnap.docs[0].data() as any;
+        const s = snap.summary || {};
+        const dc = snap.dataCompleteness || {};
+        const deptSnapLines = [
+          `  ${snap.departmentName}: Cycle ${snap.cycleNumber}, Tier ${dc.tier ?? 1}/4`,
+          `    Items: ${s.totalItemsCounted}, below PAR: ${s.itemsBelowPAR}, variance qty: ${s.totalVarianceQty}`,
+          s.totalVarianceDollars != null ? `    Variance value: $${(s.totalVarianceDollars as number).toFixed(2)}` : '    No cost prices set',
+          s.totalStockValue != null ? `    Stock value: $${(s.totalStockValue as number).toFixed(2)}` : null,
+          dc.hasInvoices ? '    Has invoice data for this cycle.' : '    No invoice data for this cycle.',
+        ].filter(Boolean) as string[];
+        snapshotContextLines.push(...deptSnapLines);
+        const findings = snap.findings || {};
+        if ((findings.likelyMissingInvoices || []).length > 0) {
+          snapshotContextLines.push(`    Missing invoices detected: ${findings.likelyMissingInvoices.map((f: any) => `${f.productName} +${f.unexplainedGainQty}`).join(', ')}`);
+        }
+        if ((findings.poDiscrepancies || []).length > 0) {
+          snapshotContextLines.push(`    PO shortfalls: ${findings.poDiscrepancies.map((f: any) => `${f.productName} (ordered ${f.orderedQty}, got ${f.receivedQty})`).join(', ')}`);
+        }
+      }
+    } catch {}
+
     allShortages.sort((a, b) => b.dollarVariance - a.dollarVariance);
     allExcesses.sort((a, b) => b.dollarVariance - a.dollarVariance);
 
@@ -1549,6 +1617,11 @@ app.post("/suitee", async (req, res) => {
 
     if (priceChangeLines.length > 0) {
       lines.push("", ...priceChangeLines);
+    }
+
+    if (snapshotContextLines.length > 0) {
+      lines.push("", "CYCLE SNAPSHOT INTELLIGENCE (per department, from last completed snapshot):");
+      lines.push(...snapshotContextLines);
     }
 
     // FIX 7: Supplier intelligence per product

@@ -1,8 +1,8 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetDepartment } from '../../services/reset';
@@ -57,6 +57,35 @@ function DepartmentSummaryScreen() {
 
   const [otherDepts, setOtherDepts] = useState<OtherDept[]>([]);
   const [resetting, setResetting] = useState(false);
+  const [snapshot, setSnapshot] = useState<any>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+
+  // Load snapshot (written async after completion — retry a few times if not yet available)
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    const snapshotId = `cycle-${cycleNumber}`;
+    const tryLoad = async (attemptsLeft: number) => {
+      try {
+        const snapRef = doc(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId);
+        const snapDoc = await getDoc(snapRef);
+        if (!cancelled) {
+          if (snapDoc.exists()) {
+            setSnapshot(snapDoc.data());
+            setSnapshotLoading(false);
+          } else if (attemptsLeft > 0) {
+            setTimeout(() => tryLoad(attemptsLeft - 1), 2000);
+          } else {
+            setSnapshotLoading(false);
+          }
+        }
+      } catch {
+        if (!cancelled) setSnapshotLoading(false);
+      }
+    };
+    tryLoad(4);
+    return () => { cancelled = true; };
+  }, [venueId, departmentId, cycleNumber]);
 
   useEffect(() => {
     if (!venueId) return;
@@ -149,6 +178,107 @@ function DepartmentSummaryScreen() {
           </View>
         ))}
       </View>
+
+      {/* Snapshot intelligence card */}
+      {snapshotLoading ? (
+        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8', alignItems: 'center' }}>
+          <ActivityIndicator size="small" color="#065f46" />
+          <Text style={{ color: '#6b7280', fontSize: 12, marginTop: 6 }}>Building cycle analysis…</Text>
+        </View>
+      ) : snapshot ? (
+        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8', gap: 10 }}>
+          <Text style={{ fontWeight: '800', color: '#374151', fontSize: 14 }}>Cycle {cycleNumber} Analysis</Text>
+
+          {/* Data completeness tier */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ backgroundColor: '#ecfdf5', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#065f46' }}>
+                Tier {snapshot.dataCompleteness?.tier ?? 1} of 4
+                {snapshot.dataCompleteness?.hasInvoices ? '  ✓ Invoices' : '  ✗ No invoices'}
+              </Text>
+            </View>
+            {snapshot.summary?.itemsWithNoPrice > 0 && (
+              <Text style={{ fontSize: 11, color: '#9ca3af' }}>
+                {snapshot.summary.itemsWithNoPrice} unpriced
+              </Text>
+            )}
+          </View>
+
+          {/* Top losses */}
+          {(() => {
+            const losses = (snapshot.items || [])
+              .filter((i: any) => i.totalVarianceQty < 0)
+              .sort((a: any, b: any) => a.totalVarianceQty - b.totalVarianceQty)
+              .slice(0, 3);
+            if (!losses.length) return null;
+            return (
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Losses</Text>
+                {losses.map((item: any, i: number) => (
+                  <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#374151', flex: 1 }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '700' }}>
+                      {item.totalVarianceQty}
+                      {item.totalVarianceDollars != null ? `  –$${Math.abs(item.totalVarianceDollars).toFixed(0)}` : ''}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
+
+          {/* Top gains */}
+          {(() => {
+            const gains = (snapshot.items || [])
+              .filter((i: any) => i.totalVarianceQty > 0)
+              .sort((a: any, b: any) => b.totalVarianceQty - a.totalVarianceQty)
+              .slice(0, 3);
+            if (!gains.length) return null;
+            return (
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Gains</Text>
+                {gains.map((item: any, i: number) => (
+                  <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                    <Text style={{ fontSize: 13, color: '#374151', flex: 1 }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: '#059669', fontWeight: '700' }}>+{item.totalVarianceQty}</Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
+
+          {/* Below PAR */}
+          {snapshot.summary?.itemsBelowPAR > 0 && (
+            <View style={{ backgroundColor: '#fef3c7', borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '600' }}>
+                {snapshot.summary.itemsBelowPAR} item{snapshot.summary.itemsBelowPAR !== 1 ? 's' : ''} below PAR — check suggested orders
+              </Text>
+            </View>
+          )}
+
+          {/* Missing invoice alert */}
+          {snapshot.findings?.likelyMissingInvoices?.length > 0 && (
+            <View style={{ backgroundColor: '#fff7ed', borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '700' }}>⚠ Possible missing invoices</Text>
+              {snapshot.findings.likelyMissingInvoices.slice(0, 2).map((f: any, i: number) => (
+                <Text key={i} style={{ fontSize: 12, color: '#78350f', marginTop: 2 }}>
+                  {f.productName}: +{f.unexplainedGainQty} units with no delivery recorded
+                </Text>
+              ))}
+            </View>
+          )}
+
+          {/* Top recommendation */}
+          {snapshot.recommendations?.length > 0 && (
+            <View style={{ backgroundColor: '#eff6ff', borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 12, color: '#1e40af', fontWeight: '700' }}>Recommended action</Text>
+              <Text style={{ fontSize: 12, color: '#1e3a8a', marginTop: 2 }}>
+                {snapshot.recommendations[0].message}
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : null}
 
       {/* CTAs */}
       <TouchableOpacity

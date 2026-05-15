@@ -30,6 +30,7 @@ import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import NetInfo from '@react-native-community/netinfo';
 import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
+import { writeDepartmentSnapshot } from '../../services/reports/snapshotWriter';
 import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 import * as Haptics from 'expo-haptics';
 import AS from '@react-native-async-storage/async-storage';
@@ -1244,6 +1245,11 @@ try {
       } catch (e) {
         console.warn('[stocktake] dept cycle write failed', e);
       }
+
+      // Write rich cycle snapshot for reports and Suitee (fire and forget — non-fatal)
+      writeDepartmentSnapshot(venueId!, departmentId, deptCycleNumber).catch(e =>
+        console.warn('[stocktake] snapshot write failed', e?.message),
+      );
 
       // Check if ALL departments completed within the last 7 days
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
