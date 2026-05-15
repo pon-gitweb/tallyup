@@ -85,6 +85,7 @@ interface VenueSummary {
   zeroItems: ItemRow[];      // lastCount === 0
   topItems: ItemRow[];       // highest counts in active areas
   slowMovers: SlowMoverRow[];
+  lastStocktakeDate: Date | null;
 }
 
 async function collectVenueSummary(
@@ -102,10 +103,17 @@ async function collectVenueSummary(
   const allActiveItems: ItemRow[] = [];
   const areasCompleted: string[] = [];
   let stocktakesCompleted = 0;
+  let lastStocktakeDate: Date | null = null;
 
   const depsSnap = await db.collection(`venues/${venueId}/departments`).limit(20).get();
 
   for (const depDoc of depsSnap.docs) {
+    // Track the most recent cycle date across departments
+    const deptLastCycle: Date | undefined = depDoc.data()?.lastCycleAt?.toDate?.();
+    if (deptLastCycle && (!lastStocktakeDate || deptLastCycle > lastStocktakeDate)) {
+      lastStocktakeDate = deptLastCycle;
+    }
+
     const areasSnap = await db
       .collection(`venues/${venueId}/departments/${depDoc.id}/areas`)
       .limit(30)
@@ -121,10 +129,8 @@ async function collectVenueSummary(
         areasCompleted.push(area?.name || areaDoc.id);
       }
 
-      // Only pull items from areas active in the last 7 days
-      const startedAt: Date | undefined = area?.startedAt?.toDate?.();
-      if (!startedAt || startedAt < sevenDaysAgo) continue;
-
+      // Read items from all areas — no longer gate on area.startedAt
+      // After a reset startedAt is null but lastCount data still exists
       const itemsSnap = await db
         .collection(`venues/${venueId}/departments/${depDoc.id}/areas/${areaDoc.id}/items`)
         .limit(200)
@@ -133,22 +139,28 @@ async function collectVenueSummary(
       for (const itemDoc of itemsSnap.docs) {
         const item = itemDoc.data();
         const lastCount = typeof item.lastCount === "number" ? item.lastCount : null;
-        if (lastCount === null) continue;
+        if (lastCount === null || lastCount <= 0) continue;
 
         const name: string = item.name || "Unknown";
         const parLevel: number | undefined = typeof item.parLevel === "number" ? item.parLevel : undefined;
         const unit: string | undefined = item.unit || undefined;
+        const lastCountAt: Date | undefined = item?.lastCountAt?.toDate?.();
+        const countedThisWeek = !!lastCountAt && lastCountAt >= sevenDaysAgo;
 
+        // All items with positive count contribute to top-items list
         allActiveItems.push({ name, lastCount, parLevel, unit });
 
-        if (parLevel !== undefined && lastCount < parLevel && reorderItems.length < 10)
-          reorderItems.push({ name, lastCount, parLevel, unit });
+        // Reorder, flagged, zero — only for items counted this week
+        if (countedThisWeek) {
+          if (parLevel !== undefined && lastCount < parLevel && reorderItems.length < 10)
+            reorderItems.push({ name, lastCount, parLevel, unit });
 
-        if (item.flagRecount && flaggedItems.length < 10)
-          flaggedItems.push({ name, lastCount, unit });
+          if (item.flagRecount && flaggedItems.length < 10)
+            flaggedItems.push({ name, lastCount, unit });
 
-        if (lastCount === 0 && zeroItems.length < 10)
-          zeroItems.push({ name, lastCount: 0 });
+          if (lastCount === 0 && zeroItems.length < 10)
+            zeroItems.push({ name, lastCount: 0 });
+        }
       }
     }
   }
@@ -177,13 +189,13 @@ async function collectVenueSummary(
     });
   } catch {}
 
-  return { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers };
+  return { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate };
 }
 
 // ── Email HTML builder ────────────────────────────────────────────────────────
 
 function buildEmailHtml(data: VenueSummary, weekOf: string): string {
-  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers } = data;
+  const { venueName, stocktakesCompleted, areasCompleted, reorderItems, flaggedItems, zeroItems, topItems, slowMovers, lastStocktakeDate } = data;
 
   const section = (title: string, body: string) => `
     <div style="margin-bottom:28px;">
@@ -207,8 +219,12 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
 
   const none = `<p style="font-size:13px;color:#9CA3AF;margin:0;">Nothing to report this week.</p>`;
 
+  const lastDateStr = lastStocktakeDate
+    ? lastStocktakeDate.toLocaleDateString("en-NZ", { day: "numeric", month: "long", year: "numeric" })
+    : null;
+
   const stocktakeBody = stocktakesCompleted === 0
-    ? `<p style="font-size:13px;color:#9CA3AF;margin:0;">No stocktakes completed this week.</p>`
+    ? `<p style="font-size:13px;color:#9CA3AF;margin:0;">No stocktake activity in the last 7 days.${lastDateStr ? ` Last completed: ${lastDateStr}.` : ""}</p>`
     : `<p style="margin:0 0 10px;font-size:14px;color:#374151;">
          <strong>${stocktakesCompleted}</strong>&nbsp;area${stocktakesCompleted !== 1 ? "s" : ""} completed this week.
        </p>
@@ -424,6 +440,12 @@ export const weeklySummaryEmail = onSchedule(
 
         if (emails.length === 0) {
           console.warn(`[weeklySummary] no manager emails found for venue=${venueId}`);
+          return;
+        }
+
+        // Skip if venue has never done a stocktake (no data exists at all)
+        if (!summary.lastStocktakeDate && summary.topItems.length === 0) {
+          console.log(`[weeklySummary] skipping venue=${venueId} — no stocktake data yet`);
           return;
         }
 

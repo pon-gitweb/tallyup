@@ -351,6 +351,12 @@ function DepartmentSelectionScreen() {
             onPress: async () => {
               try {
                 await resetDepartment(venueId, dept.id);
+                // Force immediate UI refresh — onSnapshot won't fire when only area subdocs change
+                const snap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+                const rows: DeptRow[] = [];
+                snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
+                const enriched = await enrichDepartmentsWithAreaStatus(venueId, rows);
+                setDepartments(enriched);
               } catch (e: any) {
                 Alert.alert(
                   'Reset failed',

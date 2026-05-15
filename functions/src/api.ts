@@ -1293,6 +1293,7 @@ app.post("/suitee", async (req, res) => {
     let excessDollars = 0;
     let stockHoldingValue = 0;
     let hasCountData = false;
+    let hasPrevCycle = false;
     const deptContextLines: string[] = [];
 
     try {
@@ -1325,13 +1326,16 @@ app.post("/suitee", async (req, res) => {
             const holdingCount = lastCount ?? confirmedCount ?? 0;
             if (costPrice) stockHoldingValue += holdingCount * costPrice;
 
+            // Count data check — survives reset (lastCount restored from confirmedCount after reset)
+            if ((lastCount != null && lastCount > 0) || (confirmedCount != null && confirmedCount > 0)) hasCountData = true;
+            if (confirmedCount != null && confirmedCount > 0) hasPrevCycle = true;
+
             const lastCountAtMs: number | null = d.lastCountAt?.toMillis?.() ?? d.lastCountAt?.toDate?.()?.getTime?.() ?? null;
             const confirmedCountAtMs: number | null = d.confirmedCountAt?.toMillis?.() ?? d.confirmedCountAt?.toDate?.()?.getTime?.() ?? null;
             const countedInCycle = lastCountAtMs != null && (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
             if (!countedInCycle || lastCount == null) continue;
 
             totalItemsCounted++;
-            hasCountData = true;
 
             const baseline: number | null = confirmedCount ?? parLevel ?? null;
             if (baseline == null) continue;
@@ -1362,7 +1366,7 @@ app.post("/suitee", async (req, res) => {
     } catch {}
 
     if (!hasCountData) {
-      res.json({ ok: true, answer: "Complete your first stocktake to start asking Suitee questions about your venue." });
+      res.json({ ok: true, answer: "I don't have any stocktake data yet. Complete your first stocktake and I'll be able to answer questions about your venue." });
       return;
     }
 
@@ -1487,6 +1491,13 @@ app.post("/suitee", async (req, res) => {
     // ── Build context payload ─────────────────────────────────────────────────
     const lines: string[] = [
       "=== VENUE DATA SNAPSHOT ===",
+      "",
+      "STOCKTAKE STATUS:",
+      `  Has count data: ${hasCountData}`,
+      `  Has previous cycle baseline: ${hasPrevCycle}`,
+      hasPrevCycle
+        ? "  Variance comparison against previous cycle is available."
+        : "  First stocktake only — no previous cycle baseline yet. Report on current stock levels, items below PAR, and zero stock.",
       "",
       "CURRENT STOCKTAKE:",
       `  Total shortage: $${shortfallDollars.toFixed(2)}`,

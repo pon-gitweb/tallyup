@@ -7,7 +7,7 @@ export type VarianceLine = {
   itemId: string;
   name: string;
   varianceUnits: number;  // negative = shortage
-  dollarVariance: number; // always positive
+  dollarVariance: number | null; // positive, or null when item has no cost price
   deptName: string;
   areaName: string;
 };
@@ -79,6 +79,7 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
   let totalItemsCounted = 0;
   let totalAreasCompleted = 0;
   let totalAreas = 0;
+  let hasCountData = false;
   let hasPrevCycleData = false;
   let dollarItemCount = 0;
 
@@ -132,7 +133,13 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           const confirmedCountAtMs = toMs(d.confirmedCountAt);
           const name = d.name || itemDoc.id;
 
-          // Counted in current cycle: has lastCountAt and it's newer than confirmedCountAt
+          // Count data gate — survives reset (lastCount is restored from confirmedCount after reset)
+          if ((lastCount != null && lastCount > 0) || (confirmedCount != null && confirmedCount > 0)) {
+            hasCountData = true;
+          }
+          if (confirmedCount != null && confirmedCount > 0) hasPrevCycleData = true;
+
+          // Variance only for items counted in the current cycle (lastCountAt newer than confirmedCountAt)
           const countedInCycle =
             lastCountAtMs != null &&
             (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
@@ -146,7 +153,6 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           let baseline: number | null = null;
           if (confirmedCount != null && confirmedCountAtMs != null) {
             baseline = confirmedCount;
-            hasPrevCycleData = true;
           } else if (parLevel != null) {
             // First cycle — use par as expected
             baseline = parLevel;
@@ -155,7 +161,7 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           if (baseline == null) continue;
 
           const varianceUnits = lastCount - baseline;
-          const dollar = costPrice != null ? Math.abs(varianceUnits) * costPrice : 0;
+          const dollar: number | null = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
           if (costPrice != null) dollarItemCount++;
 
           if (varianceUnits < 0) {
@@ -206,15 +212,15 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
   }
 
   // Sort by dollar impact descending
-  allShortages.sort((a, b) => b.dollarVariance - a.dollarVariance);
-  allExcesses.sort((a, b) => b.dollarVariance - a.dollarVariance);
+  allShortages.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
+  allExcesses.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
 
-  const shortfallDollars = allShortages.reduce((s, r) => s + r.dollarVariance, 0);
-  const excessDollars = allExcesses.reduce((s, r) => s + r.dollarVariance, 0);
+  const shortfallDollars = allShortages.reduce((s, r) => s + (r.dollarVariance ?? 0), 0);
+  const excessDollars = allExcesses.reduce((s, r) => s + (r.dollarVariance ?? 0), 0);
 
   return {
     role,
-    hasCountData: totalItemsCounted > 0,
+    hasCountData,
     hasPrevCycleData,
     shortfallDollars,
     excessDollars,

@@ -557,11 +557,15 @@ export default function ReportsIndexScreen() {
                         <Text style={styles.lineRowNeg}>
                           {item.varianceUnits}
                         </Text>
-                        {item.dollarVariance > 0 && (
+                        {item.dollarVariance != null && item.dollarVariance > 0 ? (
                           <Text style={styles.lineRowDollar}>
                             –{fmtDollars(item.dollarVariance)}
                           </Text>
-                        )}
+                        ) : item.dollarVariance == null ? (
+                          <Text style={[styles.lineRowDollar, { color: '#64748B' }]}>
+                            no price set
+                          </Text>
+                        ) : null}
                       </View>
                     </View>
                   ))}

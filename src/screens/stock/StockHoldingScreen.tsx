@@ -74,6 +74,7 @@ export default function StockHoldingScreen() {
   const [grandCount, setGrandCount] = useState(0);
   const [grandValue, setGrandValue] = useState<number | null>(null);
   const [venueName, setVenueName] = useState('');
+  const [showingPriorCycle, setShowingPriorCycle] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(SORT_KEY)
@@ -112,8 +113,10 @@ export default function StockHoldingScreen() {
         }
       });
 
-      // Aggregate counts from all completed area items
+      // Aggregate counts from all area items — completedAt not required
+      // After a reset, lastCount is restored from confirmedCount so data still exists
       const rowMap: Record<string, HoldingRow> = {};
+      let hasAnyIncomplete = false;
       const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
 
       await Promise.all(deptSnap.docs.map(async deptDoc => {
@@ -122,7 +125,7 @@ export default function StockHoldingScreen() {
         );
         await Promise.all(areaSnap.docs.map(async areaDoc => {
           const areaData = areaDoc.data() as any;
-          if (!areaData.completedAt) return;
+          if (!areaData.completedAt) hasAnyIncomplete = true;
           const itemSnap = await getDocs(
             collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items')
           );
@@ -157,6 +160,7 @@ export default function StockHoldingScreen() {
 
       const rows = Object.values(rowMap);
       setAllRows(rows);
+      setShowingPriorCycle(hasAnyIncomplete && rows.length > 0);
       setGrandCount(rows.reduce((s, r) => s + r.count, 0));
       const totalVal = rows.reduce((s, r) => s + (r.value ?? 0), 0);
       setGrandValue(rows.some(r => r.value != null) ? totalVal : null);
@@ -313,6 +317,15 @@ export default function StockHoldingScreen() {
           <Text style={s.sortBtnText}>{sortAZ ? 'A–Z ✓' : 'A–Z'}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Prior-cycle note */}
+      {showingPriorCycle && (
+        <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fffbeb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#fde68a' }}>
+          <Text style={{ fontSize: 12, color: '#92400e' }}>
+            Showing counts from last completed stocktake. Counts will update as you complete this cycle.
+          </Text>
+        </View>
+      )}
 
       {/* Export buttons */}
       <View style={s.exportRow}>
