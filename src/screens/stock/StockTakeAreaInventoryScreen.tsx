@@ -2860,7 +2860,15 @@ const openHistory = throttleAction(async (item: Item) => {
             } catch (e: any) { Alert.alert('Could not update', e?.message || 'Please try again.'); }
             setCountingUnitForItem(null);
           } else if (countingUnitPending) {
-            try { await countingUnitPending.write(config); } catch {}
+            try { await countingUnitPending.write(config); } catch (error: any) {
+              console.error('[AreaInventory] write failed:', error);
+              Alert.alert(
+                'Could not add product',
+                'There was a problem adding this product to the area. ' +
+                'Please try again or contact support if this continues.',
+                [{ text: 'OK' }]
+              );
+            }
             setCountingUnitPending(null);
           }
         }}
@@ -2868,7 +2876,15 @@ const openHistory = throttleAction(async (item: Item) => {
           setCountingUnitVisible(false);
           // If pending add, save with default unit mode
           if (countingUnitPending && !countingUnitForItem) {
-            countingUnitPending.write({ countingUnit: 'unit', caseSize: null }).catch(() => {});
+            countingUnitPending.write({ countingUnit: 'unit', caseSize: null }).catch((error: any) => {
+              console.error('[AreaInventory] write failed (cancel path):', error);
+              Alert.alert(
+                'Could not add product',
+                'There was a problem adding this product to the area. ' +
+                'Please try again or contact support if this continues.',
+                [{ text: 'OK' }]
+              );
+            });
             setCountingUnitPending(null);
           }
           setCountingUnitForItem(null);

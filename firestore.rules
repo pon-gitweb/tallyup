@@ -340,6 +340,7 @@ service cloud.firestore {
                     'name','unit','supplierName',
                     'productId','productName',
                     'inductionStatus','inductionSource',
+                    'countingUnit','caseSize',
                     'lastCount','lastCountAt',
                     'createdAt','updatedAt'
                   ])
@@ -522,6 +523,7 @@ service cloud.firestore {
                   'name','unit','supplierName',
                   'productId','productName',
                   'inductionStatus','inductionSource',
+                  'countingUnit','caseSize',
                   'lastCount','lastCountAt',
                   'createdAt','updatedAt'
                 ])
