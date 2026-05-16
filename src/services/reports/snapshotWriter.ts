@@ -446,6 +446,8 @@ export async function writeDepartmentSnapshot(
       departmentName,
       cycleNumber,
       completedAt: serverTimestamp(),
+      requiresRecalculation: false,
+      lastRecalculatedAt: serverTimestamp(),
       completedBy,
       completedByName,
       cycleStart: cycleStart ? Timestamp.fromDate(cycleStart) : null,

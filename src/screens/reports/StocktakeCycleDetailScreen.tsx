@@ -5,7 +5,7 @@ import {
   TextInput, SafeAreaView, StyleSheet, Alert,
 } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system';
@@ -41,6 +41,7 @@ export default function StocktakeCycleDetailScreen() {
 
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState<any>(null);
+  const [areaEditsMap, setAreaEditsMap] = useState<Record<string, any[]>>({});
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortMode>('area');
   const [exporting, setExporting] = useState<'pdf' | 'csv' | null>(null);
@@ -54,7 +55,28 @@ export default function StocktakeCycleDetailScreen() {
     try {
       const snapRef = doc(db, 'venues', venueId, 'departments', departmentId, 'snapshots', snapshotId);
       const snapDoc = await getDoc(snapRef);
-      if (snapDoc.exists()) setSnapshot(snapDoc.data());
+      if (snapDoc.exists()) {
+        const data = snapDoc.data();
+        setSnapshot(data);
+        // Load area edits to show audit trail per item
+        const areaIds = [...new Set((data.items || []).map((it: any) => it.areaId).filter(Boolean))];
+        const editsMap: Record<string, any[]> = {};
+        await Promise.all(areaIds.map(async (areaId: string) => {
+          try {
+            const areaDoc = await getDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId));
+            if (areaDoc.exists()) {
+              const areaEdits: any[] = areaDoc.data()?.edits || [];
+              for (const edit of areaEdits) {
+                if (edit.itemId) {
+                  if (!editsMap[edit.itemId]) editsMap[edit.itemId] = [];
+                  editsMap[edit.itemId].push(edit);
+                }
+              }
+            }
+          } catch {}
+        }));
+        setAreaEditsMap(editsMap);
+      }
     } catch (e: any) {
       console.error('[CycleDetail] load error', e?.message);
     } finally {
@@ -304,10 +326,17 @@ td{padding:5px 8px;border-bottom:1px solid #eee;}
           {filteredItems.map((it, i) => {
             const countedAtDate: Date | null = it.lastCountAt?.toDate?.() ?? null;
             const varColor = it.totalVarianceQty < 0 ? '#dc2626' : it.totalVarianceQty > 0 ? '#059669' : '#6b7280';
+            const itemEdits: any[] = areaEditsMap[it.productId] || [];
+            const hasEdits = itemEdits.length > 0;
             return (
-              <View key={it.productId || i} style={[s.itemRow, i > 0 && s.itemRowBorder]}>
+              <EditableItemRow key={it.productId || i} style={[s.itemRow, i > 0 && s.itemRowBorder]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.itemName}>{it.name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={s.itemName}>{it.name}</Text>
+                    {hasEdits && <Text style={{ fontSize: 11, color: '#92400E' }}>✏️</Text>}
+                    {it.varianceFlagged && <Text style={{ fontSize: 11, color: '#B45309', backgroundColor: '#FEF3C7', paddingHorizontal: 4, borderRadius: 4 }}>Flagged</Text>}
+                    {it.varianceAccepted && <Text style={{ fontSize: 11, color: '#065F46', backgroundColor: '#D1FAE5', paddingHorizontal: 4, borderRadius: 4 }}>Accepted</Text>}
+                  </View>
                   <Text style={s.itemSub}>
                     {it.areaName}{it.categoryName ? ` · ${it.categoryName}` : ''}
                   </Text>
@@ -316,6 +345,9 @@ td{padding:5px 8px;border-bottom:1px solid #eee;}
                       Counted by {it.lastCountByName}
                       {countedAtDate ? ` at ${countedAtDate.toLocaleTimeString('en-NZ', { hour: 'numeric', minute: '2-digit', hour12: true })}` : ''}
                     </Text>
+                  )}
+                  {hasEdits && (
+                    <EditHistorySection edits={itemEdits} />
                   )}
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
@@ -331,7 +363,7 @@ td{padding:5px 8px;border-bottom:1px solid #eee;}
                     </Text>
                   )}
                 </View>
-              </View>
+              </EditableItemRow>
             );
           })}
         </View>
@@ -353,6 +385,35 @@ td{padding:5px 8px;border-bottom:1px solid #eee;}
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// Wrapper so we can use useState for collapsed edit history
+function EditableItemRow({ children, style }: { children: React.ReactNode; style?: any }) {
+  return <View style={style}>{children}</View>;
+}
+
+function EditHistorySection({ edits }: { edits: any[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={{ marginTop: 4 }}>
+      <TouchableOpacity onPress={() => setExpanded(e => !e)}>
+        <Text style={{ fontSize: 11, color: '#92400E', fontWeight: '700' }}>
+          {expanded ? '▲' : '▼'} Edit history ({edits.length})
+        </Text>
+      </TouchableOpacity>
+      {expanded && edits.map((e, i) => (
+        <View key={i} style={{ marginTop: 3, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: '#F59E0B' }}>
+          <Text style={{ fontSize: 11, color: '#374151' }}>
+            {e.oldCount ?? '?'} → {e.newCount}
+            {e.editedByName ? ` by ${e.editedByName}` : ''}
+            {e.isManagerOverride ? ' (manager override)' : ' (within window)'}
+          </Text>
+          {e.reason ? <Text style={{ fontSize: 10, color: '#6B7280' }}>Reason: {e.reason}</Text> : null}
+          {e.editedAt ? <Text style={{ fontSize: 10, color: '#9CA3AF' }}>{new Date(e.editedAt).toLocaleString('en-NZ')}</Text> : null}
+        </View>
+      ))}
+    </View>
   );
 }
 

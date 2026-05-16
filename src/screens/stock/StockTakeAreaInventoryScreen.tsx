@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
 import SmartShelfModal from "./components/SmartShelfModal";
@@ -61,7 +61,11 @@ type Item = {
   countingUnit?: 'unit' | 'case' | 'both';
   caseSize?: number | null;
 };
-type AreaDoc = { name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any; };
+type AreaDoc = {
+  name: string; createdAt?: any; updatedAt?: any; startedAt?: any; completedAt?: any;
+  editWindowClosesAt?: any; editWindowOpen?: boolean; edits?: any[];
+  managerOverride?: boolean; overrideBy?: string; overrideAt?: any; overrideReason?: string;
+};
 type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
@@ -91,6 +95,9 @@ type RowProps = {
   countedInThisCycle: (it: Item) => boolean;
   clampNonNegative: (n: number) => number;
   approveNow: (it: Item) => Promise<void>;
+  isLocked: boolean;
+  isEdited: boolean;
+  isHighlighted: boolean;
 };
 
 const Row = React.memo(function Row({
@@ -112,7 +119,11 @@ const Row = React.memo(function Row({
   countedInThisCycle,
   clampNonNegative,
   approveNow,
+  isLocked,
+  isEdited,
+  isHighlighted,
 }: RowProps) {
+  const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
@@ -168,9 +179,9 @@ const Row = React.memo(function Row({
         minHeight: 56,
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
-        backgroundColor: hasLocalEntry ? '#FFFFFF' : '#F9FAFB',
-        borderLeftWidth: hasLocalEntry ? 3 : 0,
-        borderLeftColor: '#1b4f72',
+        backgroundColor: isHighlighted ? '#E0FDF4' : (hasLocalEntry ? '#FFFFFF' : '#F9FAFB'),
+        borderLeftWidth: isHighlighted ? 4 : (hasLocalEntry ? 3 : 0),
+        borderLeftColor: isHighlighted ? '#0D9488' : '#1b4f72',
       }}
     >
       {/* Single row: product info left (flex:1) + count controls right */}
@@ -190,6 +201,11 @@ const Row = React.memo(function Row({
                 <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#4CAF50' }} />
                 <Text style={{ fontSize: 11, color: '#4CAF50', fontWeight: '700' }}>Counted</Text>
               </View>
+            )}
+            {isEdited && (
+              <Text style={{ fontSize: 11, color: '#92400E', fontWeight: '800', backgroundColor: '#FEF3C7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+                EDITED
+              </Text>
             )}
             {lowStock && (
               <TouchableOpacity onPress={() => openEditItem(item, true)}>
@@ -222,7 +238,7 @@ const Row = React.memo(function Row({
           <View style={{ alignItems: 'flex-end', gap: 3 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Text style={{ fontSize: 10, color: '#64748b', width: 34, textAlign: 'right' }}>Cases</Text>
-              {showSteppers && (
+              {effectiveSteppers && (
                 <TouchableOpacity onPress={() => adjustTyped(-1)} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
                   <Text style={{ fontWeight: '900', fontSize: 18 }}>-</Text>
                 </TouchableOpacity>
@@ -246,7 +262,7 @@ const Row = React.memo(function Row({
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Text style={{ fontSize: 10, color: '#64748b', width: 34, textAlign: 'right' }}>Loose</Text>
-              {showSteppers && (
+              {effectiveSteppers && (
                 <TouchableOpacity onPress={() => setLocalQty(m => { const v = Math.max(0, parseFloat(m[item.id + '_loose'] || '0') - 1); return { ...m, [item.id + '_loose']: String(v) }; })} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
                   <Text style={{ fontWeight: '900', fontSize: 18 }}>-</Text>
                 </TouchableOpacity>
@@ -259,7 +275,7 @@ const Row = React.memo(function Row({
                 maxLength={6}
                 style={{ width: 52, paddingVertical: 6, paddingHorizontal: 4, borderWidth: 2, borderColor: (localQty[item.id + '_loose'] ?? '').trim() ? '#4CAF50' : '#d1d5db', borderRadius: 8, height: 36, backgroundColor: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' }}
               />
-              {showSteppers && (
+              {effectiveSteppers && (
                 <TouchableOpacity onPress={() => setLocalQty(m => { const v = parseFloat(m[item.id + '_loose'] || '0') + 1; return { ...m, [item.id + '_loose']: String(v) }; })} style={{ width: 28, height: 36, borderRadius: 6, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', justifyContent: 'center', alignItems: 'center' }}>
                   <Text style={{ fontWeight: '900', fontSize: 18 }}>+</Text>
                 </TouchableOpacity>
@@ -273,7 +289,7 @@ const Row = React.memo(function Row({
           </View>
         ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          {showSteppers && (
+          {effectiveSteppers && (
             <TouchableOpacity
               onPress={() => adjustTyped(-1)}
               onLongPress={() => startRepeat(-1)}
@@ -303,6 +319,7 @@ const Row = React.memo(function Row({
               onFocus={() => setFocusedInputId(item.id)}
               onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
               onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
+              editable={!isLocked}
               style={{
                 width: 80,
                 paddingVertical: Math.max(8, dens(6)),
@@ -326,7 +343,7 @@ const Row = React.memo(function Row({
             )}
           </View>
 
-          {showSteppers && (
+          {effectiveSteppers && (
             <TouchableOpacity
               onPress={() => adjustTyped(1)}
               onLongPress={() => startRepeat(1)}
@@ -653,6 +670,14 @@ function StockTakeAreaInventoryScreen() {
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
+  // Edit window state
+  const [overrideActive, setOverrideActive] = useState(false);
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [overrideReasonInput, setOverrideReasonInput] = useState('');
+  const [currentOverrideReason, setCurrentOverrideReason] = useState('');
+  const [editedItemIds, setEditedItemIds] = useState<Set<string>>(new Set());
+  const [highlightedItemIds, setHighlightedItemIds] = useState<Set<string>>(new Set());
+
   const [histFor, setHistFor] = useState<Item | null>(null);
   const [histRows, setHistRows] = useState<AuditEntry[]>([]);
   const [histLoading, setHistLoading] = useState(false);
@@ -773,6 +798,19 @@ function StockTakeAreaInventoryScreen() {
   const [localStartedAtMs, setLocalStartedAtMs] = React.useState<number|null>(null);
   const startedAtMs = localStartedAtMs ?? (areaMeta?.startedAt?.toMillis ? areaMeta.startedAt.toMillis() : (areaMeta?.startedAt?._seconds ? areaMeta.startedAt._seconds * 1000 : null));
   const areaStarted = !!startedAtMs;
+
+  // Edit window computed state
+  const isSubmitted = !!areaMeta?.completedAt;
+  const editWindowClosesAtMs = areaMeta?.editWindowClosesAt?.toMillis
+    ? areaMeta.editWindowClosesAt.toMillis()
+    : (areaMeta?.editWindowClosesAt?._seconds ? areaMeta.editWindowClosesAt._seconds * 1000 : null);
+  const editWindowOpen = isSubmitted && editWindowClosesAtMs != null
+    ? editWindowClosesAtMs > Date.now()
+    : false;
+  const windowMinutesLeft = editWindowOpen && editWindowClosesAtMs != null
+    ? Math.max(0, Math.round((editWindowClosesAtMs - Date.now()) / 60000))
+    : 0;
+  const canEdit = !isSubmitted || editWindowOpen || (isManager && overrideActive);
 
   const countedInThisCycle = (it: Item): boolean => {
     const lcMs = it?.lastCountAt?.toMillis ? it.lastCountAt.toMillis() : (it?.lastCountAt?._seconds ? it.lastCountAt._seconds * 1000 : null);
@@ -935,6 +973,13 @@ function StockTakeAreaInventoryScreen() {
           lastCountByName: cu?.displayName || 'Unknown',
           updatedAt: serverTimestamp(),
         }, { merge: true });
+        // Log edit if area was already submitted
+        if (isSubmitted && canEdit) {
+          const oldCount = typeof item.lastCount === 'number' ? item.lastCount : null;
+          const reason = isManager && overrideActive ? currentOverrideReason : 'within-edit-window';
+          await logEditToArea(item, oldCount, finalQty, reason, isManager && overrideActive);
+          setEditedItemIds(prev => { const n = new Set(prev); n.add(item.id); return n; });
+        }
       } catch (e: any) { console.error('[SaveCount] FAILED:', e?.code, e?.message); Alert.alert('Save failed', e?.message ?? String(e)); }
     };
     if (!forceReplace && existingCount !== null && existingCount > 0 && qty > 0) {
@@ -1362,10 +1407,81 @@ try {
     const counted = items.filter(hasLocalEntry);
     const missing = items.filter((it) => !hasLocalEntry(it));
     const flagged = items.filter((it) => !!it.flagRecount);
-    setReviewCounted(counted);
-    setReviewMissing(missing);
-    setReviewFlagged(flagged);
-    setReviewOpen(true);
+
+    // High variance detection — check before opening review modal
+    const highVariance = items.filter(it => {
+      const raw = (localQty[it.id] ?? '').trim();
+      const c = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
+      const expected = deriveExpected(it);
+      if (expected == null) return false;
+      const varianceAbs = Math.abs(c - expected);
+      const variancePct = expected > 0 ? varianceAbs / expected : 0;
+      const varianceDollars = typeof it.costPrice === 'number' ? varianceAbs * it.costPrice : 0;
+      if (typeof it.costPrice === 'number' && it.costPrice > 30 && varianceAbs > 0) return true;
+      if (varianceDollars > 50) return true;
+      if (variancePct > 0.2 && varianceAbs >= 2) return true;
+      return false;
+    });
+
+    const proceedToReview = () => {
+      setReviewCounted(counted);
+      setReviewMissing(missing);
+      setReviewFlagged(flagged);
+      setReviewOpen(true);
+    };
+
+    if (highVariance.length > 0) {
+      const hvList = highVariance.slice(0, 4).map(it => {
+        const raw = (localQty[it.id] ?? '').trim();
+        const c = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
+        const expected = deriveExpected(it);
+        const variance = expected != null ? c - expected : 0;
+        const dollar = typeof it.costPrice === 'number' ? Math.abs(variance * it.costPrice) : null;
+        return `• ${it.name} — counted ${c}, expected ${expected ?? '?'} (${variance > 0 ? '+' : ''}${variance}${dollar != null ? `, $${dollar.toFixed(0)}` : ''})`;
+      }).join('\n');
+      const overflow = highVariance.length > 4 ? `\n...and ${highVariance.length - 4} more` : '';
+
+      Alert.alert(
+        '⚠️ High variance detected',
+        `These items differ significantly from last stocktake:\n\n${hvList}${overflow}\n\nRecount before submitting?`,
+        [
+          { text: 'Recount now', style: 'cancel', onPress: () => {
+            setHighlightedItemIds(new Set(highVariance.map(it => it.id)));
+            const idx = filtered.findIndex(x => x.id === highVariance[0].id);
+            if (idx > -1) {
+              try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
+              setTimeout(() => inputRefs.current[highVariance[0].id]?.focus?.(), 80);
+            }
+            setTimeout(() => setHighlightedItemIds(new Set()), 5000);
+          }},
+          { text: 'Flag for review', onPress: async () => {
+            const _cu = getAuth().currentUser;
+            try {
+              await Promise.all(highVariance.map(it =>
+                updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id), {
+                  varianceFlagged: true, varianceFlaggedBy: _cu?.uid ?? 'unknown', varianceFlaggedAt: serverTimestamp(),
+                })
+              ));
+            } catch {}
+            proceedToReview();
+          }},
+          { text: 'Accept and submit', onPress: async () => {
+            const _cu = getAuth().currentUser;
+            try {
+              await Promise.all(highVariance.map(it =>
+                updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id), {
+                  varianceAccepted: true, varianceAcceptedBy: _cu?.uid ?? 'unknown', varianceAcceptedAt: serverTimestamp(),
+                })
+              ));
+            } catch {}
+            proceedToReview();
+          }},
+        ]
+      );
+      return;
+    }
+
+    proceedToReview();
   };
 
   const jumpToItem = (id: string) => {
@@ -1423,7 +1539,12 @@ try {
 
         await updateDoc(
           doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
-          { completedAt: serverTimestamp() }
+          {
+            completedAt: serverTimestamp(),
+            editWindowClosesAt: Timestamp.fromMillis(Date.now() + (60 * 60 * 1000)),
+            editWindowOpen: true,
+            edits: [],
+          }
         );
         const finalized = await maybeFinalizeDepartment();
         if (!finalized) nav.goBack();
@@ -1605,6 +1726,36 @@ const openHistory = throttleAction(async (item: Item) => {
     } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
   };
 
+  const logEditToArea = async (
+    item: Item,
+    oldCount: number | null,
+    newCount: number,
+    reason: string,
+    isManagerOverride = false,
+  ) => {
+    const cu = getAuth().currentUser;
+    try {
+      await updateDoc(
+        doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId),
+        {
+          edits: arrayUnion({
+            editedBy: cu?.uid ?? 'unknown',
+            editedByName: cu?.displayName || 'Unknown',
+            editedAt: new Date().toISOString(),
+            itemId: item.id,
+            itemName: item.name,
+            oldCount,
+            newCount,
+            reason,
+            isManagerOverride,
+          }),
+        }
+      );
+    } catch (e: any) {
+      console.warn('[logEditToArea] failed (non-fatal):', e?.message);
+    }
+  };
+
   // ── New capture handlers ──────────────────────────────────────────────────
 
   const handleShelfScanConfirm = async (products: { name: string; brand: string; size: string; category: string }[]) => {
@@ -1769,7 +1920,7 @@ const openHistory = throttleAction(async (item: Item) => {
         gap: 10,
       }}
     >
-      <TouchableOpacity
+      {!isSubmitted && <TouchableOpacity
         onPress={openReview}
         disabled={submittingArea}
         style={{
@@ -1800,9 +1951,9 @@ const openHistory = throttleAction(async (item: Item) => {
           We’ll show you any missing items that will be saved as 0 before you
           finalise.
         </Text>
-      </TouchableOpacity>
+      </TouchableOpacity>}
 
-      <TouchableOpacity
+      {!isSubmitted && <TouchableOpacity
         onPress={throttleAction(initAllZeros)}
         style={{
           paddingVertical: 12,
@@ -1820,7 +1971,7 @@ const openHistory = throttleAction(async (item: Item) => {
         >
           🟠 Initialise: set all uncounted to 0
         </Text>
-      </TouchableOpacity>
+      </TouchableOpacity>}
 
       <Text style={{ textAlign: 'center', color: '#666' }}>
         {countedCount}/{items.length} items counted
@@ -1967,6 +2118,38 @@ const openHistory = throttleAction(async (item: Item) => {
         )}
       </View>
 
+      {/* Edit window status banner */}
+      {isSubmitted && editWindowOpen && (
+        <View style={{ backgroundColor: '#FEF3C7', borderBottomWidth: 1, borderBottomColor: '#F59E0B', paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Text style={{ fontWeight: '800', color: '#92400E', fontSize: 13 }}>✏️ Submitted — corrections open</Text>
+          <Text style={{ color: '#92400E', fontSize: 12, marginTop: 1 }}>
+            Editable for {windowMinutesLeft} minute{windowMinutesLeft !== 1 ? 's' : ''} · All changes are logged
+          </Text>
+        </View>
+      )}
+      {isSubmitted && !editWindowOpen && !overrideActive && (
+        <View style={{ backgroundColor: '#F3F4F6', borderBottomWidth: 1, borderBottomColor: '#D1D5DB', paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View>
+            <Text style={{ fontWeight: '800', color: '#374151', fontSize: 13 }}>🔒 Submitted and locked</Text>
+            <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 1 }}>Edit window has closed</Text>
+          </View>
+          {isManager && (
+            <TouchableOpacity
+              onPress={() => { setOverrideReasonInput(''); setOverrideModalOpen(true); }}
+              style={{ backgroundColor: '#374151', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Manager override</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+      {isSubmitted && overrideActive && (
+        <View style={{ backgroundColor: '#FDF2F8', borderBottomWidth: 1, borderBottomColor: '#D946EF', paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Text style={{ fontWeight: '800', color: '#86198F', fontSize: 13 }}>🔓 Manager override active</Text>
+          <Text style={{ color: '#86198F', fontSize: 12, marginTop: 1 }}>All changes logged · Reason: {currentOverrideReason}</Text>
+        </View>
+      )}
+
       <FlatList
         ref={listRef}
         data={filtered}
@@ -1992,6 +2175,9 @@ const openHistory = throttleAction(async (item: Item) => {
             countedInThisCycle={countedInThisCycle}
             clampNonNegative={clampNonNegative}
             approveNow={approveNow}
+            isLocked={isSubmitted && !canEdit}
+            isEdited={editedItemIds.has(item.id)}
+            isHighlighted={highlightedItemIds.has(item.id)}
           />
         )}
         ListHeaderComponent={
@@ -2150,6 +2336,52 @@ const openHistory = throttleAction(async (item: Item) => {
             <TouchableOpacity onPress={closeHistory} style={{ marginTop:12, alignSelf:'center', paddingVertical:10, paddingHorizontal:16, borderRadius:10, backgroundColor:'#E5E7EB' }}>
               <Text style={{ fontWeight:'700' }}>Close</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Manager Override Modal */}
+      <Modal visible={overrideModalOpen} animationType="slide" transparent onRequestClose={() => setOverrideModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 8 }}>Manager override</Text>
+            <Text style={{ color: '#6B7280', marginBottom: 12 }}>
+              The edit window has closed. You can make corrections — all changes will be logged with your name and reason.
+            </Text>
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason for override</Text>
+              <TextInput
+                value={overrideReasonInput}
+                onChangeText={setOverrideReasonInput}
+                placeholder="e.g. Miscounted during handover"
+                style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }}
+                autoFocus
+              />
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity onPress={() => setOverrideModalOpen(false)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
+                <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!overrideReasonInput.trim()) { Alert.alert('Reason required', 'Enter a reason for the override.'); return; }
+                  setCurrentOverrideReason(overrideReasonInput.trim());
+                  setOverrideActive(true);
+                  setOverrideModalOpen(false);
+                  // Write override fields to area doc
+                  const cu = getAuth().currentUser;
+                  updateDoc(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), {
+                    managerOverride: true,
+                    overrideBy: cu?.uid ?? 'unknown',
+                    overrideAt: serverTimestamp(),
+                    overrideReason: overrideReasonInput.trim(),
+                  }).catch(() => {});
+                }}
+                style={{ padding: 12, borderRadius: 10, backgroundColor: '#374151', flex: 1 }}
+              >
+                <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Unlock for editing</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

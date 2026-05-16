@@ -250,6 +250,20 @@ service cloud.firestore {
             && request.resource.data.completedAt is timestamp
             && request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']);
 
+          // Edit window fields written on completion
+          allow update: if isVenueMember(venueId)
+            && request.resource.data.diff(resource.data).changedKeys()
+                 .hasOnly(['completedAt','editWindowClosesAt','editWindowOpen','edits']);
+
+          // Edit log appended within window
+          allow update: if isVenueMember(venueId)
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['edits']);
+
+          // Manager override fields
+          allow update: if hasVenueRole(venueId, ['manager','owner'])
+            && request.resource.data.diff(resource.data).changedKeys()
+                 .hasOnly(['managerOverride','overrideBy','overrideAt','overrideReason','edits']);
+
           allow delete: if hasVenueRole(venueId, ['manager','owner']) && areaOpen();
 
           match /items/{itemId} {
@@ -259,6 +273,19 @@ service cloud.firestore {
               return request.resource.data.diff(resource.data).changedKeys()
                 .hasOnly(['lastCount','lastCountAt','lastCountBy','lastCountByName','updatedAt'])
                 || request.resource.data.keys().hasAny(['lastCount','lastCountAt']);
+            }
+            function isVarianceUpdate() {
+              return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+                'varianceAccepted','varianceAcceptedBy','varianceAcceptedAt',
+                'varianceFlagged','varianceFlaggedBy','varianceFlaggedAt'
+              ]);
+            }
+            function areaEditWindowOpen() {
+              let areaData = get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data;
+              return areaData.editWindowOpen == true ||
+                (areaData.keys().hasAny(['editWindowClosesAt']) &&
+                 areaData.editWindowClosesAt is timestamp &&
+                 areaData.editWindowClosesAt > request.time);
             }
             function isLinkUpdate() {
               let keys = request.resource.data.diff(resource.data).changedKeys();
@@ -361,6 +388,16 @@ service cloud.firestore {
 
             allow update: if isVenueMember(venueId) && areaOpen()
               && (isCountUpdate() || isLinkUpdate() || isMetaUpdate() || isInductionUpdate());
+
+            // Allow count edits within the 60-minute edit window
+            allow update: if isVenueMember(venueId) && isCountUpdate() && areaEditWindowOpen();
+
+            // Allow manager override edits after window closes
+            allow update: if hasVenueRole(venueId, ['manager','owner']) && isCountUpdate()
+              && get(/databases/$(database)/documents/venues/$(venueId)/departments/$(departmentId)/areas/$(areaId)).data.managerOverride == true;
+
+            // Variance acceptance/flagging by any member before submission completes
+            allow update: if isVenueMember(venueId) && isVarianceUpdate();
 
             allow delete: if isVenueMember(venueId) && areaOpen();
           }
