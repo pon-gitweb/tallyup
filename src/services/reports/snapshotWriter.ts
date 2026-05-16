@@ -31,6 +31,28 @@ export async function writeDepartmentSnapshot(
     const deptData = deptSnap.exists() ? (deptSnap.data() as any) : {};
     const departmentName: string = deptData.name || departmentId;
 
+    // ── FIX 1: Load previous cycle snapshot for correct openingCount ──────────
+    // confirmedCount on item docs = CURRENT cycle count (overwritten by completeArea).
+    // The only reliable previous-cycle baseline is the prior snapshot's actualClosing.
+    const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
+    if (cycleNumber > 1) {
+      try {
+        const prevSnapshotId = `cycle-${cycleNumber - 1}`;
+        const prevSnap = await getDoc(
+          doc(db, 'venues', venueId, 'departments', departmentId, 'snapshots', prevSnapshotId),
+        );
+        if (prevSnap.exists()) {
+          const prevData = prevSnap.data() as any;
+          for (const item of (prevData.items || [])) {
+            const key = (item.name || '').toLowerCase().trim();
+            if (key && typeof item.actualClosing === 'number') {
+              prevItemMap.set(key, item.actualClosing);
+            }
+          }
+        }
+      } catch { /* previous snapshot may not exist — non-fatal */ }
+    }
+
     // Read all areas + items in this department
     const areasSnap = await getDocs(
       collection(db, 'venues', venueId, 'departments', departmentId, 'areas'),
@@ -68,7 +90,7 @@ export async function writeDepartmentSnapshot(
       ? Math.max(0, Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 60000))
       : 0;
 
-    // Days since last cycle (use the pre-increment value that was stored before this run)
+    // Days since last cycle (use the pre-increment value stored before this run)
     const prevCycleDateMs = cycleNumber > 1 ? toMs(deptData.lastCycleAt) : null;
     const daysSinceLastCycle = prevCycleDateMs
       ? Math.round((cycleEnd.getTime() - prevCycleDateMs) / (1000 * 60 * 60 * 24))
@@ -80,7 +102,14 @@ export async function writeDepartmentSnapshot(
     let totalPricedItems = 0;
 
     const snapshotItems: any[] = rawItems.map(item => {
-      const openingCount = typeof item.confirmedCount === 'number' ? item.confirmedCount : null;
+      const rawName = (item.name || '').toLowerCase().trim();
+
+      // FIX 1: Use previous snapshot's actualClosing as openingCount.
+      // For cycle 1 (no previous snapshot), openingCount is null.
+      const openingCount: number | null = cycleNumber > 1
+        ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
+        : null;
+
       const actualClosing = typeof item.lastCount === 'number' ? item.lastCount : 0;
       const costPrice = typeof item.costPrice === 'number' ? item.costPrice : null;
       const parLevel = typeof item.parLevel === 'number' ? item.parLevel : null;
@@ -127,8 +156,8 @@ export async function writeDepartmentSnapshot(
 
         varianceConfidence: openingCount != null ? 'high' : 'low',
         confidenceReason: openingCount == null
-          ? 'No baseline — first cycle for this product'
-          : 'Baseline exists',
+          ? (cycleNumber === 1 ? 'First cycle for department' : 'New product — no prior cycle')
+          : 'Baseline from previous cycle snapshot',
 
         // Who counted this item
         lastCountBy: item.lastCountBy || null,
@@ -137,25 +166,42 @@ export async function writeDepartmentSnapshot(
 
         // Internal helpers for matching — stripped before write
         _rawProductId: item.productId || null,
-        _rawName: (item.name || '').toLowerCase().trim(),
+        _rawName: rawName,
       };
     });
 
-    // STEP A — Enrich with invoice data
+    // STEP A — Enrich with invoice data (FIX 3+4: try invoiceDateTimestamp then date; read name/productName)
     let hasInvoices = false;
     try {
       if (cycleStart) {
         const startTs = Timestamp.fromDate(cycleStart);
         const endTs = Timestamp.fromDate(cycleEnd);
-        const invoicesSnap = await getDocs(
-          query(
+
+        // Query using invoiceDateTimestamp first (added by FIX 3), then fall back to date
+        let invoiceDocs: any[] = [];
+        try {
+          const snap1 = await getDocs(query(
+            collection(db, 'venues', venueId, 'invoices'),
+            where('invoiceDateTimestamp', '>=', startTs),
+            where('invoiceDateTimestamp', '<=', endTs),
+          ));
+          invoiceDocs = snap1.docs;
+        } catch {}
+
+        // Also query legacy 'date' field and merge (avoid duplicates by id)
+        try {
+          const snap2 = await getDocs(query(
             collection(db, 'venues', venueId, 'invoices'),
             where('date', '>=', startTs),
             where('date', '<=', endTs),
-          ),
-        );
+          ));
+          const seenIds = new Set(invoiceDocs.map(d => d.id));
+          for (const d of snap2.docs) {
+            if (!seenIds.has(d.id)) invoiceDocs.push(d);
+          }
+        } catch {}
 
-        for (const invDoc of invoicesSnap.docs) {
+        for (const invDoc of invoiceDocs) {
           const linesSnap = await getDocs(
             collection(db, 'venues', venueId, 'invoices', invDoc.id, 'lines'),
           );
@@ -164,13 +210,26 @@ export async function writeDepartmentSnapshot(
           linesSnap.forEach(lineDoc => {
             const line = lineDoc.data() as any;
             const lineProductId = line.productId || lineDoc.id;
-            const lineQty = typeof line.qty === 'number' ? line.qty : 0;
+            // FIX 4: accept both 'productName' and 'name' for product name on lines
+            const lineName = (line.productName || line.name || '').toLowerCase().trim();
+            // FIX 4: accept all cost field variants
+            const lineQty = typeof line.qty === 'number' ? line.qty :
+                            typeof line.quantity === 'number' ? line.quantity : 0;
+            const lineUnitCost = typeof line.unitCost === 'number' ? line.unitCost :
+                                 typeof line.cost === 'number' ? line.cost :
+                                 typeof line.unitPrice === 'number' ? line.unitPrice :
+                                 typeof line.price === 'number' ? line.price : 0;
+
             const match = snapshotItems.find(si =>
               (si._rawProductId && si._rawProductId === lineProductId) ||
-              (si._rawName && si._rawName === (line.productName || '').toLowerCase().trim()),
+              (si._rawName && lineName && si._rawName === lineName),
             );
             if (match) {
               match.receivedQty = (match.receivedQty || 0) + lineQty;
+              // Update per-unit cost if not already set on the snapshot item
+              if (!match._invoiceUnitCost && lineUnitCost > 0) {
+                match._invoiceUnitCost = lineUnitCost;
+              }
               if (match.openingCount != null) {
                 match.expectedClosing = match.openingCount + match.receivedQty;
                 match.unexplainedVarianceQty = match.actualClosing - match.expectedClosing;
@@ -183,6 +242,42 @@ export async function writeDepartmentSnapshot(
         }
       }
     } catch { /* invoice enrichment is best-effort */ }
+
+    // STEP A2 — FIX 5: Enrich with sales data (soldQty)
+    let hasSales = false;
+    try {
+      if (cycleStart) {
+        const startIso = cycleStart.toISOString().slice(0, 10);
+        const endIso = cycleEnd.toISOString().slice(0, 10);
+        const salesSnap = await getDocs(
+          collection(db, 'venues', venueId, 'salesReports'),
+        );
+        // salesReports have { report: { period: { start, end }, lines: [{name, qtySold}] } }
+        for (const salesDoc of salesSnap.docs) {
+          const salesData = salesDoc.data() as any;
+          const report = salesData.report;
+          if (!report || !Array.isArray(report.lines)) continue;
+
+          // Check if period overlaps with cycle window
+          const periodStart = report.period?.start ?? null;
+          const periodEnd = report.period?.end ?? null;
+          const overlapStart = !periodEnd || periodEnd >= startIso;
+          const overlapEnd = !periodStart || periodStart <= endIso;
+          if (!overlapStart || !overlapEnd) continue;
+
+          for (const line of report.lines) {
+            const lineName = (line.name || '').toLowerCase().trim();
+            const qtySold = typeof line.qtySold === 'number' ? line.qtySold : 0;
+            if (!lineName || qtySold <= 0) continue;
+            const match = snapshotItems.find(si => si._rawName === lineName);
+            if (match) {
+              match.soldQty = (match.soldQty ?? 0) + qtySold;
+              hasSales = true;
+            }
+          }
+        }
+      }
+    } catch { /* sales enrichment is best-effort */ }
 
     // STEP B — Missing invoice detection (gain > 2 units with no invoice received)
     const likelyMissingInvoices: any[] = [];
@@ -226,9 +321,10 @@ export async function writeDepartmentSnapshot(
           orderLinesSnap.forEach(lineDoc => {
             const line = lineDoc.data() as any;
             const orderedQty = typeof line.qty === 'number' ? line.qty : 0;
+            const lineName = (line.productName || line.name || '').toLowerCase().trim();
             const match = snapshotItems.find(si =>
               (si._rawProductId && si._rawProductId === (line.productId || lineDoc.id)) ||
-              (si._rawName && si._rawName === (line.productName || line.name || '').toLowerCase().trim()),
+              (si._rawName && lineName && si._rawName === lineName),
             );
             if (match && orderedQty > 0 && match.receivedQty < orderedQty) {
               poDiscrepancies.push({
@@ -292,14 +388,32 @@ export async function writeDepartmentSnapshot(
       ? Math.round((totalPricedItems / rawItems.length) * 100)
       : 0;
 
+    // FIX 8 — Data quality validation
+    const validationIssues: string[] = [];
+    const allZeroVariance = snapshotItems.length > 0 && snapshotItems.every(si => si.totalVarianceQty === 0);
+    if (allZeroVariance && cycleNumber > 1) {
+      validationIssues.push('All variances are zero — possible data issue');
+      console.warn('[Snapshot] All variances zero:', { venueId, departmentId, cycleNumber });
+    }
+    const missingBaselineCount = snapshotItems.filter(si => si.openingCount === null).length;
+    if (missingBaselineCount === snapshotItems.length && snapshotItems.length > 0) {
+      validationIssues.push(cycleNumber === 1
+        ? 'First cycle — no baseline (expected)'
+        : 'No baseline counts — previous snapshot missing',
+      );
+    }
+    const dataQualityScore = validationIssues.length === 0
+      ? 100
+      : Math.max(0, 100 - (validationIssues.length * 25));
+
     const dataCompleteness = {
       hasBaseline,
       hasInvoices,
-      hasSales: false,
+      hasSales,
       hasRecipes: false,
       hasWastage: false,
       hasPrices,
-      tier: hasInvoices ? 2 : 1,
+      tier: hasSales ? 3 : hasInvoices ? 2 : 1,
       pricedItemPercent,
       invoiceCoverage: 0,
       salesCoverage: 0,
@@ -322,7 +436,7 @@ export async function writeDepartmentSnapshot(
 
     // Clean internal helpers from items before writing
     const cleanItems = snapshotItems.slice(0, 200).map(si => {
-      const { _rawProductId, _rawName, ...rest } = si;
+      const { _rawProductId, _rawName, _invoiceUnitCost, ...rest } = si;
       return rest;
     });
 
@@ -348,6 +462,8 @@ export async function writeDepartmentSnapshot(
         patterns: [],
       },
       recommendations: recommendations.slice(0, 20),
+      validationIssues,
+      dataQualityScore,
     };
 
     // Write department snapshot
@@ -401,7 +517,14 @@ export async function writeDepartmentSnapshot(
       deptsWithData: deptSummaries.length,
     });
 
-    console.log(`[snapshotWriter] cycle-${cycleNumber} written for dept ${departmentId}`);
+    console.log(`[snapshotWriter] cycle-${cycleNumber} written for dept ${departmentId}`, {
+      items: cleanItems.length,
+      hasBaseline,
+      hasInvoices,
+      hasSales,
+      dataQualityScore,
+      validationIssues,
+    });
   } catch (e: any) {
     console.error('[snapshotWriter] failed:', e?.message || e);
     // Non-fatal — stocktake already completed

@@ -103,6 +103,12 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
       if (openingCount != null && cycleWeeks != null && cycleWeeks > 0) {
         const usage = openingCount + receivedQty - actualClosing;
         velocity = usage / cycleWeeks;
+      } else if (openingCount == null && cycleWeeks != null && cycleWeeks > 0) {
+        // First cycle for this product — no prior baseline.
+        // If deliveries were received and stock > 0, use closing as conservative usage estimate.
+        if (receivedQty > 0 && actualClosing >= 0) {
+          velocity = Math.max(0, receivedQty - actualClosing) / cycleWeeks;
+        }
       }
 
       const entry: CycleEntry = {

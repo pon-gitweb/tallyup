@@ -112,7 +112,7 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
       itemsSnap.forEach(itemDoc => {
         const data = itemDoc.data();
         if (typeof data.confirmedCount === 'number') {
-          itemBatch.update(itemDoc.ref, { lastCount: data.confirmedCount, lastCountAt: data.confirmedCountAt ?? null });
+          itemBatch.update(itemDoc.ref, { lastCount: data.confirmedCount, lastCountAt: null });
           hasRestores = true;
         }
       });

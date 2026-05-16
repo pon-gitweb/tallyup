@@ -129,7 +129,8 @@ export async function upsertInvoiceFromOrder(venueId: string, uid: string, input
     supplierId: order.supplierId || null,
     supplierName: order.supplierName || null,
     number: input.invoiceNumber.trim(),
-    date: invoiceDate,
+    date: invoiceDate,                    // Timestamp (already correct)
+    invoiceDateTimestamp: invoiceDate,    // FIX 3: canonical alias used by queries
     status: 'posted',
     totals: { subtotal },
     variance,          // { varianceValue, items[] }
@@ -149,6 +150,7 @@ export async function upsertInvoiceFromOrder(venueId: string, uid: string, input
       productName: l.productName || null,
       qty: Number(l.qty || 0),
       cost: Number(l.cost || 0),
+      unitCost: Number(l.cost || 0),  // FIX 4: alias so spend service reads correctly
     });
   }
 

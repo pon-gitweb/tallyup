@@ -5,7 +5,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { db } from '../../services/firebase';
 import {
-  doc, getDoc, getDocs, collection, addDoc, writeBatch, serverTimestamp, setDoc, updateDoc,
+  doc, getDoc, getDocs, collection, addDoc, writeBatch, serverTimestamp, setDoc, updateDoc, Timestamp,
 } from 'firebase/firestore';
 
 type Order = {
@@ -105,12 +105,19 @@ export default function InvoiceScreen() {
       setLoading(true);
 
       // create invoice doc
+      // FIX 3: Write both invoiceDate (string) and date/invoiceDateTimestamp (Timestamp)
+      // so snapshotWriter and supplierSpendService can query by date range.
+      const invoiceDateTs = invoiceDate
+        ? (() => { try { return Timestamp.fromDate(new Date(invoiceDate + 'T00:00:00')); } catch { return null; } })()
+        : null;
       const invCol = collection(db, 'venues', venueId, 'invoices');
       const invRef = await addDoc(invCol, {
         orderId,
         supplierId: order.supplierId,
         invoiceNo: invoiceNo.trim(),
         invoiceDate: invoiceDate || null,
+        date: invoiceDateTs,                   // Timestamp alias for query compatibility
+        invoiceDateTimestamp: invoiceDateTs,   // canonical Timestamp field
         status: 'posted',
         total,
         createdAt: serverTimestamp(),

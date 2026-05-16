@@ -57,11 +57,17 @@ async function sumInvoiceLines(
         const line = lineDoc.data() as any;
         const pid = line.productId || lineDoc.id;
         const pname = (line.productName || line.name || 'Unknown').toLowerCase().trim();
-        const qty = typeof line.qty === 'number' ? line.qty : 0;
+        const qty = typeof line.qty === 'number' ? line.qty :
+                    typeof line.quantity === 'number' ? line.quantity : 0;
+        // FIX 4: accept all cost field variants across invoice write paths
         const unitCost =
           typeof line.unitCost === 'number' ? line.unitCost :
+          typeof line.cost === 'number' ? line.cost :
+          typeof line.unitPrice === 'number' ? line.unitPrice :
           typeof line.price === 'number' ? line.price : 0;
-        const total = typeof line.total === 'number' ? line.total : qty * unitCost;
+        const total = typeof line.lineTotal === 'number' ? line.lineTotal :
+                      typeof line.total === 'number' ? line.total :
+                      qty * unitCost;
 
         const existing = map.get(pname);
         if (existing) {
@@ -94,18 +100,34 @@ export async function calculateSupplierSpend(
   const startTs = Timestamp.fromDate(periodStart);
   const endTs = Timestamp.fromDate(periodEnd);
 
-  // Read invoices for this supplier in the period
+  // FIX 3: Read invoices using invoiceDateTimestamp first, then legacy 'date' field.
+  // InvoiceScreen wrote 'invoiceDate' (string); upsertInvoiceFromOrder wrote 'date' (Timestamp).
+  // Both now also write 'invoiceDateTimestamp' for forward compatibility.
   let invoiceDocs: any[] = [];
   try {
-    const invSnap = await getDocs(
-      query(
+    const seen = new Set<string>();
+    // Query invoiceDateTimestamp (new canonical field)
+    try {
+      const snap1 = await getDocs(query(
+        collection(db, 'venues', venueId, 'invoices'),
+        where('supplierId', '==', supplierId),
+        where('invoiceDateTimestamp', '>=', startTs),
+        where('invoiceDateTimestamp', '<=', endTs),
+      ));
+      for (const d of snap1.docs) { seen.add(d.id); invoiceDocs.push({ id: d.id, ...d.data() }); }
+    } catch {}
+    // Also query legacy 'date' field and merge
+    try {
+      const snap2 = await getDocs(query(
         collection(db, 'venues', venueId, 'invoices'),
         where('supplierId', '==', supplierId),
         where('date', '>=', startTs),
         where('date', '<=', endTs),
-      ),
-    );
-    invoiceDocs = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      ));
+      for (const d of snap2.docs) {
+        if (!seen.has(d.id)) { seen.add(d.id); invoiceDocs.push({ id: d.id, ...d.data() }); }
+      }
+    } catch {}
   } catch {}
 
   const productMap = await sumInvoiceLines(venueId, invoiceDocs);
@@ -170,22 +192,23 @@ export async function calculateSupplierSpend(
   let spendTrend: number | null = null;
   let spendTrendPercent: number | null = null;
   try {
-    const prevSnap = await getDocs(
-      query(
-        collection(db, 'venues', venueId, 'invoices'),
-        where('supplierId', '==', supplierId),
-        where('date', '>=', Timestamp.fromDate(prevStart)),
-        where('date', '<=', Timestamp.fromDate(prevEnd)),
-      ),
-    );
-    if (!prevSnap.empty) {
-      const prevDocs = prevSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const prevStartTs = Timestamp.fromDate(prevStart);
+    const prevEndTs = Timestamp.fromDate(prevEnd);
+    const prevSeen = new Set<string>();
+    const prevDocs: any[] = [];
+    try {
+      const ps1 = await getDocs(query(collection(db, 'venues', venueId, 'invoices'), where('supplierId', '==', supplierId), where('invoiceDateTimestamp', '>=', prevStartTs), where('invoiceDateTimestamp', '<=', prevEndTs)));
+      for (const d of ps1.docs) { prevSeen.add(d.id); prevDocs.push({ id: d.id, ...d.data() }); }
+    } catch {}
+    try {
+      const ps2 = await getDocs(query(collection(db, 'venues', venueId, 'invoices'), where('supplierId', '==', supplierId), where('date', '>=', prevStartTs), where('date', '<=', prevEndTs)));
+      for (const d of ps2.docs) { if (!prevSeen.has(d.id)) { prevSeen.add(d.id); prevDocs.push({ id: d.id, ...d.data() }); } }
+    } catch {}
+    if (prevDocs.length > 0) {
       const prevMap = await sumInvoiceLines(venueId, prevDocs);
       previousPeriodSpend = Array.from(prevMap.values()).reduce((s, p) => s + p.totalCost, 0);
       spendTrend = totalSpend - previousPeriodSpend;
-      spendTrendPercent = previousPeriodSpend > 0
-        ? Math.round((spendTrend / previousPeriodSpend) * 100)
-        : null;
+      spendTrendPercent = previousPeriodSpend > 0 ? Math.round((spendTrend / previousPeriodSpend) * 100) : null;
     }
   } catch {}
 
