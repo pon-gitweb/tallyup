@@ -78,10 +78,14 @@ export default function SuggestedOrderScreen(){
   const [depts,setDepts]=useState<Dept[]>([]);
   const [selectedDeptId,setSelectedDeptId]=useState<string>('ALL');
 
-  // Quick-assign supplier UI state
+  // Quick-assign supplier UI state (permanent — updates product doc)
   const [assignForProductId,setAssignForProductId]=useState<string|null>(null);
   const [suppliers,setSuppliers]=useState<SupplierLite[]>([]);
   const [assignOpen,setAssignOpen]=useState(false);
+
+  // Temp supplier reassignment for this order only (does not update product doc)
+  const [reassignForLine,setReassignForLine]=useState<any|null>(null);
+  const [reassignOpen,setReassignOpen]=useState(false);
 
   const didInitRef=useRef(false);
 
@@ -517,6 +521,39 @@ export default function SuggestedOrderScreen(){
     }
   },[db,venueId,assignForProductId,doRefreshRaw]);
 
+  // Temp reassign: move a line from current supplier bucket to another in local snapshot state
+  const tempReassignLine = useCallback((line:any, newSupplierId:string, newSupplierName:string)=>{
+    if(!snapshot) return;
+    setSnapshot((prev:any) => {
+      if (!prev) return prev;
+      const next = { buckets: { ...prev.buckets }, unassigned: { lines: [...(prev.unassigned?.lines||[])] }, _meta: prev._meta };
+
+      // Remove from current supplier bucket or unassigned
+      const currentSid = supplierPreview?.supplierId;
+      if (currentSid === 'unassigned') {
+        next.unassigned = { lines: next.unassigned.lines.filter((l:any) => l.productId !== line.productId) };
+      } else if (currentSid && next.buckets[currentSid]) {
+        next.buckets[currentSid] = { ...next.buckets[currentSid], lines: next.buckets[currentSid].lines.filter((l:any) => l.productId !== line.productId) };
+      }
+
+      // Add to new supplier bucket
+      const updatedLine = { ...line, needsSupplier: false };
+      if (newSupplierId === 'unassigned') {
+        next.unassigned = { lines: [...next.unassigned.lines, updatedLine] };
+      } else {
+        if (!next.buckets[newSupplierId]) next.buckets[newSupplierId] = { supplierName: newSupplierName, lines: [] };
+        next.buckets[newSupplierId] = { ...next.buckets[newSupplierId], lines: [...next.buckets[newSupplierId].lines, updatedLine] };
+      }
+      return next;
+    });
+    setReassignOpen(false);
+    setReassignForLine(null);
+    // Update the preview too
+    setSupplierPreview((prev:any) => prev ? { ...prev, lines: (prev.lines||[]).filter((l:any) => l.productId !== line.productId) } : prev);
+    // Recompute rows
+    setTimeout(() => computeRowsFromSnapshot(snapshot), 50);
+  },[snapshot, supplierPreview, computeRowsFromSnapshot]);
+
   const onToggleMode=useCallback(async(nextMode:'math'|'ai')=>{
     if(nextMode==='ai'&&!entitled){ setPayOpen(true); return; }
     setMode(nextMode);
@@ -637,10 +674,13 @@ export default function SuggestedOrderScreen(){
               {mode === 'ai' ? 'AI snapshot context' : 'Math snapshot context'}
             </Text>
             <Text style={S.metaText}>
-              Engine: {mode === 'ai' ? 'AI + recent history' : 'PAR-based maths'}
+              Engine: velocity-driven math
+              {meta.snapshotsUsed > 0 ? ` · ${meta.snapshotsUsed} stocktake cycle${meta.snapshotsUsed===1?'':'s'} analysed` : ' · No stocktake data yet'}
             </Text>
             <Text style={S.metaText}>
-              Suppliers: {meta.suppliersWithLines ?? 0} · Lines: {meta.totalLines ?? 0}
+              {meta.velocityDriven > 0
+                ? `${meta.velocityDriven} velocity-driven · ${(meta.totalLines||0) - (meta.velocityDriven||0)} PAR-based`
+                : 'PAR-based (complete stocktakes for velocity data)'}
             </Text>
             {generatedLabel && (
               <Text style={S.metaText}>{generatedLabel}</Text>
@@ -685,23 +725,50 @@ export default function SuggestedOrderScreen(){
 
             <ScrollView keyboardShouldPersistTaps="handled">
               {(supplierPreview?.lines || []).map((l: any) => (
-                <View key={l.productId} style={S.lineRow}>
+                <TouchableOpacity
+                  key={l.productId}
+                  style={S.lineRow}
+                  onLongPress={() => { setReassignForLine(l); setReassignOpen(true); }}
+                  delayLongPress={400}
+                  activeOpacity={0.8}
+                >
                   <View style={{ flex: 1 }}>
+                    {/* Flag banner */}
+                    {l.flag && (
+                      <Text style={S.flagText}>⚠️ {l.flagMessage}</Text>
+                    )}
                     <Text style={S.lineName}>{l.productName || l.productId}</Text>
-                    <Text style={S.rowSub}>
-                      Qty {l.qty}
-                      {Number.isFinite(l?.packSize) && l.packSize ? ` · Pack ${l.packSize}` : ''}
-                      {Number.isFinite(l?.cost) && l.cost ? ` · $${Number(l.cost).toFixed(2)}` : ''}
-                    </Text>
+                    {/* Velocity reason line */}
+                    {l.reason === 'velocity-driven' && l.velocityPerWeek != null ? (
+                      <Text style={S.rowSub}>
+                        Order {l.qty} · {l.velocityPerWeek}/week velocity · {l.confidence} confidence
+                        {l.trendNote ? ` · ${l.trendNote}` : ''}
+                        {l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
+                      </Text>
+                    ) : l.reason === 'par-based' ? (
+                      <Text style={S.rowSub}>
+                        Order {l.qty} · Below PAR · No velocity data yet
+                        {l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
+                      </Text>
+                    ) : (
+                      <Text style={S.rowSub}>
+                        Qty {l.qty}
+                        {Number.isFinite(l?.packSize) && l.packSize ? ` · Pack ${l.packSize}` : ''}
+                        {Number.isFinite(l?.cost) && l.cost ? ` · $${Number(l.cost).toFixed(2)}` : ''}
+                      </Text>
+                    )}
+                    {l.estimatedCost != null && l.estimatedCost > 0 && (
+                      <Text style={[S.rowSub,{color:'#374151'}]}>Est. ${l.estimatedCost.toFixed(2)}</Text>
+                    )}
                   </View>
 
-                  {/* Quick-assign button appears only in Unassigned preview */}
+                  {/* Quick-assign button appears only in Unassigned preview (permanent) */}
                   {supplierPreview?.supplierId === 'unassigned' && (
                     <TouchableOpacity style={S.assignBtn} onPress={()=>openAssignForProduct(l.productId)}>
                       <Text style={S.assignBtnText}>Assign</Text>
                     </TouchableOpacity>
                   )}
-                </View>
+                </TouchableOpacity>
               ))}
               {(supplierPreview?.lines?.length || 0) === 0 && (
                 <Text style={S.rowSub}>No lines to show.</Text>
@@ -741,6 +808,29 @@ export default function SuggestedOrderScreen(){
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
               <TouchableOpacity onPress={()=>setAssignOpen(false)} style={[S.smallBtn,{backgroundColor:'#e5e7eb'}]}>
                 <Text style={[S.smallBtnText,{color:'#111827'}]}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Temp Supplier Reassignment (this order only) */}
+      <Modal visible={reassignOpen} transparent animationType="slide" onRequestClose={()=>{ setReassignOpen(false); setReassignForLine(null); }}>
+        <View style={S.modalBack}>
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Move to supplier</Text>
+            <Text style={S.rowSub}>For this order only — won't change product settings</Text>
+            <ScrollView style={{ marginTop:8 }}>
+              {suppliers.map(sup=>(
+                <TouchableOpacity key={sup.id} style={S.row} onPress={()=>tempReassignLine(reassignForLine, sup.id, sup.name)}>
+                  <Text style={S.rowTitle}>{sup.name}</Text>
+                </TouchableOpacity>
+              ))}
+              {suppliers.length===0 && <Text style={S.rowSub}>No suppliers yet.</Text>}
+            </ScrollView>
+            <View style={{ flexDirection:'row', justifyContent:'flex-end', gap:10, marginTop:12 }}>
+              <TouchableOpacity onPress={()=>{ setReassignOpen(false); setReassignForLine(null); }} style={[S.smallBtn,{backgroundColor:'#e5e7eb'}]}>
+                <Text style={[S.smallBtnText,{color:'#111827'}]}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -823,6 +913,7 @@ const S = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee'
   },
   lineName: { fontSize: 14, fontWeight: '600' },
+  flagText: { fontSize: 11, color: '#92400E', backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginBottom: 3, alignSelf: 'flex-start' },
 
   smallBtn: { backgroundColor: '#111827', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
   smallBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },

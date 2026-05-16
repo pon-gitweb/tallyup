@@ -5,7 +5,7 @@ import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
-import ConfirmedRecipeDetailPanel from './ConfirmedRecipeDetailPanel';
+import RecipeDetailScreen from './RecipeDetailScreen';
 import { useColours } from '../../context/ThemeContext';
 
 type Filter = 'all' | 'confirmed' | 'drafts';
@@ -153,7 +153,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
       {/* Read-only detail for confirmed recipes */}
       <Modal visible={!!viewId} animationType="slide" onRequestClose={() => setViewId(null)}>
         <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
-          {viewId ? <ConfirmedRecipeDetailPanel recipeId={viewId} onClose={() => setViewId(null)} /> : null}
+          {viewId ? <RecipeDetailScreen recipeId={viewId} onBack={() => setViewId(null)} /> : null}
         </SafeAreaView>
       </Modal>
     </SafeAreaView>

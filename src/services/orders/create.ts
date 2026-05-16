@@ -4,6 +4,7 @@ import {
   writeBatch,
   serverTimestamp,
   getDoc,
+  getDocs,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -56,6 +57,20 @@ export async function createDraftOrderWithLines(
   const itemsCount = cleaned.length;
   const subtotal = cleaned.reduce((acc, l) => acc + l.qty * (l.unitCost ?? 0), 0);
 
+  // Generate PO number: VENUEPREFIX-YYYYMMDD-NNNN
+  let poNumber: string | null = null;
+  try {
+    const venueSnap = await getDoc(doc(db, 'venues', venueId));
+    const venueName = (venueSnap.data() as any)?.name ?? '';
+    const venuePrefix = venueName.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ORD';
+    const ordersSnap = await getDocs(collection(db, 'venues', venueId, 'orders'));
+    const orderCount = ordersSnap.size;
+    const now2 = new Date();
+    const dateStr = now2.toISOString().replace(/-/g, '').slice(0, 8);
+    const sequence = (orderCount + 1).toString().padStart(4, '0');
+    poNumber = `${venuePrefix}-${dateStr}-${sequence}`;
+  } catch { /* non-fatal — order created without PO number */ }
+
   const ordersCol = collection(db, 'venues', venueId, 'orders');
   const orderRef = doc(ordersCol);
   const batch = writeBatch(db);
@@ -77,6 +92,7 @@ export async function createDraftOrderWithLines(
     notes: notes ?? null,
     origin: 'suggested',
     source: 'suggestedOrders',
+    poNumber: poNumber ?? null,
     createdAt: now,
     updatedAt: now,
   };

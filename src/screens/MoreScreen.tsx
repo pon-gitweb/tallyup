@@ -77,6 +77,11 @@ export default function MoreScreen() {
         </View>
 
         <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>
+          <SectionHeader title="Recipes" />
+          <Row icon="🍹" label="Recipes (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
+        </View>
+
+        <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>
           <SectionHeader title="Team" />
           <Row icon="👥" label="Team Members" onPress={() => nav.navigate('TeamMembers')} />
           <Row icon="⚙️" label="Settings"     onPress={() => nav.navigate('Settings')} />

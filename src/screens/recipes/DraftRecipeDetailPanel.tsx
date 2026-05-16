@@ -337,6 +337,21 @@ const isRrpManual =
           mode={mode}
         />
 
+        {/* Nudge: unlinked ingredients don't update when prices change */}
+        {items.length > 0 && (() => {
+          const unlinked = items.filter(r => !r.link?.productId || r.link.productId === 'misc').length;
+          return unlinked > 0 ? (
+            <View style={{ padding:10, borderRadius:10, backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B', marginTop:4 }}>
+              <Text style={{ fontSize:12, color:'#92400E', fontWeight:'700' }}>
+                {unlinked} ingredient{unlinked>1?'s are':' is'} not linked to venue products
+              </Text>
+              <Text style={{ fontSize:12, color:'#92400E', marginTop:2 }}>
+                Search and select products from the ingredient search above to link them — linked ingredients get automatic price updates when invoices are scanned (🔗).
+              </Text>
+            </View>
+          ) : null;
+        })()}
+
         <Card>
           <Row label="Derived COGS (per serve)" value={formatMoney(cogsPerServe)} />
           <Text style={{ fontSize:11, opacity:0.7, marginTop:4 }}>

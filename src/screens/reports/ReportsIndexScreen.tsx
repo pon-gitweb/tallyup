@@ -961,6 +961,7 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
       <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
       <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
       <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
+      <NavTile title="🍹 Recipe Costs (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
     </View>
   );
 }

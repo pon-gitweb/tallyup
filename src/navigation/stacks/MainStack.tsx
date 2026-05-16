@@ -69,6 +69,9 @@ import NewOrderScreen from '../../screens/orders/NewOrderScreen';
 import NewOrderStartScreen from '../../screens/orders/NewOrderStartScreen';
 import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
+// Recipes / CraftUp
+import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
+
 // Products (setup area)
 import ProductsScreen from '../../screens/setup/ProductsScreen';
 import ProductsCsvImportScreen from '../../screens/setup/ProductsCsvImportScreen';
@@ -188,6 +191,9 @@ export default function MainStack() {
         component={DepartmentVarianceScreen}
         options={{ title: 'Department Variance' }}
       />
+
+      {/* Recipes */}
+      <Stack.Screen name="CraftUp" component={CraftUpListScreen} options={{ title: 'Recipes (CraftUp)' }} />
 
       {/* Orders */}
       <Stack.Screen

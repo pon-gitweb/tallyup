@@ -365,36 +365,16 @@ app.post("/variance-explain", async (req, res) => {
 });
 
 // ── POST /suggest-orders ───────────────────────────────────────────
+// AI call removed — math is now velocity-driven client-side.
+// Endpoint kept for backwards compatibility; returns baseline as-is.
 app.post("/suggest-orders", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { venueId, baseline, context: ctx } = req.body || {};
+    const { venueId, baseline } = req.body || {};
     if (!venueId || !baseline) { res.status(400).json({ ok: false, error: "Missing venueId or baseline" }); return; }
-    const lcSO = await checkAiLimit(venueId, 'suggest_orders');
-    if (!lcSO.allowed) { res.status(429).json(lcSO.limitError); return; }
-    const buckets = baseline.buckets || {};
-    const supplierSummaries = Object.entries(buckets).map(([sid, b]: any) => {
-      const lines = Array.isArray(b?.lines) ? b.lines : [];
-      const total = lines.reduce((a: number, l: any) => a + (Number(l.qty||0) * Number(l.unitCost||l.cost||0)), 0);
-      return sid + ": " + lines.length + " lines, est $" + total.toFixed(2);
-    }).join("\n");
-    const systemPrompt = [
-      "You are an AI ordering assistant for Hosti, a hospitality inventory app for NZ bars and restaurants.",
-      "Review suggested order baselines and add intelligent insights about quantities, timing and patterns.",
-      "Consider: day of week patterns, seasonal demand, upcoming weekends, typical NZ hospitality trade flows.",
-      req.body?.aiContext?.topSellingRecipes ? "Known top recipes: " + req.body.aiContext.topSellingRecipes.slice(0,3).map((r) => r.name).join(', ') : null,
-      req.body?.aiContext?.frequentShortages?.length ? "Frequent shortages: " + req.body.aiContext.frequentShortages.slice(0,3).map((s) => s.name).join(', ') : null,
-      'Respond ONLY with valid JSON: { "insights": [{ "type": "warning|tip|seasonal|pattern", "message": "insight", "supplierId": "optional" }], "adjustments": [{ "productId": "id", "suggestedQty": 12, "reason": "why" }] }'
-    ].join("\n");
-    const today = new Date().toLocaleDateString("en-NZ", { weekday: "long", month: "long", day: "numeric" });
-    const userMsg = ["Venue: " + venueId, "Today: " + today, "Order summary:", supplierSummaries || "No lines", ctx ? "Context: " + JSON.stringify(ctx) : null, "Provide insights and flag quantity adjustments."].filter(Boolean).join("\n\n");
-    const raw = await callClaude(systemPrompt, userMsg);
-    let parsed: any = {};
-    try { const m = raw.match(/\{[\s\S]*\}/); parsed = m ? JSON.parse(m[0]) : {}; } catch { parsed = {}; }
-    const meter = await trackAiCall(venueId, 'suggest_orders');
-    console.log("[api/suggest-orders] OK", { uid, venueId, meter });
-    res.json({ ...baseline, insights: Array.isArray(parsed.insights) ? parsed.insights : [], adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [] });
+    console.log("[api/suggest-orders] returning baseline (math mode)", { uid, venueId });
+    res.json({ ...baseline, insights: [], adjustments: [] });
   } catch (e: any) {
     console.error("[api/suggest-orders] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Suggestion failed" });

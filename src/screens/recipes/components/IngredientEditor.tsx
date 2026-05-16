@@ -286,17 +286,28 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
         </View>
         {items.length === 0 ? (
           <Text style={{ padding:12, color:'#9CA3AF' }}>No ingredients yet.</Text>
-        ) : items.map(r => (
-          <View key={r.key||r.name} style={{ padding:10, borderBottomWidth:1, borderColor:'#F3F4F6', flexDirection:'row', alignItems:'center' }}>
-            <Text style={{ flex:5 }}>{r.name}</Text>
-            <Text style={{ flex:2 }}>{r.qty}</Text>
-            <Text style={{ flex:2 }}>{r.unit}</Text>
-            <Text style={{ flex:2, textAlign:'right' }}>${rowCost(r).toFixed(2)}</Text>
-            <TouchableOpacity onPress={()=>removeRow(r.key)} style={{ width:48, alignItems:'flex-end' }}>
-              <Text style={{ color:'#EF4444', fontWeight:'800' }}>Remove</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
+        ) : items.map(r => {
+          const isLinked = r.link?.productId && r.link.productId !== 'misc';
+          const cost = rowCost(r);
+          return (
+            <View key={r.key||r.name} style={{ padding:10, borderBottomWidth:1, borderColor:'#F3F4F6', flexDirection:'row', alignItems:'center' }}>
+              <View style={{ flex:5 }}>
+                <Text numberOfLines={1}>{r.name}{isLinked ? ' 🔗' : ''}</Text>
+                {cost > 0 && (
+                  <Text style={{ fontSize:10, color: isLinked ? '#059669' : '#9CA3AF' }}>
+                    {isLinked ? 'live price' : 'manual'}
+                  </Text>
+                )}
+              </View>
+              <Text style={{ flex:2 }}>{r.qty}</Text>
+              <Text style={{ flex:2 }}>{r.unit}</Text>
+              <Text style={{ flex:2, textAlign:'right' }}>${cost.toFixed(2)}</Text>
+              <TouchableOpacity onPress={()=>removeRow(r.key)} style={{ width:48, alignItems:'flex-end' }}>
+                <Text style={{ color:'#EF4444', fontWeight:'800' }}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })}
         <View style={{ padding:10, flexDirection:'row' }}>
           <Text style={{ flex:9, fontWeight:'800' }}>Totals</Text>
           <Text style={{ flex:2, textAlign:'right', fontWeight:'800' }}>${totals.totalCost.toFixed(2)}</Text>

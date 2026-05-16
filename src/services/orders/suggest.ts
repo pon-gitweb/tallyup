@@ -1,6 +1,7 @@
 // @ts-nocheck
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
+import { calculateVelocity } from '../reports/velocityService';
 
 const dlog = (...a:any[]) => console.log('[SuggestedOrders]', ...a);
 
@@ -17,10 +18,19 @@ export type SuggestedLine = {
   cost?: number | null;
   needsPar?: boolean;
   needsSupplier?: boolean;
-  reason?: string | null;
+  reason?: string | null;       // 'velocity-driven' | 'par-based' | 'insufficient-data'
   deptId?: string | null;
   deptName?: string | null;
   qtyDept?: number | null;
+  // Velocity enrichment
+  velocityPerWeek?: number | null;
+  velocityTrend?: string | null;
+  trendNote?: string | null;
+  confidence?: string | null;
+  currentStock?: number;
+  estimatedCost?: number | null;
+  flag?: string | null;          // 'possible-unrecorded-delivery' | 'po-shortfall'
+  flagMessage?: string | null;
 };
 
 export async function buildSuggestedOrdersInMemory(
@@ -53,6 +63,7 @@ export async function buildSuggestedOrdersInMemory(
     supplierName?: string|undefined;
     packSize?: number|null;
     cost?: number;
+    expiryRisk?: boolean;
   };
   const prodMeta: Record<string,ProdMeta> = {};
   productsSnap.forEach(d => {
@@ -68,10 +79,11 @@ export async function buildSuggestedOrdersInMemory(
       supplierName: sname,
       packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
       cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
+      expiryRisk: !!v?.expiryRisk,
     };
   });
 
-  // Per-dept on-hand ONLY from items that exist in that department (no global union)
+  // Per-dept on-hand ONLY from items that exist in that department
   dlog('reading departments/areas/items');
   const onHand: Record<string, Record<string, number>> = {};
   for (const dep of depsSnap.docs) {
@@ -90,18 +102,53 @@ export async function buildSuggestedOrdersInMemory(
     }
   }
 
+  // Load department snapshots for velocity data
+  dlog('reading department snapshots for velocity');
+  const allSnapshots: any[] = [];
+  const missingInvoiceProductIds = new Set<string>();
+  const poDiscrepancyProductIds = new Set<string>();
+
+  for (const dep of depsSnap.docs) {
+    try {
+      const snapsQ = query(
+        collection(db, 'venues', venueId, 'departments', dep.id, 'snapshots'),
+        orderBy('completedAt', 'desc'),
+        limit(6),
+      );
+      const snapsSnap = await getDocs(snapsQ);
+      const depSnaps: any[] = snapsSnap.docs.map(d => d.data());
+      allSnapshots.push(...depSnaps);
+
+      // Findings from latest snapshot only (for flags)
+      if (!snapsSnap.empty) {
+        const latest = snapsSnap.docs[0].data() as any;
+        const findings = latest.findings || {};
+        for (const mi of (findings.likelyMissingInvoices || [])) {
+          if (mi.productId) missingInvoiceProductIds.add(mi.productId);
+        }
+        for (const pd of (findings.poDiscrepancies || [])) {
+          if (pd.productId) poDiscrepancyProductIds.add(pd.productId);
+        }
+      }
+    } catch { /* no snapshots yet for this dept — skip */ }
+  }
+
+  // Build velocity map from all collected snapshots
+  const velocityMap = allSnapshots.length > 0 ? calculateVelocity(allSnapshots) : new Map();
+  dlog('velocity map built', velocityMap.size, 'products, snapshots:', allSnapshots.length);
+
   const buckets: Record<string,{ supplierName?:string; lines: SuggestedLine[] }> = {};
   const unassigned: { lines: SuggestedLine[] } = { lines: [] };
 
   for (const dep of departments) {
     const depId = dep.id;
     const onHandDept = onHand[depId] || {};
-    const productIds = Object.keys(onHandDept); // <-- key change: only products seen in this dept
+    const productIds = Object.keys(onHandDept);
 
-    // If a department has no items counted, it contributes no suggestions (good: Office stays empty).
     for (const pid of productIds) {
       const meta = prodMeta[pid] || {};
       const name = s(meta.name, pid);
+      const onHandQty = n(onHandDept[pid], 0);
 
       // Dept PAR precedence: deptPar[depId] -> par -> default
       const parDeptRaw =
@@ -109,30 +156,107 @@ export async function buildSuggestedOrdersInMemory(
         (Number.isFinite(meta.par) ? Number(meta.par) : undefined);
       const usedPar = Number.isFinite(parDeptRaw) ? Number(parDeptRaw) : defaultPar;
 
-      const onHandQty = n(onHandDept[pid], 0);
-      const needed = Math.max(0, usedPar - onHandQty);
-      if (needed <= 0) continue;
+      // Velocity lookup (by product name, lowercased)
+      const velData = velocityMap.get(name.toLowerCase().trim());
+      const velocityPerWeek = velData?.unitsPerWeek ?? null;
+      const velocityTrend = velData?.trend ?? null;
+      const trendPercent = velData?.trendPercent ?? 0;
+      const confidence = velData?.confidence ?? null;
+      const isUsableVelocity = velocityPerWeek != null &&
+        (confidence === 'high' || confidence === 'medium') &&
+        velocityPerWeek > 0;
 
+      // STEP 3 — Calculate demand-driven order qty
+      let suggestedQty: number;
+      let reason: string;
+
+      if (isUsableVelocity) {
+        // Velocity-driven: cover lead time + buffer, never below PAR
+        const leadTimeDays = 7;
+        const bufferDays = 3;
+        const coverageNeeded = velocityPerWeek! * ((leadTimeDays + bufferDays) / 7);
+        const velocityBased = Math.max(0, Math.ceil(coverageNeeded - onHandQty));
+        const parMinimum = Number.isFinite(parDeptRaw) ? Math.max(0, usedPar - onHandQty) : 0;
+        suggestedQty = Math.max(velocityBased, parMinimum);
+        reason = 'velocity-driven';
+      } else if (Number.isFinite(parDeptRaw)) {
+        suggestedQty = Math.max(0, usedPar - onHandQty);
+        reason = 'par-based';
+      } else {
+        suggestedQty = 0;
+        reason = 'insufficient-data';
+      }
+
+      // STEP 4 — Intelligence filters
+      let flag: string | null = null;
+      let flagMessage: string | null = null;
+      let trendNote: string | null = null;
+
+      // Skip stagnant products that have stock
+      if (velocityPerWeek != null && velocityPerWeek < 0.1 && onHandQty > 0) {
+        suggestedQty = 0;
+      }
+      // Skip expiry risk products
+      if (meta.expiryRisk === true || velData?.expiryRisk === true) {
+        suggestedQty = 0;
+      }
+
+      // Flag missing invoice
+      if (missingInvoiceProductIds.has(pid)) {
+        flag = 'possible-unrecorded-delivery';
+        flagMessage = 'Stock increased without invoice — verify receipt before ordering';
+      }
+      // Flag PO discrepancy
+      if (poDiscrepancyProductIds.has(pid)) {
+        flag = flag || 'po-shortfall';
+        flagMessage = flagMessage || 'Previous order shortfall detected — chase supplier before reordering';
+      }
+
+      // Trend adjustment (velocity-driven items only, not skipped)
+      if (suggestedQty > 0 && reason === 'velocity-driven') {
+        if (velocityTrend === 'rising' && trendPercent > 15) {
+          suggestedQty = Math.ceil(suggestedQty * 1.2);
+          trendNote = 'Increased 20% for rising trend';
+        } else if (velocityTrend === 'falling' && (trendPercent as number) < -15) {
+          suggestedQty = Math.ceil(suggestedQty * 0.8);
+          trendNote = 'Reduced 20% for falling trend';
+        }
+      }
+
+      // STEP 5 — Pack size rounding
       const sid = s(meta.supplierId || '');
       const sname = s(meta.supplierName || (sid ? supplierNameById[sid] : ''), 'Supplier');
       const pack = Number.isFinite(meta.packSize) ? Number(meta.packSize) : null;
       const cost = n(meta.cost, 0);
-      const qtyDept = pack && pack>0 && opts.roundToPack ? Math.ceil(needed / pack) * pack : Math.round(needed);
+      const qtyDept = pack && pack > 0 && roundToPack
+        ? Math.ceil(suggestedQty / pack) * pack
+        : Math.round(suggestedQty);
 
+      if (qtyDept <= 0) continue;
+
+      // STEP 6 — Build suggestion with reasoning
       const line: SuggestedLine = {
         productId: pid,
         productName: name,
-        qty: qtyDept, // dept view uses this; "All" sums later in UI
+        qty: qtyDept,
         unitCost: cost > 0 ? cost : null,
         packSize: pack,
         cost: cost > 0 ? cost : null,
         needsPar: !Number.isFinite(parDeptRaw),
         needsSupplier: !sid,
-        reason: !sid ? 'No preferred supplier set'
-              : (!Number.isFinite(parDeptRaw) ? `Dept PAR missing; used default ${usedPar}` : null),
+        reason: reason === 'velocity-driven' ? `velocity-driven` : (!sid ? 'No preferred supplier set' : reason),
         deptId: depId,
         deptName: dep.name,
         qtyDept,
+        // Velocity enrichment
+        velocityPerWeek: velocityPerWeek != null ? Math.round(velocityPerWeek * 100) / 100 : null,
+        velocityTrend: velocityTrend ?? null,
+        trendNote,
+        confidence,
+        currentStock: onHandQty,
+        estimatedCost: cost > 0 ? Math.round(qtyDept * cost * 100) / 100 : null,
+        flag,
+        flagMessage,
       };
 
       if (!sid) {
@@ -152,9 +276,11 @@ export async function buildSuggestedOrdersInMemory(
 
   const suppliersWithLines = Object.values(buckets).filter(b=> (b.lines||[]).length>0).length + (unassigned.lines.length>0?1:0);
   const totalLines = Object.values(buckets).reduce((a,b)=>a+(b.lines?.length||0),0) + unassigned.lines.length;
-  dlog('summary', { suppliersWithLines, totalLines });
+  const velocityDriven = Object.values(buckets).reduce((a,b)=>a+(b.lines||[]).filter(l=>l.reason==='velocity-driven').length,0)
+    + unassigned.lines.filter(l=>l.reason==='velocity-driven').length;
+  dlog('summary', { suppliersWithLines, totalLines, velocityDriven, snapshotsUsed: allSnapshots.length });
 
-  return { buckets, unassigned, _meta: { departments } };
+  return { buckets, unassigned, _meta: { departments, velocityDriven, totalLines, snapshotsUsed: allSnapshots.length } };
 }
 
 /** Legacy shape kept for compatibility with createFromSuggestions/drafts/fromSuggestions.
