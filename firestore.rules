@@ -72,7 +72,8 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && request.resource.data.diff(resource.data).changedKeys()
              .hasOnly(['name','brand','size','category','abv','countryOfOrigin',
-                       'updatedAt','addedByVenue','unit']);
+                       'updatedAt','addedByVenue','unit',
+                       'barcode','barcodeNumber','barcodes']);
       allow delete: if false;
     }
 
@@ -335,19 +336,23 @@ service cloud.firestore {
                 'inductionStatus','inductionSource',
                 'countingUnit','caseSize',
                 'lastCount','lastCountAt',
+                'lastCountBy','lastCountByName',
+                'barcode','barcodeNumber',
                 'createdAt','updatedAt'
               ])
               && request.resource.data.name is string
               && request.resource.data.createdAt is timestamp
               && request.resource.data.updatedAt is timestamp
               && request.resource.data.inductionStatus in ['pending','complete']
-              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','bulk-assign']
+              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','bulk-assign','barcode-scan']
               && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
               && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
               && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
               && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
               && (!('countingUnit' in request.resource.data) || request.resource.data.countingUnit == null || request.resource.data.countingUnit is string)
-              && (!('caseSize' in request.resource.data) || request.resource.data.caseSize == null || request.resource.data.caseSize is number);
+              && (!('caseSize' in request.resource.data) || request.resource.data.caseSize == null || request.resource.data.caseSize is number)
+              && (!('barcode' in request.resource.data) || request.resource.data.barcode == null || request.resource.data.barcode is string)
+              && (!('barcodeNumber' in request.resource.data) || request.resource.data.barcodeNumber == null || request.resource.data.barcodeNumber is string);
             }
             function isInductionUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly([
@@ -370,6 +375,8 @@ service cloud.firestore {
                     'inductionStatus','inductionSource',
                     'countingUnit','caseSize',
                     'lastCount','lastCountAt',
+                    'lastCountBy','lastCountByName',
+                    'barcode','barcodeNumber',
                     'createdAt','updatedAt'
                   ])
                   && request.resource.data.name is string

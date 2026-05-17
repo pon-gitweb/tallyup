@@ -194,22 +194,34 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
     setConfirming(true);
     try {
       await onConfirm(product, countNum);
-      // Best-effort: add to global barcode catalogue
+      // Best-effort: add to global barcode catalogue (both field names, with logging)
       if (product.barcode.trim()) {
+        const bc = product.barcode.trim();
         try {
           const db = getFirestore();
-          const snap = await getDocs(query(
-            collection(db, 'global_products'),
-            where('barcode', '==', product.barcode.trim())
-          ));
-          if (snap.empty) {
+          // Check both field names to avoid duplicates
+          const [snap1, snap2] = await Promise.all([
+            getDocs(query(collection(db, 'global_products'), where('barcode', '==', bc))),
+            getDocs(query(collection(db, 'global_products'), where('barcodeNumber', '==', bc))),
+          ]);
+          if (snap1.empty && snap2.empty) {
             await addDoc(collection(db, 'global_products'), {
-              name: product.name, brand: product.brand, size: product.size,
-              category: product.category, barcode: product.barcode, unit: product.unit,
-              createdAt: serverTimestamp(),
+              barcode: bc,
+              barcodeNumber: bc,
+              name: product.name,
+              brand: product.brand || null,
+              size: product.size || null,
+              category: product.category || null,
+              unit: product.unit || null,
+              addedAt: serverTimestamp(),
+              addedByVenue: venueId || null,
+              source: 'product-photo',
             });
+            console.log('[ProductPhoto] global_products write OK', bc);
           }
-        } catch {}
+        } catch (error: any) {
+          console.error('[ProductPhoto] global_products failed:', error?.code, error?.message);
+        }
       }
       handleClose();
     } catch (e: any) {

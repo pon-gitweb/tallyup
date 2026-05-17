@@ -1778,13 +1778,49 @@ const openHistory = throttleAction(async (item: Item) => {
     }
   };
 
-  const handleProductPhotoConfirm = async (product: { name: string; brand: string; size: string; unit: string }, count: number) => {
+  const handleProductPhotoConfirm = async (product: { name: string; brand: string; size: string; unit: string; barcode?: string; category?: string }, count: number) => {
     if (!venueId) throw new Error('Missing venue');
     await ensureAreaStarted();
     const displayName = [product.name, product.brand, product.size].filter(Boolean).join(' ').trim() || product.name;
+    const barcode = (product as any).barcode?.trim() || null;
+    const _cu = getAuth().currentUser;
+
+    // Write to venue products so the barcode scanner can find it next time
+    let venueProductId: string | null = null;
+    try {
+      const prodRef = await addDoc(collection(db, 'venues', venueId!, 'products'), {
+        name: displayName,
+        brand: (product as any).brand || null,
+        size: (product as any).size || null,
+        category: (product as any).category || null,
+        unit: product.unit || null,
+        barcode: barcode,
+        barcodeNumber: barcode,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      venueProductId = prodRef.id;
+    } catch (e: any) {
+      console.warn('[ProductPhoto] venue product write failed (non-fatal):', e?.message);
+    }
+
     await addDoc(
       collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-      { name: displayName, unit: product.unit || null, inductionStatus: 'pending', inductionSource: 'product-photo', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastCount: count, lastCountAt: serverTimestamp() }
+      {
+        name: displayName,
+        unit: product.unit || null,
+        productId: venueProductId,
+        barcode: barcode,
+        barcodeNumber: barcode,
+        inductionStatus: 'pending',
+        inductionSource: 'product-photo',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastCount: count,
+        lastCountAt: serverTimestamp(),
+        lastCountBy: _cu?.uid ?? 'unknown',
+        lastCountByName: _cu?.displayName || 'Unknown',
+      }
     );
   };
 

@@ -110,15 +110,21 @@ export default function BarcodeScannerModal({
     try {
       if (!venueId) throw new Error('No venue');
 
-      // STEP 1 — Check venue products
-      const venueSnap = await getDocs(
-        query(collection(db, 'venues', venueId, 'products'), where('barcode', '==', data))
-      );
-      if (!venueSnap.empty) {
-        const d = venueSnap.docs[0];
+      // STEP 1 — Check venue products (query both barcode field names, deduplicate)
+      const [venueSnap1, venueSnap2] = await Promise.all([
+        getDocs(query(collection(db, 'venues', venueId, 'products'), where('barcode', '==', data))),
+        getDocs(query(collection(db, 'venues', venueId, 'products'), where('barcodeNumber', '==', data))),
+      ]);
+      const seenVenueIds = new Set<string>();
+      const venueDocs = [...venueSnap1.docs, ...venueSnap2.docs].filter(d => {
+        if (seenVenueIds.has(d.id)) return false;
+        seenVenueIds.add(d.id);
+        return true;
+      });
+      if (venueDocs.length > 0) {
+        const d = venueDocs[0];
         const p = { id: d.id, ...(d.data() as any) } as VenueProduct;
         setVenueProduct(p);
-        // Check if already in current area
         const inArea = areaItems.some(
           item => item.productId === d.id || item.name?.toLowerCase() === p.name?.toLowerCase()
         );
@@ -126,12 +132,19 @@ export default function BarcodeScannerModal({
         return;
       }
 
-      // STEP 2 — Check global catalogue
-      const globalSnap = await getDocs(
-        query(collection(db, 'global_products'), where('barcode', '==', data))
-      );
-      if (!globalSnap.empty) {
-        const d = globalSnap.docs[0];
+      // STEP 2 — Check global catalogue (query both field names, deduplicate)
+      const [globalSnap1, globalSnap2] = await Promise.all([
+        getDocs(query(collection(db, 'global_products'), where('barcode', '==', data))),
+        getDocs(query(collection(db, 'global_products'), where('barcodeNumber', '==', data))),
+      ]);
+      const seenGlobalIds = new Set<string>();
+      const globalDocs = [...globalSnap1.docs, ...globalSnap2.docs].filter(d => {
+        if (seenGlobalIds.has(d.id)) return false;
+        seenGlobalIds.add(d.id);
+        return true;
+      });
+      if (globalDocs.length > 0) {
+        const d = globalDocs[0];
         setGlobalProduct({ id: d.id, ...(d.data() as any), barcode: data } as GlobalProduct);
         setPhase('inGlobal');
         return;
@@ -200,6 +213,7 @@ export default function BarcodeScannerModal({
         category: g.category ?? null,
         unit: g.unit ?? null,
         barcode: g.barcode,
+        barcodeNumber: g.barcode,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
