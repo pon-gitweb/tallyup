@@ -1918,7 +1918,7 @@ const openHistory = throttleAction(async (item: Item) => {
       {[
         { icon: '📱', title: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: () => setBarcodeScanOpen(true) },
         { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
-        { icon: '📸', title: 'Add product by photo', desc: 'Photo the front of a bottle — AI identifies it', onPress: () => setCaptureProductOpen(true) },
+        /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
         { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
         { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => nameInputRef.current?.focus() },
       ].map(card => (
@@ -2993,7 +2993,7 @@ const openHistory = throttleAction(async (item: Item) => {
             {[
               { icon: '🔍', label: 'Search venue products', desc: 'Find a product already in your venue', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setVenueSearchOpen(true), 0); } },
               { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
-              { icon: '📸', label: 'Photograph product', desc: 'Photo the front of a bottle — AI identifies it', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureProductOpen(true), 0); } },
+              /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
               { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
               { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setQuickAddSheetOpen(true); }, 0); } },
             ].map(opt => (
