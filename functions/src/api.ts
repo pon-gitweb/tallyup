@@ -5,7 +5,7 @@ import cors = require("cors");
 import Stripe from "stripe";
 import { trackPriceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
-import { IZZY_FEATURES } from "./izzyContext";
+import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE } from "./izzyContext";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -1748,6 +1748,8 @@ If the data doesn't contain enough information to answer confidently, say so cle
 
 Never answer questions about how to use the app — direct those to Izzy.
 
+${SUITEE_COUNTING_NOTE}
+
 ${context}`;
 
     // Build multi-turn messages (history + current question)
@@ -1833,6 +1835,21 @@ NEVER suggest workflows that aren't in the available list.
 ALWAYS be honest about what the app can and cannot do.
 ALWAYS be encouraging and warm — never apologetic.
 Keep answers concise — 2 to 5 sentences unless a step-by-step is needed.
+
+You also have practical counting guidance to help users with how-to questions:
+
+${COUNTING_GUIDANCE}
+
+Use this when users ask questions like:
+- How do I count a partial bottle?
+- How do I count a keg?
+- How do I use the scale?
+- Where is the barcode?
+- How do I count flour or weight items?
+- What does 0.5 mean?
+
+Always give practical, direct answers.
+Never make the user feel like they asked a silly question.
 
 Current screen context will be provided with each message. Use it to give context-aware answers where possible.`;
 
