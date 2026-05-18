@@ -29,10 +29,12 @@ async function updateStockAndCreateInvoice(
   venueId: string,
   orderId: string,
   uid: string | null,
-): Promise<void> {
+): Promise<string[]> {
+  const warnings: string[] = [];
+
   // Read order header + lines
   const orderSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
-  if (!orderSnap.exists()) return;
+  if (!orderSnap.exists()) return warnings;
   const orderData = orderSnap.data() as any;
 
   const linesSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
@@ -47,7 +49,7 @@ async function updateStockAndCreateInvoice(
     });
   });
 
-  if (orderLines.length === 0) return;
+  if (orderLines.length === 0) return warnings;
 
   // Find matching area items across all departments and increment lastCount
   try {
@@ -84,11 +86,17 @@ async function updateStockAndCreateInvoice(
     }
 
     if (stockUpdates > 0) {
-      await stockBatch.commit();
-      console.log('[receive] stock updated for', stockUpdates, 'item(s)');
+      try {
+        await stockBatch.commit();
+        console.log('[receive] stock updated for', stockUpdates, 'item(s)');
+      } catch (e: any) {
+        console.error('[receive] stock batch commit failed:', e?.message);
+        warnings.push(`Stock counts could not be updated: ${e?.message || 'permission denied'}`);
+      }
     }
   } catch (e: any) {
-    console.warn('[receive] stock update failed (non-fatal):', e?.message);
+    console.error('[receive] stock update failed:', e?.message);
+    warnings.push(`Stock update failed: ${e?.message || 'unknown error'}`);
   }
 
   // Create invoice document for this delivery
@@ -131,14 +139,30 @@ async function updateStockAndCreateInvoice(
     await lineBatch.commit();
     console.log('[receive] invoice created:', invRef.id);
   } catch (e: any) {
-    console.warn('[receive] invoice creation failed (non-fatal):', e?.message);
+    console.error('[receive] invoice creation failed:', e?.message);
+    warnings.push(`Invoice creation failed: ${e?.message || 'unknown error'}`);
   }
+
+  return warnings;
 }
 
 async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:string; orderId:string; parsed: Parsed }) {
   const { venueId, orderId, parsed } = args;
   const db = getFirestore(getApp());
   const uid = getAuth()?.currentUser?.uid || null;
+
+  // 0) Duplicate receive protection — bail if already invoiced/received
+  try {
+    const orderSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
+    if (orderSnap.exists()) {
+      const currentStatus = (orderSnap.data() as any)?.status;
+      if (currentStatus === 'invoiced' || currentStatus === 'received') {
+        return { ok: false, error: `Order already ${currentStatus} — cannot receive again` };
+      }
+    }
+  } catch (e: any) {
+    console.warn('[receive] duplicate check failed (continuing):', e?.message);
+  }
 
   // 1) Reconcile on server (authoritative)
   const reconciled = await reconcileInvoiceREST(venueId, orderId, {
@@ -163,7 +187,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
   const saved = await saveReconciliation(venueId, orderId, reconciled);
 
   // 3) Update stock counts + create invoice document
-  await updateStockAndCreateInvoice(db, venueId, orderId, uid);
+  const stockWarnings = await updateStockAndCreateInvoice(db, venueId, orderId, uid);
 
   // 4) Mark invoiced (fully received + invoice created)
   await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
@@ -173,7 +197,11 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
     lastReconciliationId: saved?.id || reconciled?.reconciliationId || null
   });
 
-  return { ok:true, reconciliationId: saved?.id || reconciled?.reconciliationId || null };
+  return {
+    ok: true,
+    reconciliationId: saved?.id || reconciled?.reconciliationId || null,
+    ...(stockWarnings.length > 0 ? { stockUpdateWarnings: stockWarnings } : {}),
+  };
 }
 
 export async function finalizeReceiveFromCsv(args:{ venueId:string; orderId:string; parsed: Parsed }) {

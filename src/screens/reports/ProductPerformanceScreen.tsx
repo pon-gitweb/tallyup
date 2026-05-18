@@ -419,8 +419,8 @@ function ProductRow({ v }: { v: VelocityData }) {
       {/* Velocity row */}
       <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
         <Text style={S.metricText}>
-          {v.unitsPerWeek > 0 ? `${fmtNum(v.unitsPerWeek)}/week` : 'No movement'}
-          {v.trend !== 'stable' ? ` ${v.trend === 'rising' ? '↑' : '↓'} ${Math.abs(v.trendPercent)}%` : ''}
+          {v.needsMoreData ? 'Need more data' : v.unitsPerWeek > 0 ? `${fmtNum(v.unitsPerWeek)}/week` : 'No movement'}
+          {!v.needsMoreData && v.trend !== 'stable' ? ` ${v.trend === 'rising' ? '↑' : '↓'} ${Math.abs(v.trendPercent)}%` : ''}
         </Text>
         <Text style={S.metricText}>Stock: {v.currentStock}</Text>
         {v.daysToSellThrough != null && (

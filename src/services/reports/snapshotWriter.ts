@@ -50,7 +50,7 @@ export async function writeDepartmentSnapshot(
             }
           }
         }
-      } catch { /* previous snapshot may not exist — non-fatal */ }
+      } catch (e: any) { console.warn('[snapshotWriter] previous snapshot read failed:', e?.message); }
     }
 
     // Read all areas + items in this department
@@ -186,7 +186,7 @@ export async function writeDepartmentSnapshot(
             where('invoiceDateTimestamp', '<=', endTs),
           ));
           invoiceDocs = snap1.docs;
-        } catch {}
+        } catch (e: any) { console.warn('[snapshotWriter] invoiceDateTimestamp query failed:', e?.message); }
 
         // Also query legacy 'date' field and merge (avoid duplicates by id)
         try {
@@ -199,7 +199,7 @@ export async function writeDepartmentSnapshot(
           for (const d of snap2.docs) {
             if (!seenIds.has(d.id)) invoiceDocs.push(d);
           }
-        } catch {}
+        } catch (e: any) { console.warn('[snapshotWriter] date field query failed:', e?.message); }
 
         for (const invDoc of invoiceDocs) {
           const linesSnap = await getDocs(
@@ -241,7 +241,7 @@ export async function writeDepartmentSnapshot(
           });
         }
       }
-    } catch { /* invoice enrichment is best-effort */ }
+    } catch (e: any) { console.warn('[snapshotWriter] invoice enrichment failed:', e?.message); }
 
     // STEP A2 — FIX 5: Enrich with sales data (soldQty)
     let hasSales = false;
@@ -277,7 +277,7 @@ export async function writeDepartmentSnapshot(
           }
         }
       }
-    } catch { /* sales enrichment is best-effort */ }
+    } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
     // STEP B — Missing invoice detection (gain > 2 units with no invoice received)
     const likelyMissingInvoices: any[] = [];
@@ -339,7 +339,7 @@ export async function writeDepartmentSnapshot(
           });
         }
       }
-    } catch { /* PO reconciliation is best-effort */ }
+    } catch (e: any) { console.warn('[snapshotWriter] PO reconciliation failed:', e?.message); }
 
     // STEP D — Recommendations
     const recommendations: any[] = [];

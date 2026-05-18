@@ -1301,10 +1301,27 @@ try {
         console.warn('[stocktake] dept cycle write failed', e);
       }
 
-      // Write rich cycle snapshot for reports and Suitee (fire and forget — non-fatal)
-      writeDepartmentSnapshot(venueId!, departmentId, deptCycleNumber).catch(e =>
-        console.warn('[stocktake] snapshot write failed', e?.message),
-      );
+      // Write rich cycle snapshot for reports — 3 attempts with exponential backoff
+      (async () => {
+        let snapshotWritten = false;
+        let attempts = 0;
+        while (!snapshotWritten && attempts < 3) {
+          try {
+            await writeDepartmentSnapshot(venueId!, departmentId, deptCycleNumber);
+            snapshotWritten = true;
+          } catch (e: any) {
+            attempts++;
+            console.warn(`[stocktake] snapshot write attempt ${attempts} failed:`, e?.message);
+            if (attempts < 3) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)));
+            }
+          }
+        }
+        if (!snapshotWritten) {
+          setExportToast('Report data may be delayed — please try again later.');
+          setTimeout(() => setExportToast(null), 5000);
+        }
+      })();
 
       // Check if ALL departments completed within the last 7 days
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1397,6 +1414,7 @@ try {
     return false;
   };
 
+  const varianceCheckedRef = React.useRef(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
   const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
@@ -1424,6 +1442,7 @@ try {
     });
 
     const proceedToReview = () => {
+      varianceCheckedRef.current = true;
       setReviewCounted(counted);
       setReviewMissing(missing);
       setReviewFlagged(flagged);
@@ -1481,6 +1500,7 @@ try {
       return;
     }
 
+    varianceCheckedRef.current = true;
     proceedToReview();
   };
 
@@ -1500,6 +1520,40 @@ try {
 
     const perform = async () => {
       if (submittingArea) return;
+
+      // If variance wasn't checked via openReview, run a quick guard
+      if (!varianceCheckedRef.current) {
+        const highVarianceGuard = items.filter(it => {
+          const raw = (localQty[it.id] ?? '').trim();
+          const c = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
+          const expected = deriveExpected(it);
+          if (expected == null) return false;
+          const varianceAbs = Math.abs(c - expected);
+          const variancePct = expected > 0 ? varianceAbs / expected : 0;
+          const varianceDollars = typeof it.costPrice === 'number' ? varianceAbs * it.costPrice : 0;
+          if (typeof it.costPrice === 'number' && it.costPrice > 30 && varianceAbs > 0) return true;
+          if (varianceDollars > 50) return true;
+          if (variancePct > 0.2 && varianceAbs >= 2) return true;
+          return false;
+        });
+        if (highVarianceGuard.length > 0) {
+          return new Promise<void>(resolve => {
+            Alert.alert(
+              '⚠️ High variance detected',
+              `${highVarianceGuard.length} item(s) have significant variance. Proceed with submission?`,
+              [
+                { text: 'Go back', style: 'cancel', onPress: () => resolve() },
+                { text: 'Submit anyway', style: 'destructive', onPress: () => {
+                  varianceCheckedRef.current = true;
+                  perform().then(resolve);
+                }},
+              ]
+            );
+          });
+        }
+      }
+      varianceCheckedRef.current = false;
+
       setSubmittingArea(true);
       try {
         await ensureAreaStarted();

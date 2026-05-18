@@ -365,6 +365,11 @@ service cloud.firestore {
               && (!('inductionStatus' in request.resource.data) || request.resource.data.inductionStatus in ['pending','complete'])
               && (!('inductionSource' in request.resource.data) || request.resource.data.inductionSource in ['quick-add','smart-shelf-scan']);
             }
+            function isOrderReceiveUpdate() {
+              return request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['lastCount','lastCountAt','lastCountBy','lastCountByName','updatedAt'])
+                && request.resource.data.lastCount is number;
+            }
 
             allow create: if hasVenueRole(venueId, ['manager','owner'])
               && (
@@ -405,6 +410,9 @@ service cloud.firestore {
 
             // Variance acceptance/flagging by any member before submission completes
             allow update: if isVenueMember(venueId) && isVarianceUpdate();
+
+            // Allow stock count increments from order receive — area may already be closed
+            allow update: if isVenueMember(venueId) && isOrderReceiveUpdate();
 
             allow delete: if isVenueMember(venueId) && areaOpen();
           }

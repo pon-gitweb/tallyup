@@ -363,6 +363,50 @@ export const ocrInvoicePhoto = functions
       }
     }
 
+    // Write invoice to venues/{venueId}/invoices regardless of age
+    try {
+      let invoiceDateTimestamp: admin.firestore.Timestamp | null = null;
+      if (payload.invoiceDate) {
+        try {
+          const d = new Date(payload.invoiceDate);
+          if (!isNaN(d.getTime())) invoiceDateTimestamp = admin.firestore.Timestamp.fromDate(d);
+        } catch {}
+      }
+      const now = admin.firestore.Timestamp.now();
+      const invoiceLines = lines.map((l: ParsedLine) => ({
+        name: l.name,
+        productName: l.name,
+        qty: l.qty,
+        unitCost: l.unitPrice ?? null,
+        cost: l.unitPrice ?? null,
+        unitPrice: l.unitPrice ?? null,
+        ...(l.code ? { code: l.code } : {}),
+        ...(l.total != null ? { lineTotal: l.total } : {}),
+        ...(l.unit ? { unit: l.unit } : {}),
+      }));
+      await db.collection(`venues/${venueId}/invoices`).add({
+        supplierId: data?.supplierId || null,
+        supplierName: payload.supplierName,
+        invoiceNumber: payload.invoiceNumber,
+        poNumber: payload.purchaseOrderNumber,
+        invoiceDate: payload.invoiceDate,
+        invoiceDateTimestamp: invoiceDateTimestamp ?? now,
+        date: invoiceDateTimestamp ?? now,
+        totalAmount: payload.totalAmount,
+        gstAmount: payload.gstAmount,
+        lines: invoiceLines,
+        lineCount: invoiceLines.length,
+        venueId,
+        source: "ocr-photo",
+        ageCategory,
+        matchedOrderId: payload.matchedOrderId || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e: any) {
+      console.warn("[ocrInvoicePhoto] invoice write error", e?.message);
+    }
+
     // Historical routing — invoices > 3 months old go to historicalInvoices, not stock
     if (ageCategory === "historical" || ageCategory === "old" || ageCategory === "very_old") {
       try {

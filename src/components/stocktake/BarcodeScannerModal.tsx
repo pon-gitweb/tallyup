@@ -225,6 +225,10 @@ export default function BarcodeScannerModal({
         name: g.name,
         unit: g.unit ?? null,
         productId: prodRef.id,
+        inductionStatus: 'pending',
+        inductionSource: 'barcode-scan',
+        countingUnit: 'unit',
+        caseSize: null,
         lastCount: null,
         lastCountAt: null,
         createdAt: serverTimestamp(),
@@ -259,7 +263,9 @@ export default function BarcodeScannerModal({
         addedByVenue: venueId,
         source: 'barcode-scan',
       }, { merge: true });
-    } catch {}
+    } catch (e: any) {
+      console.warn('[BarcodeScannerModal] global catalogue write failed:', e?.message);
+    }
   }
 
   // ── Render helpers ────────────────────────────────────────────────────────

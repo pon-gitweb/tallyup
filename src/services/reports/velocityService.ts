@@ -41,6 +41,7 @@ export interface VelocityData {
   // Extras for UI
   areaName: string | null;
   categoryName: string | null;
+  needsMoreData: boolean;
 }
 
 function toDate(val: any): Date | null {
@@ -59,6 +60,8 @@ function toDate(val: any): Date | null {
  * @returns Map keyed by lowercased product name → VelocityData
  */
 export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
+  const MIN_CYCLE_WEEKS = 0.5; // ignore cycles shorter than 3.5 days to prevent velocity inflation
+
   // Sort oldest first so cycle indices are sequential
   const sorted = [...snapshots].sort((a, b) => {
     const aMs = toDate(a.completedAt)?.getTime() ?? (a.cycleNumber ?? 0) * 1e10;
@@ -86,7 +89,8 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
   for (const snap of sorted) {
     const daysSince: number | null =
       typeof snap.daysSinceLastCycle === 'number' ? snap.daysSinceLastCycle : null;
-    const cycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
+    const rawCycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
+    const cycleWeeks = rawCycleWeeks != null && rawCycleWeeks >= MIN_CYCLE_WEEKS ? rawCycleWeeks : null;
 
     for (const item of snap.items || []) {
       const key = (item.name || '').toLowerCase().trim();
@@ -137,7 +141,7 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
   byName.forEach((entries, key) => {
     const last = entries[entries.length - 1];
     const cyclesAnalysed = entries.length;
-    const validEntries = entries.filter(e => e.openingCount != null && e.daysSinceLastCycle != null && e.daysSinceLastCycle > 0);
+    const validEntries = entries.filter(e => e.openingCount != null && e.daysSinceLastCycle != null && e.daysSinceLastCycle >= MIN_CYCLE_WEEKS * 7);
 
     // Average velocity
     const avgVelocity = validEntries.length > 0
@@ -240,6 +244,7 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
       expiryRiskDays,
       areaName: last.areaName,
       categoryName: last.categoryName,
+      needsMoreData: cyclesAnalysed > 0 && validEntries.length === 0,
     });
   });
 
