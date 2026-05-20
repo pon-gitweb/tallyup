@@ -275,6 +275,22 @@ async function storeHistoricalInvoice(
   return ref.id;
 }
 
+// ── Inline matching helpers (Admin SDK — cannot import client-side matching.ts) ──
+
+function normNameInline(s: string): string {
+  return (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
+}
+
+function tokenJaccardInline(a: string, b: string): number {
+  const ta = new Set(normNameInline(a).split(" ").filter(Boolean));
+  const tb = new Set(normNameInline(b).split(" ").filter(Boolean));
+  if (ta.size === 0 && tb.size === 0) return 1;
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersection = 0;
+  ta.forEach(t => { if (tb.has(t)) intersection++; });
+  return intersection / (ta.size + tb.size - intersection);
+}
+
 // ── Main callable ─────────────────────────────────────────────────────────
 
 export const ocrInvoicePhoto = functions
@@ -429,14 +445,89 @@ export const ocrInvoicePhoto = functions
       }).catch(() => {});
     }
 
-    // Track price changes (best-effort)
+    // FIX 2: Find or create venue supplier from extracted details
+    let resolvedSupplierId: string = data?.supplierId || "";
+    if (payload.supplierName) {
+      try {
+        const suppliersSnap = await db.collection(`venues/${venueId}/suppliers`).get();
+        const candNorm = normNameInline(payload.supplierName);
+        let matchedId: string | null = null;
+        let bestScore = 0;
+        for (const sd of suppliersSnap.docs) {
+          const sn = normNameInline((sd.data() as any).name || "");
+          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
+          const sc = tokenJaccardInline(payload.supplierName, (sd.data() as any).name || "");
+          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
+        }
+        if (matchedId && bestScore >= 0.85) {
+          resolvedSupplierId = matchedId;
+          const existingDoc = suppliersSnap.docs.find(d => d.id === matchedId);
+          if (existingDoc) {
+            const ex = existingDoc.data() as any;
+            const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+            if (!ex.phone && payload.supplierPhone) upd.phone = payload.supplierPhone;
+            if (!ex.email && payload.supplierEmail) upd.email = payload.supplierEmail;
+            if (!ex.address && payload.supplierAddress) upd.address = payload.supplierAddress;
+            if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
+          }
+        } else {
+          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
+            name: payload.supplierName,
+            phone: payload.supplierPhone || null,
+            email: payload.supplierEmail || null,
+            address: payload.supplierAddress || null,
+            isHoldingSupplier: false,
+            source: "invoice-scan",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          resolvedSupplierId = newSupRef.id;
+        }
+      } catch (e: any) {
+        console.log("[ocrInvoicePhoto] supplier find/create error", e?.message);
+      }
+    }
+
+    // Track price changes (best-effort, now uses resolved supplierId)
     trackPriceChanges({
       venueId,
       lines,
-      supplierId: data?.supplierId || "",
+      supplierId: resolvedSupplierId,
       supplierName: data?.supplierName || payload.supplierName || "",
       invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
     }).catch((e: any) => console.log("[ocrInvoicePhoto] price tracking error", e?.message));
+
+    // FIX 1: Create venue products for UNPRICED lines (priced lines handled by trackPriceChanges)
+    const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));
+    if (unpricedLines.length > 0) {
+      (async () => {
+        try {
+          const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+          const existingProds = productsSnap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || "" }));
+          for (const line of unpricedLines) {
+            if (!line.name?.trim()) continue;
+            const matched = existingProds.some(ep => {
+              const en = normNameInline(ep.name);
+              const cn = normNameInline(line.name);
+              return (en === cn && en.length > 0) || tokenJaccardInline(line.name, ep.name) >= 0.85;
+            });
+            if (!matched) {
+              const newRef = await db.collection(`venues/${venueId}/products`).add({
+                name: line.name.trim(),
+                unit: line.unit || null,
+                supplierId: resolvedSupplierId || null,
+                supplierName: payload.supplierName || null,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+              existingProds.push({ id: newRef.id, name: line.name.trim() });
+            }
+          }
+        } catch (e: any) {
+          console.log("[ocrInvoicePhoto] unpriced products error", e?.message);
+        }
+      })();
+    }
 
     console.log("[ocrInvoicePhoto]", {
       supplierName: payload.supplierName,

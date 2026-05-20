@@ -71,9 +71,11 @@ function InventoryImportPreviewScreen() {
         }
       }
 
+      const productRefs: { ref: ReturnType<typeof doc>; product: (typeof toCreate)[0] }[] = [];
       const batch: Promise<void>[] = [];
       for (const product of toCreate) {
         const ref = doc(productsCol);
+        productRefs.push({ ref, product });
         batch.push(setDoc(ref, {
           name: product.name,
           unit: product.unit || 'unit',
@@ -88,6 +90,54 @@ function InventoryImportPreviewScreen() {
       }
 
       await Promise.all(batch);
+
+      // FIX 4: Create area items with productId links
+      try {
+        const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        // Build area name → {deptId, areaId} map for matching; track first area as default
+        type AreaRef = { deptId: string; areaId: string; areaName: string };
+        const areaByName: Record<string, AreaRef> = {};
+        let defaultArea: AreaRef | null = null;
+        for (const deptDoc of deptSnap.docs) {
+          const areaSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+          for (const areaDoc of areaSnap.docs) {
+            const entry: AreaRef = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: (areaDoc.data() as any).name || 'Area' };
+            areaByName[(entry.areaName).toLowerCase()] = entry;
+            if (!defaultArea) defaultArea = entry;
+          }
+        }
+        if (defaultArea) {
+          // Group products by resolved target area
+          const byArea = new Map<string, { area: AreaRef; refs: typeof productRefs }>();
+          for (const pr of productRefs) {
+            const areaKey = (pr.product.area || '').toLowerCase();
+            const target = areaByName[areaKey] || defaultArea;
+            const mapKey = `${target.deptId}:${target.areaId}`;
+            if (!byArea.has(mapKey)) byArea.set(mapKey, { area: target, refs: [] });
+            byArea.get(mapKey)!.refs.push(pr);
+          }
+          for (const { area, refs } of byArea.values()) {
+            const areaItemsPromises: Promise<void>[] = [];
+            for (const { ref: prodRef, product } of refs) {
+              const itemRef = doc(db, 'venues', venueId, 'departments', area.deptId, 'areas', area.areaId, 'items', prodRef.id);
+              areaItemsPromises.push(setDoc(itemRef, {
+                name: product.name,
+                unit: product.unit || null,
+                productId: prodRef.id,
+                inductionStatus: 'pending',
+                inductionSource: 'bulk-assign',
+                lastCount: null,
+                lastCountAt: null,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              }));
+            }
+            await Promise.all(areaItemsPromises);
+          }
+        }
+      } catch (e: any) {
+        console.warn('[InventoryImport] area items error (non-fatal):', e?.message);
+      }
       await markStepComplete('products_loaded');
 
       // Write baseline import record + increment cycle counter — first import only

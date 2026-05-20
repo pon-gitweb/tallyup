@@ -7,7 +7,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import {
   doc, updateDoc, serverTimestamp, collection, addDoc,
-  writeBatch, getFirestore,
+  writeBatch, getFirestore, getDocs,
 } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -462,6 +462,47 @@ export default function BringYourDataScreen() {
           }
         }
         await batch.commit();
+
+        // FIX 3: Create area items for each product in the first available area
+        let areaNameForMsg: string | null = null;
+        try {
+          const deptSnap = await getDocs(collection(fsdb, 'venues', venueId, 'departments'));
+          let targetDeptId: string | null = null;
+          let targetAreaId: string | null = null;
+          for (const deptDoc of deptSnap.docs) {
+            const areaSnap = await getDocs(collection(fsdb, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+            if (!areaSnap.empty) {
+              targetDeptId = deptDoc.id;
+              targetAreaId = areaSnap.docs[0].id;
+              areaNameForMsg = (areaSnap.docs[0].data() as any).name || 'your area';
+              break;
+            }
+          }
+          if (targetDeptId && targetAreaId) {
+            const areaItemsBatch = writeBatch(fsdb);
+            const _cu = getAuth().currentUser;
+            for (const r of allProducts) {
+              const productId = slugId(r.name);
+              const hasCountForItem = productsMode !== 'csv' && r.parLevel != null && r.parLevel > 0;
+              const itemRef = doc(fsdb, 'venues', venueId, 'departments', targetDeptId, 'areas', targetAreaId, 'items', productId);
+              areaItemsBatch.set(itemRef, {
+                name: r.name,
+                unit: r.unit || null,
+                productId,
+                inductionStatus: 'pending',
+                inductionSource: 'bulk-assign',
+                lastCount: hasCountForItem ? r.parLevel : null,
+                lastCountAt: hasCountForItem ? serverTimestamp() : null,
+                ...(hasCountForItem && _cu ? { lastCountBy: _cu.uid, lastCountByName: _cu.displayName || 'Unknown' } : {}),
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              }, { merge: false });
+            }
+            await areaItemsBatch.commit();
+          }
+        } catch (e: any) {
+          console.warn('[BringYourData] area items error (non-fatal):', e?.message);
+        }
       }
 
       // 4) Store sales report
@@ -518,9 +559,10 @@ export default function BringYourDataScreen() {
       const stockValueStr = importStockValue > 0
         ? `\nStock value: $${importStockValue.toFixed(2)}`
         : '';
+      const areaStr = areaNameForMsg ? `\nProducts added to "${areaNameForMsg}" — open Stocktake to count them.` : '';
       const baselineMsg = alreadyHasBaseline
-        ? `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} updated. Your baseline is unchanged — variance will continue from your existing baseline.`
-        : `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`;
+        ? `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} updated. Your baseline is unchanged — variance will continue from your existing baseline.${areaStr}`
+        : `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}${areaStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`;
       Alert.alert(
         alreadyHasBaseline ? '✓ Products updated' : '✓ Opening baseline saved',
         baselineMsg,

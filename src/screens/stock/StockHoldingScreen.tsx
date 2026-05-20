@@ -67,6 +67,7 @@ export default function StockHoldingScreen() {
   const s = styles(c);
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [allRows, setAllRows] = useState<HoldingRow[]>([]);
   const [groups, setGroups] = useState<CategoryGroup[]>([]);
   const [sortAZ, setSortAZ] = useState(false);
@@ -94,6 +95,7 @@ export default function StockHoldingScreen() {
 
   async function load() {
     setLoading(true);
+    setError(false);
     try {
       // Venue name for export headers
       const venueSnap = await getDoc(doc(db, 'venues', venueId));
@@ -166,6 +168,7 @@ export default function StockHoldingScreen() {
       setGrandValue(rows.some(r => r.value != null) ? totalVal : null);
     } catch (e: any) {
       console.error('[StockHolding] load error', e?.message);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -280,6 +283,23 @@ export default function StockHoldingScreen() {
         <View style={s.centred}>
           <ActivityIndicator color={c.primary} size="large" />
           <Text style={s.loadingText}>Building stock report…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.header}>
+          <Text style={s.title}>Stock Holding</Text>
+        </View>
+        <View style={s.centred}>
+          <Text style={s.emptyTitle}>Couldn't load report</Text>
+          <Text style={s.emptyBody}>Check your connection and try again.</Text>
+          <TouchableOpacity style={s.ctaBtn} onPress={load}>
+            <Text style={s.ctaBtnText}>Try again</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );

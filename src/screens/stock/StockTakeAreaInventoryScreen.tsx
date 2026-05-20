@@ -43,6 +43,7 @@ import { approveDirectCount } from '../../services/adjustmentsDirect';
 import { openIzzy } from '../../components/IzzyAssistant';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 import { useColours } from '../../context/ThemeContext';
+import { findMatchingProduct } from '../../services/matching';
 
 type Item = {
   id: string; name: string;
@@ -1105,6 +1106,29 @@ const qty = parseFloat(typed);
   try {
     await ensureAreaStarted();
 
+    // Find or create a venue product so the area item has a productId link
+    let productId: string | null = null;
+    try {
+      const matchResult = await findMatchingProduct(venueId, { name: nm });
+      if (matchResult.match && matchResult.confidence >= 0.85) {
+        productId = matchResult.match.id;
+      } else {
+        const newProdRef = doc(collection(db, 'venues', venueId, 'products'));
+        await setDoc(newProdRef, {
+          name: nm,
+          unit: unit || null,
+          supplierName: supplier || null,
+          createdAt: nowTs,
+          updatedAt: nowTs,
+        });
+        productId = newProdRef.id;
+      }
+    } catch {
+      // Non-fatal — area item still created without productId
+    }
+
+    if (productId) payload.productId = productId;
+
     const colRef = collection(
       db,
       'venues',
@@ -1821,9 +1845,31 @@ const openHistory = throttleAction(async (item: Item) => {
       const displayName = [p.name, p.brand, p.size].filter(Boolean).join(' ').trim() || p.name;
       const alreadyExists = items.some(it => it.name?.toLowerCase() === displayName.toLowerCase());
       if (alreadyExists) { skipped++; continue; }
+
+      // Find or create venue product for productId link
+      let productId: string | null = null;
+      try {
+        const matchResult = await findMatchingProduct(venueId, { name: displayName });
+        if (matchResult.match && matchResult.confidence >= 0.85) {
+          productId = matchResult.match.id;
+        } else {
+          const newProdRef = doc(collection(db, 'venues', venueId!, 'products'));
+          await setDoc(newProdRef, {
+            name: displayName,
+            unit: p.size || null,
+            category: p.category || null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          productId = newProdRef.id;
+        }
+      } catch {
+        // Non-fatal — area item still created without productId
+      }
+
       await addDoc(
         collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-        { name: displayName, unit: p.size || null, inductionStatus: 'pending', inductionSource: 'shelf-scan', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+        { name: displayName, unit: p.size || null, productId: productId ?? null, inductionStatus: 'pending', inductionSource: 'shelf-scan', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
       );
       added++;
     }

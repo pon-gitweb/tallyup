@@ -83,6 +83,7 @@ export default function ReportsIndexScreen() {
   const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [data, setData] = useState<BriefingData | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -116,6 +117,7 @@ export default function ReportsIndexScreen() {
     }
     let cancelled = false;
     setLoading(true);
+    setError(false);
     setData(null);
     setAiInsight(null);
 
@@ -153,7 +155,7 @@ export default function ReportsIndexScreen() {
         }
       })
       .catch(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setLoading(false); setError(true); }
       });
 
     return () => {
@@ -381,6 +383,26 @@ export default function ReportsIndexScreen() {
     );
   }
 
+  if (error) {
+    return (
+      <LocalThemeGate>
+        <View style={styles.root}>
+          <ScreenHeader />
+          <View style={styles.centred}>
+            <Text style={styles.emptyTitle}>Couldn't load briefing</Text>
+            <Text style={[styles.emptyBody, { marginTop: 8 }]}>Check your connection and try again.</Text>
+            <TouchableOpacity
+              style={[styles.ctaBtn, { marginTop: 16 }]}
+              onPress={() => { setError(false); setLoading(true); setData(null); fetchBriefing(venueId).then(d => { setData(d); setLoading(false); }).catch(() => { setLoading(false); setError(true); }); }}
+            >
+              <Text style={styles.ctaBtnText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </LocalThemeGate>
+    );
+  }
+
   if (!data?.hasCountData) {
     return (
       <LocalThemeGate>
@@ -441,7 +463,7 @@ export default function ReportsIndexScreen() {
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 
           {/* ── DEPARTMENT SELECTOR ── */}
-          {availableDepts.length > 1 && (
+          {false && availableDepts.length > 1 && (
             <View style={{ marginBottom: 14 }}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
                 <View style={{ flexDirection: 'row', gap: 8 }}>

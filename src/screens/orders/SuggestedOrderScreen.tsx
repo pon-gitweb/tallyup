@@ -62,6 +62,7 @@ export default function SuggestedOrderScreen(){
   const uid=getAuth()?.currentUser?.uid||'dev';
 
   const [refreshing,setRefreshing]=useState(false);
+  const [loadError,setLoadError]=useState(false);
   const [rows,setRows]=useState<BucketRow[]>([]);
   const [snapshot,setSnapshot]=useState<any>(null);
 
@@ -244,17 +245,23 @@ export default function SuggestedOrderScreen(){
   },[db,venueId,selectedDeptId]);
 
   const doRefreshRaw=useCallback(async()=>{
+    setLoadError(false);
     if(!venueId){
       setRows([]);
       setSnapshot(null);
       setExistingKeys(new Set());
       return;
     }
-    const compat:any=await OrdersService.buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
-    const graduated=normalizeCompat(compat);
-    await computeRowsFromSnapshot(graduated);
-    const cycleKey = graduated?._meta?.stockCycleKey || null;
-    await loadExistingSuggestionKeys(cycleKey);
+    try {
+      const compat:any=await OrdersService.buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
+      const graduated=normalizeCompat(compat);
+      await computeRowsFromSnapshot(graduated);
+      const cycleKey = graduated?._meta?.stockCycleKey || null;
+      await loadExistingSuggestionKeys(cycleKey);
+    } catch(e:any) {
+      dlog('doRefreshRaw error', e?.message);
+      setLoadError(true);
+    }
   },[venueId,computeRowsFromSnapshot,normalizeCompat,loadExistingSuggestionKeys]);
 
   const doRefresh=useCallback(async()=>{
@@ -706,10 +713,19 @@ export default function SuggestedOrderScreen(){
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={doRefresh}/>}
         ListEmptyComponent={!refreshing?(
           <View style={S.empty}>
-            <Text style={S.emptyTitle}>All items are at or above PAR</Text>
-            <Text style={S.emptyText}>
-              Based on your most recent stock takes and per-dept PARs, there’s nothing to top up right now.
-            </Text>
+            {loadError ? (
+              <>
+                <Text style={S.emptyTitle}>Couldn’t load suggestions</Text>
+                <Text style={S.emptyText}>Check your connection and pull down to try again.</Text>
+              </>
+            ) : (
+              <>
+                <Text style={S.emptyTitle}>All items are at or above PAR</Text>
+                <Text style={S.emptyText}>
+                  Based on your most recent stock takes and per-dept PARs, there’s nothing to top up right now.
+                </Text>
+              </>
+            )}
           </View>
         ):null}
       />

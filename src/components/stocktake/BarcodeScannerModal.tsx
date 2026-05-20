@@ -176,6 +176,8 @@ export default function BarcodeScannerModal({
         caseSize: extras.caseSize ?? null,
         lastCount: null,
         lastCountAt: null,
+        inductionStatus: 'pending',
+        inductionSource: 'barcode-scan',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       }, { merge: true });

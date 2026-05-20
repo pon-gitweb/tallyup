@@ -25,6 +25,22 @@ async function verifyToken(req: express.Request): Promise<string | null> {
 }
 
 
+// ── Inline name-matching helpers (used for supplier/product dedup) ────────────
+
+function normNameForMatch(s: string): string {
+  return (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
+}
+
+function tokenJaccardMatch(a: string, b: string): number {
+  const ta = new Set(normNameForMatch(a).split(" ").filter(Boolean));
+  const tb = new Set(normNameForMatch(b).split(" ").filter(Boolean));
+  if (ta.size === 0 && tb.size === 0) return 1;
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersection = 0;
+  ta.forEach(t => { if (tb.has(t)) intersection++; });
+  return intersection / (ta.size + tb.size - intersection);
+}
+
 // ── AI Usage Meter ────────────────────────────────────────────────────────────
 
 type AiCallType =
@@ -1258,6 +1274,7 @@ app.post("/suitee", async (req, res) => {
       products = snap.docs.map(d => {
         const data = d.data();
         return {
+          id: d.id,
           name: data.name || d.id,
           costPrice: typeof data.costPrice === "number" ? data.costPrice : null,
           parLevel: typeof data.parLevel === "number" ? data.parLevel : null,
@@ -2184,11 +2201,57 @@ app.post("/process-invoices-pdf", async (req, res) => {
     console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName });
     res.json(payload);
 
+    // FIX 2: Find or create venue supplier from extracted details (non-blocking)
+    let resolvedSupplierIdPdf: string = req.body?.supplierId || "";
+    if (supplierName) {
+      try {
+        const db = admin.firestore();
+        const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
+        const candNorm = normNameForMatch(supplierName);
+        let matchedId: string | null = null;
+        let bestScore = 0;
+        for (const sd of suppSnap.docs) {
+          const sn = normNameForMatch((sd.data() as any).name || "");
+          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
+          const sc = tokenJaccardMatch(supplierName, (sd.data() as any).name || "");
+          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
+        }
+        if (matchedId && bestScore >= 0.85) {
+          resolvedSupplierIdPdf = matchedId;
+          const existingDoc = suppSnap.docs.find(d => d.id === matchedId);
+          if (existingDoc) {
+            const ex = existingDoc.data() as any;
+            const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+            if (!ex.phone && payload.invoice.supplierPhone) upd.phone = payload.invoice.supplierPhone;
+            if (!ex.email && payload.invoice.supplierEmail) upd.email = payload.invoice.supplierEmail;
+            if (!ex.address && payload.invoice.supplierAddress) upd.address = payload.invoice.supplierAddress;
+            if (!ex.accountNumber && payload.invoice.supplierAccountNumber) upd.accountNumber = payload.invoice.supplierAccountNumber;
+            if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
+          }
+        } else {
+          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
+            name: supplierName,
+            phone: payload.invoice.supplierPhone || null,
+            email: payload.invoice.supplierEmail || null,
+            address: payload.invoice.supplierAddress || null,
+            accountNumber: payload.invoice.supplierAccountNumber || null,
+            isHoldingSupplier: false,
+            source: "invoice-pdf",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          resolvedSupplierIdPdf = newSupRef.id;
+        }
+      } catch (e: any) {
+        console.log("[api/process-invoices-pdf] supplier find/create error", e?.message);
+      }
+    }
+
     // Track price changes non-blocking
     trackPriceChanges({
       venueId,
       lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
-      supplierId: req.body?.supplierId || "",
+      supplierId: resolvedSupplierIdPdf,
       supplierName: supplierName || req.body?.supplierName || "",
       invoiceId: poNumber || `pdf_${storagePath}`,
     }).catch((e: any) => console.log("[api/process-invoices-pdf] price tracking error", e?.message));
