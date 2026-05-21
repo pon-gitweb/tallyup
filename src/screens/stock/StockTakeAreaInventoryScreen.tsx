@@ -44,6 +44,8 @@ import { openIzzy } from '../../components/IzzyAssistant';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 import { useColours } from '../../context/ThemeContext';
 import { findMatchingProduct } from '../../services/matching';
+import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
+import OfflineBanner from '../../components/OfflineBanner';
 import { parseSpokenCount } from '../../utils/parseSpokenCount';
 
 // Voice counting — graceful degradation if native module not linked
@@ -307,12 +309,12 @@ const Row = React.memo(function Row({
               onLongPress={() => startRepeat(-1)}
               onPressOut={stopRepeat}
               style={{
-                width: 36, height: 44, borderRadius: 8,
+                width: 48, height: 48, borderRadius: 10,
                 borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb',
                 justifyContent: 'center', alignItems: 'center',
               }}
             >
-              <Text style={{ fontWeight: '900', fontSize: 20 }}>-</Text>
+              <Text style={{ fontWeight: '900', fontSize: 22 }}>-</Text>
             </TouchableOpacity>
           )}
 
@@ -361,12 +363,12 @@ const Row = React.memo(function Row({
               onLongPress={() => startRepeat(1)}
               onPressOut={stopRepeat}
               style={{
-                width: 36, height: 44, borderRadius: 8,
+                width: 48, height: 48, borderRadius: 10,
                 borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb',
                 justifyContent: 'center', alignItems: 'center',
               }}
             >
-              <Text style={{ fontWeight: '900', fontSize: 20 }}>+</Text>
+              <Text style={{ fontWeight: '900', fontSize: 22 }}>+</Text>
             </TouchableOpacity>
           )}
           {voiceAvailable && !isLocked && onVoicePress && (
@@ -700,6 +702,12 @@ function StockTakeAreaInventoryScreen() {
     if (!Voice) return;
     Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
     return () => { Voice?.destroy?.().catch(() => {}); };
+  }, []);
+
+  // FIX 8: Keep screen awake during counting session
+  useEffect(() => {
+    activateKeepAwake();
+    return () => deactivateKeepAwake();
   }, []);
 
   const handleVoicePress = async (item: Item) => {
@@ -1075,7 +1083,14 @@ function StockTakeAreaInventoryScreen() {
             } catch {}
           })();
         }
-      } catch (e: any) { console.error('[SaveCount] FAILED:', e?.code, e?.message); Alert.alert('Save failed', e?.message ?? String(e)); }
+        hapticSuccess();
+      } catch (e: any) {
+        console.error('[SaveCount] FAILED:', e?.code, e?.message);
+        // Firestore offline queue returns 'unavailable' — write is queued, don't alert
+        if (e?.code !== 'unavailable' && e?.code !== 'failed-precondition') {
+          Alert.alert('Save failed', e?.message ?? String(e));
+        }
+      }
     };
     if (!forceReplace && existingCount !== null && existingCount > 0 && qty > 0) {
       const total = existingCount + qty;
@@ -2267,6 +2282,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
+      <OfflineBanner />
       <HintBubble id="stocktake_save_indicator" style={{ marginHorizontal: 12, marginTop: 8 }} />
 
       {/* Unified search bar + dropdown */}

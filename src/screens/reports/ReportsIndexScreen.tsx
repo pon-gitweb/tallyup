@@ -20,6 +20,8 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
+import OfflineBanner from '../../components/OfflineBanner';
+import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
 import { collection, query, where, limit, getDocs, orderBy, doc, updateDoc, Timestamp, getDoc } from 'firebase/firestore';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
@@ -84,6 +86,8 @@ export default function ReportsIndexScreen() {
   const venueId = useVenueId();
   const insets = useSafeAreaInsets();
 
+  const { isOnline } = useNetworkState();
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [data, setData] = useState<BriefingData | null>(null);
@@ -167,6 +171,12 @@ export default function ReportsIndexScreen() {
       cancelled = true;
     };
   }, [venueId]);
+
+  useEffect(() => {
+    if (!loading) { setLoadingTimeout(false); return; }
+    const t = setTimeout(() => setLoadingTimeout(true), 5000);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   // ── Reports intro (shown once) ──────────────────────────────────────────
   useEffect(() => {
@@ -402,10 +412,19 @@ export default function ReportsIndexScreen() {
     return (
       <LocalThemeGate>
         <View style={styles.root}>
+          <OfflineBanner />
           <ScreenHeader />
           <View style={styles.centred}>
-            <ActivityIndicator color="#60A5FA" size="large" />
-            <Text style={[styles.emptyBody, { marginTop: 12 }]}>Building your briefing…</Text>
+            {loadingTimeout && !isOnline ? (
+              <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+                📵 No connection — showing cached data
+              </Text>
+            ) : (
+              <>
+                <ActivityIndicator color="#60A5FA" size="large" />
+                <Text style={[styles.emptyBody, { marginTop: 12 }]}>Building your briefing…</Text>
+              </>
+            )}
           </View>
         </View>
       </LocalThemeGate>
@@ -488,6 +507,7 @@ export default function ReportsIndexScreen() {
   return (
     <LocalThemeGate>
       <View style={styles.root}>
+        <OfflineBanner />
         <ScreenHeader />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 

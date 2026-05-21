@@ -8,6 +8,8 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import OfflineBanner from '../../components/OfflineBanner';
+import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import * as Print from 'expo-print';
@@ -66,6 +68,8 @@ export default function StockHoldingScreen() {
   const c = useColours();
   const s = styles(c);
 
+  const { isOnline } = useNetworkState();
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [allRows, setAllRows] = useState<HoldingRow[]>([]);
@@ -82,6 +86,12 @@ export default function StockHoldingScreen() {
       .then(v => { if (v === '1') setSortAZ(true); })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!loading) { setLoadingTimeout(false); return; }
+    const t = setTimeout(() => setLoadingTimeout(true), 5000);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   useEffect(() => {
     if (!venueId) { setLoading(false); return; }
@@ -280,9 +290,18 @@ export default function StockHoldingScreen() {
   if (loading) {
     return (
       <SafeAreaView style={s.safe}>
+        <OfflineBanner />
         <View style={s.centred}>
-          <ActivityIndicator color={c.primary} size="large" />
-          <Text style={s.loadingText}>Building stock report…</Text>
+          {loadingTimeout && !isOnline ? (
+            <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+              📵 No connection — showing cached data
+            </Text>
+          ) : (
+            <>
+              <ActivityIndicator color={c.primary} size="large" />
+              <Text style={s.loadingText}>Building stock report…</Text>
+            </>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -324,6 +343,7 @@ export default function StockHoldingScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
+      <OfflineBanner />
       {/* Header */}
       <View style={s.header}>
         <View style={{ flex: 1 }}>

@@ -24,6 +24,8 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import OfflineBanner from '../../components/OfflineBanner';
+import { useNetworkState } from '../../hooks/useNetworkState';
 import { useColours } from '../../context/ThemeContext';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
@@ -139,7 +141,9 @@ function DepartmentSelectionScreen() {
   const colours = useColours();
   const styles = makeStyles(colours);
 
+  const { isOnline } = useNetworkState();
   const [loading, setLoading] = useState(true);
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [departments, setDepartments] = useState<DeptRow[]>([]);
   const [q, setQ] = useState('');
@@ -152,6 +156,12 @@ function DepartmentSelectionScreen() {
       if (v === null) setStocktakeIntroSeen(false);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!loading) { setLoadingTimeout(false); return; }
+    const t = setTimeout(() => setLoadingTimeout(true), 5000);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   // Role gate
   const [isManager, setIsManager] = useState(false);
@@ -495,6 +505,7 @@ function DepartmentSelectionScreen() {
 
   return (
     <View style={styles.wrap}>
+      <OfflineBanner />
       {/* Header */}
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
@@ -531,12 +542,20 @@ function DepartmentSelectionScreen() {
 
       {/* List */}
       {loading ? (
-        <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-          <ActivityIndicator color={colours.primary} />
-          <Text style={{ marginTop: 8, color: colours.textSecondary }}>
-            Loading departments…
-          </Text>
-        </View>
+        loadingTimeout && !isOnline ? (
+          <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+            <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+              📵 No connection — showing cached data
+            </Text>
+          </View>
+        ) : (
+          <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+            <ActivityIndicator color={colours.primary} />
+            <Text style={{ marginTop: 8, color: colours.textSecondary }}>
+              Loading departments…
+            </Text>
+          </View>
+        )
       ) : (
         <FlatList
           data={filtered}

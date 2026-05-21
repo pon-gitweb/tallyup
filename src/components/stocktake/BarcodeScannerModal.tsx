@@ -155,7 +155,11 @@ export default function BarcodeScannerModal({
     } catch (e: any) {
       cooldown.current = false;
       setPhase('scanning');
-      Alert.alert('Scan error', e?.message || 'Could not look up barcode. Try again.');
+      if (e?.code === 'unavailable' || e?.code === 'failed-precondition') {
+        showToast('📵 No connection — add this product manually when back online');
+      } else {
+        Alert.alert('Scan error', e?.message || 'Could not look up barcode. Try again.');
+      }
     }
   };
 

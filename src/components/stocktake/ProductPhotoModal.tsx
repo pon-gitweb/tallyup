@@ -20,6 +20,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
 import { findMatchingProduct, type ProductMatchResult } from '../../services/matching';
 import { AI_BASE_URL } from '../../config/ai';
+import { useNetworkState } from '../../hooks/useNetworkState';
 
 type ProductDetails = {
   name: string;
@@ -44,6 +45,7 @@ type Step = 'front-prompt' | 'back-prompt' | 'processing' | 'match-check' | 'rev
 const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', barcode: '', unit: 'bottle' };
 
 export default function ProductPhotoModal({ visible, onClose, venueId, areaName, initialBarcode, onConfirm }: Props) {
+  const { isOnline } = useNetworkState();
   const [step, setStep] = useState<Step>('front-prompt');
   const [frontB64, setFrontB64] = useState<string | null>(null);
   const [product, setProduct] = useState<ProductDetails>(BLANK);
@@ -257,18 +259,33 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
         {/* ── FRONT PROMPT ── */}
         {step === 'front-prompt' && (
           <View style={S.centered}>
-            <Text style={S.bigIcon}>📸</Text>
-            <Text style={S.stepTitle}>Photograph the front of the bottle</Text>
-            <Text style={S.stepSub}>Show the label clearly in frame</Text>
-            <TouchableOpacity style={[S.btn, { marginTop: 28 }]} onPress={takeFrontPhoto} activeOpacity={0.8}>
-              <Text style={S.btnText}>📷 Open Camera</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={pickFrontFromLibrary} activeOpacity={0.8}>
-              <Text style={S.btnTextDark}>🖼️ Choose from Library</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleClose} style={{ marginTop: 16 }}>
-              <Text style={{ color: '#64748b', fontSize: 14 }}>Cancel</Text>
-            </TouchableOpacity>
+            {!isOnline ? (
+              <>
+                <Text style={S.bigIcon}>📵</Text>
+                <Text style={S.stepTitle}>No connection</Text>
+                <Text style={S.stepSub}>
+                  Photo recognition needs an internet connection.{'\n'}Add this product manually when you're back online.
+                </Text>
+                <TouchableOpacity onPress={handleClose} style={{ marginTop: 28 }}>
+                  <Text style={{ color: '#64748b', fontSize: 14, fontWeight: '600' }}>Close</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={S.bigIcon}>📸</Text>
+                <Text style={S.stepTitle}>Photograph the front of the bottle</Text>
+                <Text style={S.stepSub}>Show the label clearly in frame</Text>
+                <TouchableOpacity style={[S.btn, { marginTop: 28 }]} onPress={takeFrontPhoto} activeOpacity={0.8}>
+                  <Text style={S.btnText}>📷 Open Camera</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.btn, S.btnSecondary, { marginTop: 10 }]} onPress={pickFrontFromLibrary} activeOpacity={0.8}>
+                  <Text style={S.btnTextDark}>🖼️ Choose from Library</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleClose} style={{ marginTop: 16 }}>
+                  <Text style={{ color: '#64748b', fontSize: 14 }}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         )}
 
