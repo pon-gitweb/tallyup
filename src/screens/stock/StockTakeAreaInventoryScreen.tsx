@@ -44,6 +44,11 @@ import { openIzzy } from '../../components/IzzyAssistant';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 import { useColours } from '../../context/ThemeContext';
 import { findMatchingProduct } from '../../services/matching';
+import { parseSpokenCount } from '../../utils/parseSpokenCount';
+
+// Voice counting — graceful degradation if native module not linked
+let Voice: any = null;
+try { Voice = require('@react-native-voice/voice').default; } catch {}
 
 type Item = {
   id: string; name: string;
@@ -99,6 +104,9 @@ type RowProps = {
   isLocked: boolean;
   isEdited: boolean;
   isHighlighted: boolean;
+  voiceAvailable?: boolean;
+  voiceListeningId?: string | null;
+  onVoicePress?: (item: Item) => void;
 };
 
 const Row = React.memo(function Row({
@@ -123,6 +131,9 @@ const Row = React.memo(function Row({
   isLocked,
   isEdited,
   isHighlighted,
+  voiceAvailable,
+  voiceListeningId,
+  onVoicePress,
 }: RowProps) {
   const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
@@ -358,9 +369,31 @@ const Row = React.memo(function Row({
               <Text style={{ fontWeight: '900', fontSize: 20 }}>+</Text>
             </TouchableOpacity>
           )}
+          {voiceAvailable && !isLocked && onVoicePress && (
+            <TouchableOpacity
+              onPress={() => onVoicePress(item)}
+              style={{
+                width: 36, height: 44, borderRadius: 8,
+                borderWidth: 1,
+                borderColor: voiceListeningId === item.id ? '#ef4444' : '#0D9488',
+                backgroundColor: voiceListeningId === item.id ? '#fef2f2' : '#f0fdfa',
+                justifyContent: 'center', alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 18 }}>
+                {voiceListeningId === item.id ? '🔴' : '🎤'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
         )}
       </View>
+
+      {voiceListeningId === item.id && (
+        <Text style={{ fontSize: 11, color: '#0D9488', fontWeight: '600', marginTop: 4, paddingHorizontal: 4 }}>
+          Listening…
+        </Text>
+      )}
 
       {/* Manager inline approve */}
       {isManager && ENABLE_MANAGER_INLINE_APPROVE && (
@@ -658,6 +691,53 @@ function StockTakeAreaInventoryScreen() {
     if (!draftKey || !AS || !draftRestoredRef.current) return;
     AS.setItem(draftKey, JSON.stringify(localQty)).catch(() => {});
   }, [localQty, draftKey]);
+
+  // ── Voice counting ─────────────────────────────────────────────────────────
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [voiceListeningId, setVoiceListeningId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!Voice) return;
+    Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
+    return () => { Voice?.destroy?.().catch(() => {}); };
+  }, []);
+
+  const handleVoicePress = async (item: Item) => {
+    if (!Voice || !voiceAvailable) return;
+    if (voiceListeningId === item.id) {
+      // Already listening for this item — stop
+      try { await Voice.stop(); } catch {}
+      setVoiceListeningId(null);
+      return;
+    }
+    try {
+      await Voice.stop().catch(() => {});
+      Voice.onSpeechResults = (e: any) => {
+        const results: string[] = e?.value || [];
+        for (const r of results) {
+          const num = parseSpokenCount(r);
+          if (num !== null) {
+            setLocalQty(prev => ({ ...prev, [item.id]: String(num) }));
+            setVoiceListeningId(null);
+            return;
+          }
+        }
+        setVoiceListeningId(null);
+      };
+      Voice.onSpeechError = () => setVoiceListeningId(null);
+      setVoiceListeningId(item.id);
+      await Voice.start('en-NZ');
+    } catch (e: any) {
+      setVoiceListeningId(null);
+      if (e?.code === 'permissions') {
+        Alert.alert(
+          'Microphone access needed',
+          'Enable it in Settings → Privacy → Microphone',
+          [{ text: 'Cancel', style: 'cancel' }]
+        );
+      }
+    }
+  };
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
@@ -980,6 +1060,20 @@ function StockTakeAreaInventoryScreen() {
           const reason = isManager && overrideActive ? currentOverrideReason : 'within-edit-window';
           await logEditToArea(item, oldCount, finalQty, reason, isManager && overrideActive);
           setEditedItemIds(prev => { const n = new Set(prev); n.add(item.id); return n; });
+          // FIX 4: Flag snapshot for recalculation
+          (async () => {
+            try {
+              const deptSnap = await getDoc(doc(db, 'venues', venueId!, 'departments', departmentId));
+              const cycleNum = typeof deptSnap.data()?.totalCyclesCompleted === 'number'
+                ? deptSnap.data().totalCyclesCompleted : null;
+              if (cycleNum) {
+                await updateDoc(
+                  doc(db, 'venues', venueId!, 'departments', departmentId, 'snapshots', `cycle-${cycleNum}`),
+                  { requiresRecalculation: true, recalculationReason: 'count-edited-after-submission', editedAt: serverTimestamp() }
+                );
+              }
+            } catch {}
+          })();
         }
       } catch (e: any) { console.error('[SaveCount] FAILED:', e?.code, e?.message); Alert.alert('Save failed', e?.message ?? String(e)); }
     };
@@ -2314,6 +2408,9 @@ const openHistory = throttleAction(async (item: Item) => {
             isLocked={isSubmitted && !canEdit}
             isEdited={editedItemIds.has(item.id)}
             isHighlighted={highlightedItemIds.has(item.id)}
+            voiceAvailable={voiceAvailable}
+            voiceListeningId={voiceListeningId}
+            onVoicePress={handleVoicePress}
           />
         )}
         ListHeaderComponent={

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ActivityIndicator, TouchableOpacity, ScrollView, Alert } from 'react-native';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { duplicateRecipe } from '../../services/recipes/duplicateRecipe';
 
@@ -15,6 +15,7 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
   const [docData, setDocData] = useState<any>(null);
+  const [livePrices, setLivePrices] = useState<Record<string, number | null>>({});
 
   useEffect(() => {
     let alive = true;
@@ -27,7 +28,21 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
         const snap = await getDoc(ref);
         if (!alive) return;
         if (!snap.exists()) throw new Error('Recipe not found');
-        setDocData({ id: snap.id, ...snap.data() });
+        const rd = { id: snap.id, ...snap.data() };
+        setDocData(rd);
+        // Load live costPrices for linked ingredients
+        const items = (rd as any).items || [];
+        const linkedIds = [...new Set(items.filter((it: any) => it.productId).map((it: any) => it.productId))];
+        if (linkedIds.length > 0 && venueId) {
+          const prices: Record<string, number | null> = {};
+          await Promise.all(linkedIds.map(async (pid: string) => {
+            try {
+              const pSnap = await getDoc(doc(db, 'venues', venueId, 'products', pid));
+              prices[pid] = pSnap.exists() ? (pSnap.data() as any).costPrice ?? null : null;
+            } catch { prices[pid] = null; }
+          }));
+          alive && setLivePrices(prices);
+        }
       } catch (e:any) {
         console.warn('[RecipeDetailScreen] load error', e);
         Alert.alert('Load failed', String(e?.message || e));
@@ -113,16 +128,40 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
         <Card>
           <Text style={{ fontWeight:'800', marginBottom:6 }}>Ingredients</Text>
           {Array.isArray(docData.items) && docData.items.length > 0 ? (
-            docData.items.map((it:any) => (
-              <View key={it.lineId || it.name} style={{ paddingVertical:6, borderBottomWidth:1, borderColor:'#F1F5F9' }}>
-                <Text style={{ fontWeight:'700' }}>{it.name || '(ingredient)'}</Text>
-                <Text style={{ opacity:0.7 }}>
-                  {it.type === 'misc' ? 'misc' : (it.productId || 'product')}
-                  {it.qty != null ? ` · ${it.qty}` : ''} {it.unit || ''}
-                  {Number.isFinite(Number(it.cost)) ? ` · ${fmtMoney(it.cost)}` : ''}
-                </Text>
-              </View>
-            ))
+            docData.items.map((it:any) => {
+              const livePrice = it.productId ? livePrices[it.productId] : undefined;
+              const hasLive = livePrice != null;
+              const hasNoPrice = it.productId && livePrice === null;
+              const liveCost = hasLive && it.qty != null && it.packSize > 0
+                ? (it.qty / it.packSize) * livePrice
+                : null;
+              const displayCost = liveCost != null ? liveCost : (Number.isFinite(Number(it.cost)) ? Number(it.cost) : null);
+              return (
+                <View key={it.lineId || it.name} style={{ paddingVertical:6, borderBottomWidth:1, borderColor:'#F1F5F9' }}>
+                  <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'flex-start' }}>
+                    <Text style={{ fontWeight:'700', flex:1 }}>{it.name || '(ingredient)'}</Text>
+                    {displayCost != null && (
+                      <Text style={{ fontWeight:'700', color: hasLive ? '#0D9488' : '#374151' }}>
+                        {fmtMoney(displayCost)}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={{ opacity:0.7, marginTop:2 }}>
+                    {it.qty != null ? `${it.qty}` : ''}{it.unit ? ` ${it.unit}` : ''}
+                    {it.packSize ? ` · pack ${it.packSize}` : ''}
+                  </Text>
+                  {hasLive && (
+                    <Text style={{ fontSize:11, color:'#0D9488', marginTop:2 }}>🔗 Live price — updates with invoices</Text>
+                  )}
+                  {!it.productId && Number.isFinite(Number(it.cost)) && (
+                    <Text style={{ fontSize:11, color:'#6B7280', marginTop:2 }}>✏️ Manual price</Text>
+                  )}
+                  {hasNoPrice && (
+                    <Text style={{ fontSize:11, color:'#F59E0B', marginTop:2 }}>⚠️ No price set on linked product</Text>
+                  )}
+                </View>
+              );
+            })
           ) : (
             <Text style={{ opacity:0.7 }}>No ingredients</Text>
           )}

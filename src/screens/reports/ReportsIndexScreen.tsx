@@ -23,6 +23,7 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { db } from '../../services/firebase';
 import { collection, query, where, limit, getDocs, orderBy, doc, updateDoc, Timestamp, getDoc } from 'firebase/firestore';
 import { fetchBriefing, BriefingData } from '../../services/reports/briefing';
+import { writeDepartmentSnapshot } from '../../services/reports/snapshotWriter';
 import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
 import { AI_BASE_URL } from '../../config/ai';
@@ -109,6 +110,8 @@ export default function ReportsIndexScreen() {
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
   const [reportsIntroSeen, setReportsIntroSeen] = useState(true);
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcDismissed, setRecalcDismissed] = useState(false);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -356,6 +359,23 @@ export default function ReportsIndexScreen() {
     }
   }
 
+  async function handleRecalculate() {
+    if (!venueId || recalculating) return;
+    setRecalculating(true);
+    try {
+      const staleSnaps = latestSnapshots.filter(s => s.requiresRecalculation && s.deptId && s.cycleNumber);
+      await Promise.all(staleSnaps.map(s => writeDepartmentSnapshot(venueId, s.deptId, s.cycleNumber)));
+      // Reload briefing
+      setLoading(true);
+      setData(null);
+      const d = await fetchBriefing(venueId);
+      setData(d);
+      setLoading(false);
+      setRecalcDismissed(true);
+    } catch {}
+    setRecalculating(false);
+  }
+
   function handleSuiteeClose() {
     setSuiteeOpen(false);
     setSuiteeMessages([]);
@@ -493,6 +513,34 @@ export default function ReportsIndexScreen() {
             </View>
           )}
 
+          {/* ── RECALCULATION NOTE (counts edited after submission) ── */}
+          {!recalcDismissed && latestSnapshots.some(s => s.requiresRecalculation) && (
+            <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '700' }}>
+                  ⚠️ Some counts were corrected after submission
+                </Text>
+                <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2, lineHeight: 17 }}>
+                  Figures may have changed since this snapshot was generated.
+                </Text>
+              </View>
+              <View style={{ gap: 6 }}>
+                <TouchableOpacity
+                  onPress={handleRecalculate}
+                  disabled={recalculating}
+                  style={{ backgroundColor: '#92400e', borderRadius: 6, paddingVertical: 5, paddingHorizontal: 10 }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                    {recalculating ? 'Updating…' : 'Recalculate'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setRecalcDismissed(true)} style={{ alignItems: 'center' }}>
+                  <Text style={{ color: '#92400e', fontSize: 11 }}>Dismiss</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {/* ── DEPARTMENT SELECTOR ── */}
           {false && availableDepts.length > 1 && (
             <View style={{ marginBottom: 14 }}>
@@ -619,7 +667,7 @@ export default function ReportsIndexScreen() {
           {isManager && !hasDollarData && data.totalItemsCounted > 0 && (
             <TouchableOpacity
               style={{ borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1.5, borderColor: '#14B8A6', backgroundColor: '#0B132B' }}
-              onPress={() => nav.navigate('Products')}
+              onPress={() => nav.navigate('BatchPriceEntry')}
               activeOpacity={0.85}
             >
               <Text style={{ color: '#14B8A6', fontSize: 15, fontWeight: '800', marginBottom: 6 }}>💰 Add prices for dollar variance</Text>

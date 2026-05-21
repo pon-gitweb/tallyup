@@ -137,6 +137,14 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [venueId]);
 
+  // ── Setup wizard (show once for new users with 0 stocktakes) ────────────────
+  React.useEffect(() => {
+    if (stocktakeCount !== 0) return; // already done stocktakes
+    AsyncStorage.getItem('setup_wizard_seen').then(v => {
+      if (v === null) nav.navigate('SetupWizard');
+    }).catch(() => {});
+  }, [stocktakeCount]);
+
   // ── Contextual nudge data ──────────────────────────────────────────────────
   const [productCount, setProductCount] = React.useState<number | null>(null);
   const [unassignedCount, setUnassignedCount] = React.useState(0);

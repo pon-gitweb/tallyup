@@ -47,6 +47,7 @@ import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImpo
 import OnboardingRoadScreen from '../../screens/onboarding/OnboardingRoadScreen';
 import FreshStartScreen from '../../screens/onboarding/FreshStartScreen';
 import BringYourDataScreen from '../../screens/onboarding/BringYourDataScreen';
+import SetupWizardScreen from '../../screens/onboarding/SetupWizardScreen';
 import { FEATURES } from '../../config/features';
 import StocktakeSummaryScreen from '../../screens/stock/StocktakeSummaryScreen';
 import DepartmentSummaryScreen from '../../screens/stock/DepartmentSummaryScreen';
@@ -74,6 +75,7 @@ import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
 
 // Products (setup area)
 import ProductsScreen from '../../screens/setup/ProductsScreen';
+import BatchPriceEntryScreen from '../../screens/setup/BatchPriceEntryScreen';
 import ProductsCsvImportScreen from '../../screens/setup/ProductsCsvImportScreen';
 import EditProductScreen from '../../screens/setup/EditProductScreen';
 import SuppliersScreen from '../../screens/setup/SuppliersScreen';
@@ -122,6 +124,7 @@ export default function MainStack() {
 
       {/* Products */}
       <Stack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
+      <Stack.Screen name="BatchPriceEntry" component={BatchPriceEntryScreen} options={{ title: 'Add Cost Prices' }} />
       <Stack.Screen name="ProductsCsvImport" component={ProductsCsvImportScreen} options={{ title: 'Import Products (CSV)' }} />
       <Stack.Screen
         name="EditProductScreen"
@@ -174,6 +177,7 @@ export default function MainStack() {
       <Stack.Screen name="OnboardingRoad" component={OnboardingRoadScreen} options={{ title: 'Welcome', headerShown: false }} />
       <Stack.Screen name="OnboardingFreshStart" component={FreshStartScreen} options={{ title: 'Fresh Start' }} />
       <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
+      <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

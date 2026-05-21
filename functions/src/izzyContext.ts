@@ -88,6 +88,30 @@ BLUETOOTH SCALES
 - Supported models are shown in the scale settings screen (Settings → Bluetooth Scale)
 - Once connected the scale weight is read automatically
 
+VOICE COUNTING
+- Tap the 🎤 microphone button next to any product while stocktaking
+- Say the number out loud and it populates the count automatically
+- Supports decimals: say "point five" or "half" for 0.5, "twelve" for 12
+- Say "three and a half" for 3.5
+- Works on any product row in the stocktake area screen
+
+SETUP WIZARD
+- New users see a 3-step introduction to stocktaking on first login
+- Explains what a stocktake is, how the flow works, and how to add products
+- Only shown once — never appears again after you've been through it
+
+BATCH PRICE ENTRY
+- Add cost prices to multiple products at once from the Reports screen
+- The "Add prices for dollar variance" card in Reports links directly to it
+- Enter prices inline without leaving the screen
+- Save all prices in one tap
+
+RECIPE COSTS (CraftUp)
+- Recipes linked to venue products show live cost prices
+- COGS updates automatically when invoice prices change
+- Ingredients show whether their cost is live (linked to a product) or manual
+- Add prices directly from the recipe if a linked product has no price set
+
 IZZY
 - Ask Izzy anything about how to use the app
 - Available on every screen via the ✦ button in the header
@@ -99,7 +123,6 @@ SUITEE (manager/owner only)
 
   planned: `
 FEATURES PLANNED FOR FUTURE UPDATES:
-- Voice counting (say the number out loud, count is recorded)
 - POS integration (Lightspeed, Square, Wizbang Onetap, BEPOZ, Impos)
 - Xero accounting integration
 - Photo counting (count bottles visible in a photo)
