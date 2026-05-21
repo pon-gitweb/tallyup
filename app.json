@@ -60,7 +60,14 @@
       "expo-asset",
       "expo-font",
       "expo-camera",
-      "react-native-ble-plx",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "Hosti uses Bluetooth to connect to compatible scales for weighing stock during stocktakes."
+        }
+      ],
       [
         "@sentry/react-native/expo",
         {
