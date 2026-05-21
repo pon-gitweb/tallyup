@@ -45,11 +45,11 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>Hosti uses your camera to scan barcodes and photograph invoices and products.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <string>Hosti uses your microphone for voice counting during stocktake.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your photos</string>
+    <string>Hosti needs access to your photos to upload invoices and shelf scans.</string>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>
@@ -76,5 +76,9 @@
     <string>Light</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <false/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Hosti uses Bluetooth to connect to compatible scales for weighing stock during stocktakes.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Hosti uses speech recognition to let you count stock by speaking numbers out loud.</string>
   </dict>
 </plist>
