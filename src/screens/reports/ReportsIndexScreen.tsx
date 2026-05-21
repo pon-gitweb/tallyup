@@ -27,6 +27,7 @@ import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
 import { AI_BASE_URL } from '../../config/ai';
 import { handleAiLimitError } from '../../utils/aiLimitError';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
@@ -107,6 +108,7 @@ export default function ReportsIndexScreen() {
   const [slowMovers, setSlowMovers] = useState<any[]>([]);
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
+  const [reportsIntroSeen, setReportsIntroSeen] = useState(true);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -162,6 +164,13 @@ export default function ReportsIndexScreen() {
       cancelled = true;
     };
   }, [venueId]);
+
+  // ── Reports intro (shown once) ──────────────────────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem('tallyup_intro_reports_v1').then(v => {
+      if (v === null) setReportsIntroSeen(false);
+    }).catch(() => {});
+  }, []);
 
   // ── Price changes ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -462,6 +471,28 @@ export default function ReportsIndexScreen() {
         <ScreenHeader />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 
+          {/* ── REPORTS INTRO CARD (shown once, first visit after stocktake) ── */}
+          {!reportsIntroSeen && data.hasCountData && (
+            <View style={{ backgroundColor: '#f5f3ee', borderRadius: 12, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: '#14B8A6' }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>📊 Your first report</Text>
+              <Text style={{ fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 8 }}>
+                This is your stock briefing — a summary of what changed since your last count.
+              </Text>
+              <Text style={{ fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 12 }}>
+                {'After your second stocktake you\'ll see:\n✓ What went missing (variance)\n✓ What you need to reorder\n✓ Where your money is going'}
+              </Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#14B8A6', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
+                onPress={() => {
+                  setReportsIntroSeen(true);
+                  AsyncStorage.setItem('tallyup_intro_reports_v1', '1').catch(() => {});
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Got it</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* ── DEPARTMENT SELECTOR ── */}
           {false && availableDepts.length > 1 && (
             <View style={{ marginBottom: 14 }}>
@@ -581,6 +612,26 @@ export default function ReportsIndexScreen() {
               <Text style={styles.anchorLabel}>STOCK HOLDING REPORT</Text>
               <Text style={[styles.anchorValue, { color: '#14B8A6', fontSize: 22 }]}>View your stock on hand</Text>
               <Text style={styles.anchorMeta}>Products by category with quantities and value →</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* ── COST PRICE NUDGE ── */}
+          {isManager && !hasDollarData && data.totalItemsCounted > 0 && (
+            <TouchableOpacity
+              style={{ borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1.5, borderColor: '#14B8A6', backgroundColor: '#0B132B' }}
+              onPress={() => nav.navigate('Products')}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#14B8A6', fontSize: 15, fontWeight: '800', marginBottom: 6 }}>💰 Add prices for dollar variance</Text>
+              <Text style={{ color: '#94A3B8', fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
+                {data.totalItemsCounted} products counted — add cost prices to unlock:
+              </Text>
+              <View style={{ gap: 3, marginBottom: 10 }}>
+                {['✓ Dollar variance in reports','✓ Stock holding value','✓ Supplier spend analysis','✓ Suggested order costs'].map(b => (
+                  <Text key={b} style={{ color: '#64748B', fontSize: 13 }}>{b}</Text>
+                ))}
+              </View>
+              <Text style={{ color: '#14B8A6', fontWeight: '700', fontSize: 14 }}>Add prices to products →</Text>
             </TouchableOpacity>
           )}
 
@@ -975,6 +1026,7 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
       <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
       <NavTile title="📈 Product Performance" onPress={() => nav.navigate('ProductPerformance')} />
       <NavTile title="🚚 Supplier Spend" onPress={() => nav.navigate('SupplierSpend')} />
+      <NavTile title="🍹 Recipe Costs (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
       <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
       <NavTile title="Stocktake History" onPress={() => nav.navigate('StocktakeHistory')} />
       <NavTile title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
@@ -983,7 +1035,6 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
       <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
       <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
       <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
-      <NavTile title="🍹 Recipe Costs (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
     </View>
   );
 }

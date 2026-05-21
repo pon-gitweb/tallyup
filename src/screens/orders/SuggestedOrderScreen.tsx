@@ -69,6 +69,7 @@ export default function SuggestedOrderScreen(){
   const [existingKeys,setExistingKeys]=useState<Set<string>>(new Set());
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
   const [supplierOpen,setSupplierOpen]=useState(false);
+  const [lineQtyOverrides,setLineQtyOverrides]=useState<Record<string,number>>({});
 
   const colours = useColours();
   const [entitled,setEntitled]=useState(true); // BETA: force entitled — all venues have full access
@@ -335,8 +336,18 @@ export default function SuggestedOrderScreen(){
     const alreadyDrafted=existingKeys.has(suggestionKey);
     dlog('preview key', suggestionKey, 'alreadyDrafted?', alreadyDrafted, 'cycleKey', snapshot?._meta?.stockCycleKey || null);
     setSupplierPreview({ supplierId,supplierName,lines:previewLines,suggestionKey,alreadyDrafted });
+    setLineQtyOverrides({});
     setSupplierOpen(true);
   },[snapshot,existingKeys,selectedDeptId]);
+
+  const previewRunningTotal = useMemo(() => {
+    if (!supplierPreview?.lines) return 0;
+    return (supplierPreview.lines as any[]).reduce((sum: number, l: any) => {
+      const effectiveQty = lineQtyOverrides[l.productId] !== undefined ? lineQtyOverrides[l.productId] : (Number.isFinite(l?.qty) ? Math.max(0, Math.round(l.qty)) : 1);
+      const perUnit = l.estimatedCost != null && (l.qty ?? 1) > 0 ? l.estimatedCost / (l.qty ?? 1) : (Number.isFinite(l?.cost) ? Number(l.cost) : 0);
+      return sum + (Number.isFinite(perUnit) ? perUnit * effectiveQty : 0);
+    }, 0);
+  }, [supplierPreview, lineQtyOverrides]);
 
   const findExistingDraftForSupplier = useCallback(async(supplierId:string|null)=>{
     if(!venueId) return null;
@@ -451,8 +462,14 @@ export default function SuggestedOrderScreen(){
       const existingId = await findExistingDraftForSupplier(key==='unassigned'?null:key);
 
       const doCreateSeparate = async()=>{
+        const rawLines = supplierPreview.lines || [];
+        const effectiveLines = rawLines
+          .map((l: any) => lineQtyOverrides[l.productId] !== undefined
+            ? { ...l, qty: lineQtyOverrides[l.productId], qtyDept: lineQtyOverrides[l.productId] }
+            : l)
+          .filter((l: any) => (lineQtyOverrides[l.productId] !== undefined ? lineQtyOverrides[l.productId] : (l.qty ?? 1)) > 0);
         const legacyMap = {
-          [key]: { supplierName: supplierPreview.supplierName ?? null, lines: supplierPreview.lines || [] },
+          [key]: { supplierName: supplierPreview.supplierName ?? null, lines: effectiveLines },
         };
         const res = await OrdersService.createDraftsFromSuggestions(venueId, legacyMap, {
           createdBy: uid,
@@ -737,6 +754,7 @@ export default function SuggestedOrderScreen(){
             <Text style={S.modalTitle}>
               {supplierPreview?.supplierName || 'Supplier'} · {supplierPreview?.lines?.length || 0} item
               {(supplierPreview?.lines?.length || 0) === 1 ? '' : 's'}
+              {previewRunningTotal > 0 ? ` · Est. $${previewRunningTotal.toFixed(0)}` : ''}
             </Text>
 
             <ScrollView keyboardShouldPersistTaps="handled">
@@ -775,6 +793,31 @@ export default function SuggestedOrderScreen(){
                     )}
                     {l.estimatedCost != null && l.estimatedCost > 0 && (
                       <Text style={[S.rowSub,{color:'#374151'}]}>Est. ${l.estimatedCost.toFixed(2)}</Text>
+                    )}
+                  </View>
+
+                  {/* Inline quantity stepper */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                    <Text style={{ fontSize: 12, color: '#6b7280', marginRight: 2 }}>Qty:</Text>
+                    <TouchableOpacity
+                      onPress={() => setLineQtyOverrides(prev => ({ ...prev, [l.productId]: Math.max(0, (prev[l.productId] !== undefined ? prev[l.productId] : Math.max(0, Math.round(l.qty ?? 1))) - 1) }))}
+                      style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#e5e7eb' }}
+                    >
+                      <Text style={{ fontSize: 16, color: '#374151', fontWeight: '700' }}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: 15, fontWeight: '800', color: '#111827', minWidth: 28, textAlign: 'center' }}>
+                      {lineQtyOverrides[l.productId] !== undefined ? lineQtyOverrides[l.productId] : Math.max(0, Math.round(l.qty ?? 1))}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setLineQtyOverrides(prev => ({ ...prev, [l.productId]: Math.min(999, (prev[l.productId] !== undefined ? prev[l.productId] : Math.max(0, Math.round(l.qty ?? 1))) + 1) }))}
+                      style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#e5e7eb' }}
+                    >
+                      <Text style={{ fontSize: 16, color: '#374151', fontWeight: '700' }}>+</Text>
+                    </TouchableOpacity>
+                    {lineQtyOverrides[l.productId] !== undefined && lineQtyOverrides[l.productId] !== Math.round(l.qty ?? 1) && (
+                      <Text style={{ fontSize: 11, color: '#9ca3af', marginLeft: 2 }}>
+                        (was {Math.max(0, Math.round(l.qty ?? 1))})
+                      </Text>
                     )}
                   </View>
 

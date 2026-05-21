@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById } from '../../services/products';
 import { listSuppliers } from '../../services/suppliers';
@@ -362,22 +362,65 @@ export default function ProductsScreen() {
   }
 
   function onDelete(p: any) {
-    Alert.alert('Delete Product', `Delete ${p.name}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (!venueId || !p.id) return;
-            await deleteProductById(venueId, p.id);
-            await load();
-          } catch (e: any) {
-            Alert.alert('Delete Failed', e?.message || 'Unknown error');
+    (async () => {
+      if (!venueId || !p.id) return;
+      const db2 = getFirestore();
+      const affectedAreas: string[] = [];
+      try {
+        const deptsSnap = await getDocs(collection(db2, 'venues', venueId, 'departments'));
+        for (const deptDoc of deptsSnap.docs) {
+          const areasSnap = await getDocs(collection(db2, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+          for (const areaDoc of areasSnap.docs) {
+            const areaData = areaDoc.data() as any;
+            const itemsSnap = await getDocs(
+              query(collection(db2, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
+                where('productId', '==', p.id))
+            );
+            if (!itemsSnap.empty) affectedAreas.push(areaData.name || areaDoc.id);
           }
-        },
-      },
-    ]);
+        }
+      } catch {}
+
+      const areaNote = affectedAreas.length > 0
+        ? `\n\nThis will also remove it from:\n${affectedAreas.slice(0, 5).map(a => `• ${a}`).join('\n')}${affectedAreas.length > 5 ? `\n• ...and ${affectedAreas.length - 5} more` : ''}`
+        : '';
+
+      Alert.alert(
+        'Delete Product',
+        `Delete "${p.name}"?${areaNote}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: affectedAreas.length > 0 ? 'Delete product and area items' : 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                if (affectedAreas.length > 0) {
+                  const db3 = getFirestore();
+                  const deptsSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments'));
+                  for (const deptDoc of deptsSnap2.docs) {
+                    const areasSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+                    for (const areaDoc of areasSnap2.docs) {
+                      const itemsSnap = await getDocs(
+                        query(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
+                          where('productId', '==', p.id))
+                      );
+                      for (const itemDoc of itemsSnap.docs) {
+                        await deleteDoc(itemDoc.ref);
+                      }
+                    }
+                  }
+                }
+                await deleteProductById(venueId, p.id);
+                await load();
+              } catch (e: any) {
+                Alert.alert('Delete Failed', e?.message || 'Unknown error');
+              }
+            },
+          },
+        ]
+      );
+    })();
   }
 
   function handleCardAction(action: string) {

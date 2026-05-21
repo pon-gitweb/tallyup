@@ -77,8 +77,21 @@ export default function MoreScreen() {
         </View>
 
         <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>
-          <SectionHeader title="Recipes" />
-          <Row icon="🍹" label="Recipes (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
+          <SectionHeader title="RECIPES" />
+          <TouchableOpacity
+            onPress={() => nav.navigate('CraftUp')}
+            activeOpacity={0.7}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 }}
+          >
+            <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>🍹</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, color: c.navy, fontWeight: '700' }}>CraftUp — Recipe costing</Text>
+              <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2, lineHeight: 17 }}>
+                Build recipes, calculate COGS, set selling prices
+              </Text>
+            </View>
+            <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>

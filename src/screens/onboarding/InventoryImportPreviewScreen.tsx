@@ -10,7 +10,7 @@ import { matchProductInList } from '../../services/matching';
 import { getAuth } from 'firebase/auth';
 import { incrementFullStocktakeCompleted, hasExistingBaseline } from '../../services/trialStocktake';
 import {
-  ActivityIndicator, Alert, ScrollView,
+  ActivityIndicator, Alert, Modal, ScrollView,
   Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -29,6 +29,8 @@ function InventoryImportPreviewScreen() {
   const { result, venueId } = route.params as { result: ExtractionResult; venueId: string };
   const [products, setProducts] = useState<ExtractedProduct[]>(result.products);
   const [importing, setImporting] = useState(false);
+  const [showImportGuide, setShowImportGuide] = useState(false);
+  const [importGuideCount, setImportGuideCount] = useState(0);
 
   // Group products by area/department
   const grouped = useMemo(() => {
@@ -161,22 +163,8 @@ function InventoryImportPreviewScreen() {
       }
 
       setImporting(false);
-
-      const dupNote = skippedCount > 0 ? `\n\n${skippedCount} product${skippedCount !== 1 ? 's' : ''} already existed and were skipped.` : '';
-      const baselineNote = alreadyHasBaseline
-        ? `Products added to your catalogue. Your existing baseline is unchanged.${dupNote}`
-        : result.hasPricing
-          ? `Your inventory is ready as your opening baseline.\n\nYour next stocktake will show variance against these counts.${dupNote}`
-          : `Your inventory is ready as your opening baseline. Prices weren't found — add them when you link your suppliers.${dupNote}`;
-
-      Alert.alert(
-        alreadyHasBaseline ? `✓ ${toCreate.length} products added` : `✓ ${toCreate.length} products imported!`,
-        baselineNote,
-        [
-          { text: 'Start stocktake', onPress: () => nav.navigate('StockControl') },
-          { text: 'Go to dashboard', onPress: () => nav.navigate('Dashboard') },
-        ]
-      );
+      setImportGuideCount(toCreate.length);
+      setShowImportGuide(true);
     } catch (e: any) {
       setImporting(false);
       Alert.alert('Import failed', e?.message || 'Please try again.');
@@ -184,6 +172,7 @@ function InventoryImportPreviewScreen() {
   }, [products, venueId, db, nav, result.hasPricing]);
 
   return (
+    <>
     <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Header */}
@@ -295,6 +284,53 @@ function InventoryImportPreviewScreen() {
 
       <View style={{ height: 20 }} />
     </ScrollView>
+
+    <Modal visible={showImportGuide} animationType="slide" transparent onRequestClose={() => {}}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+        <View style={{ backgroundColor: '#f5f3ee', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 36 }}>
+          <Text style={{ fontSize: 22, fontWeight: '900', color: '#065f46', marginBottom: 4 }}>✓ Import complete</Text>
+          <Text style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>{importGuideCount} products added to your venue</Text>
+          <Text style={{ fontSize: 13, fontWeight: '800', color: '#374151', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>What's next</Text>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' }}>
+            <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>1. Run your first stocktake</Text>
+            <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>Your products are ready to count.</Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#065f46', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+              onPress={() => { setShowImportGuide(false); nav.navigate('DepartmentSelection'); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Go to stocktake →</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' }}>
+            <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>2. Add cost prices</Text>
+            <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>Add prices to products for dollar variance in reports.</Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+              onPress={() => { setShowImportGuide(false); nav.navigate('Products'); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add prices →</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 20, borderWidth: 1, borderColor: '#e5e1d8' }}>
+            <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>3. Scan your first invoice</Text>
+            <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>We'll automatically link products to suppliers and update prices.</Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#92400e', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+              onPress={() => { setShowImportGuide(false); nav.navigate('Orders'); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Scan invoice →</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={{ alignItems: 'center', paddingVertical: 12 }}
+            onPress={() => { setShowImportGuide(false); nav.navigate('Dashboard'); }}
+          >
+            <Text style={{ color: '#6b7280', fontSize: 15, fontWeight: '600' }}>Got it — go to dashboard</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 

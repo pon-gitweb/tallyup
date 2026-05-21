@@ -1572,6 +1572,44 @@ app.post("/suitee", async (req, res) => {
       console.log("[api/suitee] price change query error", e?.message);
     }
 
+    // Invoice spend per supplier (last 90 days)
+    const invoiceSpendLines: string[] = [];
+    try {
+      const invNinetyDaysAgo = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+      );
+      const invoicesSnap = await db.collection(`venues/${venueId}/invoices`)
+        .where("invoiceDateTimestamp", ">=", invNinetyDaysAgo)
+        .limit(200)
+        .get();
+      const supplierSpend: Record<string, { name: string; totalSpend: number; invoiceCount: number; lastInvoiceDate: string }> = {};
+      for (const invDoc of invoicesSnap.docs) {
+        const d = invDoc.data() as any;
+        const sid = d.supplierId || "unknown";
+        if (!supplierSpend[sid]) {
+          supplierSpend[sid] = { name: d.supplierName || "Unknown", totalSpend: 0, invoiceCount: 0, lastInvoiceDate: "" };
+        }
+        supplierSpend[sid].totalSpend += typeof d.totalAmount === "number" ? d.totalAmount : 0;
+        supplierSpend[sid].invoiceCount++;
+        if (d.invoiceDate && d.invoiceDate > supplierSpend[sid].lastInvoiceDate) {
+          supplierSpend[sid].lastInvoiceDate = d.invoiceDate;
+        }
+      }
+      const spendEntries = Object.values(supplierSpend)
+        .filter(s => s.totalSpend > 0)
+        .sort((a, b) => b.totalSpend - a.totalSpend);
+      if (spendEntries.length > 0) {
+        invoiceSpendLines.push(`SUPPLIER SPEND (last 90 days, from scanned invoices):`);
+        spendEntries.forEach(s => {
+          invoiceSpendLines.push(
+            `  - ${s.name}: $${s.totalSpend.toFixed(2)} across ${s.invoiceCount} invoice${s.invoiceCount !== 1 ? "s" : ""}${s.lastInvoiceDate ? `, last invoice ${s.lastInvoiceDate}` : ""}`
+          );
+        });
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] invoice spend query error", e?.message);
+    }
+
     // ── Build context payload ─────────────────────────────────────────────────
     const lines: string[] = [
       "=== VENUE DATA SNAPSHOT ===",
@@ -1633,6 +1671,10 @@ app.post("/suitee", async (req, res) => {
 
     if (priceChangeLines.length > 0) {
       lines.push("", ...priceChangeLines);
+    }
+
+    if (invoiceSpendLines.length > 0) {
+      lines.push("", ...invoiceSpendLines);
     }
 
     if (snapshotContextLines.length > 0) {

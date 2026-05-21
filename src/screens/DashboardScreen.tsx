@@ -367,6 +367,20 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* ── Recipes quick tile ────────────────────────────────────────── */}
+        <TouchableOpacity
+          style={[styles.gridCard, { marginBottom: 16, flexDirection: 'row', alignItems: 'center', minWidth: '100%', gap: 10 }]}
+          onPress={() => nav.navigate('CraftUp')}
+          activeOpacity={0.75}
+        >
+          <Text style={{ fontSize: 22 }}>🍹</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.gridLabel}>CraftUp — Recipes</Text>
+            <Text style={styles.gridSub}>Calculate COGS, set selling prices</Text>
+          </View>
+          <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>
+        </TouchableOpacity>
+
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
         {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
           <ContextNudge c={colours} message="💡 Tip: Scan an invoice to set up suppliers and products in one step — before your first stocktake." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />

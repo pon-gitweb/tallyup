@@ -59,6 +59,8 @@ function DepartmentSummaryScreen() {
   const [resetting, setResetting] = useState(false);
   const [snapshot, setSnapshot] = useState<any>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const [noSupplierCount, setNoSupplierCount] = useState(0);
+  const [supplierNudgeDismissed, setSupplierNudgeDismissed] = useState(false);
 
   // Load snapshot (written async after completion — retry a few times if not yet available)
   useEffect(() => {
@@ -86,6 +88,26 @@ function DepartmentSummaryScreen() {
     tryLoad(4);
     return () => { cancelled = true; };
   }, [venueId, departmentId, cycleNumber]);
+
+  useEffect(() => {
+    if (!venueId || !departmentId) return;
+    (async () => {
+      try {
+        const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', departmentId, 'areas'));
+        let noSupp = 0;
+        for (const areaDoc of areasSnap.docs) {
+          const itemsSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaDoc.id, 'items')
+          );
+          itemsSnap.forEach(d => {
+            const item = d.data() as any;
+            if (!item.supplierId && item.name) noSupp++;
+          });
+        }
+        setNoSupplierCount(noSupp);
+      } catch {}
+    })();
+  }, [venueId, departmentId]);
 
   useEffect(() => {
     if (!venueId) return;
@@ -279,6 +301,38 @@ function DepartmentSummaryScreen() {
           )}
         </View>
       ) : null}
+
+      {/* Supplier nudge */}
+      {noSupplierCount > 0 && !supplierNudgeDismissed && (
+        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: '#14B8A6' }}>
+          <Text style={{ fontWeight: '800', color: '#374151', fontSize: 14, marginBottom: 4 }}>
+            🚚 {noSupplierCount} product{noSupplierCount !== 1 ? 's' : ''} {noSupplierCount !== 1 ? 'have' : 'has'} no supplier
+          </Text>
+          <Text style={{ color: '#6b7280', fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
+            Scan an invoice and we'll automatically link products to their supplier. Or assign suppliers manually in Products.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <TouchableOpacity
+              onPress={() => nav.navigate('Orders' as never)}
+              style={{ backgroundColor: '#065f46', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Scan invoice</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => nav.navigate('Products' as never)}
+              style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: '#e5e1d8' }}
+            >
+              <Text style={{ color: '#374151', fontWeight: '600', fontSize: 13 }}>Assign manually</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSupplierNudgeDismissed(true)}
+              style={{ paddingVertical: 7, paddingHorizontal: 4 }}
+            >
+              <Text style={{ color: '#9ca3af', fontSize: 13 }}>Later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* CTAs */}
       <TouchableOpacity

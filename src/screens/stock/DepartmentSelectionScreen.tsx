@@ -28,6 +28,7 @@ import { useColours } from '../../context/ThemeContext';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 import { resetDepartment } from '../../services/reset';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type DeptRow = {
   id: string;
@@ -40,6 +41,8 @@ type DeptRow = {
   areasCompleted?: number;
   totalCyclesCompleted?: number;
   lastCycleAt?: any;
+  itemsTotal?: number;
+  itemsCounted?: number;
 };
 
 function fmtRelative(ms: number | null): string {
@@ -85,22 +88,34 @@ async function enrichDepartmentsWithAreaStatus(
         let allCompleted = true;
         let areasTotal = 0;
         let areasCompleted = 0;
+        let itemsTotal = 0;
+        let itemsCounted = 0;
 
-        snap.forEach((d) => {
-          const a: any = d.data();
+        for (const areaDoc of snap.docs) {
+          const a: any = areaDoc.data();
           const started = !!a.startedAt;
           const completed = !!a.completedAt;
           areasTotal++;
           if (started) anyStarted = true;
           if (!completed) allCompleted = false;
           if (completed) areasCompleted++;
-        });
+          try {
+            const itemsSnap = await getDocs(
+              collection(db, 'venues', venueId, 'departments', row.id, 'areas', areaDoc.id, 'items')
+            );
+            itemsTotal += itemsSnap.size;
+            itemsSnap.forEach(itemDoc => {
+              const item = itemDoc.data() as any;
+              if (item.lastCount != null) itemsCounted++;
+            });
+          } catch {}
+        }
 
         let derived: 'idle' | 'inprog' | 'done' = 'idle';
         if (allCompleted) derived = 'done';
         else if (anyStarted) derived = 'inprog';
 
-        return { ...row, status: derived, areasTotal, areasCompleted };
+        return { ...row, status: derived, areasTotal, areasCompleted, itemsTotal, itemsCounted };
       } catch (e: any) {
         if (__DEV__) {
           console.log(
@@ -129,6 +144,14 @@ function DepartmentSelectionScreen() {
   const [departments, setDepartments] = useState<DeptRow[]>([]);
   const [q, setQ] = useState('');
   const dq = useDebouncedValue(q, 150);
+  const [stocktakeIntroSeen, setStocktakeIntroSeen] = useState(true);
+
+  // Stocktake intro (shown once on first visit)
+  useEffect(() => {
+    AsyncStorage.getItem('tallyup_intro_stocktake_v1').then(v => {
+      if (v === null) setStocktakeIntroSeen(false);
+    }).catch(() => {});
+  }, []);
 
   // Role gate
   const [isManager, setIsManager] = useState(false);
@@ -410,6 +433,11 @@ function DepartmentSelectionScreen() {
             <Text style={{ fontSize: 12, color: statusTextColor, marginTop: 4 }}>
               {statusSubtext}
             </Text>
+            {(item.itemsTotal ?? 0) > 0 && (
+              <Text style={{ fontSize: 11, color: colours.textSecondary, marginTop: 2 }}>
+                {item.itemsCounted ?? 0} of {item.itemsTotal} items counted this cycle
+              </Text>
+            )}
           </TouchableOpacity>
           {isManager && (
             <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
@@ -516,6 +544,28 @@ function DepartmentSelectionScreen() {
           renderItem={renderDept}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListHeaderComponent={
+            !stocktakeIntroSeen && departments.length > 0 && departments.every(d => d.status !== 'done') ? (
+              <View style={{ backgroundColor: '#f5f3ee', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1.5, borderColor: '#14B8A6' }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>👋 Welcome to stocktaking</Text>
+                <Text style={{ fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 8 }}>
+                  A stocktake is a count of everything you have in your venue right now.
+                </Text>
+                <Text style={{ fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 12 }}>
+                  {'Count your stock regularly to:\n✓ Know exactly what you have\n✓ Spot missing or wasted stock\n✓ Make smarter ordering decisions\n\nYour departments are ready. Tap one to start.'}
+                </Text>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#14B8A6', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
+                  onPress={() => {
+                    setStocktakeIntroSeen(true);
+                    AsyncStorage.setItem('tallyup_intro_stocktake_v1', '1').catch(() => {});
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Got it — let's go</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null
           }
           ListEmptyComponent={
             <View style={{ paddingVertical: 20, alignItems: 'center' }}>

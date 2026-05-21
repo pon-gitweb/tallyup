@@ -2,7 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView,
-  ActivityIndicator, Alert, TextInput,
+  ActivityIndicator, Alert, TextInput, Modal,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -49,6 +49,8 @@ export default function BringYourDataScreen() {
 
   const [step, setStep] = useState<Step>('intro');
   const [busy, setBusy] = useState(false);
+  const [showImportGuide, setShowImportGuide] = useState(false);
+  const [importGuideInfo, setImportGuideInfo] = useState<{ productCount: number; areaName: string | null; alreadyHasBaseline: boolean } | null>(null);
   const [lastStocktakeDate, setLastStocktakeDate] = useState('');
 
   // ── Products state ──────────────────────────────────────────────────────────
@@ -555,19 +557,9 @@ export default function BringYourDataScreen() {
         }
       }
 
-      // Confirmation then navigate
-      const stockValueStr = importStockValue > 0
-        ? `\nStock value: $${importStockValue.toFixed(2)}`
-        : '';
-      const areaStr = areaNameForMsg ? `\nProducts added to "${areaNameForMsg}" — open Stocktake to count them.` : '';
-      const baselineMsg = alreadyHasBaseline
-        ? `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} updated. Your baseline is unchanged — variance will continue from your existing baseline.${areaStr}`
-        : `${totalProductsCount} product${totalProductsCount !== 1 ? 's' : ''} imported as your baseline.${stockValueStr}${areaStr}\n\nYour next stocktake will show variance against this baseline. You're ready to go.`;
-      Alert.alert(
-        alreadyHasBaseline ? '✓ Products updated' : '✓ Opening baseline saved',
-        baselineMsg,
-        [{ text: "Let's go →", onPress: () => nav.navigate('Dashboard') }],
-      );
+      // Show guided completion modal instead of alert
+      setImportGuideInfo({ productCount: totalProductsCount, areaName: areaNameForMsg, alreadyHasBaseline });
+      setShowImportGuide(true);
     } catch (e: any) {
       Alert.alert('Setup failed', e?.message || 'Please try again.');
     } finally {
@@ -991,6 +983,57 @@ export default function BringYourDataScreen() {
           </>
         )}
       </ScrollView>
+
+      <Modal visible={showImportGuide} animationType="slide" transparent onRequestClose={() => {}}>
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
+          <View style={{ backgroundColor: '#f5f3ee', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 36 }}>
+            <Text style={{ fontSize: 22, fontWeight: '900', color: '#065f46', marginBottom: 4 }}>✓ Import complete</Text>
+            <Text style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>
+              {importGuideInfo?.productCount ?? 0} products added to your venue
+              {importGuideInfo?.areaName ? `\n${importGuideInfo.productCount} added to "${importGuideInfo.areaName}" ready to count` : ''}
+            </Text>
+            <Text style={{ fontSize: 13, fontWeight: '800', color: '#374151', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>What's next</Text>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' }}>
+              <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>1. Run your first stocktake</Text>
+              <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>
+                Your products are ready to count{importGuideInfo?.areaName ? ` in "${importGuideInfo.areaName}"` : ''}. Start there.
+              </Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#065f46', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+                onPress={() => { setShowImportGuide(false); nav.navigate('DepartmentSelection'); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Go to stocktake →</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' }}>
+              <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>2. Add cost prices</Text>
+              <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>Add prices to products for dollar variance in reports.</Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+                onPress={() => { setShowImportGuide(false); nav.navigate('Products'); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add prices →</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 20, borderWidth: 1, borderColor: '#e5e1d8' }}>
+              <Text style={{ fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>3. Scan your first invoice</Text>
+              <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>We'll automatically link products to suppliers and update prices.</Text>
+              <TouchableOpacity
+                style={{ backgroundColor: '#92400e', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start' }}
+                onPress={() => { setShowImportGuide(false); nav.navigate('Orders'); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Scan invoice →</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={{ alignItems: 'center', paddingVertical: 12 }}
+              onPress={() => { setShowImportGuide(false); nav.navigate('Dashboard'); }}
+            >
+              <Text style={{ color: '#6b7280', fontSize: 15, fontWeight: '600' }}>Got it — go to dashboard</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
