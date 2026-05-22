@@ -1,19 +1,20 @@
 // @ts-nocheck
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { useColours } from '../../context/ThemeContext';
 
 export default function FestivalDashboardScreen() {
-  const colours = useColours();
-
   return (
-    <View style={[styles.container, { backgroundColor: colours.background }]}>
+    <View style={styles.container}>
       <Text style={styles.emoji}>🎪</Text>
-      <Text style={[styles.title, { color: colours.text ?? colours.navy }]}>
-        Festival mode
+      <Text style={styles.title}>Festival mode</Text>
+      <Text style={styles.body}>
+        We're building something great for festival and event operators.
       </Text>
-      <Text style={[styles.subtitle, { color: colours.textSecondary }]}>
-        Setting up your event experience.{'\n'}Coming soon.
+      <Text style={styles.body}>
+        This feature is coming soon — we'll let you know when it's live.
+      </Text>
+      <Text style={styles.contact}>
+        Questions? Email us at{'\n'}office@hosti.co.nz
       </Text>
     </View>
   );
@@ -22,23 +23,36 @@ export default function FestivalDashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#f5f3ee',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
+    padding: 36,
   },
   emoji: {
-    fontSize: 48,
-    marginBottom: 16,
+    fontSize: 52,
+    marginBottom: 20,
+    color: '#1b4f72',
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 8,
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#0B132B',
     textAlign: 'center',
+    marginBottom: 16,
+    letterSpacing: -0.3,
   },
-  subtitle: {
+  body: {
     fontSize: 16,
+    color: '#6b7280',
     textAlign: 'center',
     lineHeight: 24,
+    marginBottom: 12,
+  },
+  contact: {
+    marginTop: 20,
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });
