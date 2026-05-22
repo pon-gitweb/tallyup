@@ -49,8 +49,8 @@ const STEPS = [
       '   Add your whole order at once\n\n' +
       '🔍  Search and add\n' +
       '   Find products already in your venue\n\n' +
-      'Tap any department to begin your first stocktake.',
-    cta: 'Start stocktaking →',
+      'Head to the Stock tab and tap any department to begin your first stocktake.',
+    cta: 'Go to dashboard →',
   },
 ];
 
@@ -60,7 +60,10 @@ export default function SetupWizardScreen() {
 
   const dismiss = async () => {
     await AsyncStorage.setItem(SETUP_WIZARD_KEY, '1').catch(() => {});
-    nav.navigate('DepartmentSelection');
+    nav.reset({
+      index: 0,
+      routes: [{ name: 'Dashboard' }],
+    });
   };
 
   const next = async () => {
