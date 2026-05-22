@@ -697,10 +697,36 @@ function StockTakeAreaInventoryScreen() {
   // ── Voice counting ─────────────────────────────────────────────────────────
   const [voiceAvailable, setVoiceAvailable] = useState(false);
   const [voiceListeningId, setVoiceListeningId] = useState<string | null>(null);
+  const activeVoiceItemRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!Voice) return;
     Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
+
+    // Listeners set up once on mount — use ref to avoid stale closure over item
+    Voice.onSpeechResults = (e: any) => {
+      const results: string[] = e?.value || [];
+      const itemId = activeVoiceItemRef.current;
+      if (!itemId) return;
+      for (const r of results) {
+        const num = parseSpokenCount(r);
+        if (num !== null) {
+          setLocalQty(prev => ({ ...prev, [itemId]: String(num) }));
+          setVoiceListeningId(null);
+          activeVoiceItemRef.current = null;
+          Voice.stop().catch(() => {});
+          return;
+        }
+      }
+      setVoiceListeningId(null);
+      activeVoiceItemRef.current = null;
+    };
+
+    Voice.onSpeechError = () => {
+      setVoiceListeningId(null);
+      activeVoiceItemRef.current = null;
+    };
+
     return () => { Voice?.destroy?.().catch(() => {}); };
   }, []);
 
@@ -715,27 +741,17 @@ function StockTakeAreaInventoryScreen() {
     if (voiceListeningId === item.id) {
       // Already listening for this item — stop
       try { await Voice.stop(); } catch {}
+      activeVoiceItemRef.current = null;
       setVoiceListeningId(null);
       return;
     }
     try {
       await Voice.stop().catch(() => {});
-      Voice.onSpeechResults = (e: any) => {
-        const results: string[] = e?.value || [];
-        for (const r of results) {
-          const num = parseSpokenCount(r);
-          if (num !== null) {
-            setLocalQty(prev => ({ ...prev, [item.id]: String(num) }));
-            setVoiceListeningId(null);
-            return;
-          }
-        }
-        setVoiceListeningId(null);
-      };
-      Voice.onSpeechError = () => setVoiceListeningId(null);
+      activeVoiceItemRef.current = item.id;
       setVoiceListeningId(item.id);
       await Voice.start('en-NZ');
     } catch (e: any) {
+      activeVoiceItemRef.current = null;
       setVoiceListeningId(null);
       if (e?.code === 'permissions') {
         Alert.alert(
