@@ -70,6 +70,10 @@ import NewOrderScreen from '../../screens/orders/NewOrderScreen';
 import NewOrderStartScreen from '../../screens/orders/NewOrderStartScreen';
 import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
+// Festival
+import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
+import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
+
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
 
@@ -178,6 +182,8 @@ export default function MainStack() {
       <Stack.Screen name="OnboardingFreshStart" component={FreshStartScreen} options={{ title: 'Fresh Start' }} />
       <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="FestivalDashboard" component={FestivalDashboardScreen} options={{ title: 'Festival Mode' }} />
+      <Stack.Screen name="FestivalReports" component={FestivalReportsScreen} options={{ title: 'Festival Reports' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

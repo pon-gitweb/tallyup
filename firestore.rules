@@ -975,6 +975,68 @@ service cloud.firestore {
       match /processedStocktakes/{hash} {
         allow read, write: if isVenueMember(venueId);
       }
+
+      // ═══════════════════════════════════════════════════════════════
+      // FESTIVAL MODE — additive only
+      // All existing venue rules unchanged above
+      // ═══════════════════════════════════════════════════════════════
+
+      match /sessions/{sessionId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /bars/{barId} {
+        allow read, write: if isVenueMember(venueId);
+        match /stocktakes/{stocktakeId} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      match /sourceLocations/{locationId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /transfers/{transferId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /requests/{requestId} {
+        allow read, write: if isVenueMember(venueId);
+        match /messages/{messageId} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      match /contracts/{contractId} {
+        // Private — owner only
+        allow read, write: if hasVenueRole(venueId, ['owner']);
+      }
+
+      match /riders/{riderId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /consumables/{productId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /returns/{returnId} {
+        allow read, write: if isVenueMember(venueId);
+        match /pallets/{palletId} {
+          allow read, write: if isVenueMember(venueId);
+        }
+      }
+
+      match /activations/{activationId} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /obligations/{obligationId} {
+        // Obligations visible to managers and owners
+        // Contract terms (contracts/) remain owner only
+        allow read: if hasVenueRole(venueId, ['owner', 'manager']);
+        allow write: if hasVenueRole(venueId, ['owner']);
+      }
     }
   }
 }

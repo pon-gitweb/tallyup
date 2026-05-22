@@ -6,6 +6,7 @@ import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'fi
 
 export default function CreateVenueScreen() {
   const [name, setName] = useState('');
+  const [venueType, setVenueType] = useState<'permanent' | 'festival'>('permanent');
   const [busy, setBusy] = useState(false);
 
   async function handleCreate() {
@@ -44,6 +45,7 @@ export default function CreateVenueScreen() {
       await setDoc(vref, {
         name: name.trim(),
         ownerUid: uid,
+        venueType: venueType,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -124,11 +126,55 @@ export default function CreateVenueScreen() {
         editable={!busy}
       />
 
+      <Text style={{ color: '#B7C0CD', marginTop: 20, marginBottom: 10, fontSize: 15, fontWeight: '600' }}>
+        What type of account is this?
+      </Text>
+
+      <TouchableOpacity
+        onPress={() => setVenueType('permanent')}
+        disabled={busy}
+        style={{
+          backgroundColor: '#171B22',
+          borderRadius: 10,
+          borderWidth: 2,
+          borderColor: venueType === 'permanent' ? '#0D9488' : '#263142',
+          padding: 14,
+          marginBottom: 10,
+        }}
+      >
+        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
+          {venueType === 'permanent' ? '●' : '○'} Permanent venue
+        </Text>
+        <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+          Bar, restaurant, café, hotel
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => setVenueType('festival')}
+        disabled={busy}
+        style={{
+          backgroundColor: '#171B22',
+          borderRadius: 10,
+          borderWidth: 2,
+          borderColor: venueType === 'festival' ? '#0D9488' : '#263142',
+          padding: 14,
+          marginBottom: 16,
+        }}
+      >
+        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
+          {venueType === 'festival' ? '●' : '○'} Festival or event
+        </Text>
+        <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+          Single day, multi-day, or seasonal event
+        </Text>
+      </TouchableOpacity>
+
       <TouchableOpacity
         onPress={handleCreate}
         disabled={busy}
         style={{
-          marginTop: 16,
+          marginTop: 0,
           backgroundColor: busy ? '#2B3442' : '#3B82F6',
           paddingVertical: 12,
           borderRadius: 10,

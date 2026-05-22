@@ -10,6 +10,9 @@ import DepartmentSelectionScreen from '../../screens/stock/DepartmentSelectionSc
 import OrdersScreen from '../../screens/orders/OrdersScreen';
 import ReportsScreen from '../../screens/reports/ReportsScreen';
 import MoreScreen from '../../screens/MoreScreen';
+import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
+import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
+import { useFestivalMode } from '../../hooks/useFestivalMode';
 
 const Tab = createBottomTabNavigator();
 
@@ -29,6 +32,7 @@ const IzzyHeaderButton = () => (
 
 export default function MainTabs() {
   const insets = useSafeAreaInsets();
+  const { isFestival } = useFestivalMode();
 
   return (
     <Tab.Navigator
@@ -60,9 +64,9 @@ export default function MainTabs() {
       })}
     >
       <Tab.Screen name="Home"    component={DashboardScreen} />
-      <Tab.Screen name="Stock"   component={DepartmentSelectionScreen} />
+      <Tab.Screen name="Stock"   component={isFestival ? FestivalDashboardScreen : DepartmentSelectionScreen} />
       <Tab.Screen name="Orders"  component={OrdersScreen} />
-      <Tab.Screen name="Reports" component={ReportsScreen} />
+      <Tab.Screen name="Reports" component={isFestival ? FestivalReportsScreen : ReportsScreen} />
       <Tab.Screen name="More"    component={MoreScreen} />
     </Tab.Navigator>
   );
