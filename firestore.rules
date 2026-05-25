@@ -1031,6 +1031,16 @@ service cloud.firestore {
         }
       }
 
+      // Wildcard covers barCounts, photos, and any future returns subcollections
+      match /returns/{document=**} {
+        allow read, write: if isVenueMember(venueId);
+      }
+
+      match /eventHistory/{eventId} {
+        allow read: if hasVenueRole(venueId, ['owner', 'manager']);
+        allow write: if hasVenueRole(venueId, ['owner']);
+      }
+
       match /activations/{activationId} {
         allow read, write: if isVenueMember(venueId);
       }

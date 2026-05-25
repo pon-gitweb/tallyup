@@ -90,6 +90,13 @@ import FestivalObligationsScreen from '../../screens/festival/FestivalObligation
 import FestivalRidersScreen from '../../screens/festival/FestivalRidersScreen';
 import FestivalRiderDetailScreen from '../../screens/festival/FestivalRiderDetailScreen';
 import FestivalActivationsScreen from '../../screens/festival/FestivalActivationsScreen';
+import FestivalEndOfEventCountScreen from '../../screens/festival/FestivalEndOfEventCountScreen';
+import FestivalReturnPhotoScreen from '../../screens/festival/FestivalReturnPhotoScreen';
+import FestivalReturnsScreen from '../../screens/festival/FestivalReturnsScreen';
+import FestivalPackingSlipScreen from '../../screens/festival/FestivalPackingSlipScreen';
+import FestivalReconciliationScreen from '../../screens/festival/FestivalReconciliationScreen';
+import FestivalEventCloseScreen from '../../screens/festival/FestivalEventCloseScreen';
+import FestivalEventHistoryScreen from '../../screens/festival/FestivalEventHistoryScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -218,6 +225,13 @@ export default function MainStack() {
       <Stack.Screen name="FestivalRiders" component={FestivalRidersScreen} options={{ title: 'Riders' }} />
       <Stack.Screen name="FestivalRiderDetail" component={FestivalRiderDetailScreen} options={{ title: 'Rider Detail' }} />
       <Stack.Screen name="FestivalActivations" component={FestivalActivationsScreen} options={{ title: 'Activations' }} />
+      <Stack.Screen name="FestivalEndOfEventCount" component={FestivalEndOfEventCountScreen} options={{ title: 'End of Event Count' }} />
+      <Stack.Screen name="FestivalReturnPhoto" component={FestivalReturnPhotoScreen} options={{ title: 'Return Photos' }} />
+      <Stack.Screen name="FestivalReturns" component={FestivalReturnsScreen} options={{ title: 'Returns' }} />
+      <Stack.Screen name="FestivalPackingSlip" component={FestivalPackingSlipScreen} options={{ title: 'Packing Slips' }} />
+      <Stack.Screen name="FestivalReconciliation" component={FestivalReconciliationScreen} options={{ title: 'Reconciliation' }} />
+      <Stack.Screen name="FestivalEventClose" component={FestivalEventCloseScreen} options={{ title: 'Close Event' }} />
+      <Stack.Screen name="FestivalEventHistory" component={FestivalEventHistoryScreen} options={{ title: 'Event History' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

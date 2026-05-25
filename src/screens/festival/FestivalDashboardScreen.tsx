@@ -131,6 +131,16 @@ export default function FestivalDashboardScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* Closed event banner */}
+        {event?.status === 'closed' && (
+          <View style={S.closedBanner}>
+            <Text style={S.closedBannerText}>✓ Event closed — view history for details</Text>
+            <TouchableOpacity onPress={() => nav.navigate('FestivalEventHistory')}>
+              <Text style={S.closedBannerLink}>View history →</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Phase 5 — role-based quick access tiles */}
         {role === 'owner' && (
           <>
@@ -156,6 +166,21 @@ export default function FestivalDashboardScreen() {
                 <Text style={S.tileLabel}>Activations</Text>
               </TouchableOpacity>
             </View>
+            {event?.status !== 'closed' && (
+              <>
+                <Text style={S.tilesHeading}>CLOSE EVENT</Text>
+                <View style={S.tilesRow}>
+                  <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
+                    <Text style={S.tileEmoji}>🔒</Text>
+                    <Text style={S.tileLabel}>Close event</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalEventHistory')}>
+                    <Text style={S.tileEmoji}>📜</Text>
+                    <Text style={S.tileLabel}>Event history</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </>
         )}
 
@@ -246,6 +271,10 @@ const S = StyleSheet.create({
   progressLabel: { flex: 1, fontSize: 14, color: '#6b7280' },
   progressLabelDone: { color: '#0B132B', fontWeight: '600' },
   check: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
+
+  closedBanner:     { backgroundColor: '#dcfce7', borderRadius: 10, padding: 12, marginTop: 12, marginBottom: 4 },
+  closedBannerText: { fontSize: 13, fontWeight: '700', color: '#16a34a', marginBottom: 2 },
+  closedBannerLink: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
 
   tilesHeading: {
     fontSize: 11, fontWeight: '800', color: '#9ca3af',
