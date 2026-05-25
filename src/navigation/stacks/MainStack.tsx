@@ -72,6 +72,7 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 
 // Festival
 import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
+import FestivalEventSetupScreen from '../../screens/festival/FestivalEventSetupScreen';
 import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
 
 // Recipes / CraftUp
@@ -183,6 +184,7 @@ export default function MainStack() {
       <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="FestivalDashboard" component={FestivalDashboardScreen} options={{ title: 'Festival Mode' }} />
+      <Stack.Screen name="FestivalEventSetup" component={FestivalEventSetupScreen} options={{ title: 'Event Setup' }} />
       <Stack.Screen name="FestivalReports" component={FestivalReportsScreen} options={{ title: 'Festival Reports' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />

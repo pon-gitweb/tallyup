@@ -1,26 +1,130 @@
 // @ts-nocheck
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { useVenueId } from '../../context/VenueProvider';
+import { FESTIVAL_BETA } from '../../config/festivalBeta';
+
+const SECTIONS = [
+  { key: 'basics',         label: 'Event basics' },
+  { key: 'bars',           label: 'Bar configuration' },
+  { key: 'sourceLocations',label: 'Source locations' },
+  { key: 'productPlanning',label: 'Product planning' },
+  { key: 'suppliers',      label: 'Supplier setup' },
+  { key: 'historicalData', label: 'Historical data' },
+];
 
 export default function FestivalDashboardScreen() {
+  const nav = useNavigation<any>();
+  const venueId = useVenueId();
+  const [event, setEvent] = useState<any>(null);
+  // Only show loading spinner when beta mode is active
+  const [loading, setLoading] = useState(FESTIVAL_BETA);
+
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
+    const unsub = onSnapshot(
+      doc(db, 'venues', venueId, 'event', 'details'),
+      snap => { setLoading(false); setEvent(snap.exists() ? snap.data() : null); },
+      () => setLoading(false),
+    );
+    return () => unsub();
+  }, [venueId]);
+
+  // ── Coming-soon gate ────────────────────────────────────────────────────────
+  if (!FESTIVAL_BETA) {
+    return (
+      <View style={S.container}>
+        <Text style={S.emoji}>🎪</Text>
+        <Text style={S.title}>Festival mode</Text>
+        <Text style={S.body}>
+          We're building something great for festival and event operators.
+        </Text>
+        <Text style={S.body}>
+          This feature is coming soon — we'll let you know when it's live.
+        </Text>
+        <Text style={S.contact}>Questions? Email us at{'\n'}office@hosti.co.nz</Text>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={S.container}>
+        <ActivityIndicator color="#1b4f72" size="large" />
+      </View>
+    );
+  }
+
+  // ── No event set up yet ─────────────────────────────────────────────────────
+  if (!event) {
+    return (
+      <View style={S.container}>
+        <Text style={S.emoji}>🎪</Text>
+        <Text style={S.title}>Welcome to Hosti Festival</Text>
+        <Text style={S.body}>
+          Let's set up your event.{'\n'}
+          This takes about 5 minutes and you can add more detail any time.
+        </Text>
+        <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
+          <Text style={S.ctaText}>Set up your event →</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Event exists — show dashboard ───────────────────────────────────────────
+  const progress = event.setupProgress || {};
+  const doneCount = SECTIONS.filter(s => progress[s.key]).length;
+  const allDone = doneCount === SECTIONS.length;
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.emoji}>🎪</Text>
-      <Text style={styles.title}>Festival mode</Text>
-      <Text style={styles.body}>
-        We're building something great for festival and event operators.
-      </Text>
-      <Text style={styles.body}>
-        This feature is coming soon — we'll let you know when it's live.
-      </Text>
-      <Text style={styles.contact}>
-        Questions? Email us at{'\n'}office@hosti.co.nz
-      </Text>
+    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+
+        <Text style={S.emoji}>🎪</Text>
+        <Text style={[S.title, { textAlign: 'left', marginBottom: 4 }]}>
+          {event.eventName || 'Your event'}
+        </Text>
+        {(event.startDate || event.endDate) && (
+          <Text style={S.dates}>
+            {event.startDate}
+            {event.endDate && event.endDate !== event.startDate ? ` → ${event.endDate}` : ''}
+          </Text>
+        )}
+
+        <View style={S.progressCard}>
+          <Text style={S.progressHeading}>
+            Setup progress · {doneCount}/{SECTIONS.length}
+          </Text>
+          {SECTIONS.map(sec => (
+            <View key={sec.key} style={S.progressRow}>
+              <Text style={progress[sec.key] ? S.dotDone : S.dotPending}>
+                {progress[sec.key] ? '●' : '○'}
+              </Text>
+              <Text style={[S.progressLabel, progress[sec.key] && S.progressLabelDone]}>
+                {sec.label}
+              </Text>
+              {progress[sec.key] && <Text style={S.check}>✓</Text>}
+            </View>
+          ))}
+        </View>
+
+        <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
+          <Text style={S.ctaText}>
+            {allDone ? 'View event setup' : 'Continue setup →'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const S = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f3ee',
@@ -28,31 +132,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 36,
   },
-  emoji: {
-    fontSize: 52,
-    marginBottom: 20,
-    color: '#1b4f72',
-  },
+  emoji: { fontSize: 52, marginBottom: 20, textAlign: 'center' },
   title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#0B132B',
-    textAlign: 'center',
-    marginBottom: 16,
-    letterSpacing: -0.3,
+    fontSize: 26, fontWeight: '800', color: '#0B132B',
+    textAlign: 'center', marginBottom: 16, letterSpacing: -0.3,
   },
   body: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 24,
-    marginBottom: 12,
+    fontSize: 16, color: '#6b7280', textAlign: 'center',
+    lineHeight: 24, marginBottom: 12,
   },
   contact: {
-    marginTop: 20,
-    fontSize: 14,
-    color: '#9ca3af',
-    textAlign: 'center',
-    lineHeight: 22,
+    marginTop: 20, fontSize: 14, color: '#9ca3af',
+    textAlign: 'center', lineHeight: 22,
   },
+  dates: { fontSize: 14, color: '#6b7280', marginBottom: 20 },
+  cta: {
+    backgroundColor: '#1b4f72', borderRadius: 999,
+    paddingVertical: 15, paddingHorizontal: 28,
+    alignItems: 'center', marginTop: 8,
+  },
+  ctaText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+
+  progressCard: {
+    backgroundColor: '#fff', borderRadius: 14, padding: 16,
+    marginBottom: 16, borderWidth: 1, borderColor: '#e5e1d8',
+  },
+  progressHeading: {
+    fontSize: 13, fontWeight: '700', color: '#0B132B',
+    marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  progressRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  dotDone: { fontSize: 14, color: '#1b4f72', marginRight: 10 },
+  dotPending: { fontSize: 14, color: '#d1d5db', marginRight: 10 },
+  progressLabel: { flex: 1, fontSize: 14, color: '#6b7280' },
+  progressLabelDone: { color: '#0B132B', fontWeight: '600' },
+  check: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
 });
