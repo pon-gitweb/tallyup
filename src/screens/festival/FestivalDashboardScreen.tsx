@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 
@@ -21,7 +21,9 @@ const SECTIONS = [
 export default function FestivalDashboardScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const uid = auth.currentUser?.uid;
   const [event, setEvent] = useState<any>(null);
+  const [role, setRole] = useState<string | null>(null);
   // Only show loading spinner when beta mode is active
   const [loading, setLoading] = useState(FESTIVAL_BETA);
 
@@ -34,6 +36,15 @@ export default function FestivalDashboardScreen() {
     );
     return () => unsub();
   }, [venueId]);
+
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId || !uid) return;
+    const unsub = onSnapshot(
+      doc(db, 'venues', venueId, 'members', uid),
+      snap => { setRole(snap.exists() ? (snap.data() as any).role ?? null : null); },
+    );
+    return () => unsub();
+  }, [venueId, uid]);
 
   // ── Coming-soon gate ────────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -119,6 +130,74 @@ export default function FestivalDashboardScreen() {
             {allDone ? 'View event setup' : 'Continue setup →'}
           </Text>
         </TouchableOpacity>
+
+        {/* Phase 5 — role-based quick access tiles */}
+        {role === 'owner' && (
+          <>
+            <Text style={S.tilesHeading}>CONTRACTS & COMPLIANCE</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalContracts')}>
+                <Text style={S.tileEmoji}>📋</Text>
+                <Text style={S.tileLabel}>Contracts</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalObligations')}>
+                <Text style={S.tileEmoji}>🎯</Text>
+                <Text style={S.tileLabel}>Obligations</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={S.tilesHeading}>OPERATIONS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalRiders')}>
+                <Text style={S.tileEmoji}>🎸</Text>
+                <Text style={S.tileLabel}>Riders</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalActivations')}>
+                <Text style={S.tileEmoji}>⚡</Text>
+                <Text style={S.tileLabel}>Activations</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {role === 'manager' && (
+          <>
+            <Text style={S.tilesHeading}>COMPLIANCE</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalObligations')}>
+                <Text style={S.tileEmoji}>🎯</Text>
+                <Text style={S.tileLabel}>Obligations</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={S.tilesHeading}>OPERATIONS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalRiders')}>
+                <Text style={S.tileEmoji}>🎸</Text>
+                <Text style={S.tileLabel}>Riders</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalActivations')}>
+                <Text style={S.tileEmoji}>⚡</Text>
+                <Text style={S.tileLabel}>Activations</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {role === 'staff' && (
+          <>
+            <Text style={S.tilesHeading}>TODAY</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalRiders')}>
+                <Text style={S.tileEmoji}>🎸</Text>
+                <Text style={S.tileLabel}>Rider tasks</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalActivations')}>
+                <Text style={S.tileEmoji}>⚡</Text>
+                <Text style={S.tileLabel}>Today's activations</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
       </ScrollView>
     </View>
   );
@@ -167,4 +246,17 @@ const S = StyleSheet.create({
   progressLabel: { flex: 1, fontSize: 14, color: '#6b7280' },
   progressLabelDone: { color: '#0B132B', fontWeight: '600' },
   check: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
+
+  tilesHeading: {
+    fontSize: 11, fontWeight: '800', color: '#9ca3af',
+    letterSpacing: 1, marginTop: 24, marginBottom: 10,
+  },
+  tilesRow: { flexDirection: 'row', gap: 12 },
+  tile: {
+    flex: 1, backgroundColor: '#fff', borderRadius: 14,
+    padding: 16, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#e5e1d8', minHeight: 90,
+  },
+  tileEmoji: { fontSize: 28, marginBottom: 8 },
+  tileLabel: { fontSize: 13, fontWeight: '700', color: '#0B132B', textAlign: 'center' },
 });

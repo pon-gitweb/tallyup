@@ -85,6 +85,11 @@ import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen'
 import FestivalContainerLayoutScreen from '../../screens/festival/FestivalContainerLayoutScreen';
 import FestivalPlanogramScreen from '../../screens/festival/FestivalPlanogramScreen';
 import FestivalPurchasingPredictionScreen from '../../screens/festival/FestivalPurchasingPredictionScreen';
+import FestivalContractScreen from '../../screens/festival/FestivalContractScreen';
+import FestivalObligationsScreen from '../../screens/festival/FestivalObligationsScreen';
+import FestivalRidersScreen from '../../screens/festival/FestivalRidersScreen';
+import FestivalRiderDetailScreen from '../../screens/festival/FestivalRiderDetailScreen';
+import FestivalActivationsScreen from '../../screens/festival/FestivalActivationsScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -208,6 +213,11 @@ export default function MainStack() {
       <Stack.Screen name="FestivalContainerLayout" component={FestivalContainerLayoutScreen} options={{ title: 'Container Layout' }} />
       <Stack.Screen name="FestivalPlanogram" component={FestivalPlanogramScreen} options={{ title: 'Fridge Planogram' }} />
       <Stack.Screen name="FestivalPurchasingPrediction" component={FestivalPurchasingPredictionScreen} options={{ title: 'Purchasing Prediction' }} />
+      <Stack.Screen name="FestivalContracts" component={FestivalContractScreen} options={{ title: 'Contracts' }} />
+      <Stack.Screen name="FestivalObligations" component={FestivalObligationsScreen} options={{ title: 'Obligations' }} />
+      <Stack.Screen name="FestivalRiders" component={FestivalRidersScreen} options={{ title: 'Riders' }} />
+      <Stack.Screen name="FestivalRiderDetail" component={FestivalRiderDetailScreen} options={{ title: 'Rider Detail' }} />
+      <Stack.Screen name="FestivalActivations" component={FestivalActivationsScreen} options={{ title: 'Activations' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

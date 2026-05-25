@@ -2304,6 +2304,277 @@ app.post("/process-invoices-pdf", async (req, res) => {
   }
 });
 
+// ── POST /extract-festival-contract ──────────────────────────────────────────
+// Body: { venueId, contractId, storageRef }
+// Downloads PDF from Storage, extracts obligations via Claude, updates Firestore.
+app.post("/extract-festival-contract", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, contractId, storageRef } = req.body || {};
+    if (!venueId || !contractId || !storageRef) {
+      res.status(400).json({ ok: false, error: "Missing venueId, contractId, or storageRef" });
+      return;
+    }
+
+    const db = admin.firestore();
+
+    // Verify caller is owner
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    const role = memberSnap.exists ? (memberSnap.data() as any)?.role : null;
+    if (role !== "owner") {
+      res.status(403).json({ ok: false, error: "Contracts are owner only" });
+      return;
+    }
+
+    // Download PDF from Firebase Storage
+    const bucket = admin.storage().bucket();
+    const [fileBuffer] = await bucket.file(storageRef).download();
+
+    // Extract text with pdf-parse
+    const pdfParse = require("pdf-parse");
+    const pdfData = await pdfParse(fileBuffer);
+    const rawText = (pdfData.text || "").trim();
+
+    // Truncate to avoid token limits (~12k chars ≈ ~3k tokens)
+    const text = rawText.length > 14000 ? rawText.slice(0, 14000) + "\n[truncated]" : rawText;
+
+    if (text.length < 50) {
+      await db.doc(`venues/${venueId}/contracts/${contractId}`).update({
+        status: "review_needed",
+        reviewNote: "Could not extract text from PDF. May be a scanned document.",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      res.json({ ok: false, scanned: true });
+      return;
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const systemPrompt =
+      "You are extracting contract obligations from a hospitality supplier agreement for a festival operator. " +
+      "Extract ONLY factual obligations — do not interpret or advise. Return JSON only, no other text.";
+
+    const userPrompt =
+      `Extract all obligations from this contract. Return as JSON:\n` +
+      `{\n` +
+      `  "supplierName": string,\n` +
+      `  "contractPeriod": { "start": string, "end": string },\n` +
+      `  "obligations": [\n` +
+      `    {\n` +
+      `      "type": "minimum_volume" | "exclusivity" | "display_requirement" | "activation" | "rebate" | "return_policy" | "other",\n` +
+      `      "product": string | null,\n` +
+      `      "requirement": string,\n` +
+      `      "quantity": number | null,\n` +
+      `      "unit": string | null,\n` +
+      `      "zone": string | null,\n` +
+      `      "financialImpact": string | null,\n` +
+      `      "deadline": string | null\n` +
+      `    }\n` +
+      `  ],\n` +
+      `  "rebates": [\n` +
+      `    {\n` +
+      `      "threshold": number,\n` +
+      `      "thresholdUnit": string,\n` +
+      `      "rebatePercent": number | null,\n` +
+      `      "rebateAmount": number | null,\n` +
+      `      "product": string | null\n` +
+      `    }\n` +
+      `  ],\n` +
+      `  "returnConditions": string,\n` +
+      `  "paymentTerms": string | null\n` +
+      `}\n\nContract text:\n${text}`;
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error("Claude API error: " + errText);
+    }
+
+    const aiData = await resp.json() as any;
+    const rawJson = aiData?.content?.[0]?.text || "{}";
+
+    let extracted: any = {};
+    try {
+      // Strip markdown code fences if present
+      const clean = rawJson.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      extracted = JSON.parse(clean);
+    } catch {
+      await db.doc(`venues/${venueId}/contracts/${contractId}`).update({
+        status: "review_needed",
+        reviewNote: "AI returned unexpected format. Please review manually.",
+        rawExtraction: rawJson,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      res.json({ ok: false, parseError: true });
+      return;
+    }
+
+    const obligations: any[] = extracted.obligations || [];
+    const rebates: any[] = extracted.rebates || [];
+
+    // Update contract document (owner-only collection)
+    await db.doc(`venues/${venueId}/contracts/${contractId}`).update({
+      supplierName:          extracted.supplierName || null,
+      contractPeriod:        extracted.contractPeriod || null,
+      extractedObligations:  obligations,
+      rebates,
+      returnConditions:      extracted.returnConditions || null,
+      paymentTerms:          extracted.paymentTerms || null,
+      rawExtraction:         rawJson,
+      status:                "extracted",
+      updatedAt:             admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Write obligations to manager-visible collection (no financial details)
+    const batch = db.batch();
+    for (const obl of obligations) {
+      const oblId = `${contractId}_${Math.random().toString(36).slice(2, 9)}`;
+      const ref = db.doc(`venues/${venueId}/obligations/${oblId}`);
+      batch.set(ref, {
+        contractId,
+        supplierName:    extracted.supplierName || null,
+        type:            obl.type || "other",
+        product:         obl.product || null,
+        requirement:     obl.requirement || "",
+        quantity:        obl.quantity || null,
+        unit:            obl.unit || null,
+        zone:            obl.zone || null,
+        currentProgress: 0,
+        status:          "not_started",
+        createdAt:       admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+
+    console.log(`[extract-festival-contract] ok: venueId=${venueId}, contractId=${contractId}, obligations=${obligations.length}`);
+    res.json({ ok: true, obligationsCount: obligations.length, supplierName: extracted.supplierName });
+
+  } catch (e: any) {
+    console.error("[extract-festival-contract] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Extraction failed" });
+  }
+});
+
+// ── POST /extract-festival-rider ──────────────────────────────────────────────
+// Body: { venueId, riderId, storageRef }
+// Downloads rider PDF, extracts requirements via Claude, updates Firestore.
+app.post("/extract-festival-rider", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, riderId, storageRef } = req.body || {};
+    if (!venueId || !riderId || !storageRef) {
+      res.status(400).json({ ok: false, error: "Missing venueId, riderId, or storageRef" });
+      return;
+    }
+
+    const db = admin.firestore();
+
+    // Download PDF
+    const bucket = admin.storage().bucket();
+    const [fileBuffer] = await bucket.file(storageRef).download();
+
+    const pdfParse = require("pdf-parse");
+    const pdfData = await pdfParse(fileBuffer);
+    const text = ((pdfData.text || "").trim()).slice(0, 10000);
+
+    if (text.length < 20) {
+      await db.doc(`venues/${venueId}/riders/${riderId}`).update({
+        status: "review_needed",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      res.json({ ok: false, scanned: true });
+      return;
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const systemPrompt =
+      "Extract alcohol and beverage requirements from this artist rider. Return JSON only.";
+
+    const userPrompt =
+      `Extract requirements:\n{\n` +
+      `  "artistName": string,\n` +
+      `  "setTime": string | null,\n` +
+      `  "dressingRoom": [{ "product": string, "quantity": number, "unit": string, "temperature": string | null, "notes": string | null }],\n` +
+      `  "stageArea": [{ "product": string, "quantity": number, "unit": string, "notes": string | null }],\n` +
+      `  "deliveryTime": string | null,\n` +
+      `  "deliveryLocation": string | null,\n` +
+      `  "specialRequests": string | null\n` +
+      `}\n\nRider text:\n${text}`;
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error("Claude API error");
+    const aiData = await resp.json() as any;
+    const rawJson = aiData?.content?.[0]?.text || "{}";
+
+    let extracted: any = {};
+    try {
+      const clean = rawJson.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      extracted = JSON.parse(clean);
+    } catch {
+      await db.doc(`venues/${venueId}/riders/${riderId}`).update({
+        status: "review_needed",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      res.json({ ok: false, parseError: true });
+      return;
+    }
+
+    await db.doc(`venues/${venueId}/riders/${riderId}`).update({
+      artistName:       extracted.artistName || null,
+      setTime:          extracted.setTime || null,
+      deliveryTime:     extracted.deliveryTime || null,
+      deliveryLocation: extracted.deliveryLocation || null,
+      dressingRoom:     extracted.dressingRoom || [],
+      stageArea:        extracted.stageArea || [],
+      specialRequests:  extracted.specialRequests || null,
+      status:           "pending",
+      updatedAt:        admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[extract-festival-rider] ok: venueId=${venueId}, riderId=${riderId}, artist=${extracted.artistName}`);
+    res.json({ ok: true, artistName: extracted.artistName });
+
+  } catch (e: any) {
+    console.error("[extract-festival-rider] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Extraction failed" });
+  }
+});
+
 // ── scheduleSlowMoversCheck ───────────────────────────────────────────────────
 // Runs every Monday at 8am Pacific/Auckland time.
 // Flags products with no movement in 30+ days and count > 0.
