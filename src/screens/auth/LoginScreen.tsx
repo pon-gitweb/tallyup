@@ -88,6 +88,8 @@ function LoginScreenInner() {
     passRow: { flexDirection: 'row', alignItems: 'center' },
     revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: colours.border, borderRadius: 10 },
     revealText: { fontWeight: '700', color: colours.text },
+    forgotLink: { alignSelf: 'flex-end', marginTop: 6, marginBottom: 4, paddingVertical: 2 },
+    forgotText: { color: colours.primary, fontSize: 13, fontWeight: '600' },
     primary: { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
     primaryText: { color: colours.primaryText, fontWeight: '700' },
     secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: colours.border },
@@ -133,6 +135,10 @@ function LoginScreenInner() {
               <Text style={S.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity style={S.forgotLink} onPress={() => nav.navigate('ForgotPassword')} disabled={busy}>
+            <Text style={S.forgotText}>Forgot password?</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
             {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Sign In</Text>}
