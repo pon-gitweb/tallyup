@@ -1,11 +1,13 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView, Alert, Animated,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection, doc, onSnapshot, updateDoc, getDocs, serverTimestamp,
+} from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -26,20 +28,90 @@ function relTime(ts: any): string {
   return `${Math.floor(mins / 60)}h ago`;
 }
 
+function dayOfEvent(startDateStr: string | undefined): string {
+  if (!startDateStr) return '';
+  // DD/MM/YYYY
+  const parts = startDateStr.split('/');
+  if (parts.length !== 3) return '';
+  const start = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+  const today = new Date();
+  const diff = Math.floor((today.getTime() - start.getTime()) / 86400000) + 1;
+  return diff > 0 ? `Day ${diff}` : '';
+}
+
+function hoursColor(h: number | null): string {
+  if (h === null) return '#6b7280';
+  if (h > 4) return '#16a34a';
+  if (h > 2) return '#d97706';
+  return '#dc2626';
+}
+
+function fillPct(current: number, par: number): number {
+  if (!par || par <= 0) return 100;
+  return Math.min(100, Math.round((current / par) * 100));
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FestivalOpsScreen() {
   const nav     = useNavigation<any>();
   const venueId = useVenueId();
+  const uid     = auth.currentUser?.uid;
+  const userName = auth.currentUser?.displayName ?? 'Me';
 
+  const [event,     setEvent]     = useState<any>(null);
+  const [bars,      setBars]      = useState<any[]>([]);
+  const [barStock,  setBarStock]  = useState<Record<string, any[]>>({});
   const [requests,  setRequests]  = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
+  const [selectedBar, setSelectedBar] = useState<string>('all');
   const [loading,   setLoading]   = useState(FESTIVAL_BETA);
   const [acting,    setActing]    = useState<string | null>(null);
 
-  // Live listeners
+  const liveDot = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(liveDot, { toValue: 0.2, duration: 800, useNativeDriver: true }),
+        Animated.timing(liveDot, { toValue: 1, duration: 800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  // Load event doc
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
+    const unsub = onSnapshot(doc(db, 'venues', venueId), snap => {
+      if (snap.exists()) setEvent(snap.data() as any);
+    });
+    return () => unsub();
+  }, [venueId]);
+
+  // Load bars + their stock
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) return;
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars'), async snap => {
+      const barList = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      setBars(barList);
+
+      // Load stock for each bar
+      const stockMap: Record<string, any[]> = {};
+      await Promise.all(barList.map(async bar => {
+        try {
+          const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', bar.id, 'stock'));
+          stockMap[bar.id] = stockSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        } catch { stockMap[bar.id] = []; }
+      }));
+      setBarStock(stockMap);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [venueId]);
+
+  // Live listeners for requests + transfers
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) return;
 
     const unsubReq = onSnapshot(
       collection(db, 'venues', venueId, 'requests'),
@@ -53,9 +125,8 @@ export default function FestivalOpsScreen() {
             if (ud !== 0) return ud;
             return (b.createdAt?.toDate?.()?.getTime() ?? 0) - (a.createdAt?.toDate?.()?.getTime() ?? 0);
           }));
-        setLoading(false);
       },
-      () => setLoading(false),
+      () => {},
     );
 
     const unsubXfr = onSnapshot(
@@ -103,9 +174,21 @@ export default function FestivalOpsScreen() {
     );
   }
 
-  async function assignSource(reqId: string) {
-    // Placeholder: in Phase 4 this opens a source-location picker
-    Alert.alert('Assign source', 'Source location assignment coming in Phase 4.');
+  async function assignToMe(reqId: string) {
+    if (!venueId || acting) return;
+    setActing(reqId);
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
+        status:         'accepted',
+        assignedTo:     uid,
+        assignedToName: userName,
+        updatedAt:      serverTimestamp(),
+      });
+    } catch (e: any) {
+      Alert.alert('Error', e?.message);
+    } finally {
+      setActing(null);
+    }
   }
 
   async function cancelRequest(reqId: string) {
@@ -117,9 +200,9 @@ export default function FestivalOpsScreen() {
           setActing(reqId);
           try {
             await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
-              status: 'cancelled',
-              cancelledBy: auth.currentUser?.uid ?? 'unknown',
-              updatedAt: serverTimestamp(),
+              status:      'cancelled',
+              cancelledBy: uid ?? 'unknown',
+              updatedAt:   serverTimestamp(),
             });
           } catch (e: any) {
             Alert.alert('Error', e?.message);
@@ -135,28 +218,135 @@ export default function FestivalOpsScreen() {
   const accepted = requests.filter(r => r.status === 'accepted' || r.status === 'collected');
   const criticalAlerts = requests.filter(r => r.urgency === 'asap' && r.status === 'pending');
 
+  // Filter by selected bar
+  const visibleBars = selectedBar === 'all' ? bars : bars.filter(b => b.id === selectedBar);
+
+  // Critical stock alerts: bars with any product < 1hr remaining
+  const stockAlerts: { barName: string; productName: string; hours: number }[] = [];
+  for (const bar of bars) {
+    const stock = barStock[bar.id] ?? [];
+    for (const item of stock) {
+      if (item.velocity > 0 && item.currentStock != null) {
+        const hrs = item.currentStock / item.velocity;
+        if (hrs < 1) {
+          stockAlerts.push({ barName: bar.name || bar.id, productName: item.productName || item.id, hours: hrs });
+        }
+      }
+    }
+  }
+
+  const dayLabel = dayOfEvent(event?.startDate);
+
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
       <ScrollView contentContainerStyle={O.scroll}>
 
-        <Text style={O.screenTitle}>Ops overview</Text>
-
-        {/* Phase 4 placeholder banner */}
-        <View style={O.phase4Banner}>
-          <Text style={O.phase4Text}>📊 Velocity graphs — Phase 4</Text>
+        {/* ── Event header ──────────────────────────────────────────────── */}
+        <View style={O.eventHeader}>
+          <View>
+            <Text style={O.eventName} numberOfLines={1}>{event?.eventName || 'Ops Overview'}</Text>
+            {dayLabel ? <Text style={O.dayLabel}>{dayLabel}</Text> : null}
+          </View>
+          <View style={O.liveRow}>
+            <Animated.View style={[O.liveDot, { opacity: liveDot }]} />
+            <Text style={O.liveText}>LIVE</Text>
+          </View>
         </View>
 
-        {/* Critical alerts */}
-        {criticalAlerts.length > 0 && (
+        {/* ── Critical stock alerts ─────────────────────────────────────── */}
+        {stockAlerts.length > 0 && (
           <View style={O.alertBanner}>
             <Text style={O.alertBannerText}>
-              ⚡ {criticalAlerts.length} ASAP request{criticalAlerts.length !== 1 ? 's' : ''} waiting
+              🚨 {stockAlerts.length} product{stockAlerts.length !== 1 ? 's' : ''} running out within 1 hour
+            </Text>
+            {stockAlerts.map((a, i) => (
+              <Text key={i} style={O.alertBannerSub}>
+                {a.barName} — {a.productName} (~{Math.round(a.hours * 60)}min)
+              </Text>
+            ))}
+          </View>
+        )}
+
+        {/* ── ASAP request alerts ───────────────────────────────────────── */}
+        {criticalAlerts.length > 0 && (
+          <View style={[O.alertBanner, { borderColor: '#d97706', backgroundColor: '#fffbeb' }]}>
+            <Text style={[O.alertBannerText, { color: '#d97706' }]}>
+              ⚡ {criticalAlerts.length} ASAP request{criticalAlerts.length !== 1 ? 's' : ''} pending
             </Text>
           </View>
         )}
 
-        {/* Pending requests */}
-        <Text style={O.sectionLabel}>PENDING REQUESTS ({pending.length})</Text>
+        {/* ── Bar switcher ──────────────────────────────────────────────── */}
+        {bars.length > 0 && (
+          <>
+            <Text style={O.sectionLabel}>BARS</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={O.barScroll}>
+              <TouchableOpacity
+                style={[O.barChip, selectedBar === 'all' && O.barChipOn]}
+                onPress={() => setSelectedBar('all')}
+              >
+                <Text style={[O.barChipText, selectedBar === 'all' && O.barChipTextOn]}>All</Text>
+              </TouchableOpacity>
+              {bars.map(bar => (
+                <TouchableOpacity
+                  key={bar.id}
+                  style={[O.barChip, selectedBar === bar.id && O.barChipOn]}
+                  onPress={() => setSelectedBar(bar.id)}
+                >
+                  <Text style={[O.barChipText, selectedBar === bar.id && O.barChipTextOn]}>
+                    {bar.name || bar.id}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        {/* ── Per-bar stock cards ───────────────────────────────────────── */}
+        {visibleBars.length > 0 && (
+          <>
+            <Text style={[O.sectionLabel, { marginTop: 16 }]}>STOCK STATUS</Text>
+            {visibleBars.map(bar => {
+              const stock = barStock[bar.id] ?? [];
+              return (
+                <TouchableOpacity
+                  key={bar.id}
+                  style={O.barCard}
+                  onPress={() => nav.navigate('FestivalBarDashboard', { barId: bar.id, barName: bar.name || bar.id })}
+                >
+                  <Text style={O.barCardName}>{bar.name || bar.id}</Text>
+                  {stock.length === 0 ? (
+                    <Text style={O.emptyText}>No stock data</Text>
+                  ) : (
+                    stock.slice(0, 4).map(item => {
+                      const velocity = item.velocity ?? null;
+                      const hrs = velocity > 0 && item.currentStock != null
+                        ? item.currentStock / velocity : null;
+                      const pct = fillPct(item.currentStock ?? 0, item.parLevel ?? item.currentStock ?? 0);
+                      return (
+                        <View key={item.id} style={O.stockRow}>
+                          <Text style={O.stockName} numberOfLines={1}>{item.productName || item.id}</Text>
+                          <View style={O.fillBg}>
+                            <View style={[O.fillBar, { width: `${pct}%`, backgroundColor: hoursColor(hrs) }]} />
+                          </View>
+                          <Text style={[O.hoursText, { color: hoursColor(hrs) }]}>
+                            {hrs != null ? `${hrs < 1 ? Math.round(hrs * 60) + 'min' : hrs.toFixed(1) + 'hr'}` : '—'}
+                          </Text>
+                        </View>
+                      );
+                    })
+                  )}
+                  {stock.length > 4 && (
+                    <Text style={O.moreText}>+{stock.length - 4} more products</Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── Pending requests ──────────────────────────────────────────── */}
+        <Text style={[O.sectionLabel, { marginTop: 16 }]}>PENDING REQUESTS ({pending.length})</Text>
         {pending.length === 0 ? (
           <Text style={O.emptyText}>No pending requests.</Text>
         ) : (
@@ -177,17 +367,21 @@ export default function FestivalOpsScreen() {
                     • {p.productName} × {p.quantity} {p.unit}
                   </Text>
                 ))}
-                {req.assignedToName && (
-                  <Text style={O.assignedText}>Assigned to: {req.assignedToName}</Text>
-                )}
                 {!!req.note && <Text style={O.noteText}>"{req.note}"</Text>}
                 <View style={O.cardActions}>
                   <TouchableOpacity
                     style={[O.approveBtn, isActing && O.btnDisabled]}
                     disabled={!!acting}
-                    onPress={() => assignSource(req.id)}
+                    onPress={() => assignToMe(req.id)}
                   >
-                    <Text style={O.approveBtnText}>Assign source</Text>
+                    <Text style={O.approveBtnText}>Assign to me</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[O.viewBtn, isActing && O.btnDisabled]}
+                    disabled={!!acting}
+                    onPress={() => nav.navigate('FestivalDeliveryTasks')}
+                  >
+                    <Text style={O.viewBtnText}>View</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[O.cancelBtn, isActing && O.btnDisabled]}
@@ -202,12 +396,10 @@ export default function FestivalOpsScreen() {
           })
         )}
 
-        {/* Active tasks */}
+        {/* ── Active deliveries ─────────────────────────────────────────── */}
         {accepted.length > 0 && (
           <>
-            <Text style={[O.sectionLabel, { marginTop: 16 }]}>
-              ACTIVE TASKS ({accepted.length})
-            </Text>
+            <Text style={[O.sectionLabel, { marginTop: 16 }]}>ACTIVE DELIVERIES ({accepted.length})</Text>
             {accepted.map(req => (
               <View key={req.id} style={[O.card, O.cardActive]}>
                 <Text style={O.cardBarName}>{req.barName}</Text>
@@ -224,12 +416,10 @@ export default function FestivalOpsScreen() {
           </>
         )}
 
-        {/* Recent transfers */}
+        {/* ── Transfers today ───────────────────────────────────────────── */}
         {transfers.length > 0 && (
           <>
-            <Text style={[O.sectionLabel, { marginTop: 16 }]}>
-              TRANSFERS TODAY ({transfers.length})
-            </Text>
+            <Text style={[O.sectionLabel, { marginTop: 16 }]}>TRANSFERS TODAY ({transfers.length})</Text>
             {transfers.map(xfr => {
               const riskIcon = xfr.velocityCheckResult === 'safe' ? '✅'
                 : xfr.velocityCheckResult === 'caution' ? '⚠️' : '🚫';
@@ -250,13 +440,16 @@ export default function FestivalOpsScreen() {
           </>
         )}
 
-        {/* Quick actions */}
+        {/* ── Quick actions ─────────────────────────────────────────────── */}
         <View style={O.quickActions}>
           <TouchableOpacity style={O.quickBtn} onPress={() => nav.navigate('FestivalTransfer', {})}>
             <Text style={O.quickBtnText}>🔄 New transfer</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[O.quickBtn, O.quickBtnSecondary]} onPress={() => nav.navigate('FestivalBarSelection')}>
-            <Text style={[O.quickBtnText, O.quickBtnTextSecondary]}>🍺 View bars</Text>
+          <TouchableOpacity
+            style={[O.quickBtn, O.quickBtnSecondary]}
+            onPress={() => nav.navigate('FestivalDeliveryTasks')}
+          >
+            <Text style={[O.quickBtnText, O.quickBtnTextSecondary]}>📋 All tasks</Text>
           </TouchableOpacity>
         </View>
 
@@ -274,16 +467,36 @@ const O = StyleSheet.create({
   csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
 
   scroll:      { padding: 16, paddingBottom: 40 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 16 },
 
-  phase4Banner: { backgroundColor: '#fef9c3', borderRadius: 10, padding: 10, marginBottom: 14, borderWidth: 1, borderColor: '#fde68a', alignItems: 'center' },
-  phase4Text:   { fontSize: 13, fontWeight: '700', color: '#92400e' },
+  eventHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
+  eventName:   { fontSize: 22, fontWeight: '800', color: '#0B132B', flex: 1, marginRight: 8 },
+  dayLabel:    { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  liveRow:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  liveDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: '#16a34a' },
+  liveText:    { fontSize: 11, fontWeight: '800', color: '#16a34a', letterSpacing: 1 },
 
-  alertBanner: { backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1.5, borderColor: '#dc2626' },
-  alertBannerText: { fontSize: 14, fontWeight: '800', color: '#dc2626', textAlign: 'center' },
+  alertBanner:    { backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1.5, borderColor: '#dc2626' },
+  alertBannerText: { fontSize: 14, fontWeight: '800', color: '#dc2626', marginBottom: 4 },
+  alertBannerSub:  { fontSize: 12, color: '#dc2626', marginTop: 2 },
 
   sectionLabel: { fontSize: 11, fontWeight: '800', color: '#9ca3af', letterSpacing: 1, marginBottom: 8 },
   emptyText:    { fontSize: 14, color: '#9ca3af', fontStyle: 'italic', marginBottom: 12 },
+
+  barScroll: { marginBottom: 4 },
+  barChip:   { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', marginRight: 8 },
+  barChipOn: { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
+  barChipText:   { fontSize: 13, color: '#374151', fontWeight: '500' },
+  barChipTextOn: { color: '#1b4f72', fontWeight: '700' },
+
+  barCard:     { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
+  barCardName: { fontSize: 15, fontWeight: '800', color: '#0B132B', marginBottom: 10 },
+  moreText:    { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+
+  stockRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
+  stockName: { fontSize: 12, color: '#374151', width: 100, fontWeight: '500' },
+  fillBg:    { flex: 1, height: 6, backgroundColor: '#e5e7eb', borderRadius: 3, overflow: 'hidden' },
+  fillBar:   { height: 6, borderRadius: 3 },
+  hoursText: { fontSize: 11, fontWeight: '700', width: 36, textAlign: 'right' },
 
   card:       { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
   cardActive: { borderColor: '#1b4f72', borderWidth: 1.5 },
@@ -298,12 +511,14 @@ const O = StyleSheet.create({
   assignedText: { fontSize: 12, color: '#6b7280', marginTop: 4 },
   noteText:     { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 4 },
 
-  cardActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  cardActions: { flexDirection: 'row', gap: 6, marginTop: 12 },
   approveBtn:  { flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
-  approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  cancelBtn:   { paddingHorizontal: 16, borderWidth: 1.5, borderColor: '#e5e7eb', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
-  cancelBtnText:  { color: '#6b7280', fontWeight: '700', fontSize: 13 },
-  btnDisabled:    { opacity: 0.5 },
+  approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  viewBtn:     { paddingHorizontal: 14, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
+  viewBtnText: { color: '#1b4f72', fontWeight: '700', fontSize: 12 },
+  cancelBtn:   { paddingHorizontal: 14, borderWidth: 1.5, borderColor: '#e5e7eb', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
+  cancelBtnText:  { color: '#6b7280', fontWeight: '700', fontSize: 12 },
+  btnDisabled: { opacity: 0.5 },
 
   transferCard: { backgroundColor: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e5e7eb' },
   transferText: { fontSize: 14, fontWeight: '700', color: '#0B132B' },

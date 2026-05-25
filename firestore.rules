@@ -1041,6 +1041,15 @@ service cloud.firestore {
         allow read: if hasVenueRole(venueId, ['owner', 'manager']);
         allow write: if hasVenueRole(venueId, ['owner']);
       }
+
+      // Festival Phase 4 — intelligence layer
+      match /predictions/{predId} {
+        allow read, write: if hasVenueRole(venueId, ['owner', 'manager']);
+      }
+
+      match /planograms/{planId} {
+        allow read, write: if isVenueMember(venueId);
+      }
     }
   }
 }

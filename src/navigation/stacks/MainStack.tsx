@@ -82,6 +82,9 @@ import FestivalSessionCountScreen from '../../screens/festival/FestivalSessionCo
 import FestivalWastageScreen from '../../screens/festival/FestivalWastageScreen';
 import FestivalOpsScreen from '../../screens/festival/FestivalOpsScreen';
 import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
+import FestivalContainerLayoutScreen from '../../screens/festival/FestivalContainerLayoutScreen';
+import FestivalPlanogramScreen from '../../screens/festival/FestivalPlanogramScreen';
+import FestivalPurchasingPredictionScreen from '../../screens/festival/FestivalPurchasingPredictionScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -202,6 +205,9 @@ export default function MainStack() {
       <Stack.Screen name="FestivalWastage" component={FestivalWastageScreen} options={{ title: 'Record Wastage' }} />
       <Stack.Screen name="FestivalOps" component={FestivalOpsScreen} options={{ title: 'Ops Overview' }} />
       <Stack.Screen name="FestivalReports" component={FestivalReportsScreen} options={{ title: 'Festival Reports' }} />
+      <Stack.Screen name="FestivalContainerLayout" component={FestivalContainerLayoutScreen} options={{ title: 'Container Layout' }} />
+      <Stack.Screen name="FestivalPlanogram" component={FestivalPlanogramScreen} options={{ title: 'Fridge Planogram' }} />
+      <Stack.Screen name="FestivalPurchasingPrediction" component={FestivalPurchasingPredictionScreen} options={{ title: 'Purchasing Prediction' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />
