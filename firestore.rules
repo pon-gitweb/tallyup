@@ -983,6 +983,10 @@ service cloud.firestore {
 
       match /sessions/{sessionId} {
         allow read, write: if isVenueMember(venueId);
+
+        match /wastage/{wastageId} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
       match /bars/{barId} {

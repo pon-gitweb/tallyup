@@ -73,6 +73,14 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 // Festival
 import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
 import FestivalEventSetupScreen from '../../screens/festival/FestivalEventSetupScreen';
+import FestivalBarSelectionScreen from '../../screens/festival/FestivalBarSelectionScreen';
+import FestivalBarDashboardScreen from '../../screens/festival/FestivalBarDashboardScreen';
+import FestivalTopUpRequestScreen from '../../screens/festival/FestivalTopUpRequestScreen';
+import FestivalDeliveryTasksScreen from '../../screens/festival/FestivalDeliveryTasksScreen';
+import FestivalTransferScreen from '../../screens/festival/FestivalTransferScreen';
+import FestivalSessionCountScreen from '../../screens/festival/FestivalSessionCountScreen';
+import FestivalWastageScreen from '../../screens/festival/FestivalWastageScreen';
+import FestivalOpsScreen from '../../screens/festival/FestivalOpsScreen';
 import FestivalReportsScreen from '../../screens/festival/FestivalReportsScreen';
 
 // Recipes / CraftUp
@@ -185,6 +193,14 @@ export default function MainStack() {
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="FestivalDashboard" component={FestivalDashboardScreen} options={{ title: 'Festival Mode' }} />
       <Stack.Screen name="FestivalEventSetup" component={FestivalEventSetupScreen} options={{ title: 'Event Setup' }} />
+      <Stack.Screen name="FestivalBarSelection" component={FestivalBarSelectionScreen} options={{ title: 'Bars' }} />
+      <Stack.Screen name="FestivalBarDashboard" component={FestivalBarDashboardScreen} options={{ title: 'Bar' }} />
+      <Stack.Screen name="FestivalTopUpRequest" component={FestivalTopUpRequestScreen} options={{ title: 'Request Top-Up' }} />
+      <Stack.Screen name="FestivalDeliveryTasks" component={FestivalDeliveryTasksScreen} options={{ title: 'Delivery Tasks' }} />
+      <Stack.Screen name="FestivalTransfer" component={FestivalTransferScreen} options={{ title: 'Transfer Stock' }} />
+      <Stack.Screen name="FestivalSessionCount" component={FestivalSessionCountScreen} options={{ title: 'Session Count' }} />
+      <Stack.Screen name="FestivalWastage" component={FestivalWastageScreen} options={{ title: 'Record Wastage' }} />
+      <Stack.Screen name="FestivalOps" component={FestivalOpsScreen} options={{ title: 'Ops Overview' }} />
       <Stack.Screen name="FestivalReports" component={FestivalReportsScreen} options={{ title: 'Festival Reports' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
