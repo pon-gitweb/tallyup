@@ -42,9 +42,9 @@ function stockBg(hrs: number | null): string {
   return '#f0fdf4';
 }
 
-function fillPct(item: StockItem): number {
-  const max = item.maxStock || item.currentStock * 2 || 1;
-  return Math.min(1, Math.max(0, item.currentStock / max));
+function fillPct(item: StockItem): number | null {
+  if (!item.maxStock) return null;
+  return Math.min(1, Math.max(0, item.currentStock / item.maxStock));
 }
 
 function fmtHrs(hrs: number): string {
@@ -180,9 +180,11 @@ export default function FestivalBarDashboardScreen() {
                 </View>
 
                 {/* Fill bar */}
-                <View style={S.fillTrack}>
-                  <View style={[S.fillBar, { width: `${Math.round(fill * 100)}%`, backgroundColor: col }]} />
-                </View>
+                {fill !== null && (
+                  <View style={S.fillTrack}>
+                    <View style={[S.fillBar, { width: `${Math.round(fill * 100)}%`, backgroundColor: col }]} />
+                  </View>
+                )}
 
                 <View style={S.stockMeta}>
                   <Text style={S.stockQty}>Stock: {item.currentStock} units</Text>

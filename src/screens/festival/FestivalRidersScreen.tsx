@@ -28,14 +28,15 @@ function statusConfig(s: string): { icon: string; label: string; color: string }
 }
 
 function isOverdue(rider: any): boolean {
-  if (!rider.deliveryTime) return false;
+  if (!rider.deliveryTime || rider.status !== 'pending') return false;
   const parts = String(rider.deliveryTime).split(':');
   if (parts.length < 2) return false;
-  // Simple heuristic: if deliveryTime is a string like "18:30", compare to current time
-  const now = new Date();
-  const target = new Date();
-  target.setHours(parseInt(parts[0]), parseInt(parts[1]), 0);
-  return target < now && rider.status === 'pending';
+  const [h, m] = [parseInt(parts[0]), parseInt(parts[1])];
+  if (isNaN(h) || isNaN(m)) return false;
+  const base = rider.createdAt?.toDate?.() ?? new Date();
+  const target = new Date(base);
+  target.setHours(h, m, 0, 0);
+  return target < new Date();
 }
 
 // ─── Add Rider Modal ──────────────────────────────────────────────────────────

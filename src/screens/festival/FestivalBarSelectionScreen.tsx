@@ -68,12 +68,9 @@ export default function FestivalBarSelectionScreen() {
   // Load bars
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) return;
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars'), async snap => {
-      const barList: Bar[] = [];
-      for (const d of snap.docs) {
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars'), snap => {
+      Promise.all(snap.docs.map(async d => {
         const data = d.data() as any;
-
-        // Read latest session count for this bar
         let lastCountAt: string | null = null;
         let hasLowStock = false;
         try {
@@ -84,23 +81,11 @@ export default function FestivalBarSelectionScreen() {
               const t = sd.lastCountAt.toDate().toISOString();
               if (!lastCountAt || t > lastCountAt) lastCountAt = t;
             }
-            // Flag low stock: < 2 hours supply
-            if (sd.velocity > 0 && sd.currentStock / sd.velocity < 2) {
-              hasLowStock = true;
-            }
+            if (sd.velocity > 0 && sd.currentStock / sd.velocity < 2) hasLowStock = true;
           }
         } catch (_) {}
-
-        barList.push({
-          id: d.id,
-          name: data.name || `Bar ${barList.length + 1}`,
-          location: data.location || '',
-          lastCountAt,
-          hasLowStock,
-        });
-      }
-      setBars(barList);
-      setLoading(false);
+        return { id: d.id, name: data.name || d.id, location: data.location || '', lastCountAt, hasLowStock };
+      })).then(barList => { setBars(barList); setLoading(false); }).catch(() => setLoading(false));
     }, () => setLoading(false));
     return () => unsub();
   }, [venueId]);

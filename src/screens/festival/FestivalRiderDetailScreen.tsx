@@ -34,6 +34,10 @@ export default function FestivalRiderDetailScreen() {
     return () => unsub();
   }, [venueId, riderId]);
 
+  useEffect(() => {
+    if (rider?.checkedItems) setChecked(rider.checkedItems);
+  }, [rider?.id]);
+
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
     return (
@@ -59,8 +63,15 @@ export default function FestivalRiderDetailScreen() {
     );
   }
 
-  function toggleCheck(key: string) {
-    setChecked(prev => ({ ...prev, [key]: !prev[key] }));
+  async function toggleCheck(key: string) {
+    const next = { ...checked, [key]: !checked[key] };
+    setChecked(next);
+    if (!venueId || !riderId) return;
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'riders', riderId), {
+        checkedItems: next, updatedAt: serverTimestamp(),
+      });
+    } catch (_) {}
   }
 
   function itemKey(area: string, idx: number) {

@@ -102,7 +102,7 @@ export default function FestivalPurchasingPredictionScreen() {
 
   async function loadAndPredict() {
     try {
-      const venueSnap = await getDoc(doc(db, 'venues', venueId));
+      const venueSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
       const event = venueSnap.exists() ? (venueSnap.data() as any) : {};
       setEventData(event);
 

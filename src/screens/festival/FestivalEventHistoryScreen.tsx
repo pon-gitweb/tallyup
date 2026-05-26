@@ -107,7 +107,7 @@ export default function FestivalEventHistoryScreen() {
               <View style={S.actionRow}>
                 <TouchableOpacity
                   style={S.viewBtn}
-                  onPress={() => nav.navigate('FestivalReconciliation')}
+                  onPress={() => nav.navigate('FestivalReconciliation', { eventId: ev.id, isHistorical: true })}
                 >
                   <Text style={S.viewBtnText}>View reconciliation →</Text>
                 </TouchableOpacity>

@@ -4,9 +4,9 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, Alert,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
-  collection, getDocs, doc, onSnapshot, setDoc, serverTimestamp,
+  collection, getDocs, doc, getDoc, onSnapshot, setDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -36,6 +36,8 @@ type ReconciliationSummary = {
 
 export default function FestivalReconciliationScreen() {
   const nav     = useNavigation<any>();
+  const route   = useRoute<any>();
+  const { isHistorical, eventId } = route.params ?? {};
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
 
@@ -68,7 +70,19 @@ export default function FestivalReconciliationScreen() {
       });
     }
 
-    // Event details
+    if (isHistorical && eventId) {
+      Promise.all([
+        getDoc(doc(db, 'venues', venueId, 'eventHistory', eventId)),
+        getDoc(doc(db, 'venues', venueId, 'eventHistory', eventId, 'reconciliation', 'summary')),
+      ]).then(([evSnap, recSnap]) => {
+        setEvent(evSnap.exists() ? evSnap.data() : null);
+        if (recSnap.exists()) setSummary(recSnap.data() as ReconciliationSummary);
+        setLoading(false);
+      }).catch(() => setLoading(false));
+      return;
+    }
+
+    // Event details (current event)
     const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), async snap => {
       const ev = snap.exists() ? snap.data() : null;
       setEvent(ev);
@@ -112,7 +126,7 @@ export default function FestivalReconciliationScreen() {
       for (const s of sessionsSnap.docs) {
         const data = s.data() as any;
         for (const c of (data.counts || [])) {
-          sold[c.productId] = (sold[c.productId] || 0) + (c.depleted || 0);
+          sold[c.productId] = (sold[c.productId] || 0) + (c.variance || 0);
         }
       }
 
@@ -196,12 +210,22 @@ export default function FestivalReconciliationScreen() {
           </View>
         )}
 
+        {isHistorical && (
+          <View style={[S.savedBanner, { backgroundColor: '#f0f9ff' }]}>
+            <Text style={[S.savedBannerText, { color: '#1b4f72' }]}>Historical record — read only</Text>
+          </View>
+        )}
+
         {!display ? (
           <View style={S.emptyCard}>
-            <Text style={S.emptyText}>No count data found. Complete the end-of-event count first.</Text>
-            <TouchableOpacity style={S.secondaryBtn} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
-              <Text style={S.secondaryBtnText}>Go to end-of-event count</Text>
-            </TouchableOpacity>
+            <Text style={S.emptyText}>
+              {isHistorical ? 'No reconciliation data found for this event.' : 'No count data found. Complete the end-of-event count first.'}
+            </Text>
+            {!isHistorical && (
+              <TouchableOpacity style={S.secondaryBtn} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
+                <Text style={S.secondaryBtnText}>Go to end-of-event count</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <>
@@ -249,17 +273,19 @@ export default function FestivalReconciliationScreen() {
               ));
             })()}
 
-            <TouchableOpacity
-              style={[S.primaryBtn, saving && S.btnDisabled]}
-              disabled={saving}
-              onPress={saveReconciliation}
-            >
-              {saving
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={S.primaryBtnText}>Save reconciliation report</Text>}
-            </TouchableOpacity>
+            {!isHistorical && (
+              <TouchableOpacity
+                style={[S.primaryBtn, saving && S.btnDisabled]}
+                disabled={saving}
+                onPress={saveReconciliation}
+              >
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={S.primaryBtnText}>Save reconciliation report</Text>}
+              </TouchableOpacity>
+            )}
 
-            {role === 'owner' && (
+            {!isHistorical && role === 'owner' && (
               <TouchableOpacity
                 style={[S.primaryBtn, { marginTop: 10, backgroundColor: '#0B132B' }]}
                 onPress={() => nav.navigate('FestivalEventClose')}

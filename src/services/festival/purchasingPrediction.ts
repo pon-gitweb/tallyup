@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
 export type PredictionConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -41,9 +39,10 @@ const EVENT_MODIFIERS: Record<string, Record<string, number>> = {
 
 // Price positioning modifiers
 const PRICE_MODIFIERS: Record<string, number> = {
-  budget:   1.15,  // volume goes up with lower prices
-  mid:      1.0,
-  premium:  0.85,  // people drink less at high prices
+  budget:    1.15,
+  mid:       1.0,
+  mid_range: 1.0,
+  premium:   0.85,
 };
 
 function guessCategory(name: string): string {

@@ -82,7 +82,7 @@ export default function FestivalOpsScreen() {
   // Load event doc
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
-    const unsub = onSnapshot(doc(db, 'venues', venueId), snap => {
+    const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), snap => {
       if (snap.exists()) setEvent(snap.data() as any);
     });
     return () => unsub();

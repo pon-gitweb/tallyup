@@ -5,7 +5,7 @@ import {
   ScrollView, TextInput, Alert, Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -156,33 +156,30 @@ export default function FestivalTransferScreen() {
       const name = auth.currentUser?.displayName ?? 'Unknown';
       const transferId = `xfr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const result = check ?? velocityCheck(product.currentStock, product.velocity, q);
-
-      await setDoc(doc(db, 'venues', venueId, 'transfers', transferId), {
-        fromBarId:   fromBar.id,
-        fromBarName: fromBar.label,
-        toBarId:     toBar.id,
-        toBarName:   toBar.label,
-        productId:   product.id,
-        productName: product.label,
-        quantity:    q,
-        velocityCheckResult: result.level,
-        hoursRemainingAfter: result.hoursAfter,
-        overrideReason,
-        approvedBy:   uid,
-        approvedByName: name,
-        status: 'completed',
-        createdAt: serverTimestamp(),
-        completedAt: serverTimestamp(),
+      const fromRef = doc(db, 'venues', venueId, 'bars', fromBar.id, 'stock', product.id);
+      const toRef   = doc(db, 'venues', venueId, 'bars', toBar.id,   'stock', product.id);
+      await runTransaction(db, async (txn) => {
+        const fromSnap = await txn.get(fromRef);
+        if (!fromSnap.exists()) throw new Error(`${fromBar.label} has no stock record for ${product.label}.`);
+        const current = fromSnap.data()?.currentStock ?? 0;
+        if (current < q) throw new Error(`Insufficient stock: ${fromBar.label} has ${current} units.`);
+        txn.update(fromRef, { currentStock: increment(-q), updatedAt: serverTimestamp() });
+        const toSnap = await txn.get(toRef);
+        if (toSnap.exists()) {
+          txn.update(toRef, { currentStock: increment(q), updatedAt: serverTimestamp() });
+        } else {
+          txn.set(toRef, { productId: product.id, productName: product.label, currentStock: q, updatedAt: serverTimestamp() });
+        }
       });
-
-      // Decrement from-bar stock (best effort)
-      try {
-        await updateDoc(doc(db, 'venues', venueId, 'bars', fromBar.id, 'stock', product.id), {
-          currentStock: Math.max(0, product.currentStock - q),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (_) {}
-
+      await setDoc(doc(db, 'venues', venueId, 'transfers', transferId), {
+        fromBarId: fromBar.id, fromBarName: fromBar.label,
+        toBarId: toBar.id,     toBarName:   toBar.label,
+        productId: product.id, productName: product.label,
+        quantity: q,
+        velocityCheckResult: result.level, hoursRemainingAfter: result.hoursAfter,
+        overrideReason, approvedBy: uid, approvedByName: name,
+        status: 'completed', createdAt: serverTimestamp(), completedAt: serverTimestamp(),
+      });
       Alert.alert('Transfer complete', `${q} × ${product.label} moved from ${fromBar.label} to ${toBar.label}.`, [
         { text: 'Done', onPress: () => nav.goBack() },
       ]);

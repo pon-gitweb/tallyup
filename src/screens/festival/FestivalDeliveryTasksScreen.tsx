@@ -5,7 +5,7 @@ import {
   ScrollView, Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -140,13 +140,29 @@ export default function FestivalDeliveryTasksScreen() {
 
   async function markDelivered(reqId: string) {
     if (!venueId || acting) return;
+    const req = requests.find(r => r.id === reqId);
     setActing(reqId);
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
-        status: 'delivered',
-        completedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
+        status: 'delivered', completedAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
+      if (req?.barId && Array.isArray(req.products)) {
+        for (const p of req.products) {
+          if (!p.productId) continue;
+          batch.update(
+            doc(db, 'venues', venueId, 'bars', req.barId, 'stock', p.productId),
+            { currentStock: increment(p.quantity ?? 0), updatedAt: serverTimestamp() },
+          );
+          if (req.sourceLocationId) {
+            batch.update(
+              doc(db, 'venues', venueId, 'sourceLocations', req.sourceLocationId, 'stock', p.productId),
+              { currentStock: increment(-(p.quantity ?? 0)), updatedAt: serverTimestamp() },
+            );
+          }
+        }
+      }
+      await batch.commit();
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Could not update task.');
     } finally {

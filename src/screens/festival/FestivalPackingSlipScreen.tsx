@@ -86,7 +86,7 @@ export default function FestivalPackingSlipScreen() {
           productName: rem.productName,
           quantity: rem.count,
           unit: rem.unit,
-          casesCount: Math.ceil(rem.count / 12),
+          casesCount: Math.ceil(rem.count / (prod?.casesPerUnit || 12)),
           condition: 'Sealed',
         });
       }

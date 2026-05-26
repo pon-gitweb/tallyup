@@ -12,13 +12,6 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 
-// ─── Coming-soon gate ─────────────────────────────────────────────────────────
-
-if (!FESTIVAL_BETA) {
-  // eslint-disable-next-line
-  module.exports = { default: () => null };
-}
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type BarEntry = { barId: string; barName: string };

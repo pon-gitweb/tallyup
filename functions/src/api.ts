@@ -1230,6 +1230,9 @@ async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string
     "stockTakes", "sessions", "reports", "computed", "areas", "items",
     "recipes", "aiContext", "photoCountCorrections", "recipeSalesAttribution",
     "productNotes", "invites",
+    "bars", "sourceLocations", "transfers", "requests", "contracts", "riders",
+    "consumables", "returns", "eventHistory", "activations", "obligations",
+    "predictions", "planograms",
   ];
   for (const col of topCols) {
     await deleteDocs(db, `venues/${venueId}/${col}`);
@@ -2328,6 +2331,13 @@ app.post("/extract-festival-contract", async (req, res) => {
       return;
     }
 
+    if (!storageRef.startsWith(`festival-contracts/${venueId}/`)) {
+      res.status(400).json({ ok: false, error: "Invalid storageRef" }); return;
+    }
+
+    const lc = await checkAiLimit(venueId, "ai_insights");
+    if (!lc.allowed) { res.status(429).json({ ok: false, ...lc.limitError }); return; }
+
     // Download PDF from Firebase Storage
     const bucket = admin.storage().bucket();
     const [fileBuffer] = await bucket.file(storageRef).download();
@@ -2487,6 +2497,13 @@ app.post("/extract-festival-rider", async (req, res) => {
     }
 
     const db = admin.firestore();
+
+    if (!storageRef.startsWith(`festival-riders/${venueId}/`)) {
+      res.status(400).json({ ok: false, error: "Invalid storageRef" }); return;
+    }
+
+    const lc = await checkAiLimit(venueId, "ai_insights");
+    if (!lc.allowed) { res.status(429).json({ ok: false, ...lc.limitError }); return; }
 
     // Download PDF
     const bucket = admin.storage().bucket();

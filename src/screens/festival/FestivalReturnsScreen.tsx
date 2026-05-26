@@ -22,6 +22,7 @@ type ReturnProduct = {
   supplierName: string;
   hasPhotos: boolean;
   condition: string;
+  casesPerUnit: number;
 };
 
 type SupplierGroup = {
@@ -111,6 +112,7 @@ export default function FestivalReturnsScreen() {
           supplierName,
           hasPhotos: photoProductIds.has(productId),
           condition: 'Sealed',
+          casesPerUnit: prod?.casesPerUnit || 12,
         };
 
         if (!supplierMap[supplierName]) {
@@ -166,7 +168,7 @@ export default function FestivalReturnsScreen() {
           productName: p.productName,
           quantity:    p.totalRemaining,
           unit:        p.unit,
-          casesCount:  Math.ceil(p.totalRemaining / 12),
+          casesCount:  Math.ceil(p.totalRemaining / (p.casesPerUnit || 12)),
           condition:   p.condition,
           photoRef:    p.hasPhotos ? 'See return photos' : null,
         })),
@@ -196,7 +198,7 @@ export default function FestivalReturnsScreen() {
     try {
       await sendReturnEmail({
         supplierName:    group.supplierName,
-        supplierEmail:   group.products[0]?.supplierName || '',
+        supplierEmail:   group.products[0]?.supplierEmail || '',
         eventName:       event?.eventName || 'Festival',
         eventDate:       event?.startDate || new Date().toLocaleDateString('en-NZ'),
         products:        group.products.map(p => ({

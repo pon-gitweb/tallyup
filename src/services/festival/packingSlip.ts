@@ -1,4 +1,3 @@
-// @ts-nocheck
 import * as Print from 'expo-print';
 
 export interface PackingSlipProduct {

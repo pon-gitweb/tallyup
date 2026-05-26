@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 export type ChepStatus = 'balanced' | 'shortage' | 'surplus';
 
 export interface ChepReconciliation {

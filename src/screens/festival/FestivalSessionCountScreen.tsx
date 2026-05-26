@@ -5,7 +5,7 @@ import {
   ScrollView, TextInput, Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, updateDoc, serverTimestamp, query, where, orderBy, limit } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -61,18 +61,39 @@ export default function FestivalSessionCountScreen() {
   // Load stock for this bar
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) { setLoading(false); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars', barId, 'stock')).then(snap => {
-      setRows(snap.docs.map(d => {
+    Promise.all([
+      getDocs(collection(db, 'venues', venueId, 'bars', barId, 'stock')),
+      getDocs(query(
+        collection(db, 'venues', venueId, 'requests'),
+        where('barId', '==', barId),
+        where('status', '==', 'delivered'),
+      )),
+      getDocs(query(
+        collection(db, 'venues', venueId, 'sessions'),
+        where('barId', '==', barId),
+        orderBy('completedAt', 'desc'),
+        limit(1),
+      )),
+    ]).then(([stockSnap, reqSnap, sessSnap]) => {
+      const lastSessionAt = sessSnap.docs[0]?.data()?.completedAt?.toDate?.() ?? new Date(0);
+      const received: Record<string, number> = {};
+      for (const r of reqSnap.docs) {
+        const data = r.data() as any;
+        const completedAt = data.completedAt?.toDate?.();
+        if (!completedAt || completedAt <= lastSessionAt) continue;
+        for (const p of (data.products || [])) {
+          if (!p.productId) continue;
+          received[p.productId] = (received[p.productId] || 0) + (p.quantity || 0);
+        }
+      }
+      setRows(stockSnap.docs.map(d => {
         const data = d.data() as any;
         return {
-          productId:     d.id,
-          productName:   data.productName || d.id,
-          openingCount:  data.currentStock ?? 0,
-          receivedQty:   0,
+          productId: d.id, productName: data.productName || d.id,
+          openingCount: data.currentStock ?? 0,
+          receivedQty: received[d.id] || 0,
           expectedCount: Math.max(0, (data.currentStock ?? 0) - (data.velocity ?? 0) * 4),
-          actualCount:   0,
-          velocity:      data.velocity ?? null,
-          unit:          data.unit || 'units',
+          actualCount: 0, velocity: data.velocity ?? null, unit: data.unit || 'units',
         };
       }));
       setLoading(false);
