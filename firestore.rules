@@ -105,6 +105,15 @@ service cloud.firestore {
     match /venues/{venueId} {
 
       allow read: if isVenueMember(venueId);
+
+      // Allow a signed-in user to create a new venue where they are the declared owner.
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.keys().hasAll(['name', 'ownerUid', 'venueType', 'createdAt', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.venueType in ['venue', 'festival'];
+
       allow delete: if hasVenueRole(venueId, ['owner']);
 
       allow update: if hasVenueRole(venueId, ['manager','owner'])
@@ -145,6 +154,11 @@ service cloud.firestore {
       match /members/{uid} {
         allow read: if isVenueMember(venueId);
         allow create, update, delete: if hasVenueRole(venueId, ['owner','manager']);
+        // Bootstrap: owner can create their own first member doc before membership exists.
+        allow create: if request.auth != null
+          && uid == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == request.auth.uid;
       }
 
       match /invites/{inviteId} {
