@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { getAuth, signOut } from 'firebase/auth';
 import { db } from '../services/firebase';
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { useNavigation } from '@react-navigation/native';
 
 export default function CreateVenueScreen() {
   const [name, setName] = useState('');
   const [venueType, setVenueType] = useState<'venue' | 'festival'>('venue');
   const [busy, setBusy] = useState(false);
+  const navigation = useNavigation<any>();
 
   async function handleCreate() {
     const auth = getAuth();
@@ -23,6 +25,14 @@ export default function CreateVenueScreen() {
 
     setBusy(true);
     console.log('[CreateVenue] start', JSON.stringify({ name }));
+
+    const timeoutId = setTimeout(() => {
+      setBusy(false);
+      Alert.alert(
+        'Taking longer than usual',
+        'Your venue is being set up. Please wait a moment then reopen the app.'
+      );
+    }, 10000);
 
     try {
       // (A) Ensure users/{uid} exists and prime venueId:null if missing (future-proof for rules)
@@ -82,9 +92,13 @@ export default function CreateVenueScreen() {
         console.log('[CreateVenue] seed warning', JSON.stringify({ code: e?.code, message: e?.message }));
       }
 
-      Alert.alert('Venue created', 'Your venue is ready. Redirecting to Dashboard…');
-      // VenueProvider onSnapshot(users/{uid}) will switch the UI automatically
+      clearTimeout(timeoutId);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'HomeRouter' }],
+      });
     } catch (e: any) {
+      clearTimeout(timeoutId);
       console.log('[CreateVenue] error', JSON.stringify({ code: e?.code || e?.name, msg: e?.message || String(e) }));
       Alert.alert('Could not create venue', e?.message || 'Missing or insufficient permissions.');
     } finally {
@@ -103,7 +117,7 @@ export default function CreateVenueScreen() {
     <View style={{ flex: 1, padding: 16, backgroundColor: '#0F1115' }}>
       <Text style={{ color: 'white', fontSize: 22, fontWeight: '700', marginBottom: 12 }}>Create Venue</Text>
       <Text style={{ color: '#B7C0CD' }}>
-        Enter a name to create your venue. We’ll add default departments and areas; you can edit them later in Settings.
+        Enter a name to create your venue. We'll add default departments and areas; you can edit them later in Settings.
       </Text>
 
       <TextInput

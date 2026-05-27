@@ -10,18 +10,32 @@ import { useVenue } from '../context/VenueProvider';
  * Invisible routing screen shown immediately after auth.
  * Reads venueType from the venue doc and resets the stack to
  * FestivalDashboard (festival) or MainTabs (all other types).
+ * If no venue exists yet, sends the user to CreateVenueScreen.
  */
 export default function HomeRouterScreen() {
   const nav = useNavigation<any>();
   const { loading, venueId } = useVenue();
   const routed = useRef(false);
 
+  // Fallback: if loading never resolves, route to MainTabs after 5s
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!routed.current) {
+        console.warn('[HomeRouter] timeout — routing to MainTabs as fallback');
+        routed.current = true;
+        nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (loading || routed.current) return;
     routed.current = true;
 
     if (!venueId) {
-      nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+      // New user — no venue created yet. Send to venue creation.
+      nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
       return;
     }
 

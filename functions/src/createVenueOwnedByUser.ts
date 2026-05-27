@@ -1,3 +1,6 @@
+// DEPRECATED — venue creation now handled client-side via CreateVenueScreen.tsx
+// Retained for backwards compatibility only.
+// Do not remove until confirmed no clients are calling this endpoint.
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 
