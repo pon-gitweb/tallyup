@@ -142,7 +142,7 @@ export default function DashboardScreen() {
         setOnboardingDismissed(!!(data?.onboardingDismissedAt));
       }
     }).catch(() => {});
-    getDoc(doc(db, 'venues', venueId, 'latestSnapshot')).then(latestSnap => {
+    getDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current')).then(latestSnap => {
       if (latestSnap.exists()) {
         const depts = latestSnap.data()?.departments ?? [];
         const total = depts.reduce(

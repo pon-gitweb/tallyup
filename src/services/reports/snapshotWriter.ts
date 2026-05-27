@@ -512,7 +512,7 @@ export async function writeDepartmentSnapshot(
       }
     }
 
-    await setDoc(doc(db, 'venues', venueId, 'latestSnapshot'), {
+    await setDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current'), {
       updatedAt: serverTimestamp(),
       departments: deptSummaries,
       totalDepts: allDeptsSnap.size,
