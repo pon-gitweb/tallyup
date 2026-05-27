@@ -4,7 +4,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
 import OfflineBanner from '../components/OfflineBanner';
 import { useTheme, useColours } from '../context/ThemeContext';
-import { Image } from 'react-native';
 import {
   View,
   Text,
@@ -53,10 +52,17 @@ function ContextNudge({ message, cta, onCta, onDismiss, c }) {
   );
 }
 
+function formatCurrency(n: number): string {
+  return '$' + n.toLocaleString('en-NZ', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export default function DashboardScreen() {
   const nav = useNavigation<any>();
   const colours = useColours();
-  const { theme } = useTheme();
+  const { theme, fontsLoaded } = useTheme();
 
   const auth = getAuth();
   const currentUid = auth.currentUser?.uid ?? null;
@@ -122,6 +128,7 @@ export default function DashboardScreen() {
   }, [venueId]);
 
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
+  const [stockValue, setStockValue] = useState<number | null>(null);
   const [onboardingRoad, setOnboardingRoad] = React.useState<string | null | undefined>(undefined);
   const [onboardingDismissed, setOnboardingDismissed] = React.useState(false);
   React.useEffect(() => {
@@ -133,6 +140,16 @@ export default function DashboardScreen() {
         setStocktakeCount(data?.totalStocktakesCompleted || 0);
         setOnboardingRoad(data?.onboardingRoad ?? null);
         setOnboardingDismissed(!!(data?.onboardingDismissedAt));
+      }
+    }).catch(() => {});
+    getDoc(doc(db, 'venues', venueId, 'latestSnapshot')).then(latestSnap => {
+      if (latestSnap.exists()) {
+        const depts = latestSnap.data()?.departments ?? [];
+        const total = depts.reduce(
+          (sum: number, d: any) => sum + (d?.summary?.totalStockValue ?? 0),
+          0
+        );
+        setStockValue(total);
       }
     }).catch(() => {});
   }, [venueId]);
@@ -214,11 +231,7 @@ export default function DashboardScreen() {
 
   // Time-based greeting
   const hour = new Date().getHours();
-  const greeting = hour < 12
-    ? `Good morning ☀️`
-    : hour < 17
-    ? `Good afternoon`
-    : `Good evening`;
+  const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
   const firstName = (liveDisplayName || user?.email || '').split(' ')[0] || '';
 
@@ -230,7 +243,7 @@ export default function DashboardScreen() {
   const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: colours.background },
     scroll: { flex: 1 },
-    content: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 40 },
+    content: { paddingHorizontal: 16, paddingTop: 0, paddingBottom: 40 },
     headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
     greeting: { fontSize: 22, fontWeight: '800', color: colours.navy },
     venueName: { color: colours.textSecondary, marginTop: 2, fontSize: 14, fontWeight: '500' },
@@ -268,60 +281,135 @@ export default function DashboardScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
 
         {/* ── Header ────────────────────────────────────────────────────── */}
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>{greeting}{firstName ? `, ${firstName}` : ''}</Text>
-            {venueName ? <Text style={styles.venueName}>{venueName}</Text> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 8 }}>
+          <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colours.stellarAmber, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: colours.oat, fontWeight: '800', fontSize: 12, letterSpacing: 0.5 }}>
+              {venueName ? venueName.slice(0, 3).toUpperCase() : '◆'}
+            </Text>
           </View>
-          {theme.logoUri ? <Image source={{ uri: theme.logoUri }} style={{ width: 80, height: 32, resizeMode: 'contain' }} /> : null}
+          <TouchableOpacity
+            onPress={() => { /* TODO: navigate to Izzy screen when available */ }}
+            style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colours.positiveSoft, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ color: colours.stellarAmber, fontSize: 18 }}>✦</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Greeting ──────────────────────────────────────────────────── */}
+        <View style={{ paddingTop: 14, paddingBottom: 8 }}>
+          <Text style={{ fontSize: 22, fontWeight: '600', color: colours.text, letterSpacing: -0.22 }}>
+            {timeGreeting}{firstName ? `, ${firstName}` : ''}
+          </Text>
+          {venueName ? <Text style={{ fontSize: 14, color: colours.textSecondary, marginTop: 3 }}>{venueName}</Text> : null}
         </View>
 
         <OfflineBanner />
 
         {/* ── Primary action card ───────────────────────────────────────── */}
-        <View style={styles.primaryCard}>
+        <View style={{
+          backgroundColor: colours.missionSlate,
+          borderRadius: 18,
+          padding: 22,
+          paddingHorizontal: 24,
+          marginBottom: 12,
+          shadowColor: colours.missionSlate,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 8,
+          elevation: 8,
+        }}>
+          <Text style={{ fontSize: 11, fontWeight: '500', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.88, marginBottom: 8 }}>
+            {primaryState === 'none'
+              ? 'Your first stocktake'
+              : primaryState === 'inProgress'
+              ? 'Stocktake in progress'
+              : 'Stock on hand at your last count'}
+          </Text>
+
           {primaryState === 'none' && (
             <>
-              <Text style={styles.primaryIcon}>📦</Text>
-              <Text style={styles.primaryTitle}>Start your first stocktake</Text>
-              <Text style={styles.primarySub}>Takes about 20 minutes. We'll show you exactly what to do.</Text>
-              <TouchableOpacity style={styles.primaryBtn} onPress={onOpenStockTake} disabled={busy}>
-                {busy ? <ActivityIndicator color={colours.navy} /> : <Text style={styles.primaryBtnText}>Start now →</Text>}
-              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: colours.oat }}>
+                Takes about 20 minutes.
+              </Text>
+              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 6, lineHeight: 19.5 }}>
+                We'll show you exactly what to do.
+              </Text>
             </>
           )}
+
           {primaryState === 'inProgress' && lastArea && (
             <>
-              <Text style={styles.primaryIcon}>📦</Text>
-              <Text style={styles.primaryTitle}>Stocktake in progress</Text>
-              <Text style={styles.primarySub}>
-                {lastArea.deptName} → {lastArea.areaName}
-                {lastArea.startedAt ? ` · Started ${new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colours.stellarAmber }} />
+                <Text style={{ fontSize: 18, fontWeight: '600', color: colours.oat }}>
+                  {lastArea.deptName} · {lastArea.areaName}
+                </Text>
+              </View>
+              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 6, lineHeight: 19.5 }}>
+                {lastArea.startedAt
+                  ? `Started ${new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
+                  : 'In progress'}
               </Text>
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
-              >
-                <Text style={styles.primaryBtnText}>Continue →</Text>
-              </TouchableOpacity>
             </>
           )}
+
           {primaryState === 'done' && (
             <>
-              <Text style={styles.primaryIcon}>✓</Text>
-              <Text style={styles.primaryTitle}>
-                {stocktakeCount} stocktake{stocktakeCount !== 1 ? 's' : ''} completed
+              <Text style={{
+                fontSize: 52,
+                color: colours.oat,
+                fontFamily: fontsLoaded ? 'PlayfairDisplay_400Regular' : undefined,
+                fontWeight: fontsLoaded ? '400' : '600',
+                letterSpacing: -0.78,
+                marginTop: 14,
+                lineHeight: 60,
+                fontVariant: ['tabular-nums'],
+              }}>
+                {stockValue !== null && stockValue > 0
+                  ? formatCurrency(stockValue)
+                  : `${stocktakeCount} stocktakes`}
               </Text>
-              <Text style={styles.primarySub}>Your AI improves with every count.</Text>
-              <TouchableOpacity style={styles.primaryBtn} onPress={onOpenStockTake} disabled={busy}>
-                {busy ? <ActivityIndicator color={colours.navy} /> : <Text style={styles.primaryBtnText}>Start new stocktake →</Text>}
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.primarySecBtn} onPress={onOpenReports}>
-                <Text style={styles.primarySecBtnText}>View reports</Text>
-              </TouchableOpacity>
+              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 10, lineHeight: 19.5 }}>
+                {stockValue !== null && stockValue > 0
+                  ? `${stocktakeCount} count${stocktakeCount !== 1 ? 's' : ''} completed`
+                  : 'Add product costs to see stock value'}
+              </Text>
             </>
           )}
         </View>
+
+        {/* ── CTA button ───────────────────────────────────────────────── */}
+        {primaryState === 'none' && (
+          <TouchableOpacity
+            style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}
+            onPress={onOpenStockTake}
+            disabled={busy}
+          >
+            {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start now →</Text>}
+          </TouchableOpacity>
+        )}
+        {primaryState === 'inProgress' && lastArea && (
+          <TouchableOpacity
+            style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}
+            onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+          >
+            <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Continue →</Text>
+          </TouchableOpacity>
+        )}
+        {primaryState === 'done' && (
+          <>
+            <TouchableOpacity
+              style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
+              onPress={onOpenStockTake}
+              disabled={busy}
+            >
+              {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start new stocktake →</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 10, marginBottom: 8 }} onPress={onOpenReports}>
+              <Text style={{ color: colours.textSecondary, fontWeight: '600', fontSize: 14 }}>View reports</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
         {onboardingRoad === null && !onboardingDismissed && (

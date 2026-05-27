@@ -15,8 +15,6 @@ import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from '../../domain/orders';
 import { showToast } from './_toast';
-import { checkEntitlement } from '../../services/entitlement';
-import PaymentSheet from '../../components/paywall/PaymentSheet';
 
 const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
@@ -72,10 +70,6 @@ export default function SuggestedOrderScreen(){
   const [lineQtyOverrides,setLineQtyOverrides]=useState<Record<string,number>>({});
 
   const colours = useColours();
-  const [entitled,setEntitled]=useState(true); // BETA: force entitled — all venues have full access
-  const [payOpen,setPayOpen]=useState(false);
-  const [mode,setMode]=useState<'math'|'ai'>('math');
-  const [aiMeter,setAiMeter]=useState<{aiRemaining?:number;retryAfterSeconds?:number}|null>(null);
 
   const [depts,setDepts]=useState<Dept[]>([]);
   const [selectedDeptId,setSelectedDeptId]=useState<string>('ALL');
@@ -578,27 +572,6 @@ export default function SuggestedOrderScreen(){
     setTimeout(() => computeRowsFromSnapshot(snapshot), 50);
   },[snapshot, supplierPreview, computeRowsFromSnapshot]);
 
-  const onToggleMode=useCallback(async(nextMode:'math'|'ai')=>{
-    if(nextMode==='ai'&&!entitled){ setPayOpen(true); return; }
-    setMode(nextMode);
-    setAiMeter(null);
-    setRefreshing(true);
-    try{
-      if(nextMode==='math'){
-        await doRefreshRaw();
-      } else {
-        const res=await OrdersService.runAISuggest(venueId,{historyDays:28,k:3,max:400},'ai');
-        const graduated=normalizeCompat(res);
-        await computeRowsFromSnapshot(graduated);
-        if(res?.meter)setAiMeter(res.meter);
-      }
-    }catch(e:any){
-      Alert.alert(nextMode==='ai'?'AI unavailable':'Refresh failed',e?.message||'Please try again later.');
-    }finally{
-      setRefreshing(false);
-    }
-  },[venueId,entitled,doRefreshRaw,computeRowsFromSnapshot,normalizeCompat]);
-
   const keyExtractor=useCallback((r:BucketRow)=>String(r.id),[]);
   const renderRow=useCallback(({item:row}:{item:BucketRow})=>(
     <TouchableOpacity
@@ -612,27 +585,6 @@ export default function SuggestedOrderScreen(){
       <Text style={S.chev}>›</Text>
     </TouchableOpacity>
   ),[openSupplierPreview]);
-
-  const HeaderRight=useMemo(()=>(
-    <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
-      <View style={[S.badge,entitled?S.badgeOk:S.badgeLock]}>
-        <Text style={[S.badgeText,entitled?S.badgeTextOk:S.badgeTextLock]}>
-          {entitled?'AI enabled':'AI locked'}
-        </Text>
-      </View>
-      <View style={S.segmentWrap}>
-        <TouchableOpacity onPress={()=>onToggleMode('math')} style={[S.segmentBtn,mode==='math'&&S.segmentActive]}>
-          <Text style={[S.segmentText,mode==='math'&&S.segmentTextActive]}>Math</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={()=>onToggleMode('ai')} style={[S.segmentBtn,mode==='ai'&&S.segmentActive]}>
-          <Text style={[S.segmentText,mode==='ai'&&S.segmentTextActive]}>AI</Text>
-        </TouchableOpacity>
-      </View>
-      {mode==='ai'&&!!aiMeter?.aiRemaining&&(
-        <View style={S.meterPill}><Text style={S.meterText}>AI calls left: {aiMeter.aiRemaining}</Text></View>
-      )}
-    </View>
-  ),[entitled,mode,aiMeter,onToggleMode]);
 
   const DeptChips=useMemo(()=>(
     <View style={S.chipsBar}>
@@ -695,7 +647,7 @@ export default function SuggestedOrderScreen(){
         {meta && (
           <View style={S.metaCard}>
             <Text style={S.metaTitle}>
-              {mode === 'ai' ? 'AI snapshot context' : 'Math snapshot context'}
+              {'Math snapshot context'}
             </Text>
             <Text style={S.metaText}>
               Engine: velocity-driven math
@@ -716,11 +668,10 @@ export default function SuggestedOrderScreen(){
         )}
       </View>
     );
-  },[snapshot,selectedDeptId,depts,mode]);
+  },[snapshot,selectedDeptId,depts]);
 
   return (
     <View style={S.wrap}>
-      <View style={S.topBar}>{HeaderRight}</View>
       {DeptChips}
       <FlatList
         data={rows}
@@ -896,30 +847,12 @@ export default function SuggestedOrderScreen(){
         </View>
       </Modal>
 
-      {/* Paywall */}
-      <PaymentSheet
-        visible={payOpen}
-        onClose={() => setPayOpen(false)}
-        venueId={venueId || 'unknown'}
-        uid={uid}
-        onEntitled={() => {
-          setEntitled(true);
-          setPayOpen(false);
-          setMode('ai');
-          onToggleMode('ai');
-        }}
-      />
     </View>
   );
 }
 
 const S = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#fff' },
-  topBar: {
-    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
-    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#eee'
-  },
   header: {
     paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'
@@ -935,22 +868,6 @@ const S = StyleSheet.create({
   chipActive: { backgroundColor: '#111827', borderColor: '#111827' },
   chipText: { fontSize: 12, fontWeight: '800', color:'#111827' },
   chipTextActive: { color: '#fff' },
-
-  badge: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1 },
-  badgeOk: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },
-  badgeLock: { backgroundColor: '#fef2f2', borderColor: '#ef4444' },
-  badgeText: { fontSize: 11, fontWeight: '800' },
-  badgeTextOk: { color: '#065f46' },
-  badgeTextLock: { color: '#7f1d1d' },
-
-  segmentWrap: { flexDirection: 'row', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 999, overflow: 'hidden' },
-  segmentBtn: { paddingVertical: 6, paddingHorizontal: 12, backgroundColor: '#fff' },
-  segmentActive: { backgroundColor: '#111827' },
-  segmentText: { fontSize: 12, fontWeight: '800', color: '#111827' },
-  segmentTextActive: { color: '#fff' },
-
-  meterPill: { backgroundColor: '#eef2ff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  meterText: { color: '#3730a3', fontSize: 11, fontWeight: '700' },
 
   row: {
     paddingHorizontal: 16, paddingVertical: 12,

@@ -8,26 +8,41 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { useFonts, PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic } from '@expo-google-fonts/playfair-display';
 
 export type ThemeColours = {
-  primary: string;        // Action colour — buttons, active states (brand: teal #1b4f72)
+  primary: string;        // Action colour — buttons, active states
   primaryLight: string;   // Light tint of primary — backgrounds
   primaryText: string;    // Text on primary backgrounds
-  accent: string;         // Secondary accent (brand: teal #1b4f72)
-  background: string;     // App background (brand: cream #f5f3ee)
+  accent: string;         // Secondary accent
+  background: string;     // App background (brand: oat #f5f3ee)
   surface: string;        // Card/surface background
   border: string;         // Border colour
-  text: string;           // Primary text (brand: navy #0B132B)
+  text: string;           // Primary text
   textSecondary: string;  // Secondary/muted text
   success: string;        // Green — positive states
   warning: string;        // Amber — required fields and AI nudges only (#c47b2b)
   error: string;          // Red — errors
   danger: string;         // Red — destructive actions
   // Named brand tokens — use these directly for semantic clarity
-  cream: string;          // #f5f3ee — background fill
-  teal: string;           // #1b4f72 — single action colour
+  cream: string;          // #f5f3ee — background fill (Oat)
+  teal: string;           // #1b4f72 — depth/link colour only
   amber: string;          // #c47b2b — required fields, AI nudges
-  navy: string;           // #0B132B — headings, nav, body text
+  navy: string;           // Mission Slate — headings, nav, body text
+  // Extended palette
+  missionSlate: string;   // #3b3f4a — primary neutral-dark
+  stellarAmber: string;   // #c47b2b — warm accent
+  deepBlue: string;       // #1b4f72 — link/depth
+  oat: string;            // #f5f3ee — background
+  slateMid: string;       // #6b7280 — muted text
+  oatMuted: string;       // #c9c5bd — muted border/divider
+  positiveSoft: string;   // #e6f3ec — positive background tint
+  positiveStrong: string; // #2f9e5d — positive foreground
+  negativeSoft: string;   // #fce8e0 — negative background tint
+  negativeStrong: string; // #d45b44 — negative foreground
+  terracotta: string;     // #d45b44 — warm negative/alert
+  surfaceDark: string;    // #3b3f4a — dark surface (nav, headers)
+  borderStrong: string;   // #d8d3c6 — stronger border
 };
 
 export type ThemeConfig = {
@@ -45,28 +60,42 @@ export type ThemeConfig = {
 };
 
 export const DEFAULT_COLOURS: ThemeColours = {
-  primary: '#1b4f72',       // Teal — single action colour (buttons, active states)
-  primaryLight: '#e8f2f9',  // Light teal tint
-  primaryText: '#FFFFFF',
-  accent: '#1b4f72',        // Teal accent
-  background: '#f5f3ee',    // Cream — app background
-  surface: '#faf9f6',       // Warm white — cards and sheets
-  border: '#dcd9d2',        // Warm grey border
-  text: '#0B132B',          // Navy — headings and body
-  textSecondary: '#5c6b7a', // Muted navy-grey
-  success: '#16A34A',
-  warning: '#c47b2b',       // Amber — required fields and AI nudges
-  error: '#DC2626',
-  danger: '#DC2626',
+  primary: '#3b3f4a',       // Mission Slate — primary action colour
+  primaryLight: '#ece8de',  // Warm muted tint
+  primaryText: '#f5f3ee',   // Oat — text on dark/primary backgrounds
+  accent: '#3b3f4a',        // Mission Slate — aligned with primary
+  background: '#f5f3ee',    // Oat — app background
+  surface: '#fbfaf6',       // Slightly raised card surface
+  border: '#e7e3da',        // Soft Oat-tone border
+  text: '#3b3f4a',          // Mission Slate — headings and body
+  textSecondary: '#6b7280', // Slate Mid
+  success: '#2f9e5d',       // Positive Green
+  warning: '#c47b2b',       // Stellar Amber — required fields and AI nudges
+  error: '#b91c1c',         // Critical Red
+  danger: '#b91c1c',        // Critical Red — alias in sync
   // Named brand tokens
-  cream: '#f5f3ee',
-  teal: '#1b4f72',
-  amber: '#c47b2b',
-  navy: '#0B132B',
+  cream: '#f5f3ee',         // Oat — background fill
+  teal: '#1b4f72',          // Deep Blue — link/depth only
+  amber: '#c47b2b',         // Stellar Amber
+  navy: '#3b3f4a',          // Mission Slate — headings, nav, body
+  // Extended palette
+  missionSlate: '#3b3f4a',
+  stellarAmber: '#c47b2b',
+  deepBlue: '#1b4f72',
+  oat: '#f5f3ee',
+  slateMid: '#6b7280',
+  oatMuted: '#c9c5bd',
+  positiveSoft: '#e6f3ec',
+  positiveStrong: '#2f9e5d',
+  negativeSoft: '#fce8e0',
+  negativeStrong: '#d45b44',
+  terracotta: '#d45b44',
+  surfaceDark: '#3b3f4a',
+  borderStrong: '#d8d3c6',
 };
 
 export const PRESET_THEMES: { name: string; colours: Partial<ThemeColours> }[] = [
-  { name: 'Hosti (Default)', colours: { primary: '#1b4f72', accent: '#1b4f72', background: '#f5f3ee', surface: '#faf9f6' } },
+  { name: 'Hosti (Default)', colours: { primary: '#3b3f4a', accent: '#3b3f4a', background: '#f5f3ee', surface: '#fbfaf6' } },
   { name: 'Midnight', colours: { primary: '#0F172A', accent: '#2563EB', background: '#F8FAFC', surface: '#FFFFFF' } },
   { name: 'Forest', colours: { primary: '#14532D', accent: '#16A34A', primaryLight: '#F0FDF4', background: '#f5f3ee', surface: '#faf9f6' } },
   { name: 'Slate', colours: { primary: '#334155', accent: '#0EA5E9', primaryLight: '#F0F9FF', background: '#f5f3ee', surface: '#faf9f6' } },
@@ -93,6 +122,7 @@ type ThemeContextValue = {
   updateColours: (patch: Partial<ThemeColours>) => Promise<void>;
   resetTheme: () => Promise<void>;
   isLoading: boolean;
+  fontsLoaded: boolean;
 };
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -101,6 +131,7 @@ const ThemeContext = createContext<ThemeContextValue>({
   updateColours: async () => {},
   resetTheme: async () => {},
   isLoading: true,
+  fontsLoaded: false,
 });
 
 export function ThemeProvider({ venueId, children }: { venueId: string | null; children: React.ReactNode }) {
@@ -108,6 +139,11 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
   const [isLoading, setIsLoading] = useState(true);
   const loadingRef = React.useRef(false);
   const db = getFirestore();
+  const [fontsLoaded] = useFonts({ PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic });
+  const effectiveTheme = React.useMemo(
+    () => ({ ...theme, fontTitle: fontsLoaded ? 'PlayfairDisplay_500Medium' : 'System' }),
+    [theme, fontsLoaded]
+  );
 
   const load = useCallback(async () => {
     if (loadingRef.current) return;
@@ -160,7 +196,7 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
   }, [save]);
 
   return (
-    <ThemeContext.Provider value={{ theme, updateTheme, updateColours, resetTheme, isLoading }}>
+    <ThemeContext.Provider value={{ theme: effectiveTheme, updateTheme, updateColours, resetTheme, isLoading, fontsLoaded: !!fontsLoaded }}>
       {children}
     </ThemeContext.Provider>
   );

@@ -144,6 +144,23 @@ export default function FestivalDashboardScreen() {
         {/* Phase 5 — role-based quick access tiles */}
         {role === 'owner' && (
           <>
+            <Text style={S.tilesHeading}>COUNTS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📦</Text>
+                <Text style={S.tileLabel}>Load-in count</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📊</Text>
+                <Text style={S.tileLabel}>Session count</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
+                <Text style={S.tileEmoji}>🔒</Text>
+                <Text style={S.tileLabel}>Close-out count</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={S.tilesHeading}>CONTRACTS & COMPLIANCE</Text>
             <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalContracts')}>
@@ -186,6 +203,23 @@ export default function FestivalDashboardScreen() {
 
         {role === 'manager' && (
           <>
+            <Text style={S.tilesHeading}>COUNTS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📦</Text>
+                <Text style={S.tileLabel}>Load-in count</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📊</Text>
+                <Text style={S.tileLabel}>Session count</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
+                <Text style={S.tileEmoji}>🔒</Text>
+                <Text style={S.tileLabel}>Close-out count</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={S.tilesHeading}>COMPLIANCE</Text>
             <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalObligations')}>
@@ -209,6 +243,23 @@ export default function FestivalDashboardScreen() {
 
         {role === 'staff' && (
           <>
+            <Text style={S.tilesHeading}>COUNTS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📦</Text>
+                <Text style={S.tileLabel}>Load-in count</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalBarSelection')}>
+                <Text style={S.tileEmoji}>📊</Text>
+                <Text style={S.tileLabel}>Session count</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalEndOfEventCount')}>
+                <Text style={S.tileEmoji}>🔒</Text>
+                <Text style={S.tileLabel}>Close-out count</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={S.tilesHeading}>TODAY</Text>
             <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalRiders')}>

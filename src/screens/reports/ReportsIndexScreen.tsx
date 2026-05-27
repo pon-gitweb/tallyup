@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import OfflineBanner from '../../components/OfflineBanner';
@@ -85,6 +86,7 @@ export default function ReportsIndexScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const insets = useSafeAreaInsets();
+  const colours = useColours();
 
   const { isOnline } = useNetworkState();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
@@ -93,7 +95,6 @@ export default function ReportsIndexScreen() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [varianceExplained, setVarianceExplained] = useState(false);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [availableDepts, setAvailableDepts] = useState<{ id: string; name: string; lastCycleAt: any }[]>([]);
   const [insightsModalVisible, setInsightsModalVisible] = useState(false);
@@ -135,33 +136,6 @@ export default function ReportsIndexScreen() {
         if (cancelled) return;
         setData(d);
         setLoading(false);
-
-        // Fire AI insight async — non-blocking, once per mount
-        const isOwnerOrManager = d.role === 'owner' || d.role === 'manager';
-        if (d.hasCountData && isOwnerOrManager && !varianceExplained) {
-          setVarianceExplained(true);
-          setAiLoading(true);
-          explainVariance({
-            venueId,
-            shortages: d.topShortages.map((s) => ({
-              name: s.name,
-              dollarVariance: s.dollarVariance,
-              varianceUnits: s.varianceUnits,
-            })),
-            totalVarianceDollars: d.shortfallDollars,
-            trendItems: d.trendItems.map((t) => t.name),
-            totalItemsCounted: d.totalItemsCounted,
-            mode: 'briefing',
-          })
-            .then((res) => {
-              if (!cancelled) setAiInsight(res.summary || null);
-            })
-            .catch(() => {})
-            .finally(() => {
-              if (!cancelled) setAiLoading(false);
-            });
-
-        }
       })
       .catch(() => {
         if (!cancelled) { setLoading(false); setError(true); }
@@ -397,7 +371,7 @@ export default function ReportsIndexScreen() {
   if (!venueId) {
     return (
       <LocalThemeGate>
-        <View style={styles.root}>
+        <View style={[styles.root, { backgroundColor: colours.background }]}>
           <ScreenHeader />
           <View style={styles.centred}>
             <Text style={styles.emptyTitle}>No venue selected</Text>
@@ -411,7 +385,7 @@ export default function ReportsIndexScreen() {
   if (loading) {
     return (
       <LocalThemeGate>
-        <View style={styles.root}>
+        <View style={[styles.root, { backgroundColor: colours.background }]}>
           <OfflineBanner />
           <ScreenHeader />
           <View style={styles.centred}>
@@ -434,7 +408,7 @@ export default function ReportsIndexScreen() {
   if (error) {
     return (
       <LocalThemeGate>
-        <View style={styles.root}>
+        <View style={[styles.root, { backgroundColor: colours.background }]}>
           <ScreenHeader />
           <View style={styles.centred}>
             <Text style={styles.emptyTitle}>Couldn't load briefing</Text>
@@ -454,7 +428,7 @@ export default function ReportsIndexScreen() {
   if (!data?.hasCountData) {
     return (
       <LocalThemeGate>
-        <View style={styles.root}>
+        <View style={[styles.root, { backgroundColor: colours.background }]}>
           <ScreenHeader />
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
             <View style={styles.emptyCard}>
@@ -506,7 +480,7 @@ export default function ReportsIndexScreen() {
 
   return (
     <LocalThemeGate>
-      <View style={styles.root}>
+      <View style={[styles.root, { backgroundColor: colours.background }]}>
         <OfflineBanner />
         <ScreenHeader />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
@@ -792,9 +766,31 @@ export default function ReportsIndexScreen() {
               ) : aiInsight ? (
                 <Text style={styles.aiText}>{aiInsight}</Text>
               ) : (
-                <Text style={styles.laneEmpty}>
-                  AI analysis unavailable — check your connection.
-                </Text>
+                <TouchableOpacity
+                  style={styles.explainBtn}
+                  disabled={aiLoading}
+                  onPress={() => {
+                    if (!data) return;
+                    setAiLoading(true);
+                    explainVariance({
+                      venueId,
+                      shortages: data.topShortages.map((s) => ({
+                        name: s.name,
+                        dollarVariance: s.dollarVariance,
+                        varianceUnits: s.varianceUnits,
+                      })),
+                      totalVarianceDollars: data.shortfallDollars,
+                      trendItems: data.trendItems.map((t) => t.name),
+                      totalItemsCounted: data.totalItemsCounted,
+                      mode: 'briefing',
+                    })
+                      .then((res) => setAiInsight(res.summary || null))
+                      .catch(() => {})
+                      .finally(() => setAiLoading(false));
+                  }}
+                >
+                  <Text style={styles.explainBtnText}>Explain variance</Text>
+                </TouchableOpacity>
               )}
             </Lane>
           )}
@@ -1301,7 +1297,6 @@ function SuiteeModal({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#0F1115',
   },
   header: {
     padding: 16,
@@ -1497,6 +1492,20 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
     lineHeight: 19,
+  },
+
+  // Explain variance button (LANE 3)
+  explainBtn: {
+    backgroundColor: '#1b4f72',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+  },
+  explainBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
 
   // AI insight

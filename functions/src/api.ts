@@ -24,6 +24,18 @@ async function verifyToken(req: express.Request): Promise<string | null> {
   }
 }
 
+async function verifyVenueMembership(uid: string, venueId: string): Promise<void> {
+  const memberDoc = await admin
+    .firestore()
+    .doc(`venues/${venueId}/members/${uid}`)
+    .get();
+  if (!memberDoc.exists) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'You are not a member of this venue.'
+    );
+  }
+}
 
 // ── Inline name-matching helpers (used for supplier/product dedup) ────────────
 
@@ -235,12 +247,29 @@ app.post("/upload-file", async (req, res) => {
       return;
     }
 
-    const { destPath, dataUrl, cacheControl } = req.body || {};
+    const { venueId, destPath, dataUrl, cacheControl } = req.body || {};
+
+    if (!venueId || typeof venueId !== "string") {
+      res.status(400).json({ ok: false, error: "Missing venueId" });
+      return;
+    }
+    await verifyVenueMembership(uid, venueId);
 
     if (!destPath || typeof destPath !== "string") {
       res.status(400).json({ ok: false, error: "Missing destPath" });
       return;
     }
+    const allowedPrefixes = [
+      `venues/${venueId}/`,
+      `festival-contracts/${venueId}/`,
+      `festival-riders/${venueId}/`,
+    ];
+    const isAllowed = allowedPrefixes.some(prefix => destPath.startsWith(prefix));
+    if (!isAllowed) {
+      res.status(403).json({ error: "Storage path not permitted for this venue." });
+      return;
+    }
+
     if (!dataUrl || typeof dataUrl !== "string") {
       res.status(400).json({ ok: false, error: "Missing dataUrl" });
       return;
@@ -316,6 +345,7 @@ app.post("/variance-explain", async (req, res) => {
     const ctx = req.body || {};
     const venueIdForLimit: string = ctx.venueId || ctx.aiContext?.venueId || "";
     if (venueIdForLimit) {
+      await verifyVenueMembership(uid, venueIdForLimit);
       const lc = await checkAiLimit(venueIdForLimit, 'variance_explain');
       if (!lc.allowed) { res.status(429).json(lc.limitError); return; }
     }
@@ -407,6 +437,7 @@ app.post("/budget-suggest", async (req, res) => {
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, aiContext } = req.body || {};
     if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    await verifyVenueMembership(uid, venueId);
     const lcBS = await checkAiLimit(venueId, 'suggest_orders');
     if (!lcBS.allowed) { res.status(429).json(lcBS.limitError); return; }
     const ctx = aiContext || {};
@@ -482,6 +513,7 @@ app.post("/ai-insights", async (req, res) => {
 
     const { venueId, data, cacheKey } = req.body || {};
     if (!venueId || !data) { res.status(400).json({ ok: false, error: "Missing venueId or data" }); return; }
+    await verifyVenueMembership(uid, venueId);
     const lcAI = await checkAiLimit(venueId, 'ai_insights');
     if (!lcAI.allowed) { res.status(429).json(lcAI.limitError); return; }
 
@@ -577,6 +609,12 @@ app.post("/extract-inventory", async (req, res) => {
 
     const { imageBase64, pdfBase64, fileBase64, mimeType, venueId, mode, imageBase64Back } = req.body || {};
 
+    if (!venueId) {
+      res.status(400).json({ error: "venueId is required." });
+      return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
     // Resolve the raw base64 and whether it's an image or PDF
     const rawBase64: string = imageBase64 || pdfBase64 || fileBase64 || "";
     if (!rawBase64) {
@@ -585,7 +623,7 @@ app.post("/extract-inventory", async (req, res) => {
     }
 
     // Mode-aware limit check
-    if (venueId && mode !== 'catalogue') {
+    if (mode !== 'catalogue') {
       const callTypeForMode: AiCallType =
         mode === 'shelf-scan' ? 'shelf_scan' :
         mode === 'product-photo' ? 'product_photo' : 'stocktake_photo';
@@ -951,6 +989,7 @@ app.post("/photo-count", async (req, res) => {
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
     const { venueId, imageBase64, productHint, unit } = req.body || {};
     if (!venueId || !imageBase64) { res.status(400).json({ ok: false, error: "Missing venueId or imageBase64" }); return; }
+    await verifyVenueMembership(uid, venueId);
     const lcPC = await checkAiLimit(venueId, 'stocktake_photo');
     if (!lcPC.allowed) { res.status(429).json(lcPC.limitError); return; }
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1238,6 +1277,15 @@ async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string
     await deleteDocs(db, `venues/${venueId}/${col}`);
   }
 
+  await deleteSubcollection(`venues/${venueId}/departments`, 'snapshots');
+  await deleteSubcollection(`venues/${venueId}/products`, 'priceHistory');
+  await deleteSubcollection(`venues/${venueId}/products`, 'suppliers');
+  await deleteSubcollection(`venues/${venueId}/bars`, 'stock');
+
+  await admin.firestore().doc(`venues/${venueId}/settings/config`).delete().catch(() => {});
+  await admin.firestore().doc(`venues/${venueId}/settings/theme`).delete().catch(() => {});
+  await admin.firestore().doc(`venues/${venueId}/event/details`).delete().catch(() => {});
+
   await db.doc(`venues/${venueId}`).delete();
 }
 
@@ -1248,6 +1296,17 @@ async function deleteDocs(db: admin.firestore.Firestore, colPath: string): Promi
   snap.docs.forEach(d => batch.delete(d.ref));
   await batch.commit();
   if (snap.docs.length >= 200) await deleteDocs(db, colPath);
+}
+
+async function deleteSubcollection(parentPath: string, subcollectionName: string): Promise<void> {
+  const parentSnap = await admin.firestore().collection(parentPath).get();
+  const deletes = parentSnap.docs.map(doc =>
+    admin.firestore()
+      .collection(`${doc.ref.path}/${subcollectionName}`)
+      .get()
+      .then(sub => Promise.all(sub.docs.map(d => d.ref.delete())))
+  );
+  await Promise.all(deletes);
 }
 
 // ── POST /suitee ──────────────────────────────────────────────────────────────
@@ -1263,6 +1322,7 @@ app.post("/suitee", async (req, res) => {
     if (!venueId || typeof venueId !== "string") {
       res.status(400).json({ ok: false, error: "Missing venueId" }); return;
     }
+    await verifyVenueMembership(uid, venueId);
     const lcSU = await checkAiLimit(venueId, 'suitee');
     if (!lcSU.allowed) { res.status(429).json(lcSU.limitError); return; }
 
@@ -2116,6 +2176,11 @@ app.post("/process-invoices-csv", async (req, res) => {
       res.status(400).json({ ok: false, error: "Missing venueId or storagePath" });
       return;
     }
+    await verifyVenueMembership(uid, venueId);
+    if (!storagePath.startsWith(`venues/${venueId}/`)) {
+      res.status(403).json({ error: "Storage path not permitted for this venue." });
+      return;
+    }
     const lcCSV = await checkAiLimit(venueId, 'invoice_ocr');
     if (!lcCSV.allowed) { res.status(429).json(lcCSV.limitError); return; }
 
@@ -2166,6 +2231,11 @@ app.post("/process-invoices-pdf", async (req, res) => {
     const { venueId, storagePath } = req.body || {};
     if (!venueId || !storagePath) {
       res.status(400).json({ ok: false, error: "Missing venueId or storagePath" });
+      return;
+    }
+    await verifyVenueMembership(uid, venueId);
+    if (!storagePath.startsWith(`venues/${venueId}/`)) {
+      res.status(403).json({ error: "Storage path not permitted for this venue." });
       return;
     }
     const lcPDF = await checkAiLimit(venueId, 'invoice_ocr');
@@ -2497,6 +2567,13 @@ app.post("/extract-festival-rider", async (req, res) => {
     }
 
     const db = admin.firestore();
+
+    const riderMemberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    const riderRole = riderMemberSnap.data()?.role;
+    if (riderRole !== 'owner' && riderRole !== 'manager') {
+      res.status(403).json({ ok: false, error: "Insufficient role for rider extraction." });
+      return;
+    }
 
     if (!storageRef.startsWith(`festival-riders/${venueId}/`)) {
       res.status(400).json({ ok: false, error: "Invalid storageRef" }); return;

@@ -6,7 +6,7 @@ import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'fi
 
 export default function CreateVenueScreen() {
   const [name, setName] = useState('');
-  const [venueType, setVenueType] = useState<'permanent' | 'festival'>('permanent');
+  const [venueType, setVenueType] = useState<'venue' | 'festival'>('venue');
   const [busy, setBusy] = useState(false);
 
   async function handleCreate() {
@@ -131,19 +131,19 @@ export default function CreateVenueScreen() {
       </Text>
 
       <TouchableOpacity
-        onPress={() => setVenueType('permanent')}
+        onPress={() => setVenueType('venue')}
         disabled={busy}
         style={{
           backgroundColor: '#171B22',
           borderRadius: 10,
           borderWidth: 2,
-          borderColor: venueType === 'permanent' ? '#0D9488' : '#263142',
+          borderColor: venueType === 'venue' ? '#0D9488' : '#263142',
           padding: 14,
           marginBottom: 10,
         }}
       >
         <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
-          {venueType === 'permanent' ? '●' : '○'} Permanent venue
+          {venueType === 'venue' ? '●' : '○'} Permanent venue
         </Text>
         <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
           Bar, restaurant, café, hotel

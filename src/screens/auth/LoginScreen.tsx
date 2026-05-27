@@ -4,23 +4,17 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   Alert,
   ActivityIndicator,
-  Image,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-// Font package not installed — using system font
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
-import LegalFooter from '../../components/LegalFooter';
 import { useVenueId } from '../../context/VenueProvider';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
-import { useColours } from '../../context/ThemeContext';
-
-const appIcon = require('../../../assets/icon.png');
+import { useColours, useTheme } from '../../context/ThemeContext';
 
 function mapAuthError(e: any): string {
   const code = (e?.code || '').toString();
@@ -37,13 +31,14 @@ function LoginScreenInner() {
   const auth = getAuth();
   const venueId = useVenueId();
   const colours = useColours();
-
-  const fontsLoaded = false;
+  const { fontsLoaded } = useTheme();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passFocused, setPassFocused] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -72,87 +67,116 @@ function LoginScreenInner() {
 
   const gotoRegister = () => nav.navigate('Register');
 
-  const S = StyleSheet.create({
-    container: { flex: 1, backgroundColor: colours.background },
-    scroll: { flexGrow: 1, padding: 24, paddingBottom: 16 },
-    brandSection: { alignItems: 'center', paddingTop: 52, paddingBottom: 36 },
-    logoImg: { width: 80, height: 80, borderRadius: 18, marginBottom: 16 },
-    brandName: {
-      fontSize: 34,
-      fontWeight: '700',
-      color: colours.navy,
-      letterSpacing: 0.5,
-      fontFamily: fontsLoaded ? 'PlayfairDisplay_700Bold' : undefined,
-    },
-    input: { borderWidth: 1, borderColor: colours.border, borderRadius: 10, padding: 12, marginBottom: 10, backgroundColor: colours.surface, color: colours.text },
-    passRow: { flexDirection: 'row', alignItems: 'center' },
-    revealBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: colours.border, borderRadius: 10 },
-    revealText: { fontWeight: '700', color: colours.text },
-    forgotLink: { alignSelf: 'flex-end', marginTop: 6, marginBottom: 4, paddingVertical: 2 },
-    forgotText: { color: colours.primary, fontSize: 13, fontWeight: '600' },
-    primary: { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
-    primaryText: { color: colours.primaryText, fontWeight: '700' },
-    secondary: { padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: colours.border },
-    secondaryText: { color: colours.text, fontWeight: '700' },
-    disabled: { opacity: 0.6 },
-    footer: { paddingHorizontal: 16, paddingBottom: 16 },
-  });
+  const titleFont = fontsLoaded ? 'PlayfairDisplay_500Medium' : undefined;
 
   return (
-    <View style={S.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
-          {/* Brand section */}
-          <View style={S.brandSection}>
-            <Image source={appIcon} style={S.logoImg} resizeMode="contain" />
-            <Text style={S.brandName}>Hosti</Text>
+    <View style={{ flex: 1, backgroundColor: colours.background }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28, paddingBottom: 80 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Wordmark */}
+          <View style={{ paddingTop: 64 }}>
+            <Text style={{ fontSize: 36, letterSpacing: -0.5, fontFamily: titleFont }}>
+              <Text style={{ color: colours.stellarAmber }}>H</Text>
+              <Text style={{ color: colours.missionSlate }}>osti</Text>
+            </Text>
           </View>
 
-          {/* Form */}
-          <TextInput
-            style={S.input}
-            placeholder="Email"
-            placeholderTextColor={colours.textSecondary}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
+          {/* Welcome block */}
+          <View style={{ paddingTop: 32 }}>
+            <Text style={{ fontSize: 42, fontWeight: '800', color: colours.text, letterSpacing: -0.5, lineHeight: 48, fontFamily: titleFont }}>
+              Welcome back.
+            </Text>
+            <Text style={{ fontSize: 15, color: colours.textSecondary, marginTop: 8, lineHeight: 22 }}>
+              Yesterday's count is ready.
+            </Text>
+          </View>
 
-          <View style={S.passRow}>
+          {/* Form block */}
+          <View style={{ marginTop: 36 }}>
             <TextInput
-              style={[S.input, { flex: 1, marginBottom: 0 }]}
-              placeholder="Password"
+              style={{
+                height: 52,
+                borderWidth: 1.5,
+                borderColor: emailFocused ? colours.stellarAmber : colours.border,
+                borderRadius: 12,
+                paddingHorizontal: 16,
+                marginBottom: 12,
+                backgroundColor: colours.surface,
+                color: colours.text,
+                fontSize: 15,
+              }}
+              placeholder="Email"
               placeholderTextColor={colours.textSecondary}
-              secureTextEntry={!reveal}
-              value={pass}
-              onChangeText={setPass}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+              onFocus={() => setEmailFocused(true)}
+              onBlur={() => setEmailFocused(false)}
             />
-            <TouchableOpacity onPress={() => setReveal(v => !v)} style={S.revealBtn}>
-              <Text style={S.revealText}>{reveal ? 'Hide' : 'Show'}</Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <TextInput
+                style={{
+                  flex: 1,
+                  height: 52,
+                  borderWidth: 1.5,
+                  borderColor: passFocused ? colours.stellarAmber : colours.border,
+                  borderRadius: 12,
+                  paddingHorizontal: 16,
+                  backgroundColor: colours.surface,
+                  color: colours.text,
+                  fontSize: 15,
+                }}
+                placeholder="Password"
+                placeholderTextColor={colours.textSecondary}
+                secureTextEntry={!reveal}
+                value={pass}
+                onChangeText={setPass}
+                onFocus={() => setPassFocused(true)}
+                onBlur={() => setPassFocused(false)}
+              />
+              <TouchableOpacity
+                onPress={() => setReveal(v => !v)}
+                style={{ marginLeft: 10, height: 52, paddingHorizontal: 14, borderWidth: 1.5, borderColor: colours.border, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Text style={{ fontWeight: '700', color: colours.text, fontSize: 13 }}>{reveal ? 'Hide' : 'Show'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity style={{ alignSelf: 'flex-end', paddingVertical: 4, marginBottom: 4 }} onPress={() => nav.navigate('ForgotPassword')} disabled={busy}>
+              <Text style={{ color: colours.stellarAmber, fontSize: 13, fontWeight: '600' }}>Forgot password?</Text>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={S.forgotLink} onPress={() => nav.navigate('ForgotPassword')} disabled={busy}>
-            <Text style={S.forgotText}>Forgot password?</Text>
+          {/* Sign in pill */}
+          <TouchableOpacity
+            style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginTop: 8, opacity: busy ? 0.6 : 1 }}
+            onPress={trySignIn}
+            disabled={busy}
+          >
+            {busy
+              ? <ActivityIndicator color={colours.oat} />
+              : <Text style={{ color: colours.oat, fontWeight: '700', fontSize: 16 }}>Sign in →</Text>}
           </TouchableOpacity>
 
-          <TouchableOpacity style={[S.primary, busy && S.disabled]} onPress={trySignIn} disabled={busy}>
-            {busy ? <ActivityIndicator color={colours.primaryText} /> : <Text style={S.primaryText}>Sign In</Text>}
-          </TouchableOpacity>
-
-          <TouchableOpacity style={S.secondary} onPress={gotoRegister} disabled={busy}>
-            <Text style={S.secondaryText}>Create Account</Text>
+          {/* Register link */}
+          <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 16 }} onPress={gotoRegister} disabled={busy}>
+            <Text style={{ color: colours.textSecondary, fontSize: 14 }}>
+              Don't have an account?{' '}
+              <Text style={{ color: colours.missionSlate, fontWeight: '600' }}>Create one</Text>
+            </Text>
           </TouchableOpacity>
 
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <View style={S.footer}>
-        <LegalFooter />
+      {/* Footer */}
+      <View style={{ position: 'absolute', bottom: 32, left: 0, right: 0, alignItems: 'center' }}>
+        <Text style={{ fontSize: 12, color: colours.oatMuted }}>© 2026 Hosti Limited · Tāmaki Makaurau</Text>
       </View>
     </View>
   );

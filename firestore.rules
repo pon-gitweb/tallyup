@@ -149,7 +149,7 @@ service cloud.firestore {
 
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
-        allow read: if isVenueMember(venueId) || isSignedIn();
+        allow read: if isVenueMember(venueId);
         // Only owners and managers can create invites
         allow create: if hasVenueRole(venueId, ['owner','manager'])
           && request.resource.data.keys().hasAll(['email','role','status','createdAt'])
@@ -727,6 +727,9 @@ service cloud.firestore {
           && (request.resource.data.status is string)
           && (request.resource.data.createdAt is timestamp);
         allow delete: if false;
+        match /wastage/{wastageId} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
       match /stockTakes/{stockTakeId} {
@@ -981,14 +984,6 @@ service cloud.firestore {
       // All existing venue rules unchanged above
       // ═══════════════════════════════════════════════════════════════
 
-      match /sessions/{sessionId} {
-        allow read, write: if isVenueMember(venueId);
-
-        match /wastage/{wastageId} {
-          allow read, write: if isVenueMember(venueId);
-        }
-      }
-
       match /bars/{barId} {
         allow read, write: if isVenueMember(venueId);
         match /stocktakes/{stocktakeId} {
@@ -1059,6 +1054,11 @@ service cloud.firestore {
 
       match /planograms/{planId} {
         allow read, write: if isVenueMember(venueId);
+      }
+
+      match /event/{docId} {
+        allow read: if isVenueMember(venueId);
+        allow write: if hasVenueRole(venueId, ['owner', 'manager']);
       }
     }
   }
