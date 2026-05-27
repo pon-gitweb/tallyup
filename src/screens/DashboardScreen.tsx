@@ -76,12 +76,18 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!user?.uid) return;
     const db = getFirestore();
-    const unsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
-      if (snap.exists()) {
-        const dn = snap.data()?.displayName || user?.displayName || '';
-        setLiveDisplayName(dn);
+    const unsub = onSnapshot(
+      doc(db, 'users', user.uid),
+      (snap) => {
+        if (snap.exists()) {
+          const dn = snap.data()?.displayName || user?.displayName || '';
+          setLiveDisplayName(dn);
+        }
+      },
+      (error) => {
+        console.error('[Dashboard] user listener failed:', error.code, error.message);
       }
-    });
+    );
     return () => unsub();
   }, [user?.uid]);
 
@@ -90,9 +96,15 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
-    const unsub = onSnapshot(doc(db, 'venues', venueId), (snap) => {
-      if (snap.exists()) setLiveVenueName(snap.data()?.name || '');
-    });
+    const unsub = onSnapshot(
+      doc(db, 'venues', venueId),
+      (snap) => {
+        if (snap.exists()) setLiveVenueName(snap.data()?.name || '');
+      },
+      (error) => {
+        console.error('[Dashboard] venue listener failed:', error.code, error.message);
+      }
+    );
     return () => unsub();
   }, [venueId]);
 
@@ -104,8 +116,7 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
-    const db2 = getFirestore();
-    getDocs(collection(db2, 'venues', venueId, 'departments')).then(async deptSnap => {
+    getDocs(collection(db, 'venues', venueId, 'departments')).then(async deptSnap => {
         let best: any = null;
         for (const deptDoc of deptSnap.docs) {
           const areasSnap = await getDocs(
