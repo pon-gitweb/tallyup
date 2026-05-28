@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { Text, TouchableOpacity, Platform } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { openIzzy } from '../../components/IzzyAssistant';
@@ -57,9 +57,9 @@ export default function MainTabs() {
           backgroundColor: '#f5f3ee',
           borderTopWidth: 1,
           borderTopColor: '#e5e1d8',
-          paddingBottom: insets.bottom > 0 ? insets.bottom : (Platform.OS === 'android' ? 8 : 4),
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
           paddingTop: 6,
-          height: 56 + (insets.bottom > 0 ? insets.bottom : (Platform.OS === 'android' ? 8 : 4)),
+          height: 60 + (insets.bottom > 0 ? insets.bottom : 8),
         },
       })}
     >

@@ -1,5 +1,6 @@
 import React from 'react';
 import * as Sentry from '@sentry/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
 import { VenueProvider } from './src/context/VenueProvider';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
@@ -10,11 +11,13 @@ initCrashReporting();
 function App() {
   console.log('[TallyUp App] mount');
   return (
-    <VenueProvider>
-      <AppErrorBoundary>
-        <RootNavigator />
-      </AppErrorBoundary>
-    </VenueProvider>
+    <SafeAreaProvider>
+      <VenueProvider>
+        <AppErrorBoundary>
+          <RootNavigator />
+        </AppErrorBoundary>
+      </VenueProvider>
+    </SafeAreaProvider>
   );
 }
 
