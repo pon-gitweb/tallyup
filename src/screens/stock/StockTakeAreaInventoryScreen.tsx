@@ -47,6 +47,11 @@ import { findMatchingProduct } from '../../services/matching';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import OfflineBanner from '../../components/OfflineBanner';
 import { parseSpokenCount } from '../../utils/parseSpokenCount';
+import { VoiceSessionBanner } from '../../components/stocktake/VoiceSessionBanner';
+import {
+  matchProductByVoice, detectVoiceCommand, VOICE_MESSAGES,
+  VoicePhase, VoiceSessionState,
+} from '../../services/stocktake/voiceCountingSession';
 
 // Voice counting — graceful degradation if native module not linked
 let Voice: any = null;
@@ -106,9 +111,6 @@ type RowProps = {
   isLocked: boolean;
   isEdited: boolean;
   isHighlighted: boolean;
-  voiceAvailable?: boolean;
-  voiceListeningId?: string | null;
-  onVoicePress?: (item: Item) => void;
 };
 
 const Row = React.memo(function Row({
@@ -133,9 +135,6 @@ const Row = React.memo(function Row({
   isLocked,
   isEdited,
   isHighlighted,
-  voiceAvailable,
-  voiceListeningId,
-  onVoicePress,
 }: RowProps) {
   const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
@@ -371,31 +370,9 @@ const Row = React.memo(function Row({
               <Text style={{ fontWeight: '900', fontSize: 22 }}>+</Text>
             </TouchableOpacity>
           )}
-          {voiceAvailable && !isLocked && onVoicePress && (
-            <TouchableOpacity
-              onPress={() => onVoicePress(item)}
-              style={{
-                width: 36, height: 44, borderRadius: 8,
-                borderWidth: 1,
-                borderColor: voiceListeningId === item.id ? '#ef4444' : '#0D9488',
-                backgroundColor: voiceListeningId === item.id ? '#fef2f2' : '#f0fdfa',
-                justifyContent: 'center', alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontSize: 18 }}>
-                {voiceListeningId === item.id ? '🔴' : '🎤'}
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
         )}
       </View>
-
-      {voiceListeningId === item.id && (
-        <Text style={{ fontSize: 11, color: '#0D9488', fontWeight: '600', marginTop: 4, paddingHorizontal: 4 }}>
-          Listening…
-        </Text>
-      )}
 
       {/* Manager inline approve */}
       {isManager && ENABLE_MANAGER_INLINE_APPROVE && (
@@ -694,74 +671,218 @@ function StockTakeAreaInventoryScreen() {
     AS.setItem(draftKey, JSON.stringify(localQty)).catch(() => {});
   }, [localQty, draftKey]);
 
-  // ── Voice counting ─────────────────────────────────────────────────────────
+  // ── Voice counting session (Phase 2) ──────────────────────────────────────
+  // One mic button for the whole area. Two-phase cycle: product name → count.
+  // Per-row mic buttons removed. AirPods/Bluetooth work via OS audio routing.
   const [voiceAvailable, setVoiceAvailable] = useState(false);
-  const [voiceListeningId, setVoiceListeningId] = useState<string | null>(null);
-  const activeVoiceItemRef = useRef<string | null>(null);
+  const activeVoiceItemRef = useRef<Item | null>(null);
+
+  const [voiceSessionState, setVoiceSessionState] = useState<VoiceSessionState>({
+    isActive: false,
+    phase: 'idle',
+    matchedItem: null,
+    candidateItems: [],
+    lastSavedItem: null,
+    lastSavedCount: null,
+    bannerMessage: '',
+    bannerColour: 'hidden',
+  });
+  const voiceSessionActiveRef = useRef(false);
+  const voicePhaseRef = useRef<VoicePhase>('idle');
+
+  // Refs to avoid stale closures inside the Voice listener (set once with [])
+  const itemsRef = useRef<Item[]>(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const candidateItemsRef = useRef<Item[]>([]);
+
+  // saveCount ref — always points to the latest saveCount regardless of closure age
+  const saveCountRef = useRef(saveCount);
+  useEffect(() => { saveCountRef.current = saveCount; });
+
+  // Highlighted item from voice product match
+  const [highlightedVoiceItemId, setHighlightedVoiceItemId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!Voice) return;
     Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
 
-    // Listeners set up once on mount — use ref to avoid stale closure over item
-    Voice.onSpeechResults = (e: any) => {
-      const results: string[] = e?.value || [];
-      const itemId = activeVoiceItemRef.current;
-      if (!itemId) return;
-      for (const r of results) {
-        const num = parseSpokenCount(r);
-        if (num !== null) {
-          setLocalQty(prev => ({ ...prev, [itemId]: String(num) }));
-          setVoiceListeningId(null);
+    // ── Two-phase session handler ─────────────────────────────────────────
+    // All state read via refs — no stale closure over phase or candidateItems.
+    Voice.onSpeechResults = async (e: any) => {
+      const results: string[] = e?.value ?? [];
+      const spoken = results[0] ?? '';
+      if (!spoken || !voiceSessionActiveRef.current) return;
+
+      const phase = voicePhaseRef.current;
+
+      // ── PRODUCT PHASE ──────────────────────────────────────────────────
+      if (phase === 'product') {
+        const command = detectVoiceCommand(spoken);
+
+        if (command === 'end_session') {
+          voiceSessionActiveRef.current = false;
+          voicePhaseRef.current = 'idle';
           activeVoiceItemRef.current = null;
+          candidateItemsRef.current = [];
           Voice.stop().catch(() => {});
+          setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
           return;
         }
+
+        // Handle selection from multiple-match list
+        const candidates = candidateItemsRef.current;
+        if (candidates.length > 1) {
+          const idx = command === 'select_1' ? 0 : command === 'select_2' ? 1 : command === 'select_3' ? 2 : -1;
+          if (idx >= 0 && candidates[idx]) {
+            const matched = candidates[idx];
+            activeVoiceItemRef.current = matched;
+            voicePhaseRef.current = 'count';
+            candidateItemsRef.current = [];
+            setHighlightedVoiceItemId(matched.id);
+            setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+            setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+        }
+
+        const matches = matchProductByVoice(spoken, itemsRef.current);
+
+        if (matches.length === 0) {
+          candidateItemsRef.current = [];
+          setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
+          setTimeout(() => { if (voiceSessionActiveRef.current) Voice.start('en-NZ').catch(() => {}); }, 1500);
+          return;
+        }
+
+        if (matches.length === 1) {
+          const matched = matches[0];
+          activeVoiceItemRef.current = matched;
+          voicePhaseRef.current = 'count';
+          candidateItemsRef.current = [];
+          setHighlightedVoiceItemId(matched.id);
+          setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+          setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
+          Voice.start('en-NZ').catch(() => {});
+          return;
+        }
+
+        // Multiple matches — present top 3, wait for "one" / "two" / "three"
+        const top3 = matches.slice(0, 3);
+        candidateItemsRef.current = top3;
+        const matchList = top3.map((m: Item, i: number) => `${i + 1}. ${m.name}`).join('\n');
+        setVoiceSessionState(prev => ({ ...prev, candidateItems: top3, bannerMessage: `Multiple matches:\n${matchList}`, bannerColour: 'amber' }));
+        Voice.start('en-NZ').catch(() => {});
+        return;
       }
-      setVoiceListeningId(null);
-      activeVoiceItemRef.current = null;
+
+      // ── COUNT PHASE ────────────────────────────────────────────────────
+      if (phase === 'count') {
+        const command = detectVoiceCommand(spoken);
+
+        if (command === 'end_session') {
+          voiceSessionActiveRef.current = false;
+          voicePhaseRef.current = 'idle';
+          activeVoiceItemRef.current = null;
+          candidateItemsRef.current = [];
+          Voice.stop().catch(() => {});
+          setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+          return;
+        }
+
+        if (command === 'skip') {
+          // Skip this product — return to listening for next product name
+          activeVoiceItemRef.current = null;
+          candidateItemsRef.current = [];
+          voicePhaseRef.current = 'product';
+          setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+          Voice.start('en-NZ').catch(() => {});
+          return;
+        }
+
+        const count = parseSpokenCount(spoken);
+
+        if (count === null) {
+          setVoiceSessionState(prev => ({ ...prev, bannerMessage: "Didn't catch that — say the count again", bannerColour: 'amber' }));
+          Voice.start('en-NZ').catch(() => {});
+          return;
+        }
+
+        const item = activeVoiceItemRef.current;
+        if (!item) return;
+
+        // Update localQty for immediate UI feedback (green border on row)
+        setLocalQty(prev => ({ ...prev, [item.id]: String(count) }));
+        // Write to Firestore — forceReplace=true skips the add-or-replace alert
+        saveCountRef.current(item, count, true);
+
+        const itemName = item.name;
+        voicePhaseRef.current = 'saving';
+        activeVoiceItemRef.current = null;
+        candidateItemsRef.current = [];
+        setVoiceSessionState(prev => ({ ...prev, phase: 'saving', lastSavedItem: itemName, lastSavedCount: count, bannerMessage: VOICE_MESSAGES.saved(itemName, count), bannerColour: 'green' }));
+
+        // Brief confirmation flash, then listen for next product name
+        setTimeout(() => {
+          if (!voiceSessionActiveRef.current) return;
+          voicePhaseRef.current = 'product';
+          setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+          Voice.start('en-NZ').catch(() => {});
+        }, 800);
+      }
     };
 
     Voice.onSpeechError = () => {
-      setVoiceListeningId(null);
-      activeVoiceItemRef.current = null;
+      // Restart listening for the current phase after a recognition error
+      if (!voiceSessionActiveRef.current) return;
+      const phase = voicePhaseRef.current;
+      if (phase === 'product' || phase === 'count') {
+        setTimeout(() => { if (voiceSessionActiveRef.current) Voice.start('en-NZ').catch(() => {}); }, 500);
+      }
     };
 
     return () => { Voice?.destroy?.().catch(() => {}); };
   }, []);
 
-  // FIX 8: Keep screen awake during counting session
+  // ── Toggle voice session on/off ────────────────────────────────────────────
+  // Called by the header mic button. Checks connection and Voice availability.
+  const toggleVoiceSession = () => {
+    if (!Voice || !voiceAvailable) {
+      Alert.alert('Voice not available', 'Your device does not support voice recognition.');
+      return;
+    }
+    if (offline) {
+      // Voice recognition requires a network connection on most devices
+      Alert.alert('No connection', 'Voice counting needs a connection. Use steppers instead.');
+      return;
+    }
+    if (voiceSessionActiveRef.current) {
+      voiceSessionActiveRef.current = false;
+      voicePhaseRef.current = 'idle';
+      activeVoiceItemRef.current = null;
+      candidateItemsRef.current = [];
+      Voice.stop().catch(() => {});
+      setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+    } else {
+      voiceSessionActiveRef.current = true;
+      voicePhaseRef.current = 'product';
+      setVoiceSessionState(prev => ({ ...prev, isActive: true, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+      Voice.start('en-NZ').catch((e: any) => {
+        voiceSessionActiveRef.current = false;
+        voicePhaseRef.current = 'idle';
+        setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+        if (e?.code === 'permissions') {
+          Alert.alert('Microphone access needed', 'Enable it in Settings → Privacy → Microphone');
+        }
+      });
+    }
+  };
+
+  // Keep screen awake during counting session
   useEffect(() => {
     activateKeepAwake();
     return () => deactivateKeepAwake();
   }, []);
-
-  const handleVoicePress = async (item: Item) => {
-    if (!Voice || !voiceAvailable) return;
-    if (voiceListeningId === item.id) {
-      // Already listening for this item — stop
-      try { await Voice.stop(); } catch {}
-      activeVoiceItemRef.current = null;
-      setVoiceListeningId(null);
-      return;
-    }
-    try {
-      await Voice.stop().catch(() => {});
-      activeVoiceItemRef.current = item.id;
-      setVoiceListeningId(item.id);
-      await Voice.start('en-NZ');
-    } catch (e: any) {
-      activeVoiceItemRef.current = null;
-      setVoiceListeningId(null);
-      if (e?.code === 'permissions') {
-        Alert.alert(
-          'Microphone access needed',
-          'Enable it in Settings → Privacy → Microphone',
-          [{ text: 'Cancel', style: 'cancel' }]
-        );
-      }
-    }
-  };
 
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
@@ -2412,6 +2533,9 @@ const openHistory = throttleAction(async (item: Item) => {
         </View>
       )}
 
+      {/* Voice session banner — amber=listening, teal=matched, green=saved, hidden=off */}
+      <VoiceSessionBanner state={voiceSessionState} />
+
       <FlatList
         ref={listRef}
         data={filtered}
@@ -2439,10 +2563,7 @@ const openHistory = throttleAction(async (item: Item) => {
             approveNow={approveNow}
             isLocked={isSubmitted && !canEdit}
             isEdited={editedItemIds.has(item.id)}
-            isHighlighted={highlightedItemIds.has(item.id)}
-            voiceAvailable={voiceAvailable}
-            voiceListeningId={voiceListeningId}
-            onVoicePress={handleVoicePress}
+            isHighlighted={highlightedItemIds.has(item.id) || highlightedVoiceItemId === item.id}
           />
         )}
         ListHeaderComponent={
@@ -2518,8 +2639,9 @@ const openHistory = throttleAction(async (item: Item) => {
           { icon: '📷', label: 'Barcode', onPress: () => setBarcodeScanOpen(true) },
           { icon: '📸', label: 'Shelf', onPress: () => setCaptureShelfOpen(true) },
           {
-            icon: '🎤', label: 'Voice', onPress: () =>
-              Alert.alert('Voice counting coming soon!', "You'll be able to say the count out loud and we'll record it automatically. 🎤", [{ text: 'Got it' }])
+            icon: voiceSessionState.isActive ? '🔴' : '🎤',
+            label: 'Voice',
+            onPress: toggleVoiceSession,
           },
           { icon: '⚡', label: 'Scale', onPress: () => nav.navigate('ScaleSettings' as never) },
         ].map(btn => (

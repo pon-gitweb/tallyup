@@ -88,12 +88,16 @@ BLUETOOTH SCALES
 - Supported models are shown in the scale settings screen (Settings → Bluetooth Scale)
 - Once connected the scale weight is read automatically
 
-VOICE COUNTING
-- Tap the 🎤 microphone button next to any product while stocktaking
-- Say the number out loud and it populates the count automatically
-- Supports decimals: say "point five" or "half" for 0.5, "twelve" for 12
-- Say "three and a half" for 3.5
-- Works on any product row in the stocktake area screen
+VOICE COUNTING (hands-free mode)
+- Tap the 🎤 microphone button at the top of the stocktake area screen to start voice mode
+- Say a product name — the app finds it in your list automatically
+- Then say the count — say "twenty four", "one hundred", "1.5", or "half"
+- Say "done" or tap the mic button again to stop voice mode at any time
+- Normal counting with steppers and number inputs works alongside voice mode — switch freely
+- If a product has multiple matches say "one", "two", or "three" to select
+- If a product is not found say "skip" to move on
+- Works with AirPods and Bluetooth earphones automatically — no setup needed
+- Best in quieter environments (walk-in chiller, prep area, pre-service) — for noisy service use steppers
 
 SETUP WIZARD
 - New users see a 3-step introduction to stocktaking on first login
