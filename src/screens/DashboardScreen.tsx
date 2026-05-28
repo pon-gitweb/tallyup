@@ -499,7 +499,7 @@ export default function DashboardScreen() {
           <ContextNudge c={colours} message="Add a supplier to unlock ordering, AI suggestions, and invoice matching." cta="Add supplier →" onCta={() => nav.navigate('Suppliers')} onDismiss={() => dismissNudge('noSuppliers')} />
         )}
         {productCount > 0 && supplierCount > 0 && unassignedCount > 0 && !nudgeDismissed.unassigned && (
-          <ContextNudge c={colours} message={`${unassignedCount} product${unassignedCount !== 1 ? 's have' : ' has'} no supplier — assign one to improve ordering accuracy.`} cta="Review →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('unassigned')} />
+          <ContextNudge c={colours} message={`${unassignedCount} product${unassignedCount !== 1 ? 's have' : ' has'} no supplier — assign one to improve ordering accuracy.`} cta="Review →" onCta={() => nav.navigate('Products', { filterNoSupplier: true })} onDismiss={() => dismissNudge('unassigned')} />
         )}
         {productCount > 0 && stocktakeCount === 0 && !nudgeDismissed.noStocktake && (
           <ContextNudge c={colours} message="Complete your first stocktake to unlock variance reports, usage trends, and smart reorder levels." cta="Start →" onCta={() => nav.navigate('DepartmentSelection')} onDismiss={() => dismissNudge('noStocktake')} />

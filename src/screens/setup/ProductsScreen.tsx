@@ -13,7 +13,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { listProducts, deleteProductById } from '../../services/products';
@@ -198,6 +199,7 @@ async function fetchAssignedProductIds(venueId: string): Promise<{ ids: Set<stri
 
 export default function ProductsScreen() {
   const nav = useNavigation<any>();
+  const route = useRoute<any>();
   const venueId = useVenueId();
 
   const [loading, setLoading] = useState(true);
@@ -220,6 +222,8 @@ export default function ProductsScreen() {
   const [unassignedLoading, setUnassignedLoading] = useState(false);
   const [unassignedDismissed, setUnassignedDismissed] = useState(false);
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
+  const [showOnlyNoSupplier, setShowOnlyNoSupplier] = useState(false);
+  const [addToAreaHintSeen, setAddToAreaHintSeen] = useState(true);
 
   // Multi-select
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -296,6 +300,26 @@ export default function ProductsScreen() {
       if (prevRowCount.current >= 0) load({ silent: true });
     }, [venueId])
   );
+
+  // Auto-filter and select when navigated from a supplier nudge
+  const filterNoSupplierApplied = useRef(false);
+  useEffect(() => {
+    if (route.params?.filterNoSupplier && rows.length > 0 && !filterNoSupplierApplied.current) {
+      filterNoSupplierApplied.current = true;
+      setShowOnlyNoSupplier(true);
+      const ids = rows.filter((p: any) => !p.supplierId).map((p: any) => p.id);
+      setSelectedIds(new Set(ids));
+      setMultiSelectMode(true);
+    }
+  }, [route.params?.filterNoSupplier, rows]);
+
+  // Check if add-to-area hint has been seen
+  useEffect(() => {
+    AsyncStorage.getItem('products_add_to_area_hint_seen').then(val => {
+      if (val !== 'true') setAddToAreaHintSeen(false);
+    });
+  }, []);
+
 
   // Pre-load global suppliers so Card 3 can show "no catalogues" hint immediately
   useEffect(() => {
@@ -479,6 +503,12 @@ export default function ProductsScreen() {
     setMultiSelectMode(true);
   }
 
+  function selectAllNoSupplier() {
+    const ids = rows.filter((p: any) => !p.supplierId).map((p: any) => p.id);
+    setSelectedIds(new Set(ids));
+    setMultiSelectMode(true);
+  }
+
   async function openSupplierPicker() {
     if (!venueId) return;
     try {
@@ -603,6 +633,9 @@ export default function ProductsScreen() {
       const idSet = new Set(unassignedIds);
       base = base.filter((p: any) => idSet.has(p.id));
     }
+    if (showOnlyNoSupplier) {
+      base = base.filter((p: any) => !p.supplierId);
+    }
     const needle = q.trim().toLowerCase();
     if (!needle) return base;
     return base.filter((p: any) => {
@@ -617,7 +650,7 @@ export default function ProductsScreen() {
         supplier.includes(needle)
       );
     });
-  }, [rows, q, showOnlyUnassigned, unassignedIds]);
+  }, [rows, q, showOnlyUnassigned, unassignedIds, showOnlyNoSupplier]);
 
   const filteredVenueSuppliers = useMemo(() => {
     const needle = supplierQ.trim().toLowerCase();
@@ -653,6 +686,51 @@ export default function ProductsScreen() {
 
   const listHeader = (
     <View style={S.listHeader}>
+      {/* No-supplier filter banner */}
+      {showOnlyNoSupplier && (
+        <View style={{ backgroundColor: '#eff6ff', borderRadius: 8, padding: 10, flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          <Text style={{ fontSize: 13, color: '#1e40af', fontWeight: '600', flex: 1 }}>
+            Showing products without a supplier assigned
+          </Text>
+          <TouchableOpacity
+            onPress={() => { setShowOnlyNoSupplier(false); setMultiSelectMode(false); setSelectedIds(new Set()); setQ(''); }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={{ fontSize: 16, color: '#9ca3af', fontWeight: '600' }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Add-to-area nudge card */}
+      {!addToAreaHintSeen && unassignedIds.length > 0 && (
+        <View style={S.unassignedCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <Text style={{ fontSize: 20 }}>📍</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={S.unassignedTitle}>
+                {unassignedIds.length} product{unassignedIds.length !== 1 ? 's' : ''} not in any stocktake area
+              </Text>
+              <Text style={S.unassignedBody}>Add them all to an area in one step.</Text>
+              <TouchableOpacity
+                onPress={() => { selectAllUnassigned(); openAreaPicker(); }}
+                style={S.unassignedBtn}
+              >
+                <Text style={S.unassignedBtnText}>Add to area →</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setAddToAreaHintSeen(true);
+                AsyncStorage.setItem('products_add_to_area_hint_seen', 'true');
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={{ fontSize: 16, color: '#94a3b8', fontWeight: '600' }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Unassigned products card */}
       {!unassignedDismissed && unassignedIds.length > 0 && (
         <View style={S.unassignedCard}>
@@ -857,6 +935,7 @@ export default function ProductsScreen() {
               delayLongPress={400}
               activeOpacity={0.75}
             >
+              {/* TODO: replace with SelectableRow from src/components/common/SelectableRow.tsx */}
               {multiSelectMode && (
                 <View style={[MS.checkbox, isSelected && MS.checkboxSelected]}>
                   {isSelected && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 16 }}>✓</Text>}

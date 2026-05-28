@@ -1003,10 +1003,16 @@ service cloud.firestore {
         match /stocktakes/{stocktakeId} {
           allow read, write: if isVenueMember(venueId);
         }
+        match /stock/{productId} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
       match /sourceLocations/{locationId} {
         allow read, write: if isVenueMember(venueId);
+        match /stock/{productId} {
+          allow read, write: if isVenueMember(venueId);
+        }
       }
 
       match /transfers/{transferId} {
@@ -1073,6 +1079,9 @@ service cloud.firestore {
       match /event/{docId} {
         allow read: if isVenueMember(venueId);
         allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        match /shortfalls/{id} {
+          allow read, write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
       }
     }
   }

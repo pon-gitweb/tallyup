@@ -319,7 +319,7 @@ function DepartmentSummaryScreen() {
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Scan invoice</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => nav.navigate('Products' as never)}
+              onPress={() => nav.navigate('Products', { filterNoSupplier: true } as never)}
               style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: '#e5e1d8' }}
             >
               <Text style={{ color: '#374151', fontWeight: '600', fontSize: 13 }}>Assign manually</Text>

@@ -168,7 +168,7 @@ export default function FestivalTransferScreen() {
         if (toSnap.exists()) {
           txn.update(toRef, { currentStock: increment(q), updatedAt: serverTimestamp() });
         } else {
-          txn.set(toRef, { productId: product.id, productName: product.label, currentStock: q, updatedAt: serverTimestamp() });
+          txn.set(toRef, { productId: product.id, productName: product.label, currentStock: q, stockCategory: 'general', updatedAt: serverTimestamp() });
         }
       });
       await setDoc(doc(db, 'venues', venueId, 'transfers', transferId), {
