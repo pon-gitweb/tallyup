@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { collection, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, query, where, Timestamp, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export async function writeWeeklySnapshot(venueId: string, weekNumber: number): Promise<void> {
@@ -97,6 +97,48 @@ export async function writeWeeklySnapshot(venueId: string, weekNumber: number): 
     });
   });
 
+  // Sales data summary for this week
+  let salesDataSummary: {
+    hasActualSales: boolean;
+    salesSource: string | null;
+    totalUnitsSold: number;
+    totalRevenue: number | null;
+    confidence: 'high' | 'medium' | 'low';
+  } = { hasActualSales: false, salesSource: null, totalUnitsSold: 0, totalRevenue: null, confidence: 'low' };
+
+  try {
+    const salesSnap = await getDocs(
+      query(
+        collection(db, 'venues', venueId, 'event', 'details', 'salesData'),
+        where('periodStart', '>=', Timestamp.fromDate(weekStart)),
+        where('periodEnd', '<=', Timestamp.fromDate(now)),
+      )
+    );
+    if (!salesSnap.empty) {
+      let totalUnits = 0;
+      let totalRevenue: number | null = null;
+      let salesSource = 'pos-upload';
+      for (const uploadDoc of salesSnap.docs) {
+        const data = uploadDoc.data() as any;
+        if (data.source === 'manual-entry') salesSource = 'manual-entry';
+        for (const line of (data.lineItems || [])) {
+          totalUnits += line.unitsSold || 0;
+          if (line.revenue != null) {
+            if (totalRevenue === null) totalRevenue = 0;
+            totalRevenue += line.revenue;
+          }
+        }
+      }
+      salesDataSummary = {
+        hasActualSales: true,
+        salesSource,
+        totalUnitsSold: totalUnits,
+        totalRevenue,
+        confidence: salesSource === 'pos-upload' ? 'high' : 'medium',
+      };
+    }
+  } catch {}
+
   const snapshot = {
     weekNumber,
     weekStart: weekStart.toISOString(),
@@ -108,6 +150,7 @@ export async function writeWeeklySnapshot(venueId: string, weekNumber: number): 
     soldTotals,
     wastageTotals,
     barStockAtClose,
+    salesData: salesDataSummary,
     createdAt: serverTimestamp(),
   };
 

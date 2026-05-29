@@ -233,8 +233,27 @@ WHAT SUITEE CAN ANSWER (festival mode):
 WHAT SUITEE CANNOT ANSWER (festival mode):
 - Pricing recommendations or price changes — not in scope
 - Till system integration data (no POS connected)
-- Cash reconciliation or GP calculations (no sales price data)
+- Cash reconciliation or GP calculations (no sales price data, unless uploaded)
 - Live crowd data or attendance predictions
 - Anything outside the data captured in Hosti
+
+SALES DATA UPLOAD:
+Go to Dashboard → Upload sales data
+or Reports → Sales data.
+
+You can upload a CSV from your POS (Square, Wavier, or any system)
+or enter sales manually.
+
+We detect the date range automatically and map your product names to your
+festival catalogue. Mappings are saved so future uploads are faster.
+
+Upload end-of-night to improve next-day ordering accuracy.
+Upload end-of-week before closing a weekly snapshot.
+Upload at event close for precise reconciliation.
+
+The system works without sales data using session counts as estimates.
+Sales uploads improve accuracy but are never required.
 `;
+
+
 

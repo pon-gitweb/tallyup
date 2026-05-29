@@ -2165,6 +2165,38 @@ async function handleFestivalSuitee(
     }
   } catch {}
 
+  // Sales data
+  try {
+    const salesSnap = await db
+      .collection(`venues/${venueId}/event/details/salesData`)
+      .orderBy('uploadedAt', 'desc')
+      .limit(10)
+      .get();
+
+    const salesUploads = salesSnap.docs.map(d => {
+      const data = d.data() as any;
+      const totalUnits = (data.lineItems || []).reduce(
+        (sum: number, l: any) => sum + (l.unitsSold || 0), 0
+      );
+      const uploadedAt = data.uploadedAt?.toDate?.()?.toLocaleDateString('en-NZ') ?? '?';
+      return { period: data.periodLabel || '?', source: data.source || '?', totalUnits, uploadedAt };
+    });
+
+    const hasSalesData = salesUploads.length > 0;
+    lines.push("", "SALES DATA:");
+    if (hasSalesData) {
+      lines.push(`${salesUploads.length} upload(s) on record:`);
+      salesUploads.forEach(s => {
+        lines.push(`  ${s.period}: ${s.totalUnits} units (${s.source}, uploaded ${s.uploadedAt})`);
+      });
+      lines.push("Velocity calculations use actual sales data where available.");
+    } else {
+      lines.push("No sales data uploaded yet.");
+      lines.push("Velocity is estimated from session counts.");
+      lines.push("Upload a POS export from the Reports tab to improve accuracy.");
+    }
+  } catch {}
+
   // Obligations
   try {
     const oblSnap = await db.collection(`venues/${venueId}/obligations`).limit(20).get();
@@ -2198,6 +2230,10 @@ ${FESTIVAL_IZZY_FEATURES}
 
 IMPORTANT: Never suggest pricing changes. Only operational actions: stock redistribution,
 transfers between bars, supplier negotiation, write-offs, or demand management.
+
+Revenue figures: only available when sales data has been uploaded (see SALES DATA section above).
+If no sales data is uploaded, be honest that you cannot answer revenue or GP questions — direct
+the operator to upload a POS export from the Reports tab.
 
 ${context}`;
 

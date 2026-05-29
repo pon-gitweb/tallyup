@@ -11,6 +11,8 @@ import { useVenueId } from '../../context/VenueProvider';
 import { apiBase } from '../../services/apiBase';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 
+type SalesUploadSummary = { count: number; lastPeriod: string | null };
+
 type ChatMsg = { role: 'user' | 'assistant'; text: string };
 
 export default function FestivalReportsScreen() {
@@ -22,6 +24,7 @@ export default function FestivalReportsScreen() {
   const [recentTransfers, setRecentTransfers] = useState(0);
   const [recentRequests, setRecentRequests] = useState(0);
   const [loading, setLoading] = useState(FESTIVAL_BETA);
+  const [salesUploadSummary, setSalesUploadSummary] = useState<SalesUploadSummary>({ count: 0, lastPeriod: null });
 
   // Suitee chat
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -40,6 +43,20 @@ export default function FestivalReportsScreen() {
 
   useEffect(() => {
     if (!venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'event', 'details', 'salesData'))
+      .then(s => {
+        const docs = s.docs.map(d => d.data() as any);
+        const sorted = [...docs].sort((a, b) => {
+          const at = a.uploadedAt?.toDate?.()?.getTime() ?? 0;
+          const bt = b.uploadedAt?.toDate?.()?.getTime() ?? 0;
+          return bt - at;
+        });
+        setSalesUploadSummary({
+          count: docs.length,
+          lastPeriod: sorted[0]?.periodLabel ?? null,
+        });
+      })
+      .catch(() => {});
     getDocs(collection(db, 'venues', venueId, 'bars'))
       .then(s => setBarCount(s.size))
       .catch(() => {});
@@ -203,6 +220,22 @@ export default function FestivalReportsScreen() {
             <ReportTile icon="🔮" label="Purchasing prediction" onPress={() => nav.navigate('FestivalPurchasingPrediction')} />
             <ReportTile icon="📋" label="Reconciliation" onPress={() => nav.navigate('FestivalReconciliation')} />
           </View>
+          <View style={S.tilesRow}>
+            <TouchableOpacity style={S.salesTile} onPress={() => nav.navigate('FestivalSalesUpload')}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={S.tileIcon}>📊</Text>
+                <Text style={[S.tileLabel, { marginLeft: 6 }]}>Sales data</Text>
+              </View>
+              {salesUploadSummary.count > 0 ? (
+                <Text style={S.salesTileSub}>
+                  {salesUploadSummary.count} upload{salesUploadSummary.count > 1 ? 's' : ''}
+                  {salesUploadSummary.lastPeriod ? ` · Last: ${salesUploadSummary.lastPeriod}` : ''}
+                </Text>
+              ) : (
+                <Text style={S.salesTileEmpty}>No sales data yet — upload to improve velocity and reconciliation accuracy</Text>
+              )}
+            </TouchableOpacity>
+          </View>
 
           {/* Section 4: Week review prompt (long events only) */}
           {isLongEvent && weekNum && (
@@ -286,6 +319,9 @@ const S = StyleSheet.create({
   tile: { flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#e5e1d8', minHeight: 80 },
   tileIcon: { fontSize: 24, marginBottom: 6 },
   tileLabel: { fontSize: 12, fontWeight: '700', color: '#0B132B', textAlign: 'center' },
+  salesTile: { flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#e5e1d8' },
+  salesTileSub: { fontSize: 11, color: '#6b7280' },
+  salesTileEmpty: { fontSize: 11, color: '#9ca3af', fontStyle: 'italic', lineHeight: 15 },
 
   weekCard: { backgroundColor: '#eff6ff', borderRadius: 12, borderWidth: 1, borderColor: '#bfdbfe', padding: 14, marginTop: 8 },
   weekTitle: { fontSize: 14, fontWeight: '800', color: '#1b4f72', marginBottom: 4 },

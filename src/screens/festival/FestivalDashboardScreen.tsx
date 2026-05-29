@@ -213,6 +213,12 @@ export default function FestivalDashboardScreen() {
                 <Text style={S.tileEmoji}>🗺</Text>
                 <Text style={S.tileLabel}>Stock overview</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalSalesUpload')}>
+                <Text style={S.tileEmoji}>📊</Text>
+                <Text style={S.tileLabel}>Upload sales data</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('CraftUp')}>
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>
@@ -300,6 +306,12 @@ export default function FestivalDashboardScreen() {
                 <Text style={S.tileEmoji}>🗺</Text>
                 <Text style={S.tileLabel}>Stock overview</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalSalesUpload')}>
+                <Text style={S.tileEmoji}>📊</Text>
+                <Text style={S.tileLabel}>Upload sales data</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('CraftUp')}>
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>

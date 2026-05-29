@@ -1090,6 +1090,18 @@ service cloud.firestore {
           allow read: if isVenueMember(venueId);
           allow write: if hasVenueRole(venueId, ['owner', 'manager']);
         }
+        match /salesData/{uploadId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
+        match /salesRecords/{recordId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
+        match /posMappings/{mappingId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
       }
 
       match /eventHistory/{eventId} {

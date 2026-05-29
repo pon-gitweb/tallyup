@@ -11,6 +11,7 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { getSalesSummary } from '../../services/festival/salesData';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ type LineItem = {
   remainingValue: number;
   sold: number;
   soldValue: number;
+  soldSource: 'POS sales data' | 'Estimated from session counts';
 };
 
 type ReconciliationSummary = {
@@ -134,15 +136,33 @@ export default function FestivalReconciliationScreen() {
       const productMap: Record<string, any> = {};
       productsSnap.docs.forEach(d => { productMap[d.id] = d.data(); });
 
-      // Sessions → sold quantities
+      // Sessions → sold quantities (fallback when no sales data)
       const sessionsSnap = await getDocs(collection(db, 'venues', venueId, 'sessions'));
-      const sold: Record<string, number> = {};
+      const soldFromSessions: Record<string, number> = {};
       for (const s of sessionsSnap.docs) {
         const data = s.data() as any;
         for (const c of (data.counts || [])) {
-          sold[c.productId] = (sold[c.productId] || 0) + (c.variance || 0);
+          soldFromSessions[c.productId] = (soldFromSessions[c.productId] || 0) + (c.variance || 0);
         }
       }
+
+      // Sales data (POS upload takes priority when available)
+      let salesSummary: any = null;
+      try {
+        const evSnap2 = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
+        const evData = evSnap2.exists() ? evSnap2.data() : null;
+        if (evData?.startDate && evData?.endDate) {
+          const parseDate = (s: string) => {
+            const p = s.split('/');
+            return p.length === 3 ? new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0])) : new Date(s);
+          };
+          salesSummary = await getSalesSummary(
+            venueId,
+            parseDate(evData.startDate),
+            parseDate(evData.endDate),
+          );
+        }
+      } catch {}
 
       const lineItems: LineItem[] = [];
       let totalReturnValue = 0;
@@ -150,7 +170,11 @@ export default function FestivalReconciliationScreen() {
 
       for (const [productId, prod] of Object.entries(productMap)) {
         const rem = remaining[productId]?.count ?? 0;
-        const soldQty = sold[productId] ?? 0;
+        const salesQty = salesSummary?.hasActualSales ? (salesSummary.byProduct[productId] ?? null) : null;
+        const soldQty = salesQty !== null ? salesQty : (soldFromSessions[productId] ?? 0);
+        const soldSource: LineItem['soldSource'] = salesQty !== null
+          ? 'POS sales data'
+          : 'Estimated from session counts';
         const unitCost = prod.costPrice ?? 0;
         const supplierName = prod.supplierName || prod.primarySupplierName || 'Other / Unknown';
 
@@ -170,6 +194,7 @@ export default function FestivalReconciliationScreen() {
           remainingValue: remVal,
           sold: soldQty,
           soldValue: soldVal,
+          soldSource,
         });
       }
 
@@ -284,6 +309,9 @@ export default function FestivalReconciliationScreen() {
                         <Text style={S.lineName}>{li.productName}</Text>
                         <Text style={S.lineMeta}>
                           Sold: {li.sold} · Remaining: {li.remaining}
+                        </Text>
+                        <Text style={[S.lineMeta, { fontSize: 10, color: li.soldSource === 'POS sales data' ? '#16a34a' : '#9ca3af' }]}>
+                          {li.soldSource}
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>

@@ -1,4 +1,4 @@
-import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -49,6 +49,51 @@ export async function calculateFestivalVelocity(
   const now = new Date();
 
   try {
+    // PRIORITY 1: Check for actual sales data
+    try {
+      const salesSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'event', 'details', 'salesData'),
+          where('status', '==', 'applied'),
+          orderBy('uploadedAt', 'desc'),
+          limit(10),
+        )
+      );
+      if (!salesSnap.empty) {
+        let totalSold = 0;
+        for (const uploadDoc of salesSnap.docs) {
+          const data = uploadDoc.data() as any;
+          for (const line of (data.lineItems || [])) {
+            if (line.productId !== productId) continue;
+            if (barId && line.barId && line.barId !== barId) continue;
+            totalSold += line.unitsSold || 0;
+          }
+        }
+        if (totalSold > 0) {
+          // Estimate hours from earliest to latest upload period
+          const timestamps = salesSnap.docs
+            .map(d => (d.data() as any).periodStart?.toDate?.())
+            .filter(Boolean);
+          const earliest = timestamps.length > 0 ? Math.min(...timestamps.map((t: Date) => t.getTime())) : null;
+          const hoursElapsed = earliest
+            ? Math.max(1, (now.getTime() - earliest) / (1000 * 60 * 60))
+            : 12;
+          const unitsPerHour = totalSold / hoursElapsed;
+          const hoursRemaining = unitsPerHour > 0 && hoursRemainingToday != null
+            ? currentStock / unitsPerHour : null;
+          return {
+            unitsPerHour,
+            hoursRemaining,
+            confidence: 'HIGH',
+            status: hoursRemaining == null ? 'unknown' : hoursRemaining > 4 ? 'healthy' : hoursRemaining > 1 ? 'low' : 'critical',
+            sessionCount: 0,
+            basis: 'distributions',
+            lastUpdated: now,
+          };
+        }
+      }
+    } catch {}
+
     // Collect usage from sessions (last 20 for this bar)
     const sessionsSnap = await getDocs(
       query(
