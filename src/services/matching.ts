@@ -39,6 +39,7 @@ export type ProductMatchResult = {
   match: VenueProduct | null;
   confidence: number; // 0–1
   matchType: 'exact-barcode' | 'exact-name' | 'fuzzy' | 'none';
+  error?: string;
 };
 
 export type SupplierMatchResult = {
@@ -202,8 +203,9 @@ export async function findMatchingProduct(
     const allSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
     const products: VenueProduct[] = allSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
     return matchProductInList(products, candidate);
-  } catch {
-    return { match: null, confidence: 0, matchType: 'none' };
+  } catch (error: any) {
+    console.error('[matching] findMatchingProduct failed:', error?.code, error?.message);
+    return { match: null, confidence: 0, matchType: 'none', error: error?.message };
   }
 }
 
@@ -222,7 +224,8 @@ export async function findMatchingSupplier(
     const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
     const suppliers: MatchedSupplier[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
     return matchSupplierInList(suppliers, candidate);
-  } catch {
+  } catch (error: any) {
+    console.error('[matching] findMatchingSupplier failed:', error?.code, error?.message);
     return { match: null, confidence: 0, matchType: 'none' };
   }
 }

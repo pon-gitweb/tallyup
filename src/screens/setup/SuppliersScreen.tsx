@@ -16,7 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, query, where, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
 import { useNavigation } from '@react-navigation/native';
@@ -111,10 +111,25 @@ export default function SuppliersScreen() {
     setDetailLoading(true);
     try {
       const db = getFirestore();
-      const snap = await getDocs(collection(db, 'venues', venueId, 'products'));
-      const linked = snap.docs
-        .map(d => ({ id: d.id, ...(d.data() as any) }))
-        .filter((p: any) => p.supplierId === s.id || p.primarySupplierId === s.id);
+      const promises: Promise<any>[] = [
+        getDocs(query(collection(db, 'venues', venueId, 'products'), where('supplierId', '==', s.id))),
+        getDocs(query(collection(db, 'venues', venueId, 'products'), where('primarySupplierId', '==', s.id))),
+      ];
+      if (s.name) {
+        promises.push(getDocs(query(collection(db, 'venues', venueId, 'products'), where('supplierName', '==', s.name))));
+      }
+      const snaps = await Promise.all(promises);
+      const seen = new Set<string>();
+      const linked: any[] = [];
+      for (const snap of snaps) {
+        if (!snap) continue;
+        for (const d of snap.docs) {
+          if (!seen.has(d.id)) {
+            seen.add(d.id);
+            linked.push({ id: d.id, ...(d.data() as any) });
+          }
+        }
+      }
       linked.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' }));
       setDetailProducts(linked);
     } catch { setDetailProducts([]); }

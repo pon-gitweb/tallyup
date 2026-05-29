@@ -260,6 +260,7 @@ export default function BarcodeScannerModal({
       const ref = doc(db, 'global_products', fields.barcode.trim());
       await setDoc(ref, {
         barcode: fields.barcode,
+        barcodeNumber: fields.barcode,
         name: fields.name,
         brand: fields.brand || null,
         size: fields.size || null,

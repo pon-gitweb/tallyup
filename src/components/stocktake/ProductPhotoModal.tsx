@@ -29,6 +29,7 @@ type ProductDetails = {
   category: string;
   barcode: string;
   unit: string;
+  abv: string;
 };
 
 type Props = {
@@ -42,7 +43,7 @@ type Props = {
 
 type Step = 'front-prompt' | 'back-prompt' | 'processing' | 'match-check' | 'review' | 'count' | 'failed';
 
-const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', barcode: '', unit: 'bottle' };
+const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', barcode: '', unit: 'bottle', abv: '' };
 
 export default function ProductPhotoModal({ visible, onClose, venueId, areaName, initialBarcode, onConfirm }: Props) {
   const { isOnline } = useNetworkState();
@@ -166,6 +167,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
         category: ext.category || '',
         barcode: ext.barcode || '',
         unit: ext.unit || 'bottle',
+        abv: ext.abv || '',
       };
       setProduct(extractedProduct);
 
@@ -178,7 +180,9 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             setStep('match-check');
             return;
           }
-        } catch {}
+        } catch (error: any) {
+          console.error('[ProductPhotoModal] match lookup failed:', error?.code, error?.message);
+        }
       }
       setStep('review');
     } catch {
@@ -358,6 +362,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
                   category: matchResult.match!.category || '',
                   barcode: matchResult.match!.barcode || '',
                   unit: matchResult.match!.unit || 'bottle',
+                  abv: (matchResult.match! as any).abv || '',
                 });
                 setStep('count');
               }}
