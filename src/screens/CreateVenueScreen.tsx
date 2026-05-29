@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { getAuth, signOut } from 'firebase/auth';
 import { db } from '../services/firebase';
-import { collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
 
 export default function CreateVenueScreen() {
@@ -61,9 +61,14 @@ export default function CreateVenueScreen() {
       });
       console.log('[CreateVenue] venues/{id} created', JSON.stringify({ venueId: vref.id }));
 
-      // (C) Set users/{uid}.venueId (first-time only, allowed by rules)
-      await setDoc(uref, { venueId: vref.id, touchedAt: new Date() }, { merge: true });
-      console.log('[CreateVenue] users/{uid}.venueId set', JSON.stringify({ uid, venueId: vref.id }));
+      // (C) Set users/{uid}.venueId + add to venueIds array + set activeVenueId
+      await updateDoc(uref, {
+        venueId: vref.id,         // keep legacy field
+        activeVenueId: vref.id,
+        venueIds: arrayUnion(vref.id),
+        touchedAt: new Date(),
+      });
+      console.log('[CreateVenue] users/{uid} venue fields set', JSON.stringify({ uid, venueId: vref.id }));
 
       // (D) Add membership (owner)
       const mref = doc(db, 'venues', vref.id, 'members', uid);

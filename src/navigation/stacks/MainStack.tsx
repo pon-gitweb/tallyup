@@ -73,6 +73,7 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 // Home router (venueType-based routing)
 import HomeRouterScreen from '../../screens/HomeRouterScreen';
 import CreateVenueScreen from '../../screens/CreateVenueScreen';
+import VenueListScreen from '../../screens/venues/VenueListScreen';
 
 // Festival
 import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
@@ -136,6 +137,8 @@ export default function MainStack() {
       <Stack.Screen name="HomeRouter" component={HomeRouterScreen} options={{ headerShown: false }} />
       {/* Venue creation — reachable for new users with no venue */}
       <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue', headerShown: false }} />
+      {/* Venue list — manage all venues for this account */}
+      <Stack.Screen name="VenueList" component={VenueListScreen} options={{ title: 'My Venues' }} />
       {/* Root — bottom tab navigator */}
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       {/* Legacy direct route kept for nav.navigate('Dashboard') calls */}

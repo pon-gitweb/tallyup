@@ -31,6 +31,8 @@ export default function RegisterScreen() {
         email: cred.user.email,
         createdAt: serverTimestamp(),
         venueId: null,
+        activeVenueId: null,
+        venueIds: [],
       });
       navigation.navigate('CreateVenue');
     } catch (e: any) {

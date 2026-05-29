@@ -1215,11 +1215,13 @@ app.delete("/account", async (req, res) => {
 
     const db = admin.firestore();
 
-    // Resolve user's venue
+    // Resolve all venues for this user (supports multi-venue)
     const userSnap = await db.doc(`users/${uid}`).get();
-    const venueId: string | null = userSnap.exists ? (userSnap.data() as any)?.venueId ?? null : null;
+    const userData = userSnap.exists ? (userSnap.data() as any) : null;
+    const legacyVenueId: string | null = userData?.venueId ?? null;
+    const allVenueIds: string[] = userData?.venueIds ?? (legacyVenueId ? [legacyVenueId] : []);
 
-    if (venueId) {
+    for (const venueId of allVenueIds) {
       const venueSnap = await db.doc(`venues/${venueId}`).get();
       const ownerUid: string | null = venueSnap.exists ? (venueSnap.data() as any)?.ownerUid ?? null : null;
 
@@ -1238,7 +1240,7 @@ app.delete("/account", async (req, res) => {
     // Delete Firebase Auth account
     await admin.auth().deleteUser(uid);
 
-    console.log("[api/account] DELETE OK", { uid, venueId });
+    console.log("[api/account] DELETE OK", { uid, venueIds: allVenueIds });
     res.json({ ok: true });
   } catch (e: any) {
     console.error("[api/account] DELETE ERROR", e?.message || e);

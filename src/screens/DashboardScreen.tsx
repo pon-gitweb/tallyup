@@ -17,6 +17,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../context/VenueProvider';
+import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 
 const NUDGE_KEYS = {
@@ -298,6 +299,7 @@ export default function DashboardScreen() {
               {venueName ? venueName.slice(0, 3).toUpperCase() : '◆'}
             </Text>
           </View>
+          <VenueSwitcher />
           <TouchableOpacity
             onPress={() => { /* TODO: navigate to Izzy screen when available */ }}
             style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colours.positiveSoft, alignItems: 'center', justifyContent: 'center' }}

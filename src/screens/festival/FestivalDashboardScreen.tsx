@@ -8,6 +8,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { VenueSwitcher } from '../../components/common/VenueSwitcher';
 
 const SECTIONS = [
   { key: 'basics',         label: 'Event basics' },
@@ -84,6 +85,9 @@ export default function FestivalDashboardScreen() {
         <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
           <Text style={S.ctaText}>Set up your event →</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={S.settingsLink} onPress={() => nav.navigate('Settings')}>
+          <Text style={S.settingsLinkText}>Settings</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -97,7 +101,10 @@ export default function FestivalDashboardScreen() {
     <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
 
-        <Text style={S.emoji}>🎪</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <Text style={S.emoji}>🎪</Text>
+          <VenueSwitcher />
+        </View>
         <Text style={[S.title, { textAlign: 'left', marginBottom: 4 }]}>
           {event.eventName || 'Your event'}
         </Text>
@@ -366,6 +373,19 @@ export default function FestivalDashboardScreen() {
           </>
         )}
 
+        {/* Safety net — always show Settings if role hasn't loaded */}
+        {!role && (
+          <>
+            <Text style={S.tilesHeading}>SETTINGS</Text>
+            <View style={S.tilesRow}>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Settings')}>
+                <Text style={S.tileEmoji}>⚙️</Text>
+                <Text style={S.tileLabel}>Settings</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
       </ScrollView>
     </View>
   );
@@ -438,4 +458,7 @@ const S = StyleSheet.create({
   },
   tileEmoji: { fontSize: 28, marginBottom: 8 },
   tileLabel: { fontSize: 13, fontWeight: '700', color: '#0B132B', textAlign: 'center' },
+
+  settingsLink: { marginTop: 20, paddingVertical: 8, paddingHorizontal: 20 },
+  settingsLinkText: { fontSize: 14, color: '#6b7280', textDecorationLine: 'underline' },
 });

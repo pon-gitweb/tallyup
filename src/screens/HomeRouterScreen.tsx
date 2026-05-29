@@ -14,7 +14,7 @@ import { useVenue } from '../context/VenueProvider';
  */
 export default function HomeRouterScreen() {
   const nav = useNavigation<any>();
-  const { loading, venueId } = useVenue();
+  const { loading, venueId, venueIds } = useVenue();
   const routed = useRef(false);
 
   // Fallback: if loading never resolves, route to MainTabs after 5s
@@ -34,7 +34,13 @@ export default function HomeRouterScreen() {
     routed.current = true;
 
     if (!venueId) {
-      // New user — no venue created yet. Send to venue creation.
+      if (venueIds && venueIds.length > 0) {
+        // User has venues but activeVenueId not set yet — VenueProvider is auto-selecting.
+        // Don't route yet; wait for the next context update with a resolved venueId.
+        routed.current = false;
+        return;
+      }
+      // Truly new user — no venue created yet. Send to venue creation.
       nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
       return;
     }

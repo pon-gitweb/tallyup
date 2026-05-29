@@ -4,7 +4,7 @@ import { onAuthStateChanged, getAuth, User } from 'firebase/auth';
 import { db } from '../services/firebase';
 import {
   doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc,
-  query, where, limit as qlimit, Unsubscribe,
+  query, where, limit as qlimit, Unsubscribe, serverTimestamp,
 } from 'firebase/firestore';
 import { DEV_VENUE_ID, IS_DEV_PIN_ENABLED, isDevEmail } from '../config/dev';
 import { BillingState, defaultBillingState } from '../services/billing/entitlements';
@@ -23,6 +23,9 @@ type VenueCtx = {
   loading: boolean;
   user: User | null;
   venueId: string | null;
+  activeVenueId: string | null;
+  venueIds: string[];
+  switchVenue: (newVenueId: string) => Promise<void>;
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
   subscription: SubscriptionData | null;
@@ -34,7 +37,9 @@ type VenueCtx = {
 };
 
 const Ctx = createContext<VenueCtx>({
-  loading: true, user: null, venueId: null, refresh: () => {}, attachVenueIfMissing: async () => {},
+  loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [],
+  switchVenue: async () => {},
+  refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
   billingState: defaultBillingState,
 });
@@ -43,6 +48,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [venueId, setVenueId] = useState<string | null>(null);
+  const [venueIds, setVenueIds] = useState<string[]>([]);
   const [nonce, setNonce] = useState(0);
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
 
@@ -85,12 +91,25 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
       const uref = doc(db, 'users', u.uid);
       unsubUserDocRef.current = onSnapshot(uref, async (snap) => {
-        const currentVenue = snap.exists() ? (snap.data() as any)?.venueId ?? null : null;
-        if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null }));
+        const data = snap.exists() ? (snap.data() as any) : null;
+        const currentVenue: string | null = data?.activeVenueId ?? data?.venueId ?? null;
+        const currentVenueIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
+        if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null, venueIds: currentVenueIds }));
+
+        // Auto-select first venue if user has venues but no active one set (once per uid)
+        if (!currentVenue && currentVenueIds.length > 0 && triedAutoAttachForUid.current !== u.uid) {
+          triedAutoAttachForUid.current = u.uid;
+          try {
+            await updateDoc(doc(db, 'users', u.uid), { activeVenueId: currentVenueIds[0], touchedAt: new Date() });
+            return; // onSnapshot will fire again with updated data
+          } catch {}
+        }
+
         if (lastVenueIdRef.current !== currentVenue) {
           lastVenueIdRef.current = currentVenue;
           setVenueId(currentVenue ?? null);
         }
+        setVenueIds(currentVenueIds);
         setLoading(false);
 
         if ((currentVenue === null || currentVenue === undefined) && triedAutoAttachForUid.current !== u.uid) {
@@ -157,6 +176,17 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     loading,
     user,
     venueId,
+    activeVenueId: venueId,
+    venueIds,
+    switchVenue: async (newVenueId: string) => {
+      if (!user) throw new Error('Not signed in');
+      const memberSnap = await getDoc(doc(db, 'venues', newVenueId, 'members', user.uid));
+      if (!memberSnap.exists()) throw new Error('Not a member of this venue');
+      await updateDoc(doc(db, 'users', user.uid), {
+        activeVenueId: newVenueId,
+        touchedAt: serverTimestamp(),
+      });
+    },
     refresh: () => setNonce(n => n + 1),
     attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user); },
     subscription,
@@ -165,7 +195,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     plan,
     hasModule,
     billingState,
-  }), [loading, user, venueId, subscription, isPilot, isActive, plan]);
+  }), [loading, user, venueId, venueIds, subscription, isPilot, isActive, plan]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
