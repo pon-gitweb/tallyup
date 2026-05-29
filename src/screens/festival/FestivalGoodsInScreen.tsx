@@ -6,13 +6,13 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
-  collection, doc, getDocs, onSnapshot, writeBatch, serverTimestamp,
+  collection, doc, getDoc, getDocs, increment, onSnapshot, setDoc, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 
-type SourceLocation = { id: string; name: string; type: string };
+type SourceLocation = { id: string; name: string; type: string; distributionConfirmed?: boolean };
 type Bar = { id: string; name: string };
 type Product = { id: string; name: string };
 
@@ -150,6 +150,10 @@ export default function FestivalGoodsInScreen() {
           updatedAt: now,
         }, { merge: true });
       }
+      // Reset distribution flag for this new receive
+      const locResetRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id);
+      batch.set(locResetRef, { distributionConfirmed: false }, { merge: true });
+
       await batch.commit();
       setPhase('distribute');
     } catch (e: any) {
@@ -159,7 +163,7 @@ export default function FestivalGoodsInScreen() {
     }
   }
 
-  async function saveDistribute() {
+  async function saveDistribute(forceDistribute = false) {
     if (!selectedLocation || !venueId) return;
     const shortfalls = getShortfalls();
     if (shortfalls.length > 0) {
@@ -170,33 +174,108 @@ export default function FestivalGoodsInScreen() {
       );
       return;
     }
+
+    // FIX 2: Guard against double-distribution
+    if (!forceDistribute && selectedLocation.distributionConfirmed) {
+      Alert.alert(
+        'Already distributed',
+        'This delivery has already been distributed to bars. Distributing again will add to existing bar stock.\n\nAre you sure you want to continue?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Add to existing stock', style: 'destructive', onPress: () => saveDistribute(true) },
+        ]
+      );
+      return;
+    }
+
     setSaving(true);
     try {
+      // FIX 1: Pre-fetch existing bar stock docs to decide increment vs. initial set
+      const refsToCheck: Array<{ productId: string; barId: string; ref: any }> = [];
+      for (const l of lines) {
+        for (const a of (allocations[l.productId] || [])) {
+          if (a.qty <= 0) continue;
+          refsToCheck.push({
+            productId: l.productId,
+            barId: a.barId,
+            ref: doc(db, 'venues', venueId, 'bars', a.barId, 'stock', l.productId),
+          });
+        }
+      }
+      const existingSnaps = await Promise.all(refsToCheck.map(r => getDoc(r.ref)));
+      const existingMap = new Map<string, boolean>();
+      refsToCheck.forEach((r, i) => {
+        existingMap.set(`${r.productId}:${r.barId}`, existingSnaps[i].exists());
+      });
+
       const batch = writeBatch(db);
       const now = serverTimestamp();
-      lines.forEach(l => {
-        (allocations[l.productId] || []).forEach(a => {
-          if (a.qty <= 0) return;
+
+      for (const l of lines) {
+        for (const a of (allocations[l.productId] || [])) {
+          if (a.qty <= 0) continue;
           const ref = doc(db, 'venues', venueId, 'bars', a.barId, 'stock', l.productId);
-          batch.set(ref, {
-            productId: l.productId,
-            productName: l.productName,
-            currentStock: a.qty,
-            stockCategory: 'general',
-            updatedAt: now,
-          }, { merge: true });
-        });
-        // Deduct allocated total from source location stock
+          const exists = existingMap.get(`${l.productId}:${a.barId}`);
+          if (exists) {
+            // FIX 1: Increment existing stock — never overwrite
+            batch.update(ref, {
+              currentStock: increment(a.qty),
+              stockCategory: 'general',
+              lastUpdatedAt: now,
+            });
+          } else {
+            batch.set(ref, {
+              productId: l.productId,
+              productName: l.productName,
+              currentStock: a.qty,
+              openingStock: a.qty,
+              maxStock: a.qty,
+              stockCategory: 'general',
+              openingSetAt: now,
+              lastUpdatedAt: now,
+            });
+          }
+        }
+
+        // FIX 1: Deduct from source location using increment (not flat overwrite)
         const totalAllocated = (allocations[l.productId] || []).reduce((s, a) => s + a.qty, 0);
         if (totalAllocated > 0) {
           const srcRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id, 'stock', l.productId);
           batch.set(srcRef, {
-            currentStock: Math.max(0, l.receivedQty - totalAllocated),
+            currentStock: increment(-totalAllocated),
             updatedAt: now,
           }, { merge: true });
         }
-      });
+      }
+
+      // FIX 2: Mark this location as distributed
+      const locRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id);
+      batch.set(locRef, {
+        distributionConfirmed: true,
+        distributionConfirmedAt: now,
+      }, { merge: true });
+
       await batch.commit();
+
+      // FIX 3: Write each distributed product to festival product catalogue if not already there
+      for (const l of lines) {
+        const totalAllocated = (allocations[l.productId] || []).reduce((s, a) => s + a.qty, 0);
+        if (totalAllocated <= 0) continue;
+        try {
+          const productRef = doc(db, 'venues', venueId, 'products', l.productId);
+          const productSnap = await getDoc(productRef);
+          if (!productSnap.exists()) {
+            await setDoc(productRef, {
+              name: l.productName,
+              unit: 'unit',
+              source: 'goods-in',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch {}
+      }
+
       Alert.alert('Done', 'Stock allocated to bars.', [{ text: 'OK', onPress: () => nav.goBack() }]);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
@@ -356,7 +435,7 @@ export default function FestivalGoodsInScreen() {
 
       <TouchableOpacity
         style={[S.cta, (saving || shortfalls.length > 0) && S.ctaDisabled]}
-        onPress={saveDistribute}
+        onPress={() => saveDistribute()}
         disabled={saving || shortfalls.length > 0}
       >
         <Text style={S.ctaText}>{saving ? 'Saving…' : 'Confirm allocation'}</Text>

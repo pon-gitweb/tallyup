@@ -2174,7 +2174,12 @@ async function handleFestivalSuitee(
         lines.push("", `PENDING OBLIGATIONS (${pending.length}):`);
         pending.slice(0, 10).forEach(d => {
           const o = d.data() as any;
-          lines.push(`  ${o.supplierName || "?"}: ${o.description || o.type || "?"} (${o.status || "pending"})`);
+          const progressPct = o.progressPercent != null ? `${Math.round(o.progressPercent)}%` : null;
+          const projected = o.projectedAtClose != null ? `proj ${o.projectedAtClose}` : null;
+          const rec = o.recommendation ? ` | ${o.recommendation}` : '';
+          const lastCalc = o.lastCalculatedAt ? ` (calc'd ${new Date(o.lastCalculatedAt._seconds ? o.lastCalculatedAt._seconds * 1000 : o.lastCalculatedAt).toLocaleDateString()})` : '';
+          const progressStr = [progressPct, projected].filter(Boolean).join(', ');
+          lines.push(`  ${o.supplierName || "?"}: ${o.description || o.type || "?"} (${o.status || "pending"})${progressStr ? ` [${progressStr}]` : ''}${rec}${lastCalc}`);
         });
       }
     }

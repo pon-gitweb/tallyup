@@ -3,6 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { doc, getDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import { useVenue } from '../context/VenueProvider';
 
@@ -17,13 +18,19 @@ export default function HomeRouterScreen() {
   const { loading, venueId, venueIds } = useVenue();
   const routed = useRef(false);
 
-  // Fallback: if loading never resolves, route to MainTabs after 5s
+  // Fallback: if loading never resolves, route based on last known venue type after 5s
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       if (!routed.current) {
-        console.warn('[HomeRouter] timeout — routing to MainTabs as fallback');
         routed.current = true;
-        nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+        let lastKnownType: string | null = null;
+        try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
+        console.warn('[HomeRouter] timeout — routing to', lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs');
+        if (lastKnownType === 'festival') {
+          nav.reset({ index: 0, routes: [{ name: 'FestivalDashboard' }] });
+        } else {
+          nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+        }
       }
     }, 5000);
     return () => clearTimeout(timer);

@@ -5,10 +5,11 @@ import {
   ScrollView, TextInput, Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, setDoc, updateDoc, serverTimestamp, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, query, where, orderBy, limit } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { calculateObligationProgress } from '../../services/festival/obligationTracker';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -74,8 +75,13 @@ export default function FestivalSessionCountScreen() {
         orderBy('completedAt', 'desc'),
         limit(1),
       )),
-    ]).then(([stockSnap, reqSnap, sessSnap]) => {
-      const lastSessionAt = sessSnap.docs[0]?.data()?.completedAt?.toDate?.() ?? new Date(0);
+      getDoc(doc(db, 'venues', venueId, 'event', 'details')),
+    ]).then(([stockSnap, reqSnap, sessSnap, eventSnap]) => {
+      const rawStart = eventSnap.exists() ? eventSnap.data()?.startDate : null;
+      const eventStartDate = rawStart
+        ? (rawStart.toDate ? rawStart.toDate() : new Date(String(rawStart)))
+        : new Date(0);
+      const lastSessionAt = sessSnap.docs[0]?.data()?.completedAt?.toDate?.() ?? eventStartDate;
       const received: Record<string, number> = {};
       for (const r of reqSnap.docs) {
         const data = r.data() as any;
@@ -138,6 +144,35 @@ export default function FestivalSessionCountScreen() {
     ));
   }
 
+  async function updateObligationProgress(vid: string): Promise<void> {
+    const eventSnap = await getDoc(doc(db, 'venues', vid, 'event', 'details'));
+    const eventData = eventSnap.exists() ? eventSnap.data() : null;
+    const endDate = eventData?.endDate;
+    let hoursRemainingInEvent: number | null = null;
+    if (endDate) {
+      const end = endDate.toDate ? endDate.toDate() : new Date(String(endDate));
+      const diffMs = end.getTime() - Date.now();
+      hoursRemainingInEvent = diffMs > 0 ? Math.round(diffMs / (1000 * 60 * 60)) : 0;
+    }
+    const obligationsSnap = await getDocs(collection(db, 'venues', vid, 'obligations'));
+    for (const oblDoc of obligationsSnap.docs) {
+      const obligData = oblDoc.data() as any;
+      const progress = await calculateObligationProgress(
+        vid,
+        { id: oblDoc.id, ...obligData },
+        hoursRemainingInEvent,
+      );
+      await updateDoc(oblDoc.ref, {
+        currentProgress:  progress.currentProgress,
+        progressPercent:  progress.progressPercent,
+        status:           progress.status,
+        projectedAtClose: progress.projectedAtClose,
+        recommendation:   progress.recommendation,
+        lastCalculatedAt: serverTimestamp(),
+      });
+    }
+  }
+
   async function submitCount() {
     if (!venueId || rows.length === 0) return;
     setSaving(true);
@@ -185,6 +220,13 @@ export default function FestivalSessionCountScreen() {
         return { ...r, used: Math.max(0, used), expectedUsed: Math.max(0, expectedUsed), variance: used - expectedUsed };
       });
       setReconcile(reconcileRows);
+
+      // Non-blocking obligation progress update
+      if (venueId) {
+        updateObligationProgress(venueId).catch(e =>
+          console.error('[SessionCount] obligation update failed:', e)
+        );
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Could not save count. Please try again.');
     } finally {

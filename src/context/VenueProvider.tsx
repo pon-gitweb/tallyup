@@ -1,6 +1,7 @@
 import '../polyfills/firestorePaths'
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, getAuth, User } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import {
   doc, collection, onSnapshot, getDoc, getDocs, setDoc, updateDoc,
@@ -134,6 +135,10 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     if (!venueId) { setSubscription(null); return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       const data = snap.exists() ? snap.data() : null;
+      const venueType = data?.venueType ?? null;
+      if (venueType) {
+        AsyncStorage.setItem('lastKnownVenueType', venueType).catch(() => {});
+      }
       const sub = data?.subscription ?? null;
       setSubscription(sub ? {
         status: sub.status || 'pilot',
