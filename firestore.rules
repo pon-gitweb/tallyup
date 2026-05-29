@@ -95,10 +95,16 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null
+      allow create: if request.auth != null
         && request.auth.uid == uid
         && request.resource.data.keys().hasOnly([
           'venueId','createdAt','email','touchedAt','displayName',
+          'activeVenueId','venueIds'
+        ]);
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'venueId','touchedAt','displayName',
           'activeVenueId','venueIds'
         ]);
       allow delete: if false;
