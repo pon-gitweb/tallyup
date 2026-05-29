@@ -91,10 +91,9 @@ export async function searchProductsBySupplierPrefixPage(
 
 /** Browse all (ordered by name). */
 export async function listProducts(venueId: string, opts: ListOpts = {}): Promise<FullProduct[]> {
-  const { limit = 50 } = opts;
   if (!venueId) return [];
   const db = getFirestore(getApp());
-  let qRef = query(collection(db, 'venues', venueId, 'products'), orderBy('name'), fblimit(Math.max(1, Math.min(limit, 100))));
+  const qRef = query(collection(db, 'venues', venueId, 'products'), orderBy('name'));
   // if (opts.onlyActive) qRef = query(qRef, where('active','==',true)); // optional
   const snap = await getDocs(qRef);
   return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as FullProduct[];

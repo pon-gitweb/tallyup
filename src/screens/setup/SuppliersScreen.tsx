@@ -803,7 +803,7 @@ export default function SuppliersScreen() {
           {detailSupplier?.email && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.email}</Text>}
           {detailSupplier?.phone && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.phone}</Text>}
 
-          <View style={{ marginTop: 16 }}>
+          <View style={{ marginTop: 16, flex: 1 }}>
             <Text style={{ fontSize: 15, fontWeight: '800', marginBottom: 8 }}>
               Products ({detailProducts.length})
             </Text>
@@ -837,6 +837,7 @@ export default function SuppliersScreen() {
                   </View>
                 </View>
                 <FlatList
+                  style={{ flex: 1 }}
                   data={detailProducts}
                   keyExtractor={(p) => p.id}
                   ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
