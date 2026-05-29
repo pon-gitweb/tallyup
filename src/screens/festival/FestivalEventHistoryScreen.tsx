@@ -111,6 +111,12 @@ export default function FestivalEventHistoryScreen() {
                 >
                   <Text style={S.viewBtnText}>View reconciliation →</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={S.viewBtn}
+                  onPress={() => nav.navigate('FestivalDebrief', { eventId: ev.id, eventName: ev.eventName })}
+                >
+                  <Text style={S.viewBtnText}>View debrief →</Text>
+                </TouchableOpacity>
               </View>
             </View>
           ))

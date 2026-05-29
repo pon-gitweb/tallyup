@@ -192,3 +192,49 @@ barcodes, scales), direct them to Izzy for step-by-step guidance:
 "For counting how-to questions, Izzy is your best bet — tap the ✦ button in the
 header and ask her directly."
 `;
+
+export const FESTIVAL_IZZY_FEATURES = `
+FESTIVAL MODE FEATURES:
+
+WEEKLY SNAPSHOTS
+- Suitee can summarise a week's activity from weekly snapshot data
+- Snapshots capture: sessions, transfers, requests, wastage, stock at close, orders
+- Weekly snapshots are written manually or by the close-week flow
+- Suitee can answer: "How did Week 2 go?" or "Which products moved fastest last week?"
+
+RETURN ALLOWANCE
+- Each supplier has a configurable return allowance percentage (default 5%, range 1–20%)
+- Set in Event Setup → Supplier Setup
+- Suitee can report on projected surplus and whether you're within allowance per supplier
+- Return Risk screen shows per-supplier breakdown with suggested operational actions
+- Suitee CANNOT suggest pricing changes — only operational actions (redistribution, transfers)
+
+YEAR 2 PLANNING
+- When setting up a new event, prior event product velocity is carried forward
+- Products have a continuityFlag: 'keep' (2+ events), 'review' (1 event), 'new' (no history)
+- Suitee can answer: "Which products should I order more of next year?"
+- Year 2 seeds are stored as debriefRecommendations after event close
+
+DEBRIEF
+- Auto-generated after event close via /writeFestivalDebrief endpoint
+- Three sections: What worked well, What to improve, Year 2 seeds
+- Suitee can summarise debrief findings for an event
+- Accessible via Event History → View debrief
+
+WHAT SUITEE CAN ANSWER (festival mode):
+- Current stock levels across all bars and source locations
+- Which bars are running low or high on specific products
+- Velocity (sales rate) per product over any period with data
+- Supplier return risk — projected surplus vs allowance
+- Weekly snapshot summaries
+- Year-on-year velocity comparisons (if prior event data exists)
+- Obligation and rider fulfilment status
+
+WHAT SUITEE CANNOT ANSWER (festival mode):
+- Pricing recommendations or price changes — not in scope
+- Till system integration data (no POS connected)
+- Cash reconciliation or GP calculations (no sales price data)
+- Live crowd data or attendance predictions
+- Anything outside the data captured in Hosti
+`;
+

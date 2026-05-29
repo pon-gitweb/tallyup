@@ -13,7 +13,7 @@ export interface DepletionCurve {
   selloutTime: Date | null;
   targetRemainingReachedAt: Date | null;
   recommendation: string;
-  recommendationType: 'on_track' | 'sellout_before_close' | 'too_much_stock' | 'no_data';
+  recommendationType: 'on_track' | 'sellout_before_close' | 'too_much_stock' | 'surplus_risk' | 'no_data';
 }
 
 // ─── Session type to hours ────────────────────────────────────────────────────
@@ -31,6 +31,7 @@ export function buildDepletionCurve(
   velocity: number,
   eventCloseTime: Date,
   targetRemaining: number = 0,
+  returnAllowancePercent?: number,
 ): DepletionCurve {
   const now = new Date();
   const points: DepletionPoint[] = [];
@@ -105,6 +106,17 @@ export function buildDepletionCurve(
   } else {
     recommendation = 'On track to close with target remaining stock.';
     recommendationType = 'on_track';
+  }
+
+  // Surplus risk: projected remaining at close exceeds the return allowance
+  if (returnAllowancePercent != null && returnAllowancePercent > 0 && velocity > 0) {
+    const openingStock = points.find(p => p.isActual)?.stock ?? currentStock;
+    const projectedAtClose = Math.max(0, currentStock - velocity * hoursToClose);
+    const maxReturnable = openingStock * returnAllowancePercent / 100;
+    if (projectedAtClose > maxReturnable && recommendationType !== 'sellout_before_close') {
+      recommendation = `Projected remaining at close (${Math.round(projectedAtClose)} units) exceeds your ${returnAllowancePercent}% return allowance (${Math.round(maxReturnable)} units). Consider accelerating sales or redistributing stock.`;
+      recommendationType = 'surplus_risk';
+    }
   }
 
   return {

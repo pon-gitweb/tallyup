@@ -41,12 +41,13 @@ export default function FestivalReconciliationScreen() {
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
 
-  const [event,    setEvent]    = useState<any>(null);
-  const [role,     setRole]     = useState<string | null>(null);
-  const [summary,  setSummary]  = useState<ReconciliationSummary | null>(null);
-  const [saved,    setSaved]    = useState<ReconciliationSummary | null>(null);
-  const [loading,  setLoading]  = useState(FESTIVAL_BETA);
-  const [saving,   setSaving]   = useState(false);
+  const [event,           setEvent]           = useState<any>(null);
+  const [role,            setRole]            = useState<string | null>(null);
+  const [summary,         setSummary]         = useState<ReconciliationSummary | null>(null);
+  const [saved,           setSaved]           = useState<ReconciliationSummary | null>(null);
+  const [supplierConfigs, setSupplierConfigs] = useState<Record<string, any>>({});
+  const [loading,         setLoading]         = useState(FESTIVAL_BETA);
+  const [saving,          setSaving]          = useState(false);
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -81,6 +82,19 @@ export default function FestivalReconciliationScreen() {
       }).catch(() => setLoading(false));
       return;
     }
+
+    // Load supplier configs for return allowance
+    getDoc(doc(db, 'venues', venueId, 'event', 'details')).then(snap => {
+      if (snap.exists()) {
+        const cfgs = (snap.data() as any).supplierConfigs || {};
+        // Build name→allowance map
+        const nameMap: Record<string, any> = {};
+        Object.values(cfgs).forEach((cfg: any) => {
+          if (cfg.supplierName) nameMap[cfg.supplierName] = cfg;
+        });
+        setSupplierConfigs(nameMap);
+      }
+    }).catch(() => {});
 
     // Event details (current event)
     const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), async snap => {
@@ -248,9 +262,22 @@ export default function FestivalReconciliationScreen() {
                 if (!bySupplier[li.supplierName]) bySupplier[li.supplierName] = [];
                 bySupplier[li.supplierName].push(li);
               }
-              return Object.entries(bySupplier).map(([supplier, items]) => (
+              return Object.entries(bySupplier).map(([supplier, items]) => {
+                const cfg = supplierConfigs[supplier];
+                const allowancePct = cfg?.returnAllowancePercent ?? 5;
+                const totalReceived = items.reduce((s, li) => s + li.sold + li.remaining, 0);
+                const totalRemaining = items.reduce((s, li) => s + li.remaining, 0);
+                const maxReturnable = Math.floor(totalReceived * allowancePct / 100);
+                const withinAllowance = totalRemaining <= maxReturnable;
+                return (
                 <View key={supplier} style={S.supplierCard}>
                   <Text style={S.supplierName}>{supplier}</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
+                    <AllowanceStat label={`Return allowance`} value={`${allowancePct}%`} />
+                    <AllowanceStat label="Max returnable" value={`${maxReturnable} units`} />
+                    <AllowanceStat label="Projected return" value={`${totalRemaining} units`} color={withinAllowance ? '#16a34a' : '#dc2626'} />
+                    <AllowanceStat label="Status" value={withinAllowance ? '✓ Within' : '⚠ Exceeds'} color={withinAllowance ? '#16a34a' : '#dc2626'} />
+                  </View>
                   {items.map(li => (
                     <View key={li.productId} style={S.lineRow}>
                       <View style={{ flex: 1 }}>
@@ -270,7 +297,8 @@ export default function FestivalReconciliationScreen() {
                     </View>
                   ))}
                 </View>
-              ));
+              );
+              });
             })()}
 
             {!isHistorical && (
@@ -296,6 +324,15 @@ export default function FestivalReconciliationScreen() {
           </>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+function AllowanceStat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <View>
+      <Text style={{ fontSize: 10, color: '#9ca3af', fontWeight: '600' }}>{label}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: color || '#0B132B' }}>{value}</Text>
     </View>
   );
 }

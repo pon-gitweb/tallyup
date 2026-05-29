@@ -8,6 +8,7 @@ import { doc, setDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'f
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { determineCycleLength, getCycleConfig } from '../../services/festival/cycleConfig';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -156,6 +157,9 @@ export default function FestivalEventSetupScreen() {
   const [hasExclusivity,   setHasExclusivity]   = useState(false);
   const [exclusivityNote,  setExclusivityNote]  = useState('');
 
+  // ── Section 1 extra state (FIX 2) ───────────────────────────────────────
+  const [cycleOverride, setCycleOverride] = useState<string>('');
+
   // ── Section 5 state ──────────────────────────────────────────────────────
   const [venueSuppliers,  setVenueSuppliers]  = useState<any[]>([]);
   const [supplierCfg,     setSupplierCfg]     = useState<Record<string, any>>({});
@@ -193,6 +197,24 @@ export default function FestivalEventSetupScreen() {
       if (d.priorAttendance)     setPriorAttendance(String(d.priorAttendance));
       if (d.historicalNotes)     setHistoryNotes(d.historicalNotes);
       if (d.setupProgress)       setProgress(p => ({ ...p, ...d.setupProgress }));
+      if (d.cycleOverride)       setCycleOverride(d.cycleOverride);
+      // Load saved supplier configs including returnAllowancePercent
+      if (d.supplierConfigs) {
+        const cfgMap: Record<string, any> = {};
+        Object.entries(d.supplierConfigs).forEach(([suppId, cfg]: [string, any]) => {
+          cfgMap[suppId] = {
+            selected: true,
+            supplierName: cfg.supplierName || '',
+            deliveryDate: cfg.deliveryDate || '',
+            returnPolicy: cfg.returnPolicy || 'sale_or_return',
+            chepEnabled: cfg.chepEnabled || false,
+            chepPalletCount: cfg.chepPalletCount ? String(cfg.chepPalletCount) : '',
+            chepAccountNumber: cfg.chepAccountNumber || '',
+            returnAllowancePercent: cfg.returnAllowancePercent ?? 5,
+          };
+        });
+        setSupplierCfg(prev => ({ ...prev, ...cfgMap }));
+      }
     }, () => setLoadingEvent(false));
     return () => unsub();
   }, [venueId]);
@@ -246,6 +268,17 @@ export default function FestivalEventSetupScreen() {
     }).catch(() => {});
   }, [venueId]);
 
+  // ── Date helpers ─────────────────────────────────────────────────────────
+  function parseDuration(start: string, end: string): number {
+    try {
+      const [ds, ms, ys] = start.split('/');
+      const [de, me, ye] = end.split('/');
+      const startDt = new Date(parseInt(ys), parseInt(ms) - 1, parseInt(ds));
+      const endDt = new Date(parseInt(ye), parseInt(me) - 1, parseInt(de));
+      return Math.max(1, Math.ceil((endDt.getTime() - startDt.getTime()) / 86400000) + 1);
+    } catch { return 1; }
+  }
+
   // ── Toast ─────────────────────────────────────────────────────────────────
   function showToast(msg: string) {
     setToast(msg);
@@ -263,10 +296,15 @@ export default function FestivalEventSetupScreen() {
     try {
       const nb = parseInt(numBars) || 1;
       const newProgress = { ...progress, basics: true };
+      const durationDays = (startDate && endDate) ? parseDuration(startDate, endDate) : 1;
+      const autoDetectedCycle = determineCycleLength(durationDays);
+      const finalCycle = cycleOverride || autoDetectedCycle;
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), {
         eventName: eventName.trim(), eventType, startDate, endDate,
         dailyAttendance: parseInt(dailyAttend) || null,
         numBars: nb, stockModel,
+        cycleLength: finalCycle,
+        cycleOverride: cycleOverride || null,
         setupProgress: newProgress,
         updatedAt: serverTimestamp(),
       }, { merge: true });
@@ -383,6 +421,7 @@ export default function FestivalEventSetupScreen() {
           chepEnabled: cfg.chepEnabled || false,
           chepPalletCount: cfg.chepEnabled ? (parseInt(cfg.chepPalletCount) || null) : null,
           chepAccountNumber: cfg.chepEnabled ? (cfg.chepAccountNumber || null) : null,
+          returnAllowancePercent: cfg.returnAllowancePercent ?? 5,
         };
       }
       const newProgress = { ...progress, suppliers: true };
@@ -512,6 +551,34 @@ export default function FestivalEventSetupScreen() {
           <Text style={S.label}>End date *</Text>
           <Text style={S.helper}>Same as start date = single-day event</Text>
           <TextInput value={endDate} onChangeText={setEndDate} placeholder="DD/MM/YYYY" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numbers-and-punctuation" />
+
+          {/* Cycle length auto-detection (FIX 2) */}
+          {startDate && endDate && (() => {
+            const dur = parseDuration(startDate, endDate);
+            if (dur <= 0) return null;
+            const auto = determineCycleLength(dur);
+            const cfgAuto = getCycleConfig(auto);
+            return (
+              <View style={S.cycleBox}>
+                <Text style={S.cycleLabel}>Reporting cycle: {cfgAuto.cycleLabel}</Text>
+                <Text style={S.cycleDesc}>{cfgAuto.cycleDescription}</Text>
+                <Text style={[S.label, { marginTop: 8 }]}>Override cycle? (optional)</Text>
+                {(['session', 'daily', 'weekly'] as const).map(cl => {
+                  const clCfg = getCycleConfig(cl);
+                  const active = (cycleOverride || auto) === cl;
+                  return (
+                    <RadioCard
+                      key={cl}
+                      label={clCfg.cycleLabel}
+                      sub={clCfg.cycleDescription}
+                      selected={active}
+                      onPress={() => setCycleOverride(cl === auto ? '' : cl)}
+                    />
+                  );
+                })}
+              </View>
+            );
+          })()}
 
           <Text style={S.label}>Expected daily attendance</Text>
           <Text style={S.helper}>Average across all days is fine</Text>
@@ -748,6 +815,25 @@ export default function FestivalEventSetupScreen() {
                           <TextInput value={cfg.chepAccountNumber || ''} onChangeText={v => updateSup(sup.id, 'chepAccountNumber', v)} placeholder="e.g. 1234567" placeholderTextColor="#9ca3af" style={S.input} />
                         </>
                       )}
+
+                      <Text style={S.label}>Return allowance</Text>
+                      <Text style={S.helper}>Maximum % of ordered stock this supplier will accept back. Check your agreement — 5% is a conservative default.</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4, marginBottom: 2 }}>
+                        <TouchableOpacity
+                          onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.max(1, (cfg.returnAllowancePercent ?? 5) - 1))}
+                          style={S.stepperBtn}
+                        >
+                          <Text style={S.stepperBtnText}>−</Text>
+                        </TouchableOpacity>
+                        <Text style={S.stepperVal}>{cfg.returnAllowancePercent ?? 5}%</Text>
+                        <TouchableOpacity
+                          onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.min(20, (cfg.returnAllowancePercent ?? 5) + 1))}
+                          style={S.stepperBtn}
+                        >
+                          <Text style={S.stepperBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={S.helper}>Range: 1–20%. Some suppliers accept up to 10–20% — check your agreement first.</Text>
                     </>
                   )}
                 </View>
@@ -904,6 +990,16 @@ const S = StyleSheet.create({
   // Coming soon badge (Section 6)
   comingSoonBadge:    { backgroundColor: '#fef9c3', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, alignSelf: 'flex-start', marginBottom: 10, borderWidth: 1, borderColor: '#fde68a' },
   comingSoonBadgeText:{ fontSize: 11, fontWeight: '700', color: '#92400e' },
+
+  // Cycle box (FIX 2)
+  cycleBox:  { backgroundColor: '#eff6ff', borderRadius: 10, padding: 12, marginTop: 10, marginBottom: 4, borderWidth: 1, borderColor: '#bfdbfe' },
+  cycleLabel:{ fontSize: 14, fontWeight: '700', color: '#1b4f72', marginBottom: 2 },
+  cycleDesc: { fontSize: 12, color: '#6b7280', marginBottom: 6 },
+
+  // Return allowance stepper (FIX 1)
+  stepperBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
+  stepperBtnText:{ fontSize: 20, fontWeight: '700', color: '#374151' },
+  stepperVal:    { fontSize: 20, fontWeight: '800', color: '#0B132B', minWidth: 52, textAlign: 'center' },
 
   // Toast
   toast:     { position: 'absolute', bottom: 32, left: 24, right: 24, backgroundColor: 'rgba(27,79,114,0.95)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },

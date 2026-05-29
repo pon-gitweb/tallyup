@@ -103,6 +103,10 @@ import FestivalEventCloseScreen from '../../screens/festival/FestivalEventCloseS
 import FestivalEventHistoryScreen from '../../screens/festival/FestivalEventHistoryScreen';
 import FestivalGoodsInScreen from '../../screens/festival/FestivalGoodsInScreen';
 import FestivalStockOverviewScreen from '../../screens/festival/FestivalStockOverviewScreen';
+import FestivalNewEventScreen from '../../screens/festival/FestivalNewEventScreen';
+import FestivalWeekReviewScreen from '../../screens/festival/FestivalWeekReviewScreen';
+import FestivalDebriefScreen from '../../screens/festival/FestivalDebriefScreen';
+import FestivalReturnRiskScreen from '../../screens/festival/FestivalReturnRiskScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -244,6 +248,10 @@ export default function MainStack() {
       <Stack.Screen name="FestivalEventHistory" component={FestivalEventHistoryScreen} options={{ title: 'Event History' }} />
       <Stack.Screen name="FestivalGoodsIn" component={FestivalGoodsInScreen} options={{ title: 'Goods In' }} />
       <Stack.Screen name="FestivalStockOverview" component={FestivalStockOverviewScreen} options={{ title: 'Stock Overview' }} />
+      <Stack.Screen name="FestivalNewEvent" component={FestivalNewEventScreen} options={{ title: 'New Event' }} />
+      <Stack.Screen name="FestivalWeekReview" component={FestivalWeekReviewScreen} options={{ title: 'Week Review' }} />
+      <Stack.Screen name="FestivalDebrief" component={FestivalDebriefScreen} options={{ title: 'Event Debrief' }} />
+      <Stack.Screen name="FestivalReturnRisk" component={FestivalReturnRiskScreen} options={{ title: 'Return Risk' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

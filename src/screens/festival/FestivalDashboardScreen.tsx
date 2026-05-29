@@ -131,6 +131,35 @@ export default function FestivalDashboardScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* Week close nudge (FIX 4) */}
+        {event?.cycleLength === 'weekly' && event?.status !== 'closed' && (() => {
+          const getWeekNum = () => {
+            if (!event?.startDate) return null;
+            try {
+              const [ds, ms, ys] = event.startDate.split('/');
+              const start = new Date(parseInt(ys), parseInt(ms) - 1, parseInt(ds));
+              const now = new Date();
+              return Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 86400000 / 7));
+            } catch { return null; }
+          };
+          const weekNum = getWeekNum();
+          if (!weekNum) return null;
+          return (
+            <View style={S.weekNudge}>
+              <Text style={S.weekNudgeTitle}>Week {weekNum} — ready to review</Text>
+              <Text style={S.weekNudgeBody}>Snapshot this week's activity before moving on.</Text>
+              <View style={S.weekNudgeBtns}>
+                <TouchableOpacity
+                  style={S.weekNudgeBtn}
+                  onPress={() => nav.navigate('FestivalWeekReview', { weekNumber: weekNum })}
+                >
+                  <Text style={S.weekNudgeBtnText}>Review Week {weekNum} →</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })()}
+
         {/* Closed event banner */}
         {event?.status === 'closed' && (
           <View style={S.closedBanner}>
@@ -389,6 +418,13 @@ const S = StyleSheet.create({
   closedBanner:     { backgroundColor: '#dcfce7', borderRadius: 10, padding: 12, marginTop: 12, marginBottom: 4 },
   closedBannerText: { fontSize: 13, fontWeight: '700', color: '#16a34a', marginBottom: 2 },
   closedBannerLink: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
+
+  weekNudge:     { backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginTop: 12, marginBottom: 4, borderWidth: 1, borderColor: '#bfdbfe' },
+  weekNudgeTitle:{ fontSize: 14, fontWeight: '800', color: '#1b4f72', marginBottom: 4 },
+  weekNudgeBody: { fontSize: 13, color: '#374151', marginBottom: 10 },
+  weekNudgeBtns: { flexDirection: 'row', gap: 8 },
+  weekNudgeBtn:  { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14 },
+  weekNudgeBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
   tilesHeading: {
     fontSize: 11, fontWeight: '800', color: '#9ca3af',

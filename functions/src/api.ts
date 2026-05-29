@@ -5,7 +5,7 @@ import cors = require("cors");
 import Stripe from "stripe";
 import { trackPriceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
-import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE } from "./izzyContext";
+import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -1328,6 +1328,17 @@ app.post("/suitee", async (req, res) => {
 
     const db = admin.firestore();
 
+    // ── Festival routing ──────────────────────────────────────────────────────
+    try {
+      const venueDoc = await db.doc(`venues/${venueId}`).get();
+      if (venueDoc.exists && venueDoc.data()?.venueType === 'festival') {
+        const festAnswer = await handleFestivalSuitee(venueId, question, uid!, db, history);
+        const meter = await trackAiCall(venueId, 'suitee');
+        res.json({ ok: true, answer: festAnswer, usageWarning: meter.usageWarning ?? null });
+        return;
+      }
+    } catch {}
+
     // ── Gather venue context ──────────────────────────────────────────────────
 
     // Products
@@ -2004,6 +2015,414 @@ Current screen context will be provided with each message. Use it to give contex
   } catch (e: any) {
     console.error("[api/izzy] ERROR", e?.message || e);
     res.json({ ok: false, answer: "I'm having trouble right now. Please try again." });
+  }
+});
+
+// ── Festival Suitee handler ───────────────────────────────────────────────────
+
+async function handleFestivalSuitee(
+  venueId: string,
+  question: string,
+  uid: string,
+  db: admin.firestore.Firestore,
+  history: any[],
+): Promise<string> {
+  const lines: string[] = ["=== FESTIVAL EVENT DATA SNAPSHOT ===", ""];
+
+  // Event details
+  try {
+    const evSnap = await db.doc(`venues/${venueId}/event/details`).get();
+    if (evSnap.exists) {
+      const ev = evSnap.data() as any;
+      lines.push("EVENT:");
+      lines.push(`  Name: ${ev.eventName || "Unknown"}`);
+      lines.push(`  Dates: ${ev.startDate || "?"} → ${ev.endDate || "?"}`);
+      lines.push(`  Status: ${ev.status || "active"}`);
+      lines.push(`  Cycle: ${ev.cycleLength || "daily"}`);
+      if (ev.stockModel) lines.push(`  Stock model: ${ev.stockModel}`);
+      if (ev.dailyAttendance) lines.push(`  Daily attendance: ${ev.dailyAttendance}`);
+
+      // Supplier configs (return allowances)
+      const cfgs = ev.supplierConfigs || {};
+      const cfgEntries = Object.values(cfgs) as any[];
+      if (cfgEntries.length > 0) {
+        lines.push("", "SUPPLIER RETURN ALLOWANCES:");
+        cfgEntries.forEach((c: any) => {
+          lines.push(`  ${c.supplierName}: ${c.returnAllowancePercent ?? 5}% allowance, policy: ${c.returnPolicy || "sale_or_return"}`);
+        });
+      }
+    }
+  } catch {}
+
+  // Bar stock
+  try {
+    const barStockByProduct: Record<string, { name: string; total: number; bars: string[] }> = {};
+    const barsSnap = await db.collection(`venues/${venueId}/bars`).get();
+    for (const barDoc of barsSnap.docs) {
+      const barName = (barDoc.data() as any).name || barDoc.id;
+      const stockSnap = await db.collection(`venues/${venueId}/bars/${barDoc.id}/stock`).get();
+      stockSnap.docs.forEach(d => {
+        const data = d.data() as any;
+        const pid = d.id;
+        if (!barStockByProduct[pid]) {
+          barStockByProduct[pid] = { name: data.productName || pid, total: 0, bars: [] };
+        }
+        const qty = data.currentStock ?? 0;
+        barStockByProduct[pid].total += qty;
+        if (qty > 0) barStockByProduct[pid].bars.push(`${barName}:${qty}`);
+      });
+    }
+    const entries = Object.values(barStockByProduct).filter(e => e.total > 0).sort((a, b) => b.total - a.total);
+    if (entries.length > 0) {
+      lines.push("", `BAR STOCK TOTALS (${entries.length} products):`);
+      entries.slice(0, 30).forEach(e => {
+        lines.push(`  ${e.name}: ${e.total} total (${e.bars.join(", ")})`);
+      });
+    }
+
+    // Source locations
+    const srcSnap = await db.collection(`venues/${venueId}/sourceLocations`).get();
+    const srcLines: string[] = [];
+    for (const srcDoc of srcSnap.docs) {
+      const srcName = (srcDoc.data() as any).name || srcDoc.id;
+      const stockSnap = await db.collection(`venues/${venueId}/sourceLocations/${srcDoc.id}/stock`).get();
+      stockSnap.docs.forEach(d => {
+        const data = d.data() as any;
+        const qty = data.currentStock ?? 0;
+        if (qty > 0) srcLines.push(`  ${data.productName || d.id}: ${qty} at ${srcName}`);
+      });
+    }
+    if (srcLines.length > 0) {
+      lines.push("", "SOURCE LOCATION STOCK:");
+      lines.push(...srcLines);
+    }
+  } catch {}
+
+  // Recent transfers (last 48h)
+  try {
+    const since48h = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const txSnap = await db.collection(`venues/${venueId}/transfers`)
+      .where("createdAt", ">=", since48h).limit(20).get();
+    if (!txSnap.empty) {
+      lines.push("", `TRANSFERS (last 48h, ${txSnap.size}):`);
+      txSnap.docs.forEach(d => {
+        const t = d.data() as any;
+        lines.push(`  ${t.productName || "?"}: ${t.quantity} from ${t.fromName || "?"} → ${t.toName || "?"}`);
+      });
+    }
+  } catch {}
+
+  // Recent requests (last 48h)
+  try {
+    const since48h = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const reqSnap = await db.collection(`venues/${venueId}/requests`)
+      .where("createdAt", ">=", since48h).limit(20).get();
+    if (!reqSnap.empty) {
+      lines.push("", `TOP-UP REQUESTS (last 48h, ${reqSnap.size}):`);
+      reqSnap.docs.forEach(d => {
+        const r = d.data() as any;
+        lines.push(`  ${r.barName || "?"}: ${r.productName || "?"} × ${r.quantity || "?"} (${r.status || "pending"})`);
+      });
+    }
+  } catch {}
+
+  // Wastage totals
+  try {
+    const wastageSnap = await db.collection(`venues/${venueId}/wastage`).limit(50).get();
+    const wastageByProduct: Record<string, { name: string; total: number }> = {};
+    wastageSnap.docs.forEach(d => {
+      const data = d.data() as any;
+      const pid = data.productId;
+      if (!pid) return;
+      if (!wastageByProduct[pid]) wastageByProduct[pid] = { name: data.productName || pid, total: 0 };
+      wastageByProduct[pid].total += data.quantity || 0;
+    });
+    const wEntries = Object.values(wastageByProduct).filter(e => e.total > 0);
+    if (wEntries.length > 0) {
+      lines.push("", "WASTAGE TOTALS:");
+      wEntries.forEach(e => lines.push(`  ${e.name}: ${e.total} units written off`));
+    }
+  } catch {}
+
+  // Weekly snapshots (most recent 2)
+  try {
+    const snapCol = await db.collection(`venues/${venueId}/event/details/weeklySnapshots`).get();
+    if (!snapCol.empty) {
+      const snaps = snapCol.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+      snaps.sort((a, b) => (b.weekNumber || 0) - (a.weekNumber || 0));
+      lines.push("", "WEEKLY SNAPSHOTS:");
+      snaps.slice(0, 2).forEach(s => {
+        lines.push(`  Week ${s.weekNumber}: ${s.sessionCount || 0} sessions, ${s.transferCount || 0} transfers, ${s.requestCount || 0} requests`);
+        const soldKeys = Object.keys(s.soldTotals || {});
+        if (soldKeys.length > 0) {
+          const topSold = soldKeys.map(k => ({ name: s.soldTotals[k].name, sold: s.soldTotals[k].sold }))
+            .sort((a, b) => b.sold - a.sold).slice(0, 5);
+          lines.push(`    Top sellers: ${topSold.map(p => `${p.name}(${p.sold})`).join(", ")}`);
+        }
+      });
+    }
+  } catch {}
+
+  // Obligations
+  try {
+    const oblSnap = await db.collection(`venues/${venueId}/obligations`).limit(20).get();
+    if (!oblSnap.empty) {
+      const pending = oblSnap.docs.filter(d => (d.data() as any).status !== 'fulfilled');
+      if (pending.length > 0) {
+        lines.push("", `PENDING OBLIGATIONS (${pending.length}):`);
+        pending.slice(0, 10).forEach(d => {
+          const o = d.data() as any;
+          lines.push(`  ${o.supplierName || "?"}: ${o.description || o.type || "?"} (${o.status || "pending"})`);
+        });
+      }
+    }
+  } catch {}
+
+  const context = lines.join("\n");
+
+  const systemPrompt = `You are Suitee, the festival event intelligence assistant for Hosti.
+You have been given real data from this festival venue's event: stock levels across all bars,
+transfers, top-up requests, wastage, weekly snapshots, and supplier return allowances.
+
+Answer the operator's question using only this data — never invent numbers.
+Your tone is direct, analytical, and practical — like a trusted event ops manager who respects the operator's time.
+
+${FESTIVAL_IZZY_FEATURES}
+
+IMPORTANT: Never suggest pricing changes. Only operational actions: stock redistribution,
+transfers between bars, supplier negotiation, write-offs, or demand management.
+
+${context}`;
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+  const messages: { role: string; content: string }[] = [];
+  if (Array.isArray(history)) {
+    for (const msg of history) {
+      if (msg.role === "user" || msg.role === "assistant") {
+        messages.push({ role: msg.role, content: String(msg.text || msg.content || "") });
+      }
+    }
+  }
+  messages.push({ role: "user", content: question });
+
+  const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 800,
+      system: systemPrompt,
+      messages,
+    }),
+  });
+
+  if (!claudeResp.ok) {
+    const err = await claudeResp.text().catch(() => "");
+    throw new Error("Claude API error: " + err);
+  }
+  const claudeData = await claudeResp.json() as any;
+  return claudeData?.content?.[0]?.text || "I'm having trouble accessing your event data right now. Please try again.";
+}
+
+// ── POST /closeEventWeek ──────────────────────────────────────────────────────
+app.post("/closeEventWeek", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, weekNumber } = req.body || {};
+    if (!venueId || !weekNumber) { res.status(400).json({ ok: false, error: "Missing venueId or weekNumber" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const now = new Date();
+    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // Gather week data
+    const sessionsSnap = await db.collection(`venues/${venueId}/sessions`).get();
+    const sessions = sessionsSnap.docs.filter(d => {
+      const ts = d.data().completedAt?.toDate?.();
+      return ts && ts >= weekStart && ts <= now;
+    });
+
+    const transfersSnap = await db.collection(`venues/${venueId}/transfers`).get();
+    const transfers = transfersSnap.docs.filter(d => {
+      const ts = d.data().createdAt?.toDate?.();
+      return ts && ts >= weekStart && ts <= now;
+    });
+
+    const requestsSnap = await db.collection(`venues/${venueId}/requests`).get();
+    const requests = requestsSnap.docs.filter(d => {
+      const ts = d.data().createdAt?.toDate?.();
+      return ts && ts >= weekStart && ts <= now;
+    });
+
+    // Bar stock at close
+    const barStockAtClose: Record<string, any> = {};
+    const barsSnap = await db.collection(`venues/${venueId}/bars`).get();
+    for (const barDoc of barsSnap.docs) {
+      const stockSnap = await db.collection(`venues/${venueId}/bars/${barDoc.id}/stock`).get();
+      stockSnap.docs.forEach(d => {
+        const data = d.data();
+        const pid = d.id;
+        if (!barStockAtClose[pid]) barStockAtClose[pid] = { name: data.productName || pid, total: 0 };
+        barStockAtClose[pid].total += data.currentStock ?? 0;
+      });
+    }
+
+    const soldTotals: Record<string, any> = {};
+    sessions.forEach(s => {
+      (s.data().counts || []).forEach((c: any) => {
+        if (!c.productId) return;
+        if (!soldTotals[c.productId]) soldTotals[c.productId] = { name: c.productName || c.productId, sold: 0 };
+        soldTotals[c.productId].sold += Math.abs(c.variance || 0);
+      });
+    });
+
+    await db.doc(`venues/${venueId}/event/details/weeklySnapshots/week-${weekNumber}`).set({
+      weekNumber,
+      weekStart: weekStart.toISOString(),
+      weekEnd: now.toISOString(),
+      sessionCount: sessions.length,
+      transferCount: transfers.length,
+      requestCount: requests.length,
+      soldTotals,
+      barStockAtClose,
+      closedAt: admin.firestore.FieldValue.serverTimestamp(),
+      closedBy: uid,
+      status: 'closed',
+    });
+
+    // Update event/details with currentWeek
+    await db.doc(`venues/${venueId}/event/details`).set({
+      currentWeek: weekNumber + 1,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    console.log("[api/closeEventWeek] OK", { uid, venueId, weekNumber });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/closeEventWeek] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Internal error" });
+  }
+});
+
+// ── POST /writeFestivalDebrief ─────────────────────────────────────────────────
+app.post("/writeFestivalDebrief", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, eventId } = req.body || {};
+    if (!venueId || !eventId) { res.status(400).json({ ok: false, error: "Missing venueId or eventId" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+
+    // Load historic event data
+    const evSnap = await db.doc(`venues/${venueId}/eventHistory/${eventId}`).get();
+    const ev = evSnap.exists ? evSnap.data() as any : {};
+
+    // Load products with velocity history
+    const productsSnap = await db.collection(`venues/${venueId}/products`).limit(100).get();
+    const velocityData: string[] = [];
+    productsSnap.docs.forEach(d => {
+      const data = d.data() as any;
+      const vh: number[] = data.velocityHistory || [];
+      if (vh.length > 0) {
+        const avg = vh.reduce((a: number, b: number) => a + b, 0) / vh.length;
+        velocityData.push(`${data.name || d.id}: avg ${avg.toFixed(1)}/day over ${vh.length} event(s)`);
+      }
+    });
+
+    // Load reconciliation if available
+    const recSnap = await db.doc(`venues/${venueId}/eventHistory/${eventId}/reconciliation/summary`).get().catch(() => null);
+    const rec = recSnap?.exists ? recSnap.data() as any : null;
+
+    // Load supplier configs from event
+    const supplierAllowances: string[] = [];
+    if (ev.supplierConfigs) {
+      Object.values(ev.supplierConfigs).forEach((cfg: any) => {
+        supplierAllowances.push(`${cfg.supplierName}: ${cfg.returnAllowancePercent ?? 5}% allowance`);
+      });
+    }
+
+    const contextLines = [
+      `Event: ${ev.eventName || "Unknown"}`,
+      `Dates: ${ev.startDate || "?"} → ${ev.endDate || "?"}`,
+      ev.dailyAttendance ? `Daily attendance: ${ev.dailyAttendance}` : "",
+      ev.stockModel ? `Stock model: ${ev.stockModel}` : "",
+      "",
+      rec ? `Reconciliation: sold value $${rec.totalSoldValue?.toFixed(2) || "0"}, return value $${rec.totalReturnValue?.toFixed(2) || "0"}` : "",
+      "",
+      velocityData.length > 0 ? `PRODUCT VELOCITY:\n${velocityData.slice(0, 20).join("\n")}` : "",
+      "",
+      supplierAllowances.length > 0 ? `SUPPLIER ALLOWANCES:\n${supplierAllowances.join("\n")}` : "",
+    ].filter(Boolean).join("\n");
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1500,
+        system: `You are an event debrief analyst. Given festival event data, generate a structured debrief with three sections.
+Return ONLY valid JSON in this format (no markdown, no other text):
+{
+  "workedWell": [{"title": "...", "body": "...", "productName": null, "supplierName": null}],
+  "improve": [{"title": "...", "body": "...", "productName": null, "supplierName": null}],
+  "year2Seeds": [{"title": "...", "body": "...", "productName": null, "supplierName": null}]
+}
+Each array should have 2-4 items. Be specific and actionable. Never suggest pricing changes.`,
+        messages: [{ role: "user", content: `Generate a debrief for this event:\n\n${contextLines}` }],
+      }),
+    });
+
+    if (!claudeResp.ok) {
+      const err = await claudeResp.text().catch(() => "");
+      throw new Error("Claude API error: " + err);
+    }
+    const claudeData = await claudeResp.json() as any;
+    const rawText = claudeData?.content?.[0]?.text || "{}";
+
+    let parsed: any = {};
+    try { parsed = JSON.parse(rawText); } catch { parsed = {}; }
+
+    const batch = db.batch();
+    const writeRec = (category: string, items: any[]) => {
+      (items || []).forEach((item: any, i: number) => {
+        const ref = db.collection(`venues/${venueId}/eventHistory/${eventId}/debriefRecommendations`).doc(`${category}_${i}`);
+        batch.set(ref, {
+          category,
+          title: item.title || "",
+          body: item.body || "",
+          productName: item.productName || null,
+          supplierName: item.supplierName || null,
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+    };
+    writeRec("worked_well", parsed.workedWell || []);
+    writeRec("improve", parsed.improve || []);
+    writeRec("year2_seed", parsed.year2Seeds || []);
+    await batch.commit();
+
+    console.log("[api/writeFestivalDebrief] OK", { uid, venueId, eventId });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/writeFestivalDebrief] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Internal error" });
   }
 });
 

@@ -16,6 +16,11 @@ export interface PredictionResult {
   basis: PredictionBasis;
   notes: string[];
   minimumCommitment: number | null;
+  // Return allowance fields
+  returnAllowancePercent: number;
+  maxReturnable: number;
+  targetSellQty: number;
+  safeOrderQty: number;
 }
 
 // ─── Category benchmarks (units per person per day) ──────────────────────────
@@ -70,6 +75,7 @@ export function generatePurchasingPrediction(
     supplierName: string;
     unitCost?: number;
     minimumCommitment?: number;
+    returnAllowancePercent?: number;
   }[],
   priorYearData: {
     productId: string;
@@ -138,19 +144,37 @@ export function generatePurchasingPrediction(
 
     const estimatedCost = product.unitCost != null ? product.unitCost * finalQty : null;
 
+    const allowance = product.returnAllowancePercent ?? 5;
+    const maxReturnable = Math.floor(finalQty * allowance / 100);
+    const targetSellQty = finalQty - maxReturnable;
+    // safeOrderQty: the order size where selling to targetSellQty exactly uses up the buffer
+    const safeOrderQty = allowance < 100
+      ? Math.ceil((predictedQty * (1 + bufferPercent / 100)) / (1 - allowance / 100))
+      : finalQty;
+
+    if (allowance < 10) {
+      notes.push(`Return allowance ${allowance}% — max ${maxReturnable} units returnable. Target sell-through: ${targetSellQty}.`);
+    } else {
+      notes.push(`Return allowance ${allowance}% — up to ${maxReturnable} units can be returned. Safe order qty: ${safeOrderQty}.`);
+    }
+
     results.push({
-      productId:         product.id,
-      productName:       product.name,
-      supplierId:        product.supplierId,
-      supplierName:      product.supplierName,
-      predictedQty:      finalQty,
-      bufferedQty:       finalQty,
-      unitCost:          product.unitCost ?? null,
+      productId:             product.id,
+      productName:           product.name,
+      supplierId:            product.supplierId,
+      supplierName:          product.supplierName,
+      predictedQty:          finalQty,
+      bufferedQty:           finalQty,
+      unitCost:              product.unitCost ?? null,
       estimatedCost,
       confidence,
       basis,
       notes,
-      minimumCommitment: product.minimumCommitment ?? null,
+      minimumCommitment:     product.minimumCommitment ?? null,
+      returnAllowancePercent: allowance,
+      maxReturnable,
+      targetSellQty,
+      safeOrderQty,
     });
   }
 

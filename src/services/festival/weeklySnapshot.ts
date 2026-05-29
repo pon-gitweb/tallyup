@@ -1,0 +1,118 @@
+// @ts-nocheck
+import { collection, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
+
+export async function writeWeeklySnapshot(venueId: string, weekNumber: number): Promise<void> {
+  const now = new Date();
+  const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // Sessions in window
+  let sessions: any[] = [];
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'sessions'));
+    sessions = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => {
+        const ts = s.completedAt?.toDate?.();
+        return ts && ts >= weekStart && ts <= now;
+      });
+  } catch {}
+
+  // Transfers in window
+  let transfers: any[] = [];
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'transfers'));
+    transfers = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(t => {
+        const ts = t.createdAt?.toDate?.();
+        return ts && ts >= weekStart && ts <= now;
+      });
+  } catch {}
+
+  // Requests in window
+  let requests: any[] = [];
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'requests'));
+    requests = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(r => {
+        const ts = r.createdAt?.toDate?.();
+        return ts && ts >= weekStart && ts <= now;
+      });
+  } catch {}
+
+  // Wastage totals in window
+  const wastageTotals: Record<string, number> = {};
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'wastage'));
+    snap.docs.forEach(d => {
+      const data = d.data() as any;
+      const ts = data.recordedAt?.toDate?.();
+      if (ts && ts >= weekStart && ts <= now) {
+        const pid = data.productId;
+        if (pid) wastageTotals[pid] = (wastageTotals[pid] || 0) + (data.quantity || 0);
+      }
+    });
+  } catch {}
+
+  // Bar stock snapshot (current totals at time of writing)
+  const barStockAtClose: Record<string, { name: string; total: number }> = {};
+  try {
+    const barsSnap = await getDocs(collection(db, 'venues', venueId, 'bars'));
+    for (const barDoc of barsSnap.docs) {
+      const stockSnap = await getDocs(
+        collection(db, 'venues', venueId, 'bars', barDoc.id, 'stock'),
+      );
+      stockSnap.docs.forEach(d => {
+        const data = d.data() as any;
+        const pid = d.id;
+        if (!barStockAtClose[pid]) {
+          barStockAtClose[pid] = { name: data.productName || pid, total: 0 };
+        }
+        barStockAtClose[pid].total += data.currentStock ?? 0;
+      });
+    }
+  } catch {}
+
+  // Orders in window
+  let ordersInWeek: any[] = [];
+  try {
+    const snap = await getDocs(collection(db, 'venues', venueId, 'orders'));
+    ordersInWeek = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(o => {
+        const ts = o.createdAt?.toDate?.();
+        return ts && ts >= weekStart && ts <= now;
+      });
+  } catch {}
+
+  // Aggregate sold quantities from sessions
+  const soldTotals: Record<string, { name: string; sold: number }> = {};
+  sessions.forEach(s => {
+    (s.counts || []).forEach((c: any) => {
+      if (!c.productId) return;
+      if (!soldTotals[c.productId]) soldTotals[c.productId] = { name: c.productName || c.productId, sold: 0 };
+      soldTotals[c.productId].sold += Math.abs(c.variance || 0);
+    });
+  });
+
+  const snapshot = {
+    weekNumber,
+    weekStart: weekStart.toISOString(),
+    weekEnd: now.toISOString(),
+    sessionCount: sessions.length,
+    transferCount: transfers.length,
+    requestCount: requests.length,
+    orderCount: ordersInWeek.length,
+    soldTotals,
+    wastageTotals,
+    barStockAtClose,
+    createdAt: serverTimestamp(),
+  };
+
+  await setDoc(
+    doc(db, 'venues', venueId, 'event', 'details', 'weeklySnapshots', `week-${weekNumber}`),
+    snapshot,
+  );
+}

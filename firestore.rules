@@ -1051,11 +1051,6 @@ service cloud.firestore {
         allow read, write: if isVenueMember(venueId);
       }
 
-      match /eventHistory/{eventId} {
-        allow read: if hasVenueRole(venueId, ['owner', 'manager']);
-        allow write: if hasVenueRole(venueId, ['owner']);
-      }
-
       match /activations/{activationId} {
         allow read, write: if isVenueMember(venueId);
       }
@@ -1081,6 +1076,19 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['owner', 'manager']);
         match /shortfalls/{id} {
           allow read, write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
+        match /weeklySnapshots/{weekId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
+      }
+
+      match /eventHistory/{eventId} {
+        allow read: if hasVenueRole(venueId, ['owner', 'manager']);
+        allow write: if hasVenueRole(venueId, ['owner']);
+        match /debriefRecommendations/{recId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
         }
       }
     }
