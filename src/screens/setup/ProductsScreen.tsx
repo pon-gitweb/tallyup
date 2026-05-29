@@ -531,7 +531,7 @@ export default function ProductsScreen() {
     );
   }
 
-  async function doAssign(supplier: { id: string; name: string }) {
+  async function executeAssign(supplier: { id: string; name: string }) {
     if (!venueId || selectedIds.size === 0) return;
     setAssigning(true);
     setSupplierPickerOpen(false);
@@ -556,6 +556,32 @@ export default function ProductsScreen() {
     } finally {
       setAssigning(false);
     }
+  }
+
+  async function doAssign(supplier: { id: string; name: string }) {
+    if (!venueId || selectedIds.size === 0) return;
+
+    const alreadyAssigned = rows.filter(
+      (p: any) => selectedIds.has(p.id) && p.supplierId && p.supplierId !== 'unassigned'
+    );
+
+    if (alreadyAssigned.length > 0) {
+      Alert.alert(
+        'Overwrite existing suppliers?',
+        `${alreadyAssigned.length} selected product${alreadyAssigned.length > 1 ? 's' : ''} already ${alreadyAssigned.length > 1 ? 'have' : 'has'} a supplier assigned.\n\nContinuing will overwrite ${alreadyAssigned.length > 1 ? 'them' : 'it'}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Overwrite anyway',
+            style: 'destructive',
+            onPress: () => executeAssign(supplier),
+          },
+        ]
+      );
+      return;
+    }
+
+    executeAssign(supplier);
   }
 
   async function openAreaPicker() {
@@ -890,7 +916,13 @@ export default function ProductsScreen() {
           </TouchableOpacity>
           <View style={{ flex: 1, alignItems: 'center', gap: 2 }}>
             <Text style={MS.countText}>{selectedIds.size} selected</Text>
-            <TouchableOpacity onPress={selectAllVisible}>
+            <TouchableOpacity onPress={() => {
+              if (showOnlyNoSupplier) {
+                selectAllNoSupplier();
+              } else {
+                selectAllVisible();
+              }
+            }}>
               <Text style={MS.selectAllText}>Select all ({filtered.length})</Text>
             </TouchableOpacity>
           </View>
