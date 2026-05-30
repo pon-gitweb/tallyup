@@ -147,17 +147,20 @@ export default function FestivalDeliveryTasksScreen() {
       batch.update(doc(db, 'venues', venueId, 'requests', reqId), {
         status: 'delivered', completedAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
+      const now = serverTimestamp();
       if (req?.barId && Array.isArray(req.products)) {
         for (const p of req.products) {
           if (!p.productId) continue;
-          batch.update(
-            doc(db, 'venues', venueId, 'bars', req.barId, 'stock', p.productId),
-            { currentStock: increment(p.quantity ?? 0), updatedAt: serverTimestamp() },
+          batch.set(
+            doc(db, 'venues', venueId, 'departments', req.barId, 'areas', 'back-of-house', 'items', p.productId),
+            { lastCount: increment(p.quantity ?? 0), lastCountAt: now, updatedAt: now },
+            { merge: true },
           );
           if (req.sourceLocationId) {
-            batch.update(
-              doc(db, 'venues', venueId, 'sourceLocations', req.sourceLocationId, 'stock', p.productId),
-              { currentStock: increment(-(p.quantity ?? 0)), updatedAt: serverTimestamp() },
+            batch.set(
+              doc(db, 'venues', venueId, 'departments', 'hq', 'areas', req.sourceLocationId, 'items', p.productId),
+              { lastCount: increment(-(p.quantity ?? 0)), updatedAt: now },
+              { merge: true },
             );
           }
         }

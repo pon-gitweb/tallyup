@@ -52,7 +52,7 @@ export default function FestivalGoodsInScreen() {
     const checkDone = () => { if (++done === 2) setLoading(false); };
 
     const unsubLocs = onSnapshot(
-      collection(db, 'venues', venueId, 'sourceLocations'),
+      collection(db, 'venues', venueId, 'departments', 'hq', 'areas'),
       snap => {
         setSourceLocations(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
         checkDone();
@@ -60,9 +60,13 @@ export default function FestivalGoodsInScreen() {
       () => checkDone(),
     );
     const unsubBars = onSnapshot(
-      collection(db, 'venues', venueId, 'bars'),
+      collection(db, 'venues', venueId, 'departments'),
       snap => {
-        setBars(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || d.id })));
+        setBars(
+          snap.docs
+            .filter(d => (d.data() as any).isFestivalBar === true)
+            .map(d => ({ id: d.id, name: (d.data() as any).name || d.id }))
+        );
         checkDone();
       },
       () => checkDone(),
@@ -76,15 +80,15 @@ export default function FestivalGoodsInScreen() {
     (async () => {
       try {
         const snap = await getDocs(
-          collection(db, 'venues', venueId, 'sourceLocations', selectedLocation.id, 'stock')
+          collection(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items')
         );
         const loaded: DeliveryLine[] = snap.docs.map(d => {
           const data = d.data() as any;
           return {
             productId: d.id,
-            productName: data.productName || d.id,
+            productName: data.name || d.id,
             receivedQty: 0,
-            expectedQty: data.currentStock ?? 0,
+            expectedQty: data.lastCount ?? 0,
           };
         });
         setLines(loaded);
@@ -133,25 +137,27 @@ export default function FestivalGoodsInScreen() {
       const now = serverTimestamp();
       lines.forEach(l => {
         if (l.receivedQty <= 0) return;
-        const ref = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id, 'stock', l.productId);
+        const ref = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId);
         batch.set(ref, {
-          productId: l.productId,
-          productName: l.productName,
-          currentStock: l.receivedQty,
+          name: l.productName,
+          unit: 'unit',
+          lastCount: l.receivedQty,
+          lastCountAt: now,
           updatedAt: now,
         }, { merge: true });
       });
       if (chepEnabled && chepReceived) {
-        const chepRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id, 'stock', '_chep_pallets');
+        const chepRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', '_chep_pallets');
         batch.set(chepRef, {
-          productId: '_chep_pallets',
-          productName: 'CHEP Pallets',
-          currentStock: parseFloat(chepReceived) || 0,
+          name: 'CHEP Pallets',
+          unit: 'unit',
+          lastCount: parseFloat(chepReceived) || 0,
+          lastCountAt: now,
           updatedAt: now,
         }, { merge: true });
       }
       // Reset distribution flag for this new receive
-      const locResetRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id);
+      const locResetRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id);
       batch.set(locResetRef, { distributionConfirmed: false }, { merge: true });
 
       await batch.commit();
@@ -190,7 +196,7 @@ export default function FestivalGoodsInScreen() {
 
     setSaving(true);
     try {
-      // FIX 1: Pre-fetch existing bar stock docs to decide increment vs. initial set
+      // Pre-fetch existing bar back-of-house item docs to decide increment vs. initial set
       const refsToCheck: Array<{ productId: string; barId: string; ref: any }> = [];
       for (const l of lines) {
         for (const a of (allocations[l.productId] || [])) {
@@ -198,7 +204,7 @@ export default function FestivalGoodsInScreen() {
           refsToCheck.push({
             productId: l.productId,
             barId: a.barId,
-            ref: doc(db, 'venues', venueId, 'bars', a.barId, 'stock', l.productId),
+            ref: doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', l.productId),
           });
         }
       }
@@ -214,42 +220,39 @@ export default function FestivalGoodsInScreen() {
       for (const l of lines) {
         for (const a of (allocations[l.productId] || [])) {
           if (a.qty <= 0) continue;
-          const ref = doc(db, 'venues', venueId, 'bars', a.barId, 'stock', l.productId);
+          const ref = doc(db, 'venues', venueId, 'departments', a.barId, 'areas', 'back-of-house', 'items', l.productId);
           const exists = existingMap.get(`${l.productId}:${a.barId}`);
           if (exists) {
-            // FIX 1: Increment existing stock — never overwrite
             batch.update(ref, {
-              currentStock: increment(a.qty),
-              stockCategory: 'general',
-              lastUpdatedAt: now,
+              lastCount: increment(a.qty),
+              lastCountAt: now,
+              updatedAt: now,
             });
           } else {
             batch.set(ref, {
-              productId: l.productId,
-              productName: l.productName,
-              currentStock: a.qty,
-              openingStock: a.qty,
-              maxStock: a.qty,
-              stockCategory: 'general',
-              openingSetAt: now,
-              lastUpdatedAt: now,
+              name: l.productName,
+              unit: 'unit',
+              lastCount: a.qty,
+              lastCountAt: now,
+              createdAt: now,
+              updatedAt: now,
             });
           }
         }
 
-        // FIX 1: Deduct from source location using increment (not flat overwrite)
+        // Deduct from HQ source location using increment
         const totalAllocated = (allocations[l.productId] || []).reduce((s, a) => s + a.qty, 0);
         if (totalAllocated > 0) {
-          const srcRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id, 'stock', l.productId);
+          const srcRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId);
           batch.set(srcRef, {
-            currentStock: increment(-totalAllocated),
+            lastCount: increment(-totalAllocated),
             updatedAt: now,
           }, { merge: true });
         }
       }
 
-      // FIX 2: Mark this location as distributed
-      const locRef = doc(db, 'venues', venueId, 'sourceLocations', selectedLocation.id);
+      // Mark this location as distributed
+      const locRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id);
       batch.set(locRef, {
         distributionConfirmed: true,
         distributionConfirmedAt: now,

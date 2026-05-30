@@ -88,20 +88,37 @@ export default function FestivalOpsScreen() {
     return () => unsub();
   }, [venueId]);
 
-  // Load bars + their stock
+  // Load departments (HQ first, then bars alphabetically) + their items
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) return;
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars'), async snap => {
-      const barList = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-      setBars(barList);
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments'), async snap => {
+      const hqDoc = snap.docs.find(d => (d.data() as any).isFestivalHQ === true);
+      const barDepts = snap.docs
+        .filter(d => (d.data() as any).isFestivalBar === true)
+        .map(d => ({ id: d.id, ...(d.data() as any) }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      const allDepts = [
+        ...(hqDoc ? [{ id: hqDoc.id, ...(hqDoc.data() as any), isHQ: true }] : []),
+        ...barDepts,
+      ];
+      setBars(allDepts);
 
-      // Load stock for each bar
       const stockMap: Record<string, any[]> = {};
-      await Promise.all(barList.map(async bar => {
+      await Promise.all(allDepts.map(async dept => {
         try {
-          const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', bar.id, 'stock'));
-          stockMap[bar.id] = stockSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        } catch { stockMap[bar.id] = []; }
+          if (dept.isHQ) {
+            const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas'));
+            const all: any[] = [];
+            for (const area of areasSnap.docs) {
+              const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas', area.id, 'items'));
+              all.push(...itemsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+            }
+            stockMap['hq'] = all;
+          } else {
+            const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', dept.id, 'areas', 'back-of-house', 'items'));
+            stockMap[dept.id] = itemsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+          }
+        } catch { stockMap[dept.isHQ ? 'hq' : dept.id] = []; }
       }));
       setBarStock(stockMap);
       setLoading(false);
@@ -221,15 +238,37 @@ export default function FestivalOpsScreen() {
   // Filter by selected bar
   const visibleBars = selectedBar === 'all' ? bars : bars.filter(b => b.id === selectedBar);
 
+  // Staleness threshold: ≤3 day event = 2hr, longer = 8hr
+  const stalenessThresholdMs = (() => {
+    if (!event?.startDate || !event?.endDate) return 8 * 3600000;
+    try {
+      const [sd, sm, sy] = event.startDate.split('/').map(Number);
+      const [ed, em, ey] = event.endDate.split('/').map(Number);
+      const start = new Date(sy, sm - 1, sd);
+      const end   = new Date(ey, em - 1, ed);
+      const days  = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+      return days <= 3 ? 2 * 3600000 : 8 * 3600000;
+    } catch { return 8 * 3600000; }
+  })();
+
+  function barLastCountMs(barId: string): number {
+    const items = barStock[barId] ?? [];
+    return items.reduce((latest, item) => {
+      const ts = item.lastCountAt?.toDate?.()?.getTime() ?? 0;
+      return ts > latest ? ts : latest;
+    }, 0);
+  }
+
   // Critical stock alerts: bars with any product < 1hr remaining
   const stockAlerts: { barName: string; productName: string; hours: number }[] = [];
   for (const bar of bars) {
+    if (bar.isHQ) continue;
     const stock = barStock[bar.id] ?? [];
     for (const item of stock) {
-      if (item.velocity > 0 && item.currentStock != null) {
-        const hrs = item.currentStock / item.velocity;
+      if (item.velocity > 0 && item.lastCount != null) {
+        const hrs = item.lastCount / item.velocity;
         if (hrs < 1) {
-          stockAlerts.push({ barName: bar.name || bar.id, productName: item.productName || item.id, hours: hrs });
+          stockAlerts.push({ barName: bar.name || bar.id, productName: item.name || item.id, hours: hrs });
         }
       }
     }
@@ -314,18 +353,35 @@ export default function FestivalOpsScreen() {
                   style={O.barCard}
                   onPress={() => nav.navigate('FestivalBarDashboard', { barId: bar.id, barName: bar.name || bar.id })}
                 >
-                  <Text style={O.barCardName}>{bar.name || bar.id}</Text>
+                  <Text style={O.barCardName}>{bar.name || bar.id}{bar.isHQ ? ' (HQ)' : ''}</Text>
+                  {(() => {
+                    if (bar.isHQ) return null;
+                    const lastMs = barLastCountMs(bar.id);
+                    if (!lastMs) return <Text style={O.staleText}>Not yet counted</Text>;
+                    const ageMs = Date.now() - lastMs;
+                    if (ageMs > stalenessThresholdMs) {
+                      const hrs = Math.floor(ageMs / 3600000);
+                      const mins = Math.floor((ageMs % 3600000) / 60000);
+                      return (
+                        <Text style={O.staleWarning}>
+                          ⚠ Last count {hrs > 0 ? `${hrs}h ` : ''}{mins}m ago
+                        </Text>
+                      );
+                    }
+                    return null;
+                  })()}
                   {stock.length === 0 ? (
                     <Text style={O.emptyText}>No stock data</Text>
                   ) : (
                     stock.slice(0, 4).map(item => {
                       const velocity = item.velocity ?? null;
-                      const hrs = velocity > 0 && item.currentStock != null
-                        ? item.currentStock / velocity : null;
-                      const pct = fillPct(item.currentStock ?? 0, item.parLevel ?? item.currentStock ?? 0);
+                      const stockLevel = item.lastCount ?? item.currentStock ?? 0;
+                      const hrs = velocity > 0 && stockLevel != null
+                        ? stockLevel / velocity : null;
+                      const pct = fillPct(stockLevel, item.parLevel ?? stockLevel ?? 0);
                       return (
                         <View key={item.id} style={O.stockRow}>
-                          <Text style={O.stockName} numberOfLines={1}>{item.productName || item.id}</Text>
+                          <Text style={O.stockName} numberOfLines={1}>{item.name || item.productName || item.id}</Text>
                           <View style={O.fillBg}>
                             <View style={[O.fillBar, { width: `${pct}%`, backgroundColor: hoursColor(hrs) }]} />
                           </View>
@@ -488,9 +544,11 @@ const O = StyleSheet.create({
   barChipText:   { fontSize: 13, color: '#374151', fontWeight: '500' },
   barChipTextOn: { color: '#1b4f72', fontWeight: '700' },
 
-  barCard:     { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  barCardName: { fontSize: 15, fontWeight: '800', color: '#0B132B', marginBottom: 10 },
-  moreText:    { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+  barCard:      { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
+  barCardName:  { fontSize: 15, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
+  staleText:    { fontSize: 11, color: '#9ca3af', marginBottom: 6, fontStyle: 'italic' },
+  staleWarning: { fontSize: 11, color: '#d97706', fontWeight: '700', marginBottom: 6 },
+  moreText:     { fontSize: 12, color: '#9ca3af', marginTop: 4 },
 
   stockRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
   stockName: { fontSize: 12, color: '#374151', width: 100, fontWeight: '500' },

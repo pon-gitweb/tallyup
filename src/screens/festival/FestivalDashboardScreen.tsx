@@ -223,6 +223,10 @@ export default function FestivalDashboardScreen() {
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOpeningStock')}>
+                <Text style={S.tileEmoji}>📦</Text>
+                <Text style={S.tileLabel}>Opening stock</Text>
+              </TouchableOpacity>
             </View>
             <Text style={S.tilesHeading}>CONTRACTS & COMPLIANCE</Text>
             <View style={S.tilesRow}>
@@ -315,6 +319,10 @@ export default function FestivalDashboardScreen() {
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('CraftUp')}>
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOpeningStock')}>
+                <Text style={S.tileEmoji}>📦</Text>
+                <Text style={S.tileLabel}>Opening stock</Text>
               </TouchableOpacity>
             </View>
             <Text style={S.tilesHeading}>COMPLIANCE</Text>

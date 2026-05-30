@@ -1007,6 +1007,16 @@ service cloud.firestore {
       // All existing venue rules unchanged above
       // ═══════════════════════════════════════════════════════════════
 
+      // Festival: managers can update HQ area config (name, type, dimensions, servingBarIds)
+      match /departments/hq/areas/{areaId} {
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys()
+               .hasOnly(['name','type','dimensions','hasAisle','aisleWidth','servingBarIds','updatedAt']);
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['distributionConfirmed','distributionConfirmedAt','updatedAt']);
+      }
+
       match /bars/{barId} {
         allow read, write: if isVenueMember(venueId);
         match /stocktakes/{stocktakeId} {

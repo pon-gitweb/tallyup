@@ -47,13 +47,21 @@ export default function FestivalTopUpRequestScreen() {
   const [sent,     setSent]     = useState(false);
   const [loading,  setLoading]  = useState(FESTIVAL_BETA);
 
-  // Load products for this bar
+  // Load products from all areas under this bar's department
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) { setLoading(false); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars', barId, 'stock')).then(snap => {
-      setProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    (async () => {
+      try {
+        const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', barId, 'areas'));
+        const allItems = [];
+        for (const area of areasSnap.docs) {
+          const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', barId, 'areas', area.id, 'items'));
+          allItems.push(...itemsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        }
+        setProducts(allItems);
+      } catch (_) {}
       setLoading(false);
-    }).catch(() => setLoading(false));
+    })();
   }, [venueId, barId]);
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────

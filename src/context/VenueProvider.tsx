@@ -26,6 +26,7 @@ type VenueCtx = {
   venueId: string | null;
   activeVenueId: string | null;
   venueIds: string[];
+  venueType: string | null;
   switchVenue: (newVenueId: string) => Promise<void>;
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
@@ -38,7 +39,7 @@ type VenueCtx = {
 };
 
 const Ctx = createContext<VenueCtx>({
-  loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [],
+  loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null,
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
@@ -52,6 +53,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [venueIds, setVenueIds] = useState<string[]>([]);
   const [nonce, setNonce] = useState(0);
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [venueType, setVenueType] = useState<string | null>(null);
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
@@ -132,12 +134,13 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); return; }
+    if (!venueId) { setSubscription(null); setVenueType(null); return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       const data = snap.exists() ? snap.data() : null;
-      const venueType = data?.venueType ?? null;
-      if (venueType) {
-        AsyncStorage.setItem('lastKnownVenueType', venueType).catch(() => {});
+      const vt = data?.venueType ?? null;
+      setVenueType(vt);
+      if (vt) {
+        AsyncStorage.setItem('lastKnownVenueType', vt).catch(() => {});
       }
       const sub = data?.subscription ?? null;
       setSubscription(sub ? {
@@ -183,6 +186,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     venueId,
     activeVenueId: venueId,
     venueIds,
+    venueType,
     switchVenue: async (newVenueId: string) => {
       if (!user) throw new Error('Not signed in');
       const memberSnap = await getDoc(doc(db, 'venues', newVenueId, 'members', user.uid));
@@ -200,7 +204,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     plan,
     hasModule,
     billingState,
-  }), [loading, user, venueId, venueIds, subscription, isPilot, isActive, plan]);
+  }), [loading, user, venueId, venueIds, venueType, subscription, isPilot, isActive, plan]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -247,6 +251,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
 export function useVenue() { return useContext(Ctx); }
 export function useVenueId(): string | null { return useContext(Ctx).venueId; }
+export function useVenueType(): string | null { return useContext(Ctx).venueType; }
 export function useSubscription() {
   const { subscription, isPilot, isActive, plan, hasModule, billingState } = useContext(Ctx);
   return { subscription, isPilot, isActive, plan, hasModule, billingState };

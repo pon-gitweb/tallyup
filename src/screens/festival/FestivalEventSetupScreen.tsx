@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Alert, ScrollView, StyleSheet,
   Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
-import { doc, setDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -219,12 +219,13 @@ export default function FestivalEventSetupScreen() {
     return () => unsub();
   }, [venueId]);
 
-  // ── Load existing bars ────────────────────────────────────────────────────
+  // ── Load existing bars (from departments) ─────────────────────────────────
   useEffect(() => {
     if (!venueId) return;
-    getDocs(collection(db, 'venues', venueId, 'bars')).then(snap => {
-      if (snap.empty) return;
-      setBarForms(snap.docs.map(d => {
+    getDocs(collection(db, 'venues', venueId, 'departments')).then(snap => {
+      const barDocs = snap.docs.filter(d => (d.data() as any).isFestivalBar === true);
+      if (barDocs.length === 0) return;
+      setBarForms(barDocs.map(d => {
         const data = d.data() as any;
         return {
           id: d.id,
@@ -238,12 +239,14 @@ export default function FestivalEventSetupScreen() {
     }).catch(() => {});
   }, [venueId]);
 
-  // ── Load existing source locations ────────────────────────────────────────
+  // ── Load existing HQ storage areas ───────────────────────────────────────
   useEffect(() => {
     if (!venueId) return;
-    getDocs(collection(db, 'venues', venueId, 'sourceLocations')).then(snap => {
-      if (snap.empty) return;
-      setLocationForms(snap.docs.map(d => {
+    getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas')).then(snap => {
+      // Exclude the auto-created main-storage default area from the form
+      const locDocs = snap.docs.filter(d => d.id !== 'main-storage');
+      if (locDocs.length === 0) return;
+      setLocationForms(locDocs.map(d => {
         const data = d.data() as any;
         return {
           id: d.id,
@@ -254,7 +257,7 @@ export default function FestivalEventSetupScreen() {
           dimensionH: String(data.dimensions?.h || ''),
           hasAisle: data.hasAisle !== false,
           aisleWidth: String(data.aisleWidth || '800'),
-          barsServed: data.barsServed || [],
+          barsServed: data.servingBarIds || [],
         };
       }));
     }).catch(() => {});
@@ -309,6 +312,24 @@ export default function FestivalEventSetupScreen() {
         updatedAt: serverTimestamp(),
       }, { merge: true });
       setProgress(newProgress);
+      // Auto-create HQ / Central Store department if not yet created
+      try {
+        const hqRef = doc(db, 'venues', venueId, 'departments', 'hq');
+        const hqSnap = await getDoc(hqRef);
+        if (!hqSnap.exists()) {
+          await setDoc(hqRef, {
+            name: 'HQ — Central Store',
+            type: 'hq',
+            isFestivalHQ: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          await setDoc(
+            doc(db, 'venues', venueId, 'departments', 'hq', 'areas', 'main-storage'),
+            { name: 'Main storage', type: 'storage', createdAt: serverTimestamp() },
+          );
+        }
+      } catch (_) {}
       // Pad bar forms to match numBars if user hasn't added them manually
       if (barForms.length < nb) {
         const toAdd = nb - barForms.length;
@@ -332,19 +353,30 @@ export default function FestivalEventSetupScreen() {
     try {
       for (let i = 0; i < barForms.length; i++) {
         const bar = barForms[i];
-        await setDoc(doc(db, 'venues', venueId, 'bars', bar.id), {
+        await setDoc(doc(db, 'venues', venueId, 'departments', bar.id), {
           name: bar.name.trim() || `Bar ${i + 1}`,
           location: bar.location.trim(),
+          type: 'festival-bar',
+          isFestivalBar: true,
           fridgeCapacity: {
             service: parseFloat(bar.fridgeService) || 0,
             display: parseFloat(bar.fridgeDisplay) || null,
             underBar: parseFloat(bar.fridgeUnderBar) || null,
           },
-          primarySourceId: null,
-          backupSourceId: null,
+          primaryStorageId: null,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         }, { merge: true });
+        const bohRef = doc(db, 'venues', venueId, 'departments', bar.id, 'areas', 'back-of-house');
+        const bohSnap = await getDoc(bohRef);
+        if (!bohSnap.exists()) {
+          await setDoc(bohRef, {
+            name: 'Back of house',
+            type: 'bar-storage',
+            isDefault: true,
+            createdAt: serverTimestamp(),
+          });
+        }
       }
       const newProgress = { ...progress, bars: true };
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), { setupProgress: newProgress, updatedAt: serverTimestamp() }, { merge: true });
@@ -361,7 +393,7 @@ export default function FestivalEventSetupScreen() {
     try {
       for (let i = 0; i < locationForms.length; i++) {
         const loc = locationForms[i];
-        await setDoc(doc(db, 'venues', venueId, 'sourceLocations', loc.id), {
+        await setDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', loc.id), {
           name: loc.name.trim() || `Location ${i + 1}`,
           type: loc.type,
           dimensions: {
@@ -371,7 +403,7 @@ export default function FestivalEventSetupScreen() {
           },
           hasAisle: loc.hasAisle,
           aisleWidth: parseFloat(loc.aisleWidth) || 800,
-          barsServed: loc.barsServed,
+          servingBarIds: loc.barsServed,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         }, { merge: true });

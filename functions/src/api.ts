@@ -2056,20 +2056,21 @@ async function handleFestivalSuitee(
     }
   } catch {}
 
-  // Bar stock
+  // Bar stock (reads from departments/{barId}/areas/back-of-house/items)
   try {
     const barStockByProduct: Record<string, { name: string; total: number; bars: string[] }> = {};
-    const barsSnap = await db.collection(`venues/${venueId}/bars`).get();
-    for (const barDoc of barsSnap.docs) {
+    const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+    const barDepts = deptsSnap.docs.filter(d => (d.data() as any).isFestivalBar === true);
+    for (const barDoc of barDepts) {
       const barName = (barDoc.data() as any).name || barDoc.id;
-      const stockSnap = await db.collection(`venues/${venueId}/bars/${barDoc.id}/stock`).get();
-      stockSnap.docs.forEach(d => {
+      const itemsSnap = await db.collection(`venues/${venueId}/departments/${barDoc.id}/areas/back-of-house/items`).get();
+      itemsSnap.docs.forEach(d => {
         const data = d.data() as any;
         const pid = d.id;
         if (!barStockByProduct[pid]) {
-          barStockByProduct[pid] = { name: data.productName || pid, total: 0, bars: [] };
+          barStockByProduct[pid] = { name: data.name || data.productName || pid, total: 0, bars: [] };
         }
-        const qty = data.currentStock ?? 0;
+        const qty = data.lastCount ?? data.currentStock ?? 0;
         barStockByProduct[pid].total += qty;
         if (qty > 0) barStockByProduct[pid].bars.push(`${barName}:${qty}`);
       });
@@ -2082,20 +2083,20 @@ async function handleFestivalSuitee(
       });
     }
 
-    // Source locations
-    const srcSnap = await db.collection(`venues/${venueId}/sourceLocations`).get();
+    // HQ storage locations (reads from departments/hq/areas/{areaId}/items)
+    const hqAreasSnap = await db.collection(`venues/${venueId}/departments/hq/areas`).get();
     const srcLines: string[] = [];
-    for (const srcDoc of srcSnap.docs) {
-      const srcName = (srcDoc.data() as any).name || srcDoc.id;
-      const stockSnap = await db.collection(`venues/${venueId}/sourceLocations/${srcDoc.id}/stock`).get();
-      stockSnap.docs.forEach(d => {
+    for (const areaDoc of hqAreasSnap.docs) {
+      const areaName = (areaDoc.data() as any).name || areaDoc.id;
+      const itemsSnap = await db.collection(`venues/${venueId}/departments/hq/areas/${areaDoc.id}/items`).get();
+      itemsSnap.docs.forEach(d => {
         const data = d.data() as any;
-        const qty = data.currentStock ?? 0;
-        if (qty > 0) srcLines.push(`  ${data.productName || d.id}: ${qty} at ${srcName}`);
+        const qty = data.lastCount ?? data.currentStock ?? 0;
+        if (qty > 0) srcLines.push(`  ${data.name || data.productName || d.id}: ${qty} at ${areaName}`);
       });
     }
     if (srcLines.length > 0) {
-      lines.push("", "SOURCE LOCATION STOCK:");
+      lines.push("", "HQ STORAGE STOCK:");
       lines.push(...srcLines);
     }
   } catch {}
@@ -2305,16 +2306,16 @@ app.post("/closeEventWeek", async (req, res) => {
       return ts && ts >= weekStart && ts <= now;
     });
 
-    // Bar stock at close
+    // Bar stock at close (reads from departments/{barId}/areas/back-of-house/items)
     const barStockAtClose: Record<string, any> = {};
-    const barsSnap = await db.collection(`venues/${venueId}/bars`).get();
-    for (const barDoc of barsSnap.docs) {
-      const stockSnap = await db.collection(`venues/${venueId}/bars/${barDoc.id}/stock`).get();
-      stockSnap.docs.forEach(d => {
+    const barsDeptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+    for (const barDoc of barsDeptsSnap.docs.filter(d => (d.data() as any).isFestivalBar === true)) {
+      const itemsSnap = await db.collection(`venues/${venueId}/departments/${barDoc.id}/areas/back-of-house/items`).get();
+      itemsSnap.docs.forEach(d => {
         const data = d.data();
         const pid = d.id;
-        if (!barStockAtClose[pid]) barStockAtClose[pid] = { name: data.productName || pid, total: 0 };
-        barStockAtClose[pid].total += data.currentStock ?? 0;
+        if (!barStockAtClose[pid]) barStockAtClose[pid] = { name: (data as any).name || (data as any).productName || pid, total: 0 };
+        barStockAtClose[pid].total += (data as any).lastCount ?? (data as any).currentStock ?? 0;
       });
     }
 

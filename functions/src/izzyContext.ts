@@ -196,6 +196,58 @@ header and ask her directly."
 export const FESTIVAL_IZZY_FEATURES = `
 FESTIVAL MODE FEATURES:
 
+HOW FESTIVAL STOCK IS ORGANISED:
+- HQ / Central Store: the central receiving and storage hub for the entire event.
+  Stock is received at HQ first, then distributed to individual bars.
+  HQ has one or more named storage locations (e.g. "Main walkway", "Walk-in chiller").
+- Bars: individual serving bars at the event (e.g. "Bar 1", "Garden Bar").
+  Each bar has a "back of house" storage area where distributed stock lands.
+- The flow is: Goods In → HQ storage location → Goods In distribute → Bar back of house
+- Session counts are done per bar — staff count the bar's back-of-house stock.
+- Top-up requests are raised by bar staff when they need more stock from HQ.
+- Transfers move stock between bars (bar-to-bar) without going through HQ.
+
+SESSION COUNTS:
+- A session count is a stock count for a specific bar's back-of-house area.
+  It uses the same counting screen as a regular venue stocktake.
+- When a bar starts a session count, it opens the bar's "back of house" area.
+- Session counts record how much stock is physically present at the bar.
+- Staff can do a session count at start-of-shift, mid-session, or end-of-session.
+- The count creates a snapshot of bar stock at that point in time.
+- You can count from FestivalBarDashboard → "Count now" button.
+
+TOP-UP REQUESTS:
+- Raised by bar staff to request more stock from HQ.
+- A request contains: which products, how many, urgency (ASAP / next round / planning).
+- Ops team sees all pending requests in the Delivery Tasks screen.
+- An ops runner accepts the task, collects stock from HQ, and marks it delivered.
+- When marked delivered, bar stock is automatically updated.
+
+GOODS IN (receiving stock at HQ):
+- Stock arrives at a named HQ storage location (e.g. "Main walkway").
+- Record received quantities in the Goods In screen.
+- Then distribute: allocate stock from that location to individual bars.
+- Distributed stock goes into each bar's "back of house" area.
+- HQ stock is deducted when distribution is confirmed.
+
+SHARED STORAGE:
+- HQ storage locations can be configured to serve specific bars.
+- This links a storage location to the bars it primarily supplies.
+- Viewing which storage location serves which bars: Event Setup → Source Locations.
+
+WHAT IZZY CAN EXPLAIN (festival mode):
+- How to do a session count (go to the bar, tap "Count now")
+- How to raise a top-up request
+- How goods are received and distributed at HQ
+- How transfers work between bars
+- How to read the Ops overview screen
+- The difference between HQ stock and bar stock
+
+WHAT IZZY CANNOT TELL YOU:
+- Live current stock levels (ask Suitee for data questions)
+- Which bars have the most stock right now (ask Suitee)
+- Velocity data (ask Suitee)
+
 WEEKLY SNAPSHOTS
 - Suitee can summarise a week's activity from weekly snapshot data
 - Snapshots capture: sessions, transfers, requests, wastage, stock at close, orders
@@ -222,7 +274,7 @@ DEBRIEF
 - Accessible via Event History → View debrief
 
 WHAT SUITEE CAN ANSWER (festival mode):
-- Current stock levels across all bars and source locations
+- Current stock levels across all bars and HQ storage locations
 - Which bars are running low or high on specific products
 - Velocity (sales rate) per product over any period with data
 - Supplier return risk — projected surplus vs allowance

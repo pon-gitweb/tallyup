@@ -82,22 +82,37 @@ export default function FestivalBarDashboardScreen() {
     return () => unsub();
   }, [venueId]);
 
-  // Load bar doc
+  // Load bar department doc
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) { setLoading(false); return; }
-    const unsub = onSnapshot(doc(db, 'venues', venueId, 'bars', barId), snap => {
+    const unsub = onSnapshot(doc(db, 'venues', venueId, 'departments', barId), snap => {
       setBar(snap.exists() ? snap.data() : null);
     });
     return () => unsub();
   }, [venueId, barId]);
 
-  // Load stock subcollection
+  // Load items from back-of-house area
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) { setLoading(false); return; }
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars', barId, 'stock'), snap => {
-      setStock(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      setLoading(false);
-    }, () => setLoading(false));
+    const unsub = onSnapshot(
+      collection(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items'),
+      snap => {
+        setStock(snap.docs.map(d => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            productName: data.name || d.id,
+            currentStock: data.lastCount ?? 0,
+            velocity: data.velocity ?? null,
+            lastCountAt: data.lastCountAt ?? null,
+            maxStock: data.maxStock ?? null,
+            minStock: data.minStock ?? null,
+          };
+        }));
+        setLoading(false);
+      },
+      () => setLoading(false),
+    );
     return () => unsub();
   }, [venueId, barId]);
 

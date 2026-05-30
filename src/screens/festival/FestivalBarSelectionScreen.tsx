@@ -65,23 +65,23 @@ export default function FestivalBarSelectionScreen() {
     return () => unsub();
   }, [venueId]);
 
-  // Load bars
+  // Load bars from departments filtered by isFestivalBar
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) return;
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'bars'), snap => {
-      Promise.all(snap.docs.map(async d => {
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments'), snap => {
+      const barDepts = snap.docs.filter(d => (d.data() as any).isFestivalBar === true);
+      Promise.all(barDepts.map(async d => {
         const data = d.data() as any;
         let lastCountAt: string | null = null;
         let hasLowStock = false;
         try {
-          const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', d.id, 'stock'));
-          for (const s of stockSnap.docs) {
+          const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', d.id, 'areas', 'back-of-house', 'items'));
+          for (const s of itemsSnap.docs) {
             const sd = s.data() as any;
             if (sd.lastCountAt?.toDate) {
               const t = sd.lastCountAt.toDate().toISOString();
               if (!lastCountAt || t > lastCountAt) lastCountAt = t;
             }
-            if (sd.velocity > 0 && sd.currentStock / sd.velocity < 2) hasLowStock = true;
           }
         } catch (_) {}
         return { id: d.id, name: data.name || d.id, location: data.location || '', lastCountAt, hasLowStock };
