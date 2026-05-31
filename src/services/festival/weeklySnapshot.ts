@@ -48,9 +48,9 @@ export async function writeWeeklySnapshot(venueId: string, weekNumber: number): 
     const snap = await getDocs(collection(db, 'venues', venueId, 'wastage'));
     snap.docs.forEach(d => {
       const data = d.data() as any;
-      const ts = data.recordedAt?.toDate?.();
+      const ts = data.createdAt?.toDate?.();
       if (ts && ts >= weekStart && ts <= now) {
-        const pid = data.productId;
+        const pid = data.itemId || data.productId;
         if (pid) wastageTotals[pid] = (wastageTotals[pid] || 0) + (data.quantity || 0);
       }
     });
@@ -59,18 +59,20 @@ export async function writeWeeklySnapshot(venueId: string, weekNumber: number): 
   // Bar stock snapshot (current totals at time of writing)
   const barStockAtClose: Record<string, { name: string; total: number }> = {};
   try {
-    const barsSnap = await getDocs(collection(db, 'venues', venueId, 'bars'));
-    for (const barDoc of barsSnap.docs) {
-      const stockSnap = await getDocs(
-        collection(db, 'venues', venueId, 'bars', barDoc.id, 'stock'),
+    const deptsSnap = await getDocs(
+      query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true)),
+    );
+    for (const deptDoc of deptsSnap.docs) {
+      const itemsSnap = await getDocs(
+        collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', 'back-of-house', 'items'),
       );
-      stockSnap.docs.forEach(d => {
+      itemsSnap.docs.forEach(d => {
         const data = d.data() as any;
         const pid = d.id;
         if (!barStockAtClose[pid]) {
-          barStockAtClose[pid] = { name: data.productName || pid, total: 0 };
+          barStockAtClose[pid] = { name: data.name || pid, total: 0 };
         }
-        barStockAtClose[pid].total += data.currentStock ?? 0;
+        barStockAtClose[pid].total += data.lastCount ?? 0;
       });
     }
   } catch {}

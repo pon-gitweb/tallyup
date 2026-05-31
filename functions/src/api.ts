@@ -2110,7 +2110,7 @@ async function handleFestivalSuitee(
       lines.push("", `TRANSFERS (last 48h, ${txSnap.size}):`);
       txSnap.docs.forEach(d => {
         const t = d.data() as any;
-        lines.push(`  ${t.productName || "?"}: ${t.quantity} from ${t.fromName || "?"} → ${t.toName || "?"}`);
+        lines.push(`  ${t.productName || "?"}: ${t.quantity} from ${t.fromBarName || "?"} → ${t.toBarName || "?"}`);
       });
     }
   } catch {}
@@ -2124,26 +2124,63 @@ async function handleFestivalSuitee(
       lines.push("", `TOP-UP REQUESTS (last 48h, ${reqSnap.size}):`);
       reqSnap.docs.forEach(d => {
         const r = d.data() as any;
-        lines.push(`  ${r.barName || "?"}: ${r.productName || "?"} × ${r.quantity || "?"} (${r.status || "pending"})`);
+        const prods = (r.products || [])
+          .map((p: any) => `${p.productName || '?'} ×${p.quantity || '?'}`)
+          .join(', ');
+        const urgencyTag = r.urgency ? `, ${r.urgency}` : '';
+        lines.push(`  ${r.barName || '?'}: ${prods || 'no products listed'} (${r.status || 'pending'}${urgencyTag})`);
       });
     }
   } catch {}
 
-  // Wastage totals
+  // Wastage totals — two-tier: per-product (all bars) + per-bar breakdown
   try {
     const wastageSnap = await db.collection(`venues/${venueId}/wastage`).limit(50).get();
     const wastageByProduct: Record<string, { name: string; total: number }> = {};
+    const wastageByBar: Record<string, { barName: string; total: number; byProduct: Record<string, { name: string; qty: number }> }> = {};
+    let wastageGrandTotal = 0;
+
     wastageSnap.docs.forEach(d => {
       const data = d.data() as any;
-      const pid = data.productId;
-      if (!pid) return;
-      if (!wastageByProduct[pid]) wastageByProduct[pid] = { name: data.productName || pid, total: 0 };
-      wastageByProduct[pid].total += data.quantity || 0;
+      const pid   = data.itemId || data.productId;
+      const bid   = data.barId;
+      const pName = data.productName || pid || '?';
+      const bName = data.barName || bid || 'Unknown bar';
+      const qty   = data.quantity || 0;
+      if (!pid || qty <= 0) return;
+
+      // Tier 1: per-product total across all bars
+      if (!wastageByProduct[pid]) wastageByProduct[pid] = { name: pName, total: 0 };
+      wastageByProduct[pid].total += qty;
+
+      // Tier 2: per-bar with per-product breakdown
+      if (bid) {
+        if (!wastageByBar[bid]) wastageByBar[bid] = { barName: bName, total: 0, byProduct: {} };
+        wastageByBar[bid].total += qty;
+        if (!wastageByBar[bid].byProduct[pid]) wastageByBar[bid].byProduct[pid] = { name: pName, qty: 0 };
+        wastageByBar[bid].byProduct[pid].qty += qty;
+      }
+
+      wastageGrandTotal += qty;
     });
+
     const wEntries = Object.values(wastageByProduct).filter(e => e.total > 0);
-    if (wEntries.length > 0) {
+    const bEntries = Object.values(wastageByBar).filter(b => b.total > 0);
+
+    if (wastageGrandTotal > 0) {
       lines.push("", "WASTAGE TOTALS:");
-      wEntries.forEach(e => lines.push(`  ${e.name}: ${e.total} units written off`));
+      lines.push(`  Grand total: ${wastageGrandTotal} units across all bars`);
+      wEntries.sort((a, b) => b.total - a.total)
+              .forEach(e => lines.push(`  ${e.name}: ${e.total} units`));
+
+      if (bEntries.length > 0) {
+        lines.push("", "WASTAGE BY BAR:");
+        bEntries.sort((a, b) => b.total - a.total).forEach(b => {
+          lines.push(`  ${b.barName}: ${b.total} units total`);
+          Object.values(b.byProduct).sort((x, y) => y.qty - x.qty)
+                .forEach(p => lines.push(`    ${p.name}: ${p.qty}`));
+        });
+      }
     }
   } catch {}
 
@@ -2235,6 +2272,12 @@ transfers between bars, supplier negotiation, write-offs, or demand management.
 Revenue figures: only available when sales data has been uploaded (see SALES DATA section above).
 If no sales data is uploaded, be honest that you cannot answer revenue or GP questions — direct
 the operator to upload a POS export from the Reports tab.
+
+Wastage data is provided in two tiers — WASTAGE TOTALS and WASTAGE BY BAR.
+Both are always computed; choose which to surface based on the question:
+- Big-picture ("how much did we waste?", "total write-off?") → cite the grand total and WASTAGE TOTALS.
+- Specific ("which bar wasted the most?", "what was wasted at Bar 2?") → use WASTAGE BY BAR.
+Always include the grand total when discussing wastage so the operator has the headline figure.
 
 ${context}`;
 
