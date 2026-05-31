@@ -55,24 +55,24 @@ export default function FestivalReturnRiskScreen() {
 
       // Load bar stock totals (remaining)
       const barStockRemaining: Record<string, number> = {};
-      const barsSnap = await getDocs(collection(db, 'venues', venueId, 'bars'));
-      for (const barDoc of barsSnap.docs) {
-        const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', barDoc.id, 'stock'));
-        stockSnap.docs.forEach(d => {
+      const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+      for (const deptDoc of deptsSnap.docs.filter(d => (d.data() as any).isFestivalBar === true)) {
+        const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', 'back-of-house', 'items'));
+        itemsSnap.docs.forEach(d => {
           const data = d.data() as any;
           const pid = d.id;
-          barStockRemaining[pid] = (barStockRemaining[pid] || 0) + (data.currentStock ?? 0);
+          barStockRemaining[pid] = (barStockRemaining[pid] || 0) + (data.lastCount ?? 0);
         });
       }
 
-      // Load source location stock
-      const srcSnap = await getDocs(collection(db, 'venues', venueId, 'sourceLocations'));
-      for (const srcDoc of srcSnap.docs) {
-        const stockSnap = await getDocs(collection(db, 'venues', venueId, 'sourceLocations', srcDoc.id, 'stock'));
-        stockSnap.docs.forEach(d => {
+      // Load HQ storage stock
+      const hqAreasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas'));
+      for (const areaDoc of hqAreasSnap.docs) {
+        const itemsSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas', areaDoc.id, 'items'));
+        itemsSnap.docs.forEach(d => {
           const data = d.data() as any;
           const pid = d.id;
-          barStockRemaining[pid] = (barStockRemaining[pid] || 0) + (data.currentStock ?? 0);
+          barStockRemaining[pid] = (barStockRemaining[pid] || 0) + (data.lastCount ?? 0);
         });
       }
 

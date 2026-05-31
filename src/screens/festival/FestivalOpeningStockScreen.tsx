@@ -88,7 +88,7 @@ export default function FestivalOpeningStockScreen() {
               key={area.id}
               style={S.areaCard}
               onPress={() =>
-                nav.navigate('StockTakeArea', {
+                nav.navigate('AreaInventory', {
                   departmentId: 'hq',
                   areaId: area.id,
                   isFestivalSession: true,

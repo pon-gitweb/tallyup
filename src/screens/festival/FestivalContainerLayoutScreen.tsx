@@ -156,15 +156,15 @@ export default function FestivalContainerLayoutScreen() {
     try {
       // Load source location products assigned to this container
       const stockSnap = await getDocs(
-        collection(db, 'venues', venueId, 'sourceLocations', containerId ?? 'default', 'stock'),
+        collection(db, 'venues', venueId, 'departments', 'hq', 'areas', containerId ?? 'default', 'items'),
       );
 
       const products: ContainerProduct[] = stockSnap.docs.map((d, i) => {
         const data = d.data() as any;
         return {
           id:           d.id,
-          name:         data.productName || d.id,
-          casesNeeded:  Math.ceil((data.plannedQty ?? data.currentStock ?? 0) / (data.unitsPerCase ?? 1)),
+          name:         data.name || d.id,
+          casesNeeded:  Math.ceil((data.plannedQty ?? data.lastCount ?? 0) / (data.unitsPerCase ?? 1)),
           caseWidthMM:  data.caseWidthMM  ?? 300,
           caseLengthMM: data.caseLengthMM ?? 400,
           caseHeightMM: data.caseHeightMM ?? 280,

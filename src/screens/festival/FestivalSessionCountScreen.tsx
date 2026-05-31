@@ -11,7 +11,7 @@ export default function FestivalSessionCountScreen() {
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !barId) { nav.goBack(); return; }
-    nav.replace('StockTakeArea', {
+    nav.replace('AreaInventory', {
       departmentId: barId,
       areaId: 'back-of-house',
       isFestivalSession: true,

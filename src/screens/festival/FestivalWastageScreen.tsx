@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
-  collection, doc, getDocs, setDoc, updateDoc, onSnapshot, serverTimestamp,
+  collection, doc, getDocs, writeBatch, increment, onSnapshot, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -45,8 +45,11 @@ export default function FestivalWastageScreen() {
   // Load products for this bar
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) { setLoading(false); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars', barId, 'stock')).then(snap => {
-      setProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    getDocs(collection(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items')).then(snap => {
+      setProducts(snap.docs.map(d => {
+        const data = d.data() as any;
+        return { id: d.id, ...data, productName: data.name || d.id, currentStock: data.lastCount ?? 0 };
+      }));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [venueId, barId]);
@@ -55,14 +58,14 @@ export default function FestivalWastageScreen() {
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !barId) return;
     const unsub = onSnapshot(
-      collection(db, 'venues', venueId, 'sessions', 'wastage', barId),
+      query(collection(db, 'venues', venueId, 'wastage'), where('barId', '==', barId)),
       snap => {
         const today = new Date();
         const rows = snap.docs
           .map(d => ({ id: d.id, ...(d.data() as any) }))
           .filter(w => {
-            if (!w.recordedAt?.toDate) return false;
-            const d = w.recordedAt.toDate();
+            if (!w.createdAt?.toDate) return false;
+            const d = w.createdAt.toDate();
             return d.getFullYear() === today.getFullYear()
               && d.getMonth() === today.getMonth()
               && d.getDate() === today.getDate();
@@ -110,35 +113,43 @@ export default function FestivalWastageScreen() {
 
     setSaving(true);
     try {
-      const uid  = auth.currentUser?.uid ?? 'unknown';
-      const wastageId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const uid         = auth.currentUser?.uid ?? 'unknown';
+      const displayName = auth.currentUser?.displayName ?? null;
+      const wastageId   = `w_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // Write wastage record under sessions/wastage/{barId}/{wastageId}
-      await setDoc(doc(db, 'venues', venueId, 'sessions', 'wastage', barId, wastageId), {
-        barId,
-        productId:   selectedProd.id,
-        productName: selectedProd.productName || selectedProd.id,
-        quantity:    q,
-        reason,
-        note: note.trim() || null,
-        recordedBy:  uid,
-        recordedAt:  serverTimestamp(),
-      });
+      const batch = writeBatch(db);
 
-      // Decrement bar stock (best effort)
-      try {
-        const currentStock = selectedProd.currentStock ?? 0;
-        await updateDoc(doc(db, 'venues', venueId, 'bars', barId, 'stock', selectedProd.id), {
-          currentStock: Math.max(0, currentStock - q),
-          updatedAt: serverTimestamp(),
-        });
-        // Update local products list for next save
-        setProducts(prev => prev.map(p =>
-          p.id === selectedProd.id
-            ? { ...p, currentStock: Math.max(0, (p.currentStock ?? 0) - q) }
-            : p
-        ));
-      } catch (_) {}
+      // Decrement bar stock
+      batch.update(
+        doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', selectedProd.id),
+        { lastCount: increment(-q), updatedAt: serverTimestamp() },
+      );
+
+      // Tracked wastage record
+      batch.set(
+        doc(db, 'venues', venueId, 'wastage', wastageId),
+        {
+          barId,
+          barName:      barName || null,
+          itemId:       selectedProd.id,
+          productName:  selectedProd.productName || selectedProd.id,
+          quantity:     q,
+          reason,
+          note:         note.trim() || null,
+          wastedBy:     uid,
+          wastedByName: displayName,
+          createdAt:    serverTimestamp(),
+        },
+      );
+
+      await batch.commit();
+
+      // Optimistic local update so chip shows reduced stock without re-read
+      setProducts(prev => prev.map(p =>
+        p.id === selectedProd.id
+          ? { ...p, currentStock: Math.max(0, (p.currentStock ?? 0) - q) }
+          : p
+      ));
 
       setSelectedProd(null);
       setQty('');

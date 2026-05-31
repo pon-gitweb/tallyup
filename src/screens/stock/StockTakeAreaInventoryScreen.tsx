@@ -32,6 +32,7 @@ import { useDensity } from '../../hooks/useDensity';
 import generateLatestCountsSnapshot from '../../services/reports/generateLatestCountsSnapshot';
 import { writeDepartmentSnapshot } from '../../services/reports/snapshotWriter';
 import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
+import { startNewDepartmentCycle } from '../../services/cycles';
 import * as Haptics from 'expo-haptics';
 import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
@@ -81,7 +82,7 @@ type AreaDoc = {
 };
 type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
-type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; };
+type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; isFestivalSession?: boolean; sessionLabel?: string; barName?: string; };
 
 const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 const DELTA_ABS_THRESHOLD = 5;
@@ -411,7 +412,7 @@ function StockTakeAreaInventoryScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueIdFromCtx = useVenueId();
-  const { departmentId, areaId, areaName, venueId: venueIdFromRoute } = (route.params ?? {}) as RouteParams;
+  const { departmentId, areaId, areaName, venueId: venueIdFromRoute, isFestivalSession } = (route.params ?? {}) as RouteParams;
   const venueId = venueIdFromCtx || venueIdFromRoute;
 
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
@@ -1871,6 +1872,9 @@ try {
           }
         );
         const finalized = await maybeFinalizeDepartment();
+        if (isFestivalSession && finalized) {
+          await startNewDepartmentCycle(venueId!, departmentId);
+        }
         if (!finalized) nav.goBack();
       } catch (e: any) {
         Alert.alert('Could not complete area', e?.message ?? String(e));
