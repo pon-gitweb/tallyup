@@ -53,6 +53,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
 
     try {
       // Look up product by barcode in venue products
+      // All writers set `barcode`; single-field query is safe — barcodeNumber fallback intentionally omitted here.
       const productsRef = collection(db, 'venues', venueId!, 'products');
       const snap = await getDocs(query(productsRef, where('barcode', '==', data)));
 
@@ -71,6 +72,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
         onClose();
       } else {
         // Not in venue — check global catalogue for pre-fill
+        // All writers set `barcode`; single-field query is safe — barcodeNumber fallback intentionally omitted here.
         const globalSnap = await getDocs(query(collection(db, 'global_products'), where('barcode', '==', data)));
         setLoading(false);
 

@@ -186,6 +186,7 @@ export async function findMatchingProduct(
     const db = getFirestore();
 
     // Fast-path: exact barcode lookup via query
+    // All writers set `barcode`; single-field query is safe — barcodeNumber fallback intentionally omitted here.
     if (candidate.barcode?.trim()) {
       const snap = await getDocs(
         query(
