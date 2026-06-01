@@ -1,9 +1,10 @@
 // @ts-nocheck
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, ScrollView, StyleSheet,
   Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { doc, setDoc, getDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -131,6 +132,7 @@ function LockedBox({ text }: { text: string }) {
 
 export default function FestivalEventSetupScreen() {
   const venueId = useVenueId();
+  const navigation = useNavigation<any>();
 
   // ── Section 1 state ──────────────────────────────────────────────────────
   const [eventName,      setEventName]      = useState('');
@@ -160,9 +162,10 @@ export default function FestivalEventSetupScreen() {
   // ── Section 1 extra state (FIX 2) ───────────────────────────────────────
   const [cycleOverride, setCycleOverride] = useState<string>('');
 
-  // ── Section 5 state ──────────────────────────────────────────────────────
+  // ── Section 3 state (suppliers) ──────────────────────────────────────────
   const [venueSuppliers,  setVenueSuppliers]  = useState<any[]>([]);
   const [supplierCfg,     setSupplierCfg]     = useState<Record<string, any>>({});
+  const [products,        setProducts]        = useState<any[]>([]);
 
   // ── Section 6 state ──────────────────────────────────────────────────────
   const [isNewEvent,      setIsNewEvent]      = useState(true);
@@ -264,12 +267,24 @@ export default function FestivalEventSetupScreen() {
   }, [venueId]);
 
   // ── Load venue suppliers ──────────────────────────────────────────────────
-  useEffect(() => {
+  function loadSuppliers() {
     if (!venueId) return;
     getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
       setVenueSuppliers(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
     }).catch(() => {});
-  }, [venueId]);
+  }
+  useEffect(() => { loadSuppliers(); }, [venueId]);
+  useFocusEffect(useCallback(() => { loadSuppliers(); }, [venueId]));
+
+  // ── Load venue products ───────────────────────────────────────────────────
+  function loadProducts() {
+    if (!venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    }).catch(() => {});
+  }
+  useEffect(() => { loadProducts(); }, [venueId]);
+  useFocusEffect(useCallback(() => { loadProducts(); }, [venueId]));
 
   // ── Date helpers ─────────────────────────────────────────────────────────
   function parseDuration(start: string, end: string): number {
@@ -553,8 +568,8 @@ export default function FestivalEventSetupScreen() {
             ['Event basics',      progress.basics],
             ['Bar configuration', progress.bars],
             ['Source locations',  progress.sourceLocations],
-            ['Product planning',  progress.productPlanning],
             ['Supplier setup',    progress.suppliers],
+            ['Product planning',  progress.productPlanning],
             ['Historical data',   progress.historicalData],
           ].map(([label, done]) => (
             <View key={label as string} style={S.progressRow}>
@@ -761,52 +776,18 @@ export default function FestivalEventSetupScreen() {
           )}
         </View>
 
-        {/* ── SECTION 4: Product planning ── */}
+        {/* ── SECTION 4: Supplier setup ── */}
         <View style={S.section}>
-          <SectionHeader n="4" title="Product planning" complete={progress.productPlanning} />
-
-          <Text style={S.label}>Categories selling at this event</Text>
-          <View style={S.chipRow}>
-            {CATEGORIES.map(cat => (
-              <Chip
-                key={cat.id}
-                label={cat.label}
-                selected={categories.includes(cat.id)}
-                onPress={() => setCategories(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])}
-              />
-            ))}
-          </View>
-
-          <Text style={S.label}>Price positioning</Text>
-          {PRICE_POSITIONS.map(pp => (
-            <RadioCard key={pp.id} label={pp.label} sub={pp.sub} selected={pricePosition === pp.id} onPress={() => setPricePosition(pp.id)} />
-          ))}
-
-          <View style={S.toggleRow}>
-            <Text style={S.label}>Any zone exclusivity?</Text>
-            <Switch value={hasExclusivity} onValueChange={setHasExclusivity} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
-          </View>
-          {hasExclusivity && (
-            <>
-              <Text style={S.helper}>e.g. Beer Garden — Lion brands only</Text>
-              <TextInput
-                value={exclusivityNote}
-                onChangeText={setExclusivityNote}
-                placeholder="Describe any exclusivity requirements"
-                placeholderTextColor="#9ca3af"
-                style={[S.input, { minHeight: 64 }]}
-                multiline
-              />
-            </>
-          )}
-
-          <SaveButton label="Save product planning →" savingKey="products" saving={saving} onPress={saveProductPlanning} />
-        </View>
-
-        {/* ── SECTION 5: Supplier setup ── */}
-        <View style={S.section}>
-          <SectionHeader n="5" title="Supplier setup" complete={progress.suppliers} />
+          <SectionHeader n="4" title="Supplier setup" complete={progress.suppliers} />
           <Text style={S.sectionIntro}>Which suppliers are delivering to this event?</Text>
+
+          <Text style={S.helper}>{venueSuppliers.length} supplier{venueSuppliers.length !== 1 ? 's' : ''} configured</Text>
+          <TouchableOpacity style={S.navBtn} onPress={() => navigation.navigate('Suppliers')}>
+            <Text style={S.navBtnText}>View / manage suppliers →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.navBtn} onPress={() => navigation.navigate('Orders')}>
+            <Text style={S.navBtnText}>Scan a supplier invoice →</Text>
+          </TouchableOpacity>
 
           {venueSuppliers.length === 0 ? (
             <View style={S.infoBox}>
@@ -874,6 +855,56 @@ export default function FestivalEventSetupScreen() {
           )}
 
           <SaveButton label="Save supplier config →" savingKey="suppliers" saving={saving} onPress={saveSuppliers} />
+        </View>
+
+        {/* ── SECTION 5: Product planning ── */}
+        <View style={S.section}>
+          <SectionHeader n="5" title="Product planning" complete={progress.productPlanning} />
+
+          <Text style={S.helper}>{products.length} product{products.length !== 1 ? 's' : ''} in catalogue</Text>
+          <TouchableOpacity style={S.navBtn} onPress={() => navigation.navigate('Products')}>
+            <Text style={S.navBtnText}>View / manage products →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.navBtn} onPress={() => navigation.navigate('Products')}>
+            <Text style={S.navBtnText}>Scan a barcode →</Text>
+          </TouchableOpacity>
+
+          <Text style={S.label}>Categories selling at this event</Text>
+          <View style={S.chipRow}>
+            {CATEGORIES.map(cat => (
+              <Chip
+                key={cat.id}
+                label={cat.label}
+                selected={categories.includes(cat.id)}
+                onPress={() => setCategories(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])}
+              />
+            ))}
+          </View>
+
+          <Text style={S.label}>Price positioning</Text>
+          {PRICE_POSITIONS.map(pp => (
+            <RadioCard key={pp.id} label={pp.label} sub={pp.sub} selected={pricePosition === pp.id} onPress={() => setPricePosition(pp.id)} />
+          ))}
+
+          <View style={S.toggleRow}>
+            <Text style={S.label}>Any zone exclusivity?</Text>
+            <Switch value={hasExclusivity} onValueChange={setHasExclusivity} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
+          </View>
+          {hasExclusivity && (
+            <>
+              <Text style={S.helper}>e.g. Beer Garden — Lion brands only</Text>
+              <TextInput
+                value={exclusivityNote}
+                onChangeText={setExclusivityNote}
+                placeholder="Describe any exclusivity requirements"
+                placeholderTextColor="#9ca3af"
+                style={[S.input, { minHeight: 64 }]}
+                multiline
+              />
+            </>
+          )}
+
+          <SaveButton label="Save product planning →" savingKey="products" saving={saving} onPress={saveProductPlanning} />
         </View>
 
         {/* ── SECTION 6: Historical data ── */}
@@ -1032,6 +1063,9 @@ const S = StyleSheet.create({
   stepperBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
   stepperBtnText:{ fontSize: 20, fontWeight: '700', color: '#374151' },
   stepperVal:    { fontSize: 20, fontWeight: '800', color: '#0B132B', minWidth: 52, textAlign: 'center' },
+
+  navBtn:        { backgroundColor: '#e8f0fe', borderRadius: 10, padding: 12, marginTop: 8, alignItems: 'center' },
+  navBtnText:    { color: '#1b4f72', fontWeight: '700', fontSize: 14 },
 
   // Toast
   toast:     { position: 'absolute', bottom: 32, left: 24, right: 24, backgroundColor: 'rgba(27,79,114,0.95)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
