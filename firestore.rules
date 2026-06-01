@@ -1088,6 +1088,15 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['owner']);
       }
 
+      match /priceDisputes/{disputeId} {
+        allow read: if isVenueMember(venueId);
+        allow create: if hasVenueRole(venueId, ['owner', 'manager'])
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.status == 'open';
+        allow update: if hasVenueRole(venueId, ['owner', 'manager']);
+        allow delete: if hasVenueRole(venueId, ['owner']);
+      }
+
       // Festival Phase 4 — intelligence layer
       match /predictions/{predId} {
         allow read, write: if hasVenueRole(venueId, ['owner', 'manager']);

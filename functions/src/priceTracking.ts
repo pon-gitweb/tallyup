@@ -30,7 +30,18 @@ function namesMatch(a: string, b: string): boolean {
   return shorter.length >= 5 && longer.includes(shorter);
 }
 
-export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ changed: number; created: number; productMap: Record<string, string> }> {
+export interface ChangedLineDetail {
+  productId: string;
+  productName: string;
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  direction: "increase" | "decrease";
+  qty: number;
+  caseSize: number | null;
+}
+
+export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ changed: number; created: number; productMap: Record<string, string>; changedLines: ChangedLineDetail[] }> {
   const {
     venueId,
     lines,
@@ -47,7 +58,7 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     (l.unitPrice as number) > 0 &&
     (l.unitPrice as number) < 10000
   );
-  if (!priced.length) return { changed: 0, created: 0, productMap: {} };
+  if (!priced.length) return { changed: 0, created: 0, productMap: {}, changedLines: [] };
 
   const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
   const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -57,6 +68,7 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
   let changed = 0;
   let created = 0;
   const productMap: Record<string, string> = {};
+  const changedLines: ChangedLineDetail[] = [];
 
   for (const line of priced) {
     if (ops >= 400) break;
@@ -79,6 +91,16 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
         if (pctDiff > 0.01) {
           // Price changed — write history + update costPrice
           const changePercent = Math.round(((unitPrice - existing) / existing) * 10000) / 100;
+          changedLines.push({
+            productId: matched.id,
+            productName: matched.name || line.name,
+            oldPrice: existing,
+            newPrice: unitPrice,
+            changePercent,
+            direction: unitPrice > existing ? "increase" : "decrease",
+            qty: line.qty,
+            caseSize: cs,
+          });
           const histRef = productRef.collection("priceHistory").doc();
           batch.set(histRef, {
             date: admin.firestore.FieldValue.serverTimestamp(),
@@ -187,6 +209,9 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
             caseCost: cs ? unitPrice : null,
             isPreferred: !hasPreferred,
             relationship: "alternative",
+            agreedPrice: unitCost,
+            agreedPriceSetAt: admin.firestore.FieldValue.serverTimestamp(),
+            agreedPriceSource: "invoice",
             lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
             lastInvoicePrice: unitPrice,
             addedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -212,5 +237,5 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     }
   }
 
-  return { changed, created, productMap };
+  return { changed, created, productMap, changedLines };
 }

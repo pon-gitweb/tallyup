@@ -463,6 +463,8 @@ export const ocrInvoicePhoto = functions
       historicalExplanation: null as string | null,
       matchedOrderId: null as string | null,
       matchedOrderNumber: null as string | null,
+      priceChanges: [] as any[],
+      hasPriceChanges: false,
     };
 
     // PO → Order matching (non-blocking on error)
@@ -608,6 +610,20 @@ export const ocrInvoicePhoto = functions
         invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
         invoiceDocId,
       });
+      // Build price change summary for client
+      const priceChangeSummary = (priceResult.changedLines || []).map((c) => ({
+        name: c.productName,
+        productId: c.productId,
+        oldPrice: c.oldPrice,
+        newPrice: c.newPrice,
+        changePercent: c.changePercent,
+        direction: c.direction,
+        qty: c.qty,
+        caseSize: c.caseSize,
+      }));
+      payload.priceChanges = priceChangeSummary;
+      payload.hasPriceChanges = priceChangeSummary.length > 0;
+
       // Link matched productIds back into the saved invoice line items
       if (invoiceDocId && Object.keys(priceResult.productMap).length > 0) {
         try {
@@ -648,5 +664,7 @@ export const ocrInvoicePhoto = functions
       linesCount: lines.length,
     });
 
+    payload.supplierId = resolvedSupplierId || null;
+    payload.invoiceDocId = invoiceDocId || null;
     return payload;
   });

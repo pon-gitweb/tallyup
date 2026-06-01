@@ -111,6 +111,10 @@ export async function runPhotoOcrJob({ venueId, localUri }: RunArgs) {
     deliveryDate: out?.deliveryDate || undefined,
     lines: normalizedLines,
     raw: out,
+    priceChanges: Array.isArray(out?.priceChanges) ? out.priceChanges : [],
+    hasPriceChanges: out?.hasPriceChanges === true,
+    supplierId: out?.supplierId || null,
+    invoiceDocId: out?.invoiceDocId || null,
   };
 
   console.log('[PhotoOCR] normalized payload ready', {

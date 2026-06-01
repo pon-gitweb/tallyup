@@ -2,7 +2,8 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { useVenueId } from '../../context/VenueProvider';
+import { useNavigation } from '@react-navigation/native';
+import { useVenueId, useVenueType } from '../../context/VenueProvider';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 
 type Props = {
@@ -18,6 +19,8 @@ type Props = {
 
 export default function PhotoOCRPanel({ onParsed }: Props) {
   const venueId = useVenueId();
+  const venueType = useVenueType();
+  const navigation = useNavigation<any>();
   const [busy, setBusy] = useState(false);
 
   async function takePhoto() {
@@ -78,6 +81,19 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
       }
 
       onParsed(parsed);
+
+      // Navigate to InvoiceSummaryScreen when price changes were detected
+      if (parsed?.hasPriceChanges) {
+        navigation.navigate('InvoiceSummary', {
+          supplierName: parsed.supplierName || null,
+          invoiceNumber: parsed.invoiceNumber || null,
+          productCount: parsed.lines?.length || 0,
+          priceChanges: parsed.priceChanges || [],
+          supplierId: parsed.supplierId || null,
+          invoiceDocId: parsed.invoiceDocId || null,
+          venueType,
+        });
+      }
     } catch (e: any) {
       setBusy(false);
       console.log('[PhotoOCRPanel] error during scan', e);

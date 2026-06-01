@@ -2258,6 +2258,25 @@ async function handleFestivalSuitee(
     }
   } catch {}
 
+  // Open price disputes
+  try {
+    const disputesSnap = await db.collection(`venues/${venueId}/priceDisputes`)
+      .where("status", "==", "open")
+      .limit(20)
+      .get();
+    if (!disputesSnap.empty) {
+      const openDisputes = disputesSnap.docs.map(d => d.data() as any);
+      const totalOvercharge = openDisputes.reduce((sum, d) => sum + (d.estimatedOvercharge || 0), 0);
+      lines.push("", `OPEN PRICE DISPUTES (${openDisputes.length}):`);
+      lines.push(`  Total estimated overcharge: $${totalOvercharge.toFixed(2)}`);
+      openDisputes.forEach(d => {
+        lines.push(`  ${d.productName || "?"} (${d.supplierName || "?"}): agreed $${(d.agreedPrice || 0).toFixed(2)} → invoiced $${(d.invoicePrice || 0).toFixed(2)}, est. overcharge $${(d.estimatedOvercharge || 0).toFixed(2)}`);
+      });
+    } else {
+      lines.push("", "PRICE DISPUTES: None open ✓");
+    }
+  } catch {}
+
   const context = lines.join("\n");
 
   const systemPrompt = `You are Suitee, the festival event intelligence assistant for Hosti.
@@ -2973,8 +2992,25 @@ app.post("/extract-festival-contract", async (req, res) => {
       `    }\n` +
       `  ],\n` +
       `  "returnConditions": string,\n` +
-      `  "paymentTerms": string | null\n` +
-      `}\n\nContract text:\n${text}`;
+      `  "paymentTerms": string | null,\n` +
+      `  "pricingTerms": [\n` +
+      `    {\n` +
+      `      "productName": "product name as written in contract",\n` +
+      `      "agreedUnitPrice": number | null,\n` +
+      `      "agreedCasePrice": number | null,\n` +
+      `      "currency": "NZD",\n` +
+      `      "gstExclusive": true,\n` +
+      `      "validFrom": "YYYY-MM-DD or null",\n` +
+      `      "validTo": "YYYY-MM-DD or null",\n` +
+      `      "notes": "any pricing conditions or null"\n` +
+      `    }\n` +
+      `  ]\n` +
+      `}\n\n` +
+      `For pricingTerms: extract any fixed unit prices or case prices specified in this contract. ` +
+      `These are prices the supplier has agreed to charge. If a price range is given, extract the maximum (ceiling) price. ` +
+      `If prices are GST-inclusive set gstExclusive to false. ` +
+      `If no pricing terms are specified return an empty array.\n\n` +
+      `Contract text:\n${text}`;
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -3017,6 +3053,7 @@ app.post("/extract-festival-contract", async (req, res) => {
 
     const obligations: any[] = extracted.obligations || [];
     const rebates: any[] = extracted.rebates || [];
+    const pricingTerms: any[] = extracted.pricingTerms || [];
 
     // Update contract document (owner-only collection)
     await db.doc(`venues/${venueId}/contracts/${contractId}`).update({
@@ -3024,12 +3061,32 @@ app.post("/extract-festival-contract", async (req, res) => {
       contractPeriod:        extracted.contractPeriod || null,
       extractedObligations:  obligations,
       rebates,
+      pricingTerms,
       returnConditions:      extracted.returnConditions || null,
       paymentTerms:          extracted.paymentTerms || null,
       rawExtraction:         rawJson,
       status:                "extracted",
       updatedAt:             admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Write agreed prices to event/details.contractPricing keyed by supplierName (best-effort)
+    if (pricingTerms.length > 0 && extracted.supplierName) {
+      try {
+        const supplierKey = extracted.supplierName.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+        await db.doc(`venues/${venueId}/event/details`).set({
+          contractPricing: {
+            [supplierKey]: {
+              supplierName: extracted.supplierName,
+              contractId,
+              pricingTerms,
+              extractedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          },
+        }, { merge: true });
+      } catch (e: any) {
+        console.log("[extract-festival-contract] contractPricing write error", e?.message);
+      }
+    }
 
     // Write obligations to manager-visible collection (no financial details)
     const batch = db.batch();

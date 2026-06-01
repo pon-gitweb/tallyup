@@ -15,8 +15,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
-import { useVenueId } from '../context/VenueProvider';
+import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
+import { useVenueId, useVenueType } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 
@@ -69,6 +69,7 @@ export default function DashboardScreen() {
   const currentUid = auth.currentUser?.uid ?? null;
   const user = auth.currentUser;
   const venueId = useVenueId();
+  const venueType = useVenueType();
 
   // Live display name — read from users/{uid} so updates in Settings reflect immediately
   const [liveDisplayName, setLiveDisplayName] = React.useState<string>(
@@ -198,6 +199,21 @@ export default function DashboardScreen() {
       setSupplierCount(count);
     }).catch(() => {});
   }, [venueId]);
+
+  const [priceChangeCount, setPriceChangeCount] = React.useState(0);
+  const [openDisputeCount, setOpenDisputeCount] = React.useState(0);
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDocs(query(collection(db, 'venues', venueId, 'products'), where('priceChanged', '==', true)))
+      .then(snap => setPriceChangeCount(snap.size))
+      .catch(() => {});
+    if (venueType === 'festival') {
+      getDocs(query(collection(db, 'venues', venueId, 'priceDisputes'), where('status', '==', 'open')))
+        .then(snap => setOpenDisputeCount(snap.size))
+        .catch(() => {});
+    }
+  }, [venueId, venueType]);
 
   React.useEffect(() => {
     Promise.all(
@@ -508,6 +524,25 @@ export default function DashboardScreen() {
         )}
         {stocktakeCount === 1 && !nudgeDismissed.firstStocktakeDone && (
           <ContextNudge c={colours} message="First stocktake done! View your Stock Holding Report to see what you have on hand by category." cta="View report →" onCta={() => nav.navigate('StockHolding')} onDismiss={() => dismissNudge('firstStocktakeDone')} />
+        )}
+
+        {venueType === 'festival' && (priceChangeCount > 0 || openDisputeCount > 0) && (
+          <ContextNudge
+            c={colours}
+            message={`⚠️ ${priceChangeCount} invoice price${priceChangeCount !== 1 ? 's' : ''} differ from agreed rates${openDisputeCount > 0 ? ` · ${openDisputeCount} open dispute${openDisputeCount !== 1 ? 's' : ''}` : ''}`}
+            cta="Review discrepancies →"
+            onCta={() => nav.navigate('Reports')}
+            onDismiss={() => {}}
+          />
+        )}
+        {venueType !== 'festival' && priceChangeCount > 0 && (
+          <ContextNudge
+            c={colours}
+            message={`📊 ${priceChangeCount} product price change${priceChangeCount !== 1 ? 's' : ''} detected since last stocktake`}
+            cta="Review →"
+            onCta={() => nav.navigate('Reports')}
+            onDismiss={() => {}}
+          />
         )}
 
         <SetupGuideBanner onNavigate={(route, params) => nav.navigate(route as never, params as never)} />
