@@ -13,6 +13,7 @@ export interface PriceTrackingOptions {
   supplierId?: string;
   supplierName?: string;
   invoiceId?: string;
+  invoiceDocId?: string;
 }
 
 function normalizeName(s: string): string {
@@ -29,13 +30,14 @@ function namesMatch(a: string, b: string): boolean {
   return shorter.length >= 5 && longer.includes(shorter);
 }
 
-export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ changed: number; created: number }> {
+export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ changed: number; created: number; productMap: Record<string, string> }> {
   const {
     venueId,
     lines,
     supplierId = "",
     supplierName = "",
     invoiceId = `inv_${Date.now()}`,
+    invoiceDocId,
   } = opts;
   const db = admin.firestore();
 
@@ -45,7 +47,7 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     (l.unitPrice as number) > 0 &&
     (l.unitPrice as number) < 10000
   );
-  if (!priced.length) return { changed: 0, created: 0 };
+  if (!priced.length) return { changed: 0, created: 0, productMap: {} };
 
   const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
   const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -54,6 +56,7 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
   let ops = 0;
   let changed = 0;
   let created = 0;
+  const productMap: Record<string, string> = {};
 
   for (const line of priced) {
     if (ops >= 400) break;
@@ -67,6 +70,7 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
       : {};
 
     if (matched) {
+      productMap[line.name] = matched.id;
       const existing: number | null = typeof matched.costPrice === "number" ? matched.costPrice : null;
       const productRef = db.doc(`venues/${venueId}/products/${matched.id}`);
 
@@ -110,7 +114,19 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
           ops++;
         }
       } else {
-        // No existing costPrice — set it for the first time
+        // No existing costPrice — set it for the first time; write initial history entry
+        const initHistRef = productRef.collection("priceHistory").doc();
+        batch.set(initHistRef, {
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          oldPrice: null,
+          newPrice: unitPrice,
+          supplierId,
+          supplierName,
+          invoiceId,
+          changePercent: null,
+          direction: "initial",
+          note: "Initial price set from invoice",
+        });
         batch.update(productRef, {
           costPrice: unitPrice,
           costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -120,11 +136,12 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           ...caseSizeFields,
         });
-        ops++;
+        ops += 2;
       }
     } else {
       // No matching product — create a new one
       const newRef = db.collection(`venues/${venueId}/products`).doc();
+      productMap[line.name] = newRef.id;
       batch.set(newRef, {
         name: line.name,
         costPrice: unitPrice,
@@ -195,5 +212,5 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     }
   }
 
-  return { changed, created };
+  return { changed, created, productMap };
 }

@@ -14,20 +14,46 @@ type ParsedLine = {
   code?: string;
   total?: number;
   unit?: string;
+  caseSize?: number;
+  pricePerCase?: number;
+  source?: string;
 };
 
-// Regex fallback for line items when Claude fails
+// Regex fallback for line items when Claude fails.
+// Tries to distinguish unit price from line total by verifying unitPrice × qty ≈ lineTotal.
+// Returns unitPrice: undefined rather than guess when it cannot be verified.
 function extractLines(text: string): ParsedLine[] {
   const out: ParsedLine[] = [];
   const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   for (const raw of lines) {
     const qtyMatch = raw.match(/\b(\d{1,4})\s*(?:x|@)?\b/i);
-    const priceMatch = raw.match(/\$?\s*(\d{1,5}(?:\.\d{1,2})?)\s*$/);
     const qty = qtyMatch ? Number(qtyMatch[1]) : NaN;
-    const price = priceMatch ? Number(priceMatch[1]) : NaN;
-    if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(price) && price > 0) {
-      const name = raw.replace(/\$?\s*\d{1,5}(?:\.\d{1,2})?\s*$/, "").trim();
-      if (name.length >= 3) out.push({ name, qty, unitPrice: price });
+    if (Number.isNaN(qty) || qty <= 0) continue;
+
+    // Collect all price-like numbers on this line
+    const priceNums = Array.from(raw.matchAll(/\$?\s*(\d{1,5}(?:\.\d{1,2})?)/g))
+      .map(m => Number(m[1]))
+      .filter(n => !isNaN(n) && n > 0);
+    if (priceNums.length === 0) continue;
+
+    let unitPrice: number | undefined;
+    if (priceNums.length === 1) {
+      unitPrice = priceNums[0];
+    } else {
+      // Multiple numbers — find unit price where unitPrice × qty ≈ another number (line total)
+      for (const candidate of priceNums) {
+        const expectedTotal = candidate * qty;
+        const verified = priceNums.some(
+          n => n !== candidate && Math.abs(n - expectedTotal) / Math.max(expectedTotal, 0.01) < 0.05
+        );
+        if (verified) { unitPrice = candidate; break; }
+      }
+      // If unverifiable, omit price rather than guess the wrong figure
+    }
+
+    const name = raw.replace(/(\s*\$?\s*\d{1,5}(?:\.\d{1,2})?)+\s*$/, "").trim();
+    if (name.length >= 3) {
+      out.push({ name, qty, unitPrice, source: "regex-fallback" });
     }
     if (out.length >= 80) break;
   }
@@ -37,6 +63,14 @@ function extractLines(text: string): ParsedLine[] {
     }
   }
   return out;
+}
+
+// Strip currency symbols/commas and parse to a positive number, undefined if invalid
+function parsePrice(raw: any): number | undefined {
+  if (raw == null) return undefined;
+  const cleaned = String(raw).replace(/[$NZD\s,]/g, "").trim();
+  const parsed = Number(cleaned);
+  return isNaN(parsed) || parsed <= 0 ? undefined : parsed;
 }
 
 // ── Invoice age helpers ────────────────────────────────────────────────────
@@ -134,7 +168,7 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
       deliveryDate: "string or null — delivery date if different from invoice date",
       totalAmount: "number or null — total inc GST",
       gstAmount: "number or null",
-      lines: [{ name: "product name", code: "item code", qty: 1, unitPrice: 0, total: 0, unit: "ea" }],
+      lines: [{ name: "product name", code: "item code or null", qty: 1, unitPrice: 0, total: 0, unit: "ea or null", caseSize: null, pricePerCase: null }],
     }),
     "",
     "CRITICAL — supplierName rules:",
@@ -149,7 +183,9 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
     "- name: clean product name without extra whitespace",
     "- code: supplier item code/SKU if visible, null otherwise",
     "- qty: numeric quantity ordered — a plain integer or decimal, NEVER a dollar amount",
-    "- unitPrice: price per unit in NZD, null if not found",
+    "- unitPrice: price per SINGLE UNIT in NZD excluding GST. NZ hospitality invoices (Bidfood, Gilmours, Lion, DB, Hancocks) show ex-GST prices — use the ex-GST figure. If only an inc-GST price is visible, divide by 1.15. If the invoice shows a case price, divide by caseSize to get unit price (e.g. $42.00 for a 24-pack ÷ 24 = $1.75/unit). Return as a plain number only, no $ symbol. null if not found.",
+    "- caseSize: units per case if this is a case-priced line (e.g. 24 for a 24-pack), null if priced per unit",
+    "- pricePerCase: case price exactly as shown on the invoice (e.g. 42.00), null if priced per unit",
     "- total: line total in NZD, null if not found",
     "- unit: unit of measure (ea, kg, L, case) if shown",
     "",
@@ -192,14 +228,27 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
   const parsed = match ? JSON.parse(match[0]) : {};
 
   const lines: ParsedLine[] = Array.isArray(parsed.lines)
-    ? parsed.lines.filter((l: any) => l && l.name && Number(l.qty) > 0).map((l: any) => ({
-        name: String(l.name).trim(),
-        qty: Number(l.qty),
-        unitPrice: l.unitPrice != null ? Number(l.unitPrice) : undefined,
-        code: l.code ? String(l.code).trim() : undefined,
-        total: l.total != null ? Number(l.total) : undefined,
-        unit: l.unit ? String(l.unit).trim() : undefined,
-      }))
+    ? parsed.lines.filter((l: any) => l && l.name && Number(l.qty) > 0).map((l: any) => {
+        const rawCaseSize = l.caseSize != null && Number(l.caseSize) > 0 ? Number(l.caseSize) : undefined;
+        const rawPricePerCase = parsePrice(l.pricePerCase);
+        const directUnitPrice = parsePrice(l.unitPrice);
+        // Derive unit price from case price if direct unit price not provided
+        const rawUnitPrice = directUnitPrice !== undefined
+          ? directUnitPrice
+          : (rawPricePerCase != null && rawCaseSize != null)
+            ? rawPricePerCase / rawCaseSize
+            : undefined;
+        return {
+          name: String(l.name).trim(),
+          qty: Number(l.qty),
+          unitPrice: rawUnitPrice,
+          code: l.code ? String(l.code).trim() : undefined,
+          total: l.total != null ? Number(l.total) : undefined,
+          unit: l.unit ? String(l.unit).trim() : undefined,
+          caseSize: rawCaseSize,
+          pricePerCase: rawPricePerCase,
+        };
+      })
     : [];
 
   return {
@@ -477,6 +526,7 @@ export const ocrInvoicePhoto = functions
     }
 
     // Write invoice to venues/{venueId}/invoices with resolved supplierId
+    let invoiceDocId: string | undefined;
     try {
       let invoiceDateTimestamp: admin.firestore.Timestamp | null = null;
       if (payload.invoiceDate) {
@@ -496,8 +546,11 @@ export const ocrInvoicePhoto = functions
         ...(l.code ? { code: l.code } : {}),
         ...(l.total != null ? { lineTotal: l.total } : {}),
         ...(l.unit ? { unit: l.unit } : {}),
+        ...(l.caseSize ? { caseSize: l.caseSize } : {}),
+        ...(l.pricePerCase ? { pricePerCase: l.pricePerCase } : {}),
+        ...(l.source ? { source: l.source } : {}),
       }));
-      await db.collection(`venues/${venueId}/invoices`).add({
+      const invoiceRef = await db.collection(`venues/${venueId}/invoices`).add({
         supplierId: resolvedSupplierId || null,
         supplierName: resolvedSupplierName || payload.supplierName || null,
         invoiceNumber: payload.invoiceNumber,
@@ -513,9 +566,12 @@ export const ocrInvoicePhoto = functions
         source: "ocr-photo",
         ageCategory,
         matchedOrderId: payload.matchedOrderId || null,
+        pricesExGST: true,
+        gstRate: 0.15,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      invoiceDocId = invoiceRef.id;
     } catch (e: any) {
       console.warn("[ocrInvoicePhoto] invoice write error", e?.message);
     }
@@ -542,14 +598,36 @@ export const ocrInvoicePhoto = functions
       }).catch(() => {});
     }
 
-    // Track price changes (best-effort, uses resolved supplierId)
-    trackPriceChanges({
-      venueId,
-      lines,
-      supplierId: resolvedSupplierId,
-      supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
-      invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
-    }).catch((e: any) => console.log("[ocrInvoicePhoto] price tracking error", e?.message));
+    // Track price changes — awaited to guarantee costPrice is written before function returns
+    try {
+      const priceResult = await trackPriceChanges({
+        venueId,
+        lines,
+        supplierId: resolvedSupplierId,
+        supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
+        invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
+        invoiceDocId,
+      });
+      // Link matched productIds back into the saved invoice line items
+      if (invoiceDocId && Object.keys(priceResult.productMap).length > 0) {
+        try {
+          const invRef = db.doc(`venues/${venueId}/invoices/${invoiceDocId}`);
+          const invSnap = await invRef.get();
+          if (invSnap.exists) {
+            const updatedLines = ((invSnap.data() as any).lines || []).map((il: any) => {
+              const pid = priceResult.productMap[il.name] || priceResult.productMap[il.productName];
+              return pid ? { ...il, productId: pid } : il;
+            });
+            await invRef.update({ lines: updatedLines });
+          }
+        } catch (e: any) {
+          console.log("[ocrInvoicePhoto] invoice product link error", e?.message);
+        }
+      }
+    } catch (e: any) {
+      console.error("[ocrInvoicePhoto] price tracking failed:", e?.message);
+      // Non-fatal — invoice was saved correctly but product costPrice may not have updated
+    }
 
     // Create venue products for unpriced lines (awaited, non-fatal)
     const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));

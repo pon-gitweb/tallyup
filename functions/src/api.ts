@@ -878,6 +878,9 @@ app.post("/extract-inventory", async (req, res) => {
 // ── extractInvoiceComplete ─────────────────────────────────────────────────────
 // Single comprehensive Claude call that extracts supplier, customer, metadata
 // and product lines from invoice text in one pass.
+// NOTE: This function has no HTTP endpoint caller — it is dead code.
+// Safe to delete in a future cleanup pass. The active extraction path is
+// extractInvoiceWithClaude() in ocrInvoicePhoto.ts (the onCall callable).
 
 type CompleteInvoiceExtraction = {
   supplier: {
