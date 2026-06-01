@@ -4,7 +4,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -25,6 +25,8 @@ export default function FestivalDashboardScreen() {
   const uid = auth.currentUser?.uid;
   const [event, setEvent] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [productCount, setProductCount] = useState(0);
+  const [hasOrders, setHasOrders] = useState(false);
   // Only show loading spinner when beta mode is active
   const [loading, setLoading] = useState(FESTIVAL_BETA);
 
@@ -46,6 +48,17 @@ export default function FestivalDashboardScreen() {
     );
     return () => unsub();
   }, [venueId, uid]);
+
+  // Load product count + orders existence for prediction tile
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'products'))
+      .then(snap => setProductCount(snap.size))
+      .catch(() => {});
+    getDocs(query(collection(db, 'venues', venueId, 'orders'), limit(1)))
+      .then(snap => setHasOrders(!snap.empty))
+      .catch(() => {});
+  }, [venueId]);
 
   // ── Coming-soon gate ────────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -132,6 +145,17 @@ export default function FestivalDashboardScreen() {
           ))}
         </View>
 
+        {doneCount >= 4 && !hasOrders && (
+          <TouchableOpacity
+            style={S.generateOrderCTA}
+            onPress={() => nav.navigate('FestivalPurchasingPrediction')}
+          >
+            <Text style={S.generateOrderCTAText}>
+              ✓ Setup ready — generate your suggested order →
+            </Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
           <Text style={S.ctaText}>
             {allDone ? 'View event setup' : 'Continue setup →'}
@@ -199,30 +223,42 @@ export default function FestivalDashboardScreen() {
             </View>
             <Text style={S.tilesHeading}>ORDERS & RECEIVING</Text>
             <View style={S.tilesRow}>
+              <TouchableOpacity
+                style={[S.tile, doneCount >= 4 && !hasOrders && S.tilePredictionHighlight]}
+                onPress={() => nav.navigate('FestivalPurchasingPrediction')}
+              >
+                <Text style={S.tileEmoji}>📋</Text>
+                <Text style={S.tileLabel}>Suggested order</Text>
+                {productCount > 0 && (
+                  <Text style={S.tileSub}>{productCount} products</Text>
+                )}
+              </TouchableOpacity>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Orders')}>
                 <Text style={S.tileEmoji}>🛒</Text>
                 <Text style={S.tileLabel}>Orders</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalGoodsIn')}>
                 <Text style={S.tileEmoji}>🚚</Text>
                 <Text style={S.tileLabel}>Goods in</Text>
               </TouchableOpacity>
-            </View>
-            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalStockOverview')}>
                 <Text style={S.tileEmoji}>🗺</Text>
                 <Text style={S.tileLabel}>Stock overview</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalSalesUpload')}>
                 <Text style={S.tileEmoji}>📊</Text>
                 <Text style={S.tileLabel}>Upload sales data</Text>
               </TouchableOpacity>
-            </View>
-            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('CraftUp')}>
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOpeningStock')}>
                 <Text style={S.tileEmoji}>📦</Text>
                 <Text style={S.tileLabel}>Opening stock</Text>
@@ -296,30 +332,42 @@ export default function FestivalDashboardScreen() {
             </View>
             <Text style={S.tilesHeading}>ORDERS & RECEIVING</Text>
             <View style={S.tilesRow}>
+              <TouchableOpacity
+                style={[S.tile, doneCount >= 4 && !hasOrders && S.tilePredictionHighlight]}
+                onPress={() => nav.navigate('FestivalPurchasingPrediction')}
+              >
+                <Text style={S.tileEmoji}>📋</Text>
+                <Text style={S.tileLabel}>Suggested order</Text>
+                {productCount > 0 && (
+                  <Text style={S.tileSub}>{productCount} products</Text>
+                )}
+              </TouchableOpacity>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('Orders')}>
                 <Text style={S.tileEmoji}>🛒</Text>
                 <Text style={S.tileLabel}>Orders</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalGoodsIn')}>
                 <Text style={S.tileEmoji}>🚚</Text>
                 <Text style={S.tileLabel}>Goods in</Text>
               </TouchableOpacity>
-            </View>
-            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalStockOverview')}>
                 <Text style={S.tileEmoji}>🗺</Text>
                 <Text style={S.tileLabel}>Stock overview</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalSalesUpload')}>
                 <Text style={S.tileEmoji}>📊</Text>
                 <Text style={S.tileLabel}>Upload sales data</Text>
               </TouchableOpacity>
-            </View>
-            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('CraftUp')}>
                 <Text style={S.tileEmoji}>🍹</Text>
                 <Text style={S.tileLabel}>Recipes</Text>
               </TouchableOpacity>
+            </View>
+            <View style={S.tilesRow}>
               <TouchableOpacity style={S.tile} onPress={() => nav.navigate('FestivalOpeningStock')}>
                 <Text style={S.tileEmoji}>📦</Text>
                 <Text style={S.tileLabel}>Opening stock</Text>
@@ -481,4 +529,9 @@ const S = StyleSheet.create({
 
   settingsLink: { marginTop: 20, paddingVertical: 8, paddingHorizontal: 20 },
   settingsLinkText: { fontSize: 14, color: '#6b7280', textDecorationLine: 'underline' },
+
+  generateOrderCTA: { backgroundColor: '#dbeafe', borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1.5, borderColor: '#1b4f72' },
+  generateOrderCTAText: { color: '#1b4f72', fontWeight: '700', fontSize: 14, textAlign: 'center' },
+  tilePredictionHighlight: { borderColor: '#f59e0b', borderWidth: 2 },
+  tileSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'center' },
 });

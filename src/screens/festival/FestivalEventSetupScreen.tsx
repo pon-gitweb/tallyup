@@ -168,6 +168,9 @@ export default function FestivalEventSetupScreen() {
   const [supplierCfg,     setSupplierCfg]     = useState<Record<string, any>>({});
   const [products,        setProducts]        = useState<any[]>([]);
 
+  // ── Contracts count (for Section 6 card) ─────────────────────────────────
+  const [contractCount,   setContractCount]   = useState(0);
+
   // ── Section 6 state ──────────────────────────────────────────────────────
   const [isNewEvent,      setIsNewEvent]      = useState(true);
   const [priorAttendance, setPriorAttendance] = useState('');
@@ -288,6 +291,16 @@ export default function FestivalEventSetupScreen() {
   useEffect(() => { loadProducts(); }, [venueId]);
   useFocusEffect(useCallback(() => { loadProducts(); }, [venueId]));
 
+  // ── Load contract count for Section 6 ────────────────────────────────────
+  function loadContracts() {
+    if (!venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'contracts')).then(snap => {
+      setContractCount(snap.size);
+    }).catch(() => {});
+  }
+  useEffect(() => { loadContracts(); }, [venueId]);
+  useFocusEffect(useCallback(() => { loadContracts(); }, [venueId]));
+
   // ── Date helpers ─────────────────────────────────────────────────────────
   function parseDuration(start: string, end: string): number {
     try {
@@ -312,6 +325,26 @@ export default function FestivalEventSetupScreen() {
     if (!venueId) return;
     if (!eventName.trim()) { Alert.alert('Required', 'Event name is required.'); return; }
     if (!startDate || !endDate) { Alert.alert('Required', 'Start and end dates are required.'); return; }
+
+    // Validate DD/MM/YYYY format and produce real Date objects
+    const parseEventDate = (s: string): Date | null => {
+      const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (!m) return null;
+      const d = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+      return isNaN(d.getTime()) ? null : d;
+    };
+    const startParsed = parseEventDate(startDate);
+    const endParsed   = parseEventDate(endDate);
+    if (!startParsed || !endParsed) {
+      Alert.alert('Invalid dates', 'Please enter dates as DD/MM/YYYY\nExample: 13/04/2027');
+      return;
+    }
+    if (endParsed < startParsed) {
+      Alert.alert('Invalid dates', 'End date must be on or after start date.');
+      return;
+    }
+    const eventDurationDays = Math.ceil((endParsed.getTime() - startParsed.getTime()) / 86400000) + 1;
+
     setSaving('basics');
     try {
       const nb = parseInt(numBars) || 1;
@@ -322,6 +355,7 @@ export default function FestivalEventSetupScreen() {
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), {
         eventName: eventName.trim(), eventType, startDate, endDate,
         dailyAttendance: parseInt(dailyAttend) || null,
+        eventDurationDays,
         numBars: nb, stockModel,
         cycleLength: finalCycle,
         cycleOverride: cycleOverride || null,
@@ -955,6 +989,26 @@ export default function FestivalEventSetupScreen() {
               </View>
             </>
           )}
+
+          {/* Contracts — navigate to contract upload to enable obligation checks */}
+          <View style={[S.infoBox, { marginTop: 16, borderColor: '#bfdbfe', backgroundColor: '#eff6ff' }]}>
+            <Text style={[S.infoText, { color: '#1e40af', fontWeight: '700', marginBottom: 4 }]}>
+              Supplier contracts
+            </Text>
+            <Text style={[S.infoText, { color: '#374151' }]}>
+              {contractCount > 0
+                ? `${contractCount} contract${contractCount !== 1 ? 's' : ''} uploaded. We use these to track minimum volume obligations in your suggested order.`
+                : 'Upload supplier contracts and we\'ll automatically track minimum volume commitments and factor them into your suggested order.'}
+            </Text>
+            <TouchableOpacity
+              style={S.navBtn}
+              onPress={() => navigation.navigate('FestivalContracts')}
+            >
+              <Text style={S.navBtnText}>
+                {contractCount > 0 ? `View contracts (${contractCount}) →` : 'Upload a contract →'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <SaveButton label="Save →" savingKey="historical" saving={saving} onPress={saveHistorical} />
         </View>

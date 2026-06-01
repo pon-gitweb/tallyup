@@ -105,6 +105,8 @@ export default function EditProductScreen() {
     supplierNameSuggested: seed?.supplierNameSuggested ?? null,
     supplierGlobalId: seed?.supplierGlobalId ?? null,
     categorySuggested: seed?.categorySuggested ?? null,
+    // category is the authoritative field used by prediction; defaults to suggestion
+    category: seed?.category ?? seed?.categorySuggested ?? null,
 
     // activity
     active: typeof seed?.active === 'boolean' ? seed.active : true,
@@ -286,6 +288,8 @@ export default function EditProductScreen() {
       supplierNameSuggested: form.supplierNameSuggested || null,
       supplierGlobalId: form.supplierGlobalId || null,
       categorySuggested: form.categorySuggested || null,
+      // authoritative category field — used by purchasing prediction
+      category: form.category || form.categorySuggested || null,
 
       active: !!form.active,
       updatedAt: (serverTimestamp ? serverTimestamp() : new Date()),
@@ -509,6 +513,37 @@ export default function EditProductScreen() {
               </Text>
             </TouchableOpacity>
           </Field>
+        </View>
+
+        {/* ---- Category picker (authoritative field used by purchasing prediction) ---- */}
+        <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
+          <Text style={[styles.cardTitle, { color: colours.text }]}>Category</Text>
+          <Text style={[styles.hintDim, { color: colours.textSecondary, marginBottom: 8 }]}>
+            Used for purchasing predictions. Correct this if auto-detection is wrong.
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {['beer', 'wine', 'spirits', 'rtd', 'na'].map(cat => (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => setForm((p: any) => ({ ...p, category: cat }))}
+                style={{
+                  paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                  backgroundColor: (form.category || form.categorySuggested) === cat
+                    ? '#1b4f72' : colours.surface,
+                  borderWidth: 1,
+                  borderColor: (form.category || form.categorySuggested) === cat
+                    ? '#1b4f72' : colours.border,
+                }}
+              >
+                <Text style={{
+                  fontSize: 13, fontWeight: '700',
+                  color: (form.category || form.categorySuggested) === cat ? '#fff' : colours.textSecondary,
+                }}>
+                  {cat}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* ---- Supplier hints (non-binding) ---- */}

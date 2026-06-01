@@ -90,11 +90,15 @@ export default function CreateVenueScreen() {
         }
       }
 
-      try {
-        await seedDept('Bar', ['Front Bar', 'Back Bar', 'Fridge', 'Cellar']);
-        await seedDept('Kitchen', ['Prep', 'Line', 'Dry Store', 'Cool Room']);
-      } catch (e: any) {
-        console.log('[CreateVenue] seed warning', JSON.stringify({ code: e?.code, message: e?.message }));
+      // Only seed permanent-venue departments — festival accounts start clean
+      // (HQ and bar departments are created by the festival event setup wizard)
+      if (venueType === 'venue') {
+        try {
+          await seedDept('Bar', ['Front Bar', 'Back Bar', 'Fridge', 'Cellar']);
+          await seedDept('Kitchen', ['Prep', 'Line', 'Dry Store', 'Cool Room']);
+        } catch (e: any) {
+          console.log('[CreateVenue] seed warning', JSON.stringify({ code: e?.code, message: e?.message }));
+        }
       }
 
       clearTimeout(timeoutId);

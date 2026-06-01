@@ -45,6 +45,10 @@ const EVENT_MODIFIERS: Record<string, Record<string, number>> = {
   food_wine:      { beer: 0.9, wine: 1.3, spirits: 1.0, rtd: 0.9, na: 1.1 },
   sports:         { beer: 1.1, rtd: 1.2, wine: 0.7, spirits: 0.8, na: 1.0 },
   corporate:      { beer: 0.8, wine: 1.2, spirits: 1.1, rtd: 0.8, na: 1.2 },
+  // Estimates pending real data — update after first year of tracking
+  fringe_arts:    { beer: 0.8, wine: 1.1, spirits: 1.0, rtd: 0.7, na: 1.1 },
+  community:      { beer: 0.7, wine: 0.8, spirits: 0.5, rtd: 0.8, na: 1.3 },
+  markets:        { beer: 0.7, wine: 0.9, spirits: 0.5, rtd: 0.7, na: 1.4 },
   default:        { beer: 1.0, wine: 1.0, spirits: 1.0, rtd: 1.0, na: 1.0 },
 };
 
@@ -77,6 +81,7 @@ export function generatePurchasingPrediction(
   products: {
     id: string;
     name: string;
+    category?: string;
     supplierId: string;
     supplierName: string;
     unitCost?: number;
@@ -94,7 +99,31 @@ export function generatePurchasingPrediction(
 
   const eventType = event.eventType ?? 'default';
   const modifiers = EVENT_MODIFIERS[eventType] ?? EVENT_MODIFIERS.default;
-  const priceMultiplier = PRICE_MODIFIERS[event.pricePositioning ?? 'mid'];
+  const priceMultiplier = PRICE_MODIFIERS[event.pricePositioning ?? 'mid'] ?? 1.0;
+
+  // ── Market share pre-computation ─────────────────────────────────────────
+  // Group products that will use benchmark path (no prior-year data) by category.
+  // Each product gets an equal share of its category's total volume.
+  const benchmarkIdsByCategory: Record<string, string[]> = {};
+  for (const product of products) {
+    const priorYear = priorYearData.find(p => p.productId === product.id);
+    if (!priorYear || priorYear.lastYearAttendance <= 0 || priorYear.lastYearSales <= 0) {
+      const cat = product.category || guessCategory(product.name) || 'na';
+      if (!benchmarkIdsByCategory[cat]) benchmarkIdsByCategory[cat] = [];
+      benchmarkIdsByCategory[cat].push(product.id);
+    }
+  }
+
+  // Pre-compute total category volume once per category (not per product)
+  const categoryTotals: Record<string, number> = {};
+  for (const cat of Object.keys(benchmarkIdsByCategory)) {
+    const benchmarkPerPersonPerDay = BENCHMARKS[cat] ?? BENCHMARKS.na;
+    const categoryModifier = modifiers[cat] ?? 1.0;
+    categoryTotals[cat] = Math.round(
+      benchmarkPerPersonPerDay * categoryModifier * priceMultiplier * event.attendance * event.eventDays
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   for (const product of products) {
     const notes: string[] = [];
@@ -118,22 +147,22 @@ export function generatePurchasingPrediction(
         notes.push(`Attendance ${attendanceRatio > 1 ? `up ${Math.round((attendanceRatio - 1) * 100)}%` : `down ${Math.round((1 - attendanceRatio) * 100)}%`} from last year.`);
       }
     } else {
-      // Path B: category benchmark
-      const category = guessCategory(product.name);
-      const benchmarkPerPersonPerDay = BENCHMARKS[category] ?? BENCHMARKS.na;
-      const categoryModifier = modifiers[category] ?? 1.0;
+      // Path B: category benchmark with market share division
+      const cat = product.category || guessCategory(product.name) || 'na';
+      const catProductCount = benchmarkIdsByCategory[cat]?.length || 1;
+      const marketShare = 1 / catProductCount;
+      const catTotal = categoryTotals[cat] ?? 0;
 
-      predictedQty = Math.ceil(
-        benchmarkPerPersonPerDay * categoryModifier * priceMultiplier * event.attendance * event.eventDays
-      );
+      predictedQty = Math.max(1, Math.round(catTotal * marketShare));
       basis = 'benchmark';
       confidence = 'LOW';
 
-      notes.push(`Estimated from ${category} benchmark: ${benchmarkPerPersonPerDay} units/person/day × ${event.attendance.toLocaleString()} people × ${event.eventDays} day${event.eventDays !== 1 ? 's' : ''}.`);
+      notes.push(`Category total: ${catTotal} units (${BENCHMARKS[cat] ?? BENCHMARKS.na} units/person/day × ${event.attendance.toLocaleString()} people × ${event.eventDays} day${event.eventDays !== 1 ? 's' : ''}).`);
+      notes.push(`Market share: ${Math.round(marketShare * 100)}% of ${cat} category (${catProductCount} product${catProductCount !== 1 ? 's' : ''} — equal split).`);
       if (eventType !== 'default') {
-        notes.push(`${eventType.replace('_', ' ')} event type modifier applied.`);
+        notes.push(`${eventType.replace(/_/g, ' ')} event type modifier applied.`);
       }
-      if (event.pricePositioning && event.pricePositioning !== 'mid') {
+      if (event.pricePositioning && event.pricePositioning !== 'mid' && event.pricePositioning !== 'mid_range') {
         notes.push(`${event.pricePositioning} pricing modifier applied.`);
       }
     }

@@ -651,13 +651,24 @@ service cloud.firestore {
       match /products/{productId} {
         allow read: if isVenueMember(venueId);
         allow create: if isVenueMember(venueId);
-        allow update: if hasVenueRole(venueId, ['manager','owner']) && (
-          request.resource.data.diff(resource.data).changedKeys().hasOnly([
-            'par','parLevel','supplierId','supplierName','supplierUpdatedAt',
-            'primarySupplierId','primarySupplierName','supplierCount','lowestUnitCost',
-            'updatedAt','expiryDate'
-          ])
-        );
+        // Rule A: manager/owner can update all product fields (name, cost, unit, category, etc.)
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'sku', 'unit', 'size', 'packSize', 'caseSize', 'abv',
+            'costPrice', 'gstPercent', 'parLevel', 'par',
+            'supplierId', 'supplierName', 'supplierUpdatedAt',
+            'primarySupplierId', 'primarySupplierName', 'supplierCount', 'lowestUnitCost',
+            'updatedAt', 'expiryDate', 'category', 'categorySuggested',
+            'active', 'barcode', 'barcodeNumber', 'brand', 'description', 'notes',
+            'supplierNameSuggested', 'supplierGlobalId'
+          ]);
+        // Rule B: any venue member can update supplier-link and par fields
+        allow update: if isVenueMember(venueId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'par', 'parLevel', 'supplierId', 'supplierName', 'supplierUpdatedAt',
+            'primarySupplierId', 'primarySupplierName', 'supplierCount', 'lowestUnitCost',
+            'updatedAt', 'expiryDate'
+          ]);
         match /suppliers/{supplierLinkId} {
           allow read: if isVenueMember(venueId);
           allow create, update: if isVenueMember(venueId);

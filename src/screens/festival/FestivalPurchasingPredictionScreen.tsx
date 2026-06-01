@@ -217,6 +217,7 @@ export default function FestivalPurchasingPredictionScreen() {
 
   const [results,       setResults]       = useState([]);
   const [loading,       setLoading]       = useState(FESTIVAL_BETA);
+  const [loadError,     setLoadError]     = useState(null);
   const [generating,    setGenerating]    = useState(false);
   const [eventData,     setEventData]     = useState(null);
   const [bufferPercent, setBufferPercent] = useState(15);
@@ -270,15 +271,24 @@ export default function FestivalPurchasingPredictionScreen() {
 
   async function runFullLoad(overrideBuffer) {
     setLoading(true);
+    setLoadError(null);
     try {
+      // ── Parallelise all 5 Firestore reads (FIX 9) ──────────────────────────
+      const [evSnap, prodSnap, oblSnapMaybe, ridersSnapMaybe, actSnapMaybe] =
+        await Promise.all([
+          getDoc(doc(db, 'venues', venueId, 'event', 'details')),
+          getDocs(collection(db, 'venues', venueId, 'products')),
+          getDocs(collection(db, 'venues', venueId, 'obligations')).catch(() => null),
+          getDocs(collection(db, 'venues', venueId, 'riders')).catch(() => null),
+          getDocs(collection(db, 'venues', venueId, 'activations')).catch(() => null),
+        ]);
+
       // 1. Event details
-      const evSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
       const event  = evSnap.exists() ? evSnap.data() : {};
       setEventData(event);
       const buf = overrideBuffer ?? bufferPercent;
 
-      // 2. Products from venue catalogue (FIX 1)
-      const prodSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+      // 2. Products from venue catalogue
       const allProducts = prodSnap.docs
         .map(d => {
           const data = d.data();
@@ -294,46 +304,43 @@ export default function FestivalPurchasingPredictionScreen() {
         })
         .filter(p => p.supplierId); // products must have a supplier to be ordered
 
-      // 3. Return allowances from supplier configs (FIX 1)
+      // 3. Return allowances from supplier configs
       const supplierAllowances = {};
       Object.entries(event.supplierConfigs || {}).forEach(([sid, cfg]) => {
         supplierAllowances[sid] = cfg.returnAllowancePercent || 5;
       });
 
-      // 4. Obligation minimums from contracts collection (FIX 3)
+      // 4. Obligation minimums from contracts collection
       const obligationMins = {};
-      try {
-        const oblSnap = await getDocs(collection(db, 'venues', venueId, 'obligations'));
-        oblSnap.docs.forEach(d => {
+      if (oblSnapMaybe) {
+        oblSnapMaybe.docs.forEach(d => {
           const obl = d.data();
           if (obl.type === 'minimum_volume' && obl.supplierName) {
             obligationMins[obl.supplierName] =
               (obligationMins[obl.supplierName] || 0) + (obl.quantity || 0);
           }
         });
-      } catch {}
+      }
 
-      // 5. Rider stock per product (FIX 4)
+      // 5. Rider stock per product
       const riderStock = {};
-      try {
-        const ridersSnap = await getDocs(collection(db, 'venues', venueId, 'riders'));
-        ridersSnap.docs.forEach(d => {
+      if (ridersSnapMaybe) {
+        ridersSnapMaybe.docs.forEach(d => {
           (d.data().products || []).forEach(p => {
             riderStock[p.productId] = (riderStock[p.productId] || 0) + (p.quantity || 0);
           });
         });
-      } catch {}
+      }
 
-      // 6. Activation stock per product (FIX 4)
+      // 6. Activation stock per product
       const activationStock = {};
-      try {
-        const actSnap = await getDocs(collection(db, 'venues', venueId, 'activations'));
-        actSnap.docs.forEach(d => {
+      if (actSnapMaybe) {
+        actSnapMaybe.docs.forEach(d => {
           (d.data().products || []).forEach(p => {
             activationStock[p.productId] = (activationStock[p.productId] || 0) + (p.quantity || 0);
           });
         });
-      } catch {}
+      }
 
       // 7. Filter by active categories (FIX 8)
       const setupCats = event.categories || null;
@@ -407,6 +414,7 @@ export default function FestivalPurchasingPredictionScreen() {
       setResults(enriched);
     } catch (e) {
       console.error('[PurchasingPrediction]', e?.message);
+      setLoadError('Could not load prediction data. Please check your connection and try again.');
       setResults([]);
     } finally {
       setLoading(false);
@@ -705,7 +713,19 @@ export default function FestivalPurchasingPredictionScreen() {
           );
         })}
 
-        {results.length === 0 && (
+        {loadError && (
+          <View style={{ backgroundColor: '#fee2e2', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#fca5a5' }}>
+            <Text style={{ color: '#dc2626', fontWeight: '700', marginBottom: 8 }}>⚠️ {loadError}</Text>
+            <TouchableOpacity
+              onPress={() => runFullLoad(null)}
+              style={{ backgroundColor: '#dc2626', borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {results.length === 0 && !loadError && (
           <View style={R.emptyCard}>
             <Text style={R.emptyText}>No products found.</Text>
             <Text style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
