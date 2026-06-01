@@ -1,79 +1,206 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert,
+  ActivityIndicator, Alert, ScrollView, StyleSheet,
+  Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { useNavigation } from '@react-navigation/native';
+import { collection, doc, getDocs, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
-import { generatePurchasingPrediction, type PredictionResult } from '../../services/festival/purchasingPrediction';
+import { generatePurchasingPrediction, guessCategory } from '../../services/festival/purchasingPrediction';
+
+// ─── Category mapping: setup screen IDs → prediction service categories ────────
+
+const SETUP_TO_PRED: Record<string, string> = {
+  beer_cans:     'beer',
+  beer_draught:  'beer',
+  wine_still:    'wine',
+  wine_sparkling:'wine',
+  spirits:       'spirits',
+  rtd:           'rtd',
+  cider:         'rtd',
+  non_alcoholic: 'na',
+  cocktails:     'spirits',
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function confidenceColor(c: string) {
+function formatCurrency(v) {
+  if (v == null) return '—';
+  if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`;
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+  return `$${Math.round(v)}`;
+}
+
+function confidenceColor(c) {
   if (c === 'HIGH')   return '#16a34a';
   if (c === 'MEDIUM') return '#d97706';
   return '#dc2626';
 }
 
-function formatCurrency(v: number | null): string {
-  if (v == null) return '—';
-  return v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${Math.round(v)}`;
+function calcEventDays(startStr, endStr) {
+  if (!startStr || !endStr) return 1;
+  try {
+    const [ds, ms, ys] = startStr.split('/').map(Number);
+    const [de, me, ye] = endStr.split('/').map(Number);
+    const diff = new Date(ye, me - 1, de).getTime() - new Date(ys, ms - 1, ds).getTime();
+    return Math.max(1, Math.round(diff / 86400000) + 1);
+  } catch { return 1; }
+}
+
+function formatShortDate(ddmmyyyy) {
+  if (!ddmmyyyy) return '';
+  const [d, m, y] = ddmmyyyy.split('/');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1] || ''} ${y}`;
 }
 
 // ─── Per-product row ──────────────────────────────────────────────────────────
 
-function ProductRow({
-  result,
-  onQtyChange,
-}: {
-  result: PredictionResult;
-  onQtyChange: (id: string, qty: number) => void;
-}) {
-  const [qtyText, setQtyText] = useState(String(result.bufferedQty));
+function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange }) {
+  const displayQty = result.totalQty ?? result.predictedQty;
+  const [qtyText, setQtyText] = useState(String(displayQty));
   const [notesOpen, setNotesOpen] = useState(false);
 
-  function commit() {
+  useEffect(() => {
+    setQtyText(String(result.totalQty ?? result.predictedQty));
+  }, [result.totalQty, result.predictedQty]);
+
+  function commitQty() {
     const val = parseInt(qtyText, 10);
     if (!isNaN(val) && val > 0) onQtyChange(result.productId, val);
-    else setQtyText(String(result.bufferedQty));
+    else setQtyText(String(result.totalQty ?? result.predictedQty));
   }
+
+  const currentQty = parseInt(qtyText, 10) || 0;
+  const sellNum    = parseFloat(sellingPrice) || null;
+  const cost       = result.unitCost;
+  const estCost    = cost != null ? cost * currentQty : null;
+  const estRev     = sellNum != null ? sellNum * currentQty : null;
+  const gpPct      = sellNum != null && cost != null && sellNum > 0
+    ? Math.round(((sellNum - cost) / sellNum) * 100)
+    : null;
+  const maxReturn  = Math.floor(currentQty * result.returnAllowancePercent / 100);
+  const gpColor    = gpPct == null ? '#9ca3af'
+    : gpPct >= 60 ? '#16a34a' : gpPct >= 40 ? '#d97706' : '#dc2626';
 
   return (
     <View style={R.prodRow}>
+      {/* Header */}
       <View style={R.prodTop}>
-        <Text style={R.prodName} numberOfLines={1}>{result.productName}</Text>
+        <Text style={R.prodName} numberOfLines={2}>{result.productName}</Text>
         <View style={[R.confBadge, { borderColor: confidenceColor(result.confidence) }]}>
           <Text style={[R.confText, { color: confidenceColor(result.confidence) }]}>
             {result.confidence}
           </Text>
         </View>
       </View>
-      <Text style={R.basisText}>{result.basis === 'prior_year' ? 'Prior year data' : 'Category benchmark'}</Text>
-      <View style={R.prodBottom}>
-        <View style={R.qtyRow}>
-          <TextInput
-            value={qtyText}
-            onChangeText={setQtyText}
-            onBlur={commit}
-            keyboardType="number-pad"
-            style={R.qtyInput}
-            selectTextOnFocus
-          />
-          <Text style={R.qtyUnit}>{' '}units</Text>
+      <Text style={R.basisText}>
+        {result.basis === 'prior_year' ? 'Prior year data' : 'Category benchmark'}
+        {result.obligationAdjusted ? ' · obligation adjusted' : ''}
+      </Text>
+
+      {/* Qty breakdown */}
+      <View style={R.breakdownBox}>
+        <View style={R.bkRow}>
+          <Text style={R.bkLabel}>Predicted ({result.basis === 'prior_year' ? 'prior year' : 'benchmark'}):</Text>
+          <Text style={R.bkQty}>{result.bufferedQty}</Text>
         </View>
-        {result.estimatedCost != null && (
-          <Text style={R.costText}>{formatCurrency(result.estimatedCost)}</Text>
+        {(result.riderQty || 0) > 0 && (
+          <View style={R.bkRow}>
+            <Text style={R.bkLabel}>+ Rider allocation:</Text>
+            <Text style={R.bkQty}>{result.riderQty}</Text>
+          </View>
+        )}
+        {(result.activationQty || 0) > 0 && (
+          <View style={R.bkRow}>
+            <Text style={R.bkLabel}>+ Activation stock:</Text>
+            <Text style={R.bkQty}>{result.activationQty}</Text>
+          </View>
+        )}
+        <View style={R.bkDivider} />
+        <View style={R.bkRow}>
+          <Text style={[R.bkLabel, { fontWeight: '700', color: '#0B132B' }]}>Total to order:</Text>
+          <View style={R.stepperRow}>
+            <TouchableOpacity
+              style={R.stepperBtn}
+              onPress={() => {
+                const v = Math.max(1, currentQty - 1);
+                setQtyText(String(v));
+                onQtyChange(result.productId, v);
+              }}
+            >
+              <Text style={R.stepperBtnText}>−</Text>
+            </TouchableOpacity>
+            <TextInput
+              value={qtyText}
+              onChangeText={setQtyText}
+              onBlur={commitQty}
+              keyboardType="number-pad"
+              style={R.qtyInput}
+              selectTextOnFocus
+            />
+            <TouchableOpacity
+              style={R.stepperBtn}
+              onPress={() => {
+                const v = currentQty + 1;
+                setQtyText(String(v));
+                onQtyChange(result.productId, v);
+              }}
+            >
+              <Text style={R.stepperBtnText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <Text style={R.returnNote}>
+          Max returnable ({result.returnAllowancePercent}%): {maxReturn} units
+        </Text>
+      </View>
+
+      {/* Cost / sell / GP */}
+      <View style={R.pricingBox}>
+        {cost != null ? (
+          <View style={R.pricingRow}>
+            <Text style={R.pricingLbl}>Cost:</Text>
+            <Text style={R.pricingVal}>
+              ${cost.toFixed(2)}/unit → {estCost != null ? formatCurrency(estCost) : '—'}
+            </Text>
+          </View>
+        ) : (
+          <Text style={R.noCostWarn}>⚠ No cost price — add in Products</Text>
+        )}
+        <View style={R.pricingRow}>
+          <Text style={R.pricingLbl}>Sell: $</Text>
+          <TextInput
+            value={sellingPrice}
+            onChangeText={v => onSellPriceChange(result.productId, v)}
+            placeholder="0.00"
+            placeholderTextColor="#93c5fd"
+            keyboardType="decimal-pad"
+            style={R.sellInput}
+          />
+          {estRev != null && (
+            <Text style={R.pricingVal}> → {formatCurrency(estRev)}</Text>
+          )}
+        </View>
+        {gpPct != null && (
+          <View style={R.pricingRow}>
+            <Text style={R.pricingLbl}>GP:</Text>
+            <Text style={[R.gpText, { color: gpColor }]}>{gpPct}%</Text>
+          </View>
         )}
       </View>
-      {result.minimumCommitment != null && result.bufferedQty < result.minimumCommitment + 1 && (
-        <Text style={R.commitText}>Min commitment: {result.minimumCommitment}</Text>
+
+      {result.minimumCommitment != null && currentQty < result.minimumCommitment && (
+        <Text style={R.commitWarn}>⚠ Min commitment: {result.minimumCommitment} units</Text>
       )}
+
       <TouchableOpacity onPress={() => setNotesOpen(v => !v)} style={R.notesToggle}>
-        <Text style={R.notesToggleText}>{notesOpen ? '▲ Hide notes' : '▼ How we calculated this'}</Text>
+        <Text style={R.notesToggleText}>
+          {notesOpen ? '▲ Hide calculation' : '▼ How we calculated this'}
+        </Text>
       </TouchableOpacity>
       {notesOpen && result.notes.map((n, i) => (
         <Text key={i} style={R.noteText}>• {n}</Text>
@@ -85,94 +212,285 @@ function ProductRow({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FestivalPurchasingPredictionScreen() {
-  const nav     = useNavigation<any>();
-  const route   = useRoute<any>();
+  const nav     = useNavigation();
   const venueId = useVenueId();
 
-  const [results,      setResults]      = useState<PredictionResult[]>([]);
-  const [edited,       setEdited]       = useState<Record<string, number>>({});
-  const [loading,      setLoading]      = useState(FESTIVAL_BETA);
-  const [generating,   setGenerating]   = useState(false);
-  const [eventData,    setEventData]    = useState<any>(null);
+  const [results,       setResults]       = useState([]);
+  const [loading,       setLoading]       = useState(FESTIVAL_BETA);
+  const [generating,    setGenerating]    = useState(false);
+  const [eventData,     setEventData]     = useState(null);
+  const [bufferPercent, setBufferPercent] = useState(15);
+  const [sellingPrices, setSellingPrices] = useState({});
+  const snapshotTimer = useRef(null);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
-    loadAndPredict();
+    checkAndLoad();
   }, [venueId]);
 
-  async function loadAndPredict() {
+  // ── Snapshot check on entry ───────────────────────────────────────────────
+
+  async function checkAndLoad() {
     try {
-      const venueSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
-      const event = venueSnap.exists() ? (venueSnap.data() as any) : {};
-      setEventData(event);
-
-      // Load products from planned sources (all bars' stock)
-      const barsSnap = await getDocs(collection(db, 'venues', venueId, 'bars'));
-      const productMap: Record<string, any> = {};
-
-      await Promise.all(barsSnap.docs.map(async barDoc => {
-        const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', barDoc.id, 'stock'));
-        for (const s of stockSnap.docs) {
-          const data = s.data() as any;
-          if (!productMap[s.id]) {
-            productMap[s.id] = {
-              id:           s.id,
-              name:         data.productName || s.id,
-              supplierId:   data.supplierId   || 'unknown',
-              supplierName: data.supplierName || 'Unknown Supplier',
-              unitCost:     data.unitCost     ?? null,
-              minimumCommitment: data.minimumCommitment ?? null,
-            };
-          }
+      const snapDoc = await getDoc(doc(db, 'venues', venueId, 'event', 'predictionSnapshot'));
+      if (snapDoc.exists()) {
+        const snap = snapDoc.data();
+        const ageMs = Date.now() - (snap.savedAt?.toMillis?.() || 0);
+        if (ageMs < 86400000 && snap.results?.length > 0) {
+          const ageHours = ageMs / 3600000;
+          const label = ageHours < 1
+            ? `${Math.round(ageMs / 60000)} min ago`
+            : `${Math.round(ageHours)} hr ago`;
+          Alert.alert(
+            'Load saved prediction?',
+            `You have a saved prediction from ${label}. Load it or start fresh?`,
+            [
+              {
+                text: 'Load saved',
+                onPress: async () => {
+                  setResults(snap.results);
+                  if (snap.bufferUsed) setBufferPercent(snap.bufferUsed);
+                  if (snap.sellingPrices) setSellingPrices(snap.sellingPrices);
+                  const evSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
+                  setEventData(evSnap.exists() ? evSnap.data() : {});
+                  setLoading(false);
+                },
+              },
+              { text: 'Start fresh', onPress: () => runFullLoad(null) },
+            ],
+          );
+          return;
         }
+      }
+    } catch {}
+    runFullLoad(null);
+  }
+
+  // ── Full data load + prediction ───────────────────────────────────────────
+
+  async function runFullLoad(overrideBuffer) {
+    setLoading(true);
+    try {
+      // 1. Event details
+      const evSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
+      const event  = evSnap.exists() ? evSnap.data() : {};
+      setEventData(event);
+      const buf = overrideBuffer ?? bufferPercent;
+
+      // 2. Products from venue catalogue (FIX 1)
+      const prodSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+      const allProducts = prodSnap.docs
+        .map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: data.name || d.id,
+            category: data.category || guessCategory(data.name || ''),
+            unitCost: data.costPrice ?? null,
+            supplierId: data.supplierId || null,
+            supplierName: data.supplierName || 'Unknown Supplier',
+            caseSize: data.caseSize || null,
+          };
+        })
+        .filter(p => p.supplierId); // products must have a supplier to be ordered
+
+      // 3. Return allowances from supplier configs (FIX 1)
+      const supplierAllowances = {};
+      Object.entries(event.supplierConfigs || {}).forEach(([sid, cfg]) => {
+        supplierAllowances[sid] = cfg.returnAllowancePercent || 5;
+      });
+
+      // 4. Obligation minimums from contracts collection (FIX 3)
+      const obligationMins = {};
+      try {
+        const oblSnap = await getDocs(collection(db, 'venues', venueId, 'obligations'));
+        oblSnap.docs.forEach(d => {
+          const obl = d.data();
+          if (obl.type === 'minimum_volume' && obl.supplierName) {
+            obligationMins[obl.supplierName] =
+              (obligationMins[obl.supplierName] || 0) + (obl.quantity || 0);
+          }
+        });
+      } catch {}
+
+      // 5. Rider stock per product (FIX 4)
+      const riderStock = {};
+      try {
+        const ridersSnap = await getDocs(collection(db, 'venues', venueId, 'riders'));
+        ridersSnap.docs.forEach(d => {
+          (d.data().products || []).forEach(p => {
+            riderStock[p.productId] = (riderStock[p.productId] || 0) + (p.quantity || 0);
+          });
+        });
+      } catch {}
+
+      // 6. Activation stock per product (FIX 4)
+      const activationStock = {};
+      try {
+        const actSnap = await getDocs(collection(db, 'venues', venueId, 'activations'));
+        actSnap.docs.forEach(d => {
+          (d.data().products || []).forEach(p => {
+            activationStock[p.productId] = (activationStock[p.productId] || 0) + (p.quantity || 0);
+          });
+        });
+      } catch {}
+
+      // 7. Filter by active categories (FIX 8)
+      const setupCats = event.categories || null;
+      const activePredCats = setupCats
+        ? [...new Set(setupCats.map(c => SETUP_TO_PRED[c] || 'na'))]
+        : null;
+      const filteredProducts = activePredCats
+        ? allProducts.filter(p => activePredCats.includes(p.category))
+        : allProducts;
+
+      if (filteredProducts.length === 0) {
+        setResults([]);
+        setLoading(false);
+        return;
+      }
+
+      // 8. Attach per-supplier return allowance to each product (FIX 1)
+      const productsForPrediction = filteredProducts.map(p => ({
+        ...p,
+        returnAllowancePercent: supplierAllowances[p.supplierId] || 5,
+        minimumCommitment: null,
       }));
 
-      const products = Object.values(productMap);
-
-      // Parse attendance and event days
-      const attendance = parseInt(event.dailyAttendance ?? event.attendance ?? '500', 10) || 500;
-      const eventDays  = calculateEventDays(event.startDate, event.endDate);
-
-      const predictions = generatePurchasingPrediction(
+      // 9. Run prediction service
+      const attendance = parseInt(event.dailyAttendance ?? '500', 10) || 500;
+      const eventDays  = calcEventDays(event.startDate, event.endDate);
+      const rawPredictions = generatePurchasingPrediction(
         { attendance, eventDays, eventType: event.eventType, pricePositioning: event.pricePositioning },
-        products,
+        productsForPrediction,
+        [],
+        buf,
       );
-      setResults(predictions);
-    } catch {
+
+      // 10. Apply obligation minimums — proportionally scale up if total < minimum (FIX 3)
+      Object.entries(obligationMins).forEach(([supplierName, minQty]) => {
+        const group = rawPredictions.filter(r => r.supplierName === supplierName);
+        if (!group.length) return;
+        const groupTotal = group.reduce((s, r) => s + r.predictedQty, 0);
+        group.forEach(r => { r.obligationMin = minQty; });
+        if (groupTotal < minQty) {
+          const factor = minQty / groupTotal;
+          group.forEach(r => {
+            r.predictedQty    = Math.ceil(r.predictedQty * factor);
+            r.bufferedQty     = r.predictedQty;
+            r.safeOrderQty    = r.predictedQty;
+            r.estimatedCost   = r.unitCost != null ? r.unitCost * r.predictedQty : null;
+            r.obligationAdjusted = true;
+            r.notes.push(`⚠️ Scaled up to meet supplier obligation minimum of ${minQty} units.`);
+          });
+        }
+      });
+
+      // 11. Attach rider + activation stock on top of predicted qty (FIX 4)
+      const enriched = rawPredictions.map(r => {
+        const riderQty      = riderStock[r.productId] || 0;
+        const activationQty = activationStock[r.productId] || 0;
+        const totalQty      = r.predictedQty + riderQty + activationQty;
+        const notes         = [...r.notes];
+        if (riderQty > 0)      notes.push(`+ ${riderQty} units for rider allocations.`);
+        if (activationQty > 0) notes.push(`+ ${activationQty} units for activations.`);
+        return {
+          ...r,
+          notes,
+          riderQty,
+          activationQty,
+          totalQty,
+          estimatedCost: r.unitCost != null ? r.unitCost * totalQty : null,
+        };
+      });
+
+      setResults(enriched);
+    } catch (e) {
+      console.error('[PurchasingPrediction]', e?.message);
       setResults([]);
     } finally {
       setLoading(false);
     }
   }
 
-  function calculateEventDays(startStr?: string, endStr?: string): number {
-    if (!startStr || !endStr) return 1;
-    const parseDMY = (s: string) => {
-      const [d, m, y] = s.split('/').map(Number);
-      return new Date(y, m - 1, d);
-    };
-    const diff = parseDMY(endStr).getTime() - parseDMY(startStr).getTime();
-    return Math.max(1, Math.round(diff / 86400000) + 1);
+  // ── Inline edit handlers ──────────────────────────────────────────────────
+
+  function handleQtyChange(productId, qty) {
+    setResults(prev => {
+      const updated = prev.map(r =>
+        r.productId === productId
+          ? { ...r, totalQty: qty, estimatedCost: r.unitCost != null ? r.unitCost * qty : null }
+          : r
+      );
+      scheduleSave(updated, null);
+      return updated;
+    });
   }
 
-  function handleQtyChange(productId: string, qty: number) {
-    setEdited(prev => ({ ...prev, [productId]: qty }));
-    setResults(prev => prev.map(r =>
-      r.productId === productId ? { ...r, bufferedQty: qty, estimatedCost: r.unitCost != null ? r.unitCost * qty : null } : r
-    ));
+  function handleSellPriceChange(productId, text) {
+    const newPrices = { ...sellingPrices, [productId]: text };
+    setSellingPrices(newPrices);
+    scheduleSave(null, newPrices);
   }
+
+  // ── Snapshot auto-save (FIX 9) ────────────────────────────────────────────
+
+  function scheduleSave(updatedResults, updatedPrices) {
+    if (snapshotTimer.current) clearTimeout(snapshotTimer.current);
+    snapshotTimer.current = setTimeout(() => {
+      const snap = updatedResults || results;
+      const prices = updatedPrices || sellingPrices;
+      saveSnapshot(snap, prices);
+    }, 2000);
+  }
+
+  async function saveSnapshot(snap, prices) {
+    if (!venueId || !snap.length) return;
+    try {
+      await setDoc(doc(db, 'venues', venueId, 'event', 'predictionSnapshot'), {
+        results: snap.map(r => ({
+          productId: r.productId, productName: r.productName,
+          supplierId: r.supplierId, supplierName: r.supplierName,
+          predictedQty: r.predictedQty, bufferedQty: r.bufferedQty,
+          totalQty: r.totalQty, riderQty: r.riderQty, activationQty: r.activationQty,
+          unitCost: r.unitCost, estimatedCost: r.estimatedCost,
+          confidence: r.confidence, basis: r.basis, notes: r.notes,
+          minimumCommitment: r.minimumCommitment ?? null,
+          returnAllowancePercent: r.returnAllowancePercent,
+          maxReturnable: r.maxReturnable, targetSellQty: r.targetSellQty,
+          safeOrderQty: r.safeOrderQty,
+          obligationAdjusted: r.obligationAdjusted || false,
+          obligationMin: r.obligationMin ?? null,
+        })),
+        sellingPrices: prices || {},
+        bufferUsed: bufferPercent,
+        savedAt: serverTimestamp(),
+        attendanceUsed: eventData?.dailyAttendance || null,
+        totalCost: snap.reduce((s, r) => s + (r.estimatedCost || 0), 0),
+      }, { merge: true });
+    } catch {}
+  }
+
+  // ── Buffer stepper (FIX 7) ────────────────────────────────────────────────
+
+  function adjustBuffer(delta) {
+    const newBuf = Math.max(5, Math.min(30, bufferPercent + delta));
+    setBufferPercent(newBuf);
+    runFullLoad(newBuf);
+  }
+
+  // ── Generate orders (FIX 11 — grouped by supplierId) ─────────────────────
 
   async function generateOrders() {
     if (!venueId || results.length === 0) return;
     setGenerating(true);
     try {
-      // Group by supplier
-      const bySupplier: Record<string, PredictionResult[]> = {};
+      const bySupplier = {};
       for (const r of results) {
-        if (!bySupplier[r.supplierId]) bySupplier[r.supplierId] = [];
-        bySupplier[r.supplierId].push(r);
+        const key = r.supplierId || 'unknown';
+        if (!bySupplier[key]) bySupplier[key] = [];
+        bySupplier[key].push(r);
       }
-
       const uid  = auth.currentUser?.uid ?? 'unknown';
       const name = auth.currentUser?.displayName ?? 'Unknown';
 
@@ -181,22 +499,26 @@ export default function FestivalPurchasingPredictionScreen() {
         await setDoc(doc(db, 'venues', venueId, 'orders', orderId), {
           supplierId,
           supplierName: items[0]?.supplierName ?? supplierId,
-          status:       'draft',
-          source:       'festival_prediction',
-          createdBy:    uid,
+          status: 'draft',
+          source: 'festival_prediction',
+          createdBy: uid,
           createdByName: name,
-          createdAt:    serverTimestamp(),
-          products:     items.map(i => ({
-            productId:   i.productId,
+          createdAt: serverTimestamp(),
+          products: items.map(i => ({
+            productId: i.productId,
             productName: i.productName,
-            quantity:    i.bufferedQty,
-            unitCost:    i.unitCost,
+            quantity: i.totalQty ?? i.predictedQty,
+            unitCost: i.unitCost,
+            riderQty: i.riderQty || 0,
+            activationQty: i.activationQty || 0,
           })),
         });
       }
-
-      Alert.alert('Orders created', `${Object.keys(bySupplier).length} draft order${Object.keys(bySupplier).length !== 1 ? 's' : ''} created. Review them in Orders before sending.`);
-    } catch (e: any) {
+      Alert.alert(
+        'Orders created',
+        `${Object.keys(bySupplier).length} draft order${Object.keys(bySupplier).length !== 1 ? 's' : ''} created. Review them in Orders before sending.`,
+      );
+    } catch (e) {
       Alert.alert('Error', e?.message || 'Could not generate orders.');
     } finally {
       setGenerating(false);
@@ -204,15 +526,13 @@ export default function FestivalPurchasingPredictionScreen() {
   }
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
+
   if (!FESTIVAL_BETA) {
     return (
       <View style={R.comingSoon}>
         <Text style={R.csEmoji}>🎪</Text>
         <Text style={R.csTitle}>Festival mode</Text>
-        <Text style={R.csBody}>
-          We're building something great for festival and event operators.{'\n'}
-          Coming soon — we'll let you know when it's live.
-        </Text>
+        <Text style={R.csBody}>We're building something great for festival and event operators.{'\n'}Coming soon — we'll let you know when it's live.</Text>
         <Text style={R.csContact}>Questions? office@hosti.co.nz</Text>
       </View>
     );
@@ -226,27 +546,75 @@ export default function FestivalPurchasingPredictionScreen() {
     );
   }
 
-  // Summary stats
-  const totalCost = results.reduce((s, r) => s + (r.estimatedCost ?? 0), 0);
-  const supplierCount = new Set(results.map(r => r.supplierId)).size;
-  const highConf = results.filter(r => r.confidence === 'HIGH').length;
-  const confBasis = highConf > results.length / 2 ? 'Mostly prior year data' : 'Mostly benchmarks';
+  // ── Derived stats ─────────────────────────────────────────────────────────
 
-  // Group by supplier
-  const bySupplier: Record<string, PredictionResult[]> = {};
+  const totalCost    = results.reduce((s, r) => s + (r.estimatedCost ?? 0), 0);
+  const noCostCount  = results.filter(r => r.unitCost == null).length;
+  const supplierCount = new Set(results.map(r => r.supplierId)).size;
+  const highConf     = results.filter(r => r.confidence === 'HIGH').length;
+  const confBasis    = results.length === 0 ? '—'
+    : highConf > results.length / 2 ? 'Mostly prior year data' : 'Mostly benchmarks';
+  const budget       = eventData?.totalBudget ? Number(eventData.totalBudget) : null;
+  const overBudget   = budget != null && totalCost > budget;
+  const totalRevenue = results.reduce((s, r) => {
+    const sp = parseFloat(sellingPrices[r.productId]);
+    const qty = r.totalQty ?? r.predictedQty ?? 0;
+    return s + (sp > 0 && qty > 0 ? sp * qty : 0);
+  }, 0);
+  const hasSellPrices = totalRevenue > 0;
+  const estGP = hasSellPrices && totalCost > 0
+    ? Math.round(((totalRevenue - totalCost) / totalRevenue) * 100)
+    : null;
+  const eventDays = calcEventDays(eventData?.startDate, eventData?.endDate);
+
+  // Group by supplierId for display — consistent with generateOrders (FIX 11)
+  const bySupplier = {};
   for (const r of results) {
-    if (!bySupplier[r.supplierName]) bySupplier[r.supplierName] = [];
-    bySupplier[r.supplierName].push(r);
+    const key = r.supplierId || 'unknown';
+    if (!bySupplier[key]) bySupplier[key] = [];
+    bySupplier[key].push(r);
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
       <ScrollView contentContainerStyle={R.scroll} keyboardShouldPersistTaps="handled">
 
-        <Text style={R.screenTitle}>Purchasing Prediction</Text>
+        {/* ── Event header (FIX 7) ── */}
+        {eventData?.eventName ? (
+          <View style={R.eventHeader}>
+            <Text style={R.eventName}>{eventData.eventName}</Text>
+            {eventData.startDate && eventData.endDate && (
+              <Text style={R.eventDates}>
+                {formatShortDate(eventData.startDate)} — {formatShortDate(eventData.endDate)}
+                {' · '}{eventDays} day{eventDays !== 1 ? 's' : ''}
+              </Text>
+            )}
+            {!!eventData.dailyAttendance && (
+              <Text style={R.eventAttend}>
+                {Number(eventData.dailyAttendance).toLocaleString()} expected per day
+              </Text>
+            )}
+            <Text style={R.eventBasis}>Prediction basis: {confBasis}</Text>
+          </View>
+        ) : null}
 
-        {/* Summary card */}
+        {/* ── Summary card (FIX 5B, 6, 7B, 10) ── */}
         <View style={R.summaryCard}>
+
+          {/* Buffer stepper (FIX 7B) */}
+          <View style={R.bufferRow}>
+            <Text style={R.bufferLabel}>Safety buffer:</Text>
+            <TouchableOpacity style={R.stepperSmall} onPress={() => adjustBuffer(-5)}>
+              <Text style={R.stepperSmallText}>−</Text>
+            </TouchableOpacity>
+            <Text style={R.bufferVal}>{bufferPercent}%</Text>
+            <TouchableOpacity style={R.stepperSmall} onPress={() => adjustBuffer(5)}>
+              <Text style={R.stepperSmallText}>+</Text>
+            </TouchableOpacity>
+            <Text style={R.bufferHint}>  5–30%</Text>
+          </View>
+
+          {/* Stats */}
           <View style={R.summaryRow}>
             <View style={R.summaryItem}>
               <Text style={R.summaryValue}>{results.length}</Text>
@@ -261,22 +629,77 @@ export default function FestivalPurchasingPredictionScreen() {
               <Text style={R.summaryLabel}>Est. cost</Text>
             </View>
           </View>
-          <Text style={R.confBasis}>{confBasis} · 15% buffer included</Text>
+
+          {/* Budget check (FIX 5B) */}
+          {budget != null && (
+            <View style={R.budgetRow}>
+              <Text style={R.budgetText}>Budget: {formatCurrency(budget)}</Text>
+              {overBudget
+                ? <Text style={R.budgetOver}>⚠️ over by {formatCurrency(totalCost - budget)}</Text>
+                : <Text style={R.budgetUnder}>✓ under by {formatCurrency(budget - totalCost)}</Text>}
+            </View>
+          )}
+
+          {/* GP summary (FIX 6) */}
+          {hasSellPrices && (
+            <View style={R.gpSummaryRow}>
+              <Text style={R.gpSummaryText}>Est. revenue: {formatCurrency(totalRevenue)}</Text>
+              {estGP != null && (
+                <Text style={[R.gpSummaryText, {
+                  color: estGP >= 60 ? '#4ade80' : estGP >= 40 ? '#fbbf24' : '#f87171',
+                }]}>
+                  Est. GP: {estGP}%
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* No cost warning (FIX 10) */}
+          {noCostCount > 0 && (
+            <TouchableOpacity
+              style={R.noCostCard}
+              onPress={() => nav.navigate('Products')}
+            >
+              <Text style={R.noCostCardText}>
+                ⚠ {noCostCount} product{noCostCount !== 1 ? 's have' : ' has'} no cost price — total understated
+              </Text>
+              <Text style={R.noCostLink}>Add cost prices →</Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={R.confBasis}>{confBasis}</Text>
         </View>
 
-        {/* By supplier */}
-        {Object.entries(bySupplier).map(([supplierName, items]) => {
+        {/* ── Products grouped by supplierId (FIX 11) ── */}
+        {Object.entries(bySupplier).map(([supplierId, items]) => {
           const supplierTotal = items.reduce((s, r) => s + (r.estimatedCost ?? 0), 0);
+          const supplierName  = items[0]?.supplierName || supplierId;
+          const oblMin        = items[0]?.obligationMin;
+          const supplierTotalQty = items.reduce((s, r) => s + (r.totalQty ?? r.predictedQty ?? 0), 0);
           return (
-            <View key={supplierName}>
+            <View key={supplierId}>
               <View style={R.supplierHeader}>
-                <Text style={R.supplierName}>{supplierName}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={R.supplierName}>{supplierName}</Text>
+                  {oblMin != null && (
+                    <Text style={R.oblNote}>
+                      Obligation: {oblMin.toLocaleString()} units min
+                      {supplierTotalQty >= oblMin ? ' ✓' : ' ⚠ at risk'}
+                    </Text>
+                  )}
+                </View>
                 {supplierTotal > 0 && (
                   <Text style={R.supplierTotal}>{formatCurrency(supplierTotal)}</Text>
                 )}
               </View>
               {items.map(r => (
-                <ProductRow key={r.productId} result={r} onQtyChange={handleQtyChange} />
+                <ProductRow
+                  key={r.productId}
+                  result={r}
+                  sellingPrice={sellingPrices[r.productId] || ''}
+                  onQtyChange={handleQtyChange}
+                  onSellPriceChange={handleSellPriceChange}
+                />
               ))}
             </View>
           );
@@ -284,7 +707,16 @@ export default function FestivalPurchasingPredictionScreen() {
 
         {results.length === 0 && (
           <View style={R.emptyCard}>
-            <Text style={R.emptyText}>No products found. Add products to your bars first.</Text>
+            <Text style={R.emptyText}>No products found.</Text>
+            <Text style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
+              Add products with a supplier assigned in the Products screen to see predictions.
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 14, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 20 }}
+              onPress={() => nav.navigate('Products')}
+            >
+              <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Go to Products →</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -306,6 +738,7 @@ export default function FestivalPurchasingPredictionScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
 const R = StyleSheet.create({
   comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
   csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
@@ -313,42 +746,81 @@ const R = StyleSheet.create({
   csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
   csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
 
-  scroll:      { padding: 16, paddingBottom: 40 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 16 },
+  scroll: { padding: 16, paddingBottom: 60 },
 
-  summaryCard: { backgroundColor: '#1b4f72', borderRadius: 14, padding: 16, marginBottom: 20 },
-  summaryRow:  { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 10 },
-  summaryItem: { alignItems: 'center' },
-  summaryValue:{ fontSize: 22, fontWeight: '800', color: '#fff' },
-  summaryLabel:{ fontSize: 11, color: '#93c5fd', marginTop: 2 },
-  confBasis:   { fontSize: 12, color: '#93c5fd', textAlign: 'center' },
+  eventHeader: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#e5e1d8' },
+  eventName:   { fontSize: 18, fontWeight: '800', color: '#0B132B', marginBottom: 3 },
+  eventDates:  { fontSize: 13, color: '#374151', marginBottom: 2 },
+  eventAttend: { fontSize: 13, color: '#374151', marginBottom: 4 },
+  eventBasis:  { fontSize: 12, color: '#9ca3af' },
 
-  supplierHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, marginTop: 8 },
-  supplierName:   { fontSize: 13, fontWeight: '800', color: '#374151' },
+  summaryCard:  { backgroundColor: '#1b4f72', borderRadius: 14, padding: 16, marginBottom: 16 },
+  bufferRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  bufferLabel:  { color: '#93c5fd', fontSize: 13, marginRight: 8 },
+  bufferVal:    { color: '#fff', fontWeight: '800', fontSize: 16, minWidth: 36, textAlign: 'center' },
+  bufferHint:   { color: '#93c5fd', fontSize: 11, marginLeft: 4 },
+  stepperSmall: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6, width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  stepperSmallText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  summaryRow:   { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 10 },
+  summaryItem:  { alignItems: 'center' },
+  summaryValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  summaryLabel: { fontSize: 11, color: '#93c5fd', marginTop: 2 },
+  confBasis:    { fontSize: 11, color: '#93c5fd', textAlign: 'center', marginTop: 4 },
+
+  budgetRow:    { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: 10, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  budgetText:   { color: '#e0f2fe', fontSize: 13 },
+  budgetOver:   { color: '#fca5a5', fontWeight: '700', fontSize: 13 },
+  budgetUnder:  { color: '#86efac', fontWeight: '700', fontSize: 13 },
+
+  gpSummaryRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
+  gpSummaryText:{ color: '#e0f2fe', fontSize: 12, fontWeight: '600' },
+
+  noCostCard:     { backgroundColor: 'rgba(251,191,36,0.15)', borderRadius: 8, padding: 10, marginTop: 6 },
+  noCostCardText: { color: '#fbbf24', fontSize: 12, fontWeight: '600' },
+  noCostLink:     { color: '#93c5fd', fontSize: 12, marginTop: 2 },
+
+  supplierHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: 8, marginTop: 12 },
+  supplierName:   { fontSize: 14, fontWeight: '800', color: '#374151' },
+  oblNote:        { fontSize: 11, color: '#d97706', marginTop: 2 },
   supplierTotal:  { fontSize: 13, fontWeight: '700', color: '#1b4f72' },
 
   prodRow:   { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: '#e5e1d8' },
-  prodTop:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+  prodTop:   { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 2 },
   prodName:  { fontSize: 14, fontWeight: '700', color: '#0B132B', flex: 1, marginRight: 8 },
-  confBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1 },
+  confBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, flexShrink: 0 },
   confText:  { fontSize: 10, fontWeight: '800' },
   basisText: { fontSize: 11, color: '#9ca3af', marginBottom: 8 },
 
-  prodBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  qtyRow:    { flexDirection: 'row', alignItems: 'center' },
-  qtyInput:  { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 16, fontWeight: '700', color: '#0B132B', width: 80, textAlign: 'center', backgroundColor: '#f9fafb' },
-  qtyUnit:   { fontSize: 13, color: '#6b7280' },
-  costText:  { fontSize: 15, fontWeight: '700', color: '#1b4f72' },
-  commitText:{ fontSize: 11, color: '#d97706', marginTop: 4 },
+  breakdownBox: { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 10 },
+  bkRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  bkLabel:      { fontSize: 13, color: '#6b7280' },
+  bkQty:        { fontSize: 13, color: '#374151', fontWeight: '600' },
+  bkDivider:    { height: 1, backgroundColor: '#e5e7eb', marginVertical: 6 },
+  stepperRow:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  stepperBtn:   { width: 30, height: 30, borderRadius: 15, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
+  stepperBtnText: { fontSize: 18, fontWeight: '700', color: '#374151' },
+  qtyInput:     { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 15, fontWeight: '700', color: '#0B132B', width: 70, textAlign: 'center', backgroundColor: '#fff' },
+  returnNote:   { fontSize: 11, color: '#9ca3af', marginTop: 4 },
 
-  notesToggle:    { marginTop: 8 },
+  pricingBox:  { backgroundColor: '#eff6ff', borderRadius: 8, padding: 10, marginBottom: 8 },
+  pricingRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' },
+  pricingLbl:  { fontSize: 12, color: '#6b7280', width: 44 },
+  pricingVal:  { fontSize: 12, color: '#374151', fontWeight: '600', flex: 1 },
+  sellInput:   { borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 13, fontWeight: '600', color: '#1e40af', width: 64, textAlign: 'center', backgroundColor: '#fff' },
+  gpText:      { fontSize: 13, fontWeight: '800' },
+  noCostWarn:  { fontSize: 11, color: '#d97706', marginBottom: 4 },
+
+  commitWarn: { fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '600' },
+
+  notesToggle:    { marginTop: 6 },
   notesToggleText:{ fontSize: 11, color: '#1b4f72', fontWeight: '600' },
   noteText:       { fontSize: 12, color: '#6b7280', lineHeight: 18, marginTop: 3 },
 
-  generateBtn:         { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 16, alignItems: 'center', marginTop: 20 },
+  generateBtn:         { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
   generateBtnDisabled: { opacity: 0.5 },
   generateBtnText:     { color: '#fff', fontWeight: '700', fontSize: 16 },
 
   emptyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' },
-  emptyText: { fontSize: 15, color: '#9ca3af', textAlign: 'center' },
+  emptyText: { fontSize: 15, color: '#9ca3af', textAlign: 'center', fontWeight: '600' },
 });

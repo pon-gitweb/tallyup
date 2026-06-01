@@ -8,8 +8,8 @@ export interface PredictionResult {
   productName: string;
   supplierId: string;
   supplierName: string;
-  predictedQty: number;
-  bufferedQty: number;
+  predictedQty: number;    // safeOrderQty — the recommended order quantity
+  bufferedQty: number;     // demand + buffer, before return allowance math
   unitCost: number | null;
   estimatedCost: number | null;
   confidence: PredictionConfidence;
@@ -21,6 +21,12 @@ export interface PredictionResult {
   maxReturnable: number;
   targetSellQty: number;
   safeOrderQty: number;
+  // Obligation / rider / activation (set by screen post-processing)
+  obligationAdjusted?: boolean;
+  obligationMin?: number | null;
+  riderQty?: number;
+  activationQty?: number;
+  totalQty?: number;
 }
 
 // ─── Category benchmarks (units per person per day) ──────────────────────────
@@ -50,7 +56,7 @@ const PRICE_MODIFIERS: Record<string, number> = {
   premium:   0.85,
 };
 
-function guessCategory(name: string): string {
+export function guessCategory(name: string): string {
   const n = (name || '').toLowerCase();
   if (n.includes('beer') || n.includes('lager') || n.includes('ale') || n.includes('ipa')) return 'beer';
   if (n.includes('wine') || n.includes('sauvignon') || n.includes('pinot') || n.includes('rosé') || n.includes('rose') || n.includes('champagne')) return 'wine';
@@ -66,7 +72,7 @@ export function generatePurchasingPrediction(
     attendance: number;
     eventDays: number;
     eventType?: string;
-    pricePositioning?: 'budget' | 'mid' | 'premium';
+    pricePositioning?: 'budget' | 'mid' | 'mid_range' | 'premium' | 'mixed';
   },
   products: {
     id: string;
@@ -142,35 +148,33 @@ export function generatePurchasingPrediction(
       notes.push(`⚠️ Quantity raised to meet supplier minimum commitment of ${product.minimumCommitment}.`);
     }
 
-    const estimatedCost = product.unitCost != null ? product.unitCost * finalQty : null;
-
     const allowance = product.returnAllowancePercent ?? 5;
-    const maxReturnable = Math.floor(finalQty * allowance / 100);
-    const targetSellQty = finalQty - maxReturnable;
-    // safeOrderQty: the order size where selling to targetSellQty exactly uses up the buffer
+    // safeOrderQty: order this many so that even returning allowance% leaves demand covered
+    // Math: need = safeOrderQty × (1 - allowance/100)  →  safeOrderQty = finalQty / (1 - allowance/100)
     const safeOrderQty = allowance < 100
-      ? Math.ceil((predictedQty * (1 + bufferPercent / 100)) / (1 - allowance / 100))
+      ? Math.ceil(finalQty / (1 - allowance / 100))
       : finalQty;
+    const maxReturnable = Math.floor(safeOrderQty * allowance / 100);
+    const targetSellQty = safeOrderQty - maxReturnable;
+    const estimatedCost = product.unitCost != null ? product.unitCost * safeOrderQty : null;
 
-    if (allowance < 10) {
-      notes.push(`Return allowance ${allowance}% — max ${maxReturnable} units returnable. Target sell-through: ${targetSellQty}.`);
-    } else {
-      notes.push(`Return allowance ${allowance}% — up to ${maxReturnable} units can be returned. Safe order qty: ${safeOrderQty}.`);
+    if (allowance > 0) {
+      notes.push(`Return allowance ${allowance}% — order ${safeOrderQty}, target sell ${targetSellQty}, return up to ${maxReturnable}.`);
     }
 
     results.push({
-      productId:             product.id,
-      productName:           product.name,
-      supplierId:            product.supplierId,
-      supplierName:          product.supplierName,
-      predictedQty:          finalQty,
-      bufferedQty:           finalQty,
-      unitCost:              product.unitCost ?? null,
+      productId:              product.id,
+      productName:            product.name,
+      supplierId:             product.supplierId,
+      supplierName:           product.supplierName,
+      predictedQty:           safeOrderQty,   // recommended order quantity (return-allowance-aware)
+      bufferedQty:            bufferedQty,     // demand + buffer before return allowance
+      unitCost:               product.unitCost ?? null,
       estimatedCost,
       confidence,
       basis,
       notes,
-      minimumCommitment:     product.minimumCommitment ?? null,
+      minimumCommitment:      product.minimumCommitment ?? null,
       returnAllowancePercent: allowance,
       maxReturnable,
       targetSellQty,

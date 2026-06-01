@@ -159,8 +159,9 @@ export default function FestivalEventSetupScreen() {
   const [hasExclusivity,   setHasExclusivity]   = useState(false);
   const [exclusivityNote,  setExclusivityNote]  = useState('');
 
-  // ── Section 1 extra state (FIX 2) ───────────────────────────────────────
+  // ── Section 1 extra state ────────────────────────────────────────────────
   const [cycleOverride, setCycleOverride] = useState<string>('');
+  const [totalBudget,   setTotalBudget]   = useState('');
 
   // ── Section 3 state (suppliers) ──────────────────────────────────────────
   const [venueSuppliers,  setVenueSuppliers]  = useState<any[]>([]);
@@ -201,6 +202,7 @@ export default function FestivalEventSetupScreen() {
       if (d.historicalNotes)     setHistoryNotes(d.historicalNotes);
       if (d.setupProgress)       setProgress(p => ({ ...p, ...d.setupProgress }));
       if (d.cycleOverride)       setCycleOverride(d.cycleOverride);
+      if (d.totalBudget != null) setTotalBudget(String(d.totalBudget));
       // Load saved supplier configs including returnAllowancePercent
       if (d.supplierConfigs) {
         const cfgMap: Record<string, any> = {};
@@ -323,6 +325,7 @@ export default function FestivalEventSetupScreen() {
         numBars: nb, stockModel,
         cycleLength: finalCycle,
         cycleOverride: cycleOverride || null,
+        totalBudget: parseFloat(totalBudget) || null,
         setupProgress: newProgress,
         updatedAt: serverTimestamp(),
       }, { merge: true });
@@ -630,6 +633,14 @@ export default function FestivalEventSetupScreen() {
           <Text style={S.label}>Expected daily attendance</Text>
           <Text style={S.helper}>Average across all days is fine</Text>
           <TextInput value={dailyAttend} onChangeText={setDailyAttend} placeholder="e.g. 2500" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+
+          <Text style={S.label}>Total beverage budget (optional)</Text>
+          <Text style={S.helper}>We'll flag if your predicted order exceeds this figure.</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 16, color: '#374151', fontWeight: '600' }}>$</Text>
+            <TextInput value={totalBudget} onChangeText={setTotalBudget} placeholder="e.g. 50000" placeholderTextColor="#9ca3af" style={[S.input, { flex: 1 }]} keyboardType="numeric" />
+            <Text style={{ fontSize: 13, color: '#9ca3af' }}>NZD</Text>
+          </View>
 
           <Text style={S.label}>Number of bars / service points</Text>
           <TextInput value={numBars} onChangeText={setNumBars} placeholder="e.g. 3" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
