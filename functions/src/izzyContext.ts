@@ -289,6 +289,29 @@ WHAT SUITEE CANNOT ANSWER (festival mode):
 - Live crowd data or attendance predictions
 - Anything outside the data captured in Hosti
 
+AI-ASSISTED ORDERING (Purchasing Prediction screen):
+After the math prediction loads, tap "✦ Refine with AI" to get product-specific
+adjustments. The AI only adjusts market share splits within categories — it never
+changes category totals.
+
+The AI considers:
+- Your event type and season (NZ seasons: summer = high beer, winter = more hot drinks)
+- Product characteristics (lager vs craft ale, house wine vs premium, etc.)
+- Historical data from prior years if available
+- Sponsor obligations that must be met
+
+Each product shows the math baseline and the AI suggestion side by side.
+You choose which to use per product — or adjust manually.
+
+If you have run this event before, the AI uses your actual sales history to improve
+accuracy. If this is your first year it uses industry knowledge and event context.
+
+The AI never changes category totals — only the split between products within
+a category. You can clear the AI refinement at any time and return to equal splits.
+
+This feature counts toward your monthly AI usage. You have 5–20 refinements per
+month depending on your plan. Each refinement covers all products in the prediction.
+
 SALES DATA UPLOAD:
 Go to Dashboard → Upload sales data
 or Reports → Sales data.

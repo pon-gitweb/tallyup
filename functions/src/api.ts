@@ -58,7 +58,8 @@ function tokenJaccardMatch(a: string, b: string): number {
 type AiCallType =
   | 'invoice_ocr' | 'product_photo' | 'shelf_scan' | 'stocktake_photo'
   | 'sales_report' | 'izzy' | 'suitee' | 'ai_insights'
-  | 'suggest_orders' | 'variance_explain' | 'budget_suggest' | 'photo_count';
+  | 'suggest_orders' | 'variance_explain' | 'budget_suggest' | 'photo_count'
+  | 'prediction_refinement';
 
 interface MeterState {
   aiUsed: number;
@@ -74,16 +75,19 @@ const PLAN_LIMITS: Record<string, Record<string, number>> = {
     total: 300, invoice_ocr: 50, product_photo: 75, shelf_scan: 15,
     stocktake_photo: 40, sales_report: 10, izzy: 150, suitee: 50,
     ai_insights: 12, suggest_orders: 20, variance_explain: 12,
+    prediction_refinement: 10,
   },
   core: {
     total: 200, invoice_ocr: 30, product_photo: 30, shelf_scan: 10,
     stocktake_photo: 20, sales_report: 5, izzy: 100, suitee: 30,
     ai_insights: 8, suggest_orders: 15, variance_explain: 8,
+    prediction_refinement: 5,
   },
   core_plus: {
     total: 500, invoice_ocr: 80, product_photo: 100, shelf_scan: 30,
     stocktake_photo: 60, sales_report: 15, izzy: 300, suitee: 100,
     ai_insights: 20, suggest_orders: 40, variance_explain: 20,
+    prediction_refinement: 20,
   },
 };
 
@@ -93,6 +97,7 @@ const FEATURE_LABELS: Record<string, string> = {
   sales_report: 'sales report import', izzy: 'Izzy questions',
   suitee: 'Suitee queries', ai_insights: 'AI insights',
   suggest_orders: 'order suggestions', variance_explain: 'variance explanations',
+  prediction_refinement: 'AI prediction refinement',
 };
 
 function buildLimitMessage(feature: string, used: number, limit: number, resetAt: string): string {
@@ -2902,6 +2907,76 @@ app.post("/process-invoices-pdf", async (req, res) => {
   } catch (e: any) {
     console.error("[api/process-invoices-pdf] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "PDF processing failed" });
+  }
+});
+
+// ── POST /refine-prediction ───────────────────────────────────────────────────
+// Body: { venueId, mathResults, eventDetails }
+// Calls Claude to adjust market share splits within categories.
+// Math category totals are preserved — only splits are adjusted.
+app.post("/refine-prediction", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, mathResults, eventDetails } = req.body || {};
+    if (!venueId || !Array.isArray(mathResults) || !eventDetails) {
+      res.status(400).json({ ok: false, error: "Missing venueId, mathResults, or eventDetails" });
+      return;
+    }
+
+    await verifyVenueMembership(uid, venueId);
+
+    const lc = await checkAiLimit(venueId, "prediction_refinement");
+    if (!lc.allowed) { res.status(429).json({ ok: false, ...lc.limitError }); return; }
+
+    const db = admin.firestore();
+    const { buildRefinementContext, buildRefinementPrompt } = require("./predictionRefinement");
+    const context = await buildRefinementContext(venueId, eventDetails, mathResults, db);
+    const prompt  = buildRefinementPrompt(context);
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2000,
+        system: "You are a beverage purchasing advisor specialising in NZ/AU festival operations. Return only valid JSON.",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error("Claude API error: " + errText);
+    }
+
+    const aiData = await resp.json() as any;
+    const rawText = aiData?.content?.[0]?.text || "{}";
+
+    let refinement: any;
+    try {
+      const clean = rawText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      refinement = JSON.parse(clean);
+    } catch {
+      res.status(500).json({
+        ok: false,
+        error: "Could not parse AI response",
+        message: "AI refinement failed. Use the math baseline instead.",
+      });
+      return;
+    }
+
+    const meter = await trackAiCall(venueId, "prediction_refinement");
+    console.log("[api/refine-prediction] ok", { uid, venueId, historyUsed: context.hasHistory, products: mathResults.length });
+    res.json({ ok: true, refinement, historyUsed: context.hasHistory, meter });
+
+  } catch (e: any) {
+    console.error("[api/refine-prediction] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Refinement failed" });
   }
 });
 

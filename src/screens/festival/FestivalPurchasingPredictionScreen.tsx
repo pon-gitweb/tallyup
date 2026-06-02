@@ -7,9 +7,11 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, getDocs, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import { apiBase } from '../../services/apiBase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { generatePurchasingPrediction, guessCategory } from '../../services/festival/purchasingPrediction';
+import type { AiRefinement, AiAdjustment } from '../../services/festival/predictionRefinement';
 
 // ─── Category mapping: setup screen IDs → prediction service categories ────────
 
@@ -59,7 +61,7 @@ function formatShortDate(ddmmyyyy) {
 
 // ─── Per-product row ──────────────────────────────────────────────────────────
 
-function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange }) {
+function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAdjustment, mathQtyDisplay, aiQtyDisplay, useAi, onToggleAi }) {
   const displayQty = result.totalQty ?? result.predictedQty;
   const [qtyText, setQtyText] = useState(String(displayQty));
   const [notesOpen, setNotesOpen] = useState(false);
@@ -197,6 +199,24 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange }) {
         <Text style={R.commitWarn}>⚠ Min commitment: {result.minimumCommitment} units</Text>
       )}
 
+      {/* AI comparison block — shown when refinement is active */}
+      {aiAdjustment != null && mathQtyDisplay != null && aiQtyDisplay != null && (
+        <View style={R.aiCompareBox}>
+          <View style={R.aiCompareRow}>
+            <Text style={[R.aiCompareLabel, !useAi && R.aiActiveLabel]}>Math: {mathQtyDisplay}</Text>
+            <Text style={R.aiArrow}>→</Text>
+            <Text style={[R.aiCompareLabel, useAi && R.aiActiveLabel]}>AI: {aiQtyDisplay}</Text>
+          </View>
+          <Text style={R.aiReasoning}>{aiAdjustment.reasoning}</Text>
+          <View style={R.aiConfidenceRow}>
+            <Text style={R.aiConfidence}>Confidence: {aiAdjustment.confidenceInAdjustment}</Text>
+            <TouchableOpacity onPress={onToggleAi} style={R.aiToggleBtn}>
+              <Text style={R.aiToggleBtnText}>{useAi ? 'Use math' : 'Use AI'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <TouchableOpacity onPress={() => setNotesOpen(v => !v)} style={R.notesToggle}>
         <Text style={R.notesToggleText}>
           {notesOpen ? '▲ Hide calculation' : '▼ How we calculated this'}
@@ -215,13 +235,18 @@ export default function FestivalPurchasingPredictionScreen() {
   const nav     = useNavigation();
   const venueId = useVenueId();
 
-  const [results,       setResults]       = useState([]);
-  const [loading,       setLoading]       = useState(FESTIVAL_BETA);
-  const [loadError,     setLoadError]     = useState(null);
-  const [generating,    setGenerating]    = useState(false);
-  const [eventData,     setEventData]     = useState(null);
-  const [bufferPercent, setBufferPercent] = useState(15);
-  const [sellingPrices, setSellingPrices] = useState({});
+  const [results,        setResults]        = useState([]);
+  const [loading,        setLoading]        = useState(FESTIVAL_BETA);
+  const [loadError,      setLoadError]      = useState(null);
+  const [generating,     setGenerating]     = useState(false);
+  const [eventData,      setEventData]      = useState(null);
+  const [bufferPercent,  setBufferPercent]  = useState(15);
+  const [sellingPrices,  setSellingPrices]  = useState({});
+  // AI refinement state
+  const [aiRefinement,   setAiRefinement]   = useState<AiRefinement | null>(null);
+  const [refining,       setRefining]       = useState(false);
+  const [refinementError,setRefinementError]= useState(null);
+  const [useAiSuggestion,setUseAiSuggestion]= useState<Record<string, boolean>>({});
   const snapshotTimer = useRef(null);
 
   useEffect(() => {
@@ -487,6 +512,89 @@ export default function FestivalPurchasingPredictionScreen() {
     runFullLoad(newBuf);
   }
 
+  // ── AI refinement helpers ─────────────────────────────────────────────────
+
+  function getCategoryTotal(category, allResults) {
+    return allResults
+      .filter(r => (r.category || guessCategory(r.productName)) === category)
+      .reduce((s, r) => s + r.predictedQty, 0);
+  }
+
+  function getAiQtyForProduct(result, adj, allResults) {
+    if (!adj) return null;
+    const cat = result.category || guessCategory(result.productName);
+    const catTotal = getCategoryTotal(cat, allResults);
+    const base = Math.ceil(catTotal * adj.adjustedShare);
+    return base + (result.riderQty || 0) + (result.activationQty || 0);
+  }
+
+  async function refineWithAI() {
+    if (!venueId || results.length === 0 || !eventData) return;
+    setRefining(true);
+    setRefinementError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch(`${apiBase()}/refine-prediction`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ venueId, mathResults: results, eventDetails: eventData }),
+      });
+      const data = await response.json();
+      if (data.ok && data.refinement) {
+        const refinement: AiRefinement = data.refinement;
+        setAiRefinement(refinement);
+        // Default all products to use AI suggestion
+        const defaults = {};
+        refinement.adjustments.forEach(a => { defaults[a.productName] = true; });
+        setUseAiSuggestion(defaults);
+        // Apply AI quantities immediately
+        refinement.adjustments.forEach(a => {
+          const result = results.find(r => r.productName === a.productName);
+          if (result) {
+            const aiQty = getAiQtyForProduct(result, a, results);
+            if (aiQty != null && aiQty > 0) handleQtyChange(result.productId, aiQty);
+          }
+        });
+      } else {
+        setRefinementError(data.message || data.error || 'AI refinement failed. Use the math baseline instead.');
+      }
+    } catch (e) {
+      setRefinementError('Could not reach AI service. Use manual adjustments instead.');
+    } finally {
+      setRefining(false);
+    }
+  }
+
+  function clearAiRefinement() {
+    // Reset all products to their math baseline (predictedQty + riders + activations)
+    results.forEach(r => {
+      const mathQty = r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0);
+      handleQtyChange(r.productId, mathQty);
+    });
+    setAiRefinement(null);
+    setUseAiSuggestion({});
+    setRefinementError(null);
+  }
+
+  function toggleAiForProduct(productName) {
+    const result = results.find(r => r.productName === productName);
+    if (!result) return;
+    const adj = aiRefinement?.adjustments?.find(a => a.productName === productName);
+    const currentlyUsingAI = useAiSuggestion[productName] ?? true;
+    const newUseAI = !currentlyUsingAI;
+    setUseAiSuggestion(prev => ({ ...prev, [productName]: newUseAI }));
+    if (newUseAI && adj) {
+      const aiQty = getAiQtyForProduct(result, adj, results);
+      if (aiQty != null && aiQty > 0) handleQtyChange(result.productId, aiQty);
+    } else {
+      const mathQty = result.predictedQty + (result.riderQty || 0) + (result.activationQty || 0);
+      handleQtyChange(result.productId, mathQty);
+    }
+  }
+
   // ── Generate orders (FIX 11 — grouped by supplierId) ─────────────────────
 
   function confirmGenerateOrders() {
@@ -692,6 +800,37 @@ export default function FestivalPurchasingPredictionScreen() {
           )}
 
           <Text style={R.confBasis}>{confBasis}</Text>
+
+          {/* AI refinement controls */}
+          {!aiRefinement && !refining && results.length > 0 && (
+            <TouchableOpacity
+              style={R.refineBtn}
+              onPress={refineWithAI}
+              disabled={refining}
+            >
+              <Text style={R.refineBtnText}>✦ Refine with AI</Text>
+            </TouchableOpacity>
+          )}
+          {refining && (
+            <View style={R.refineBtn}>
+              <ActivityIndicator color="#fff" size="small" />
+              <Text style={[R.refineBtnText, { marginLeft: 8 }]}>Refining…</Text>
+            </View>
+          )}
+          {aiRefinement && (
+            <View style={R.refinedBadge}>
+              <Text style={R.refinedBadgeTitle}>
+                ✦ AI refined{aiRefinement.historyUsed ? ' · with history' : ' · no history'}
+              </Text>
+              <Text style={R.refinedNote}>{aiRefinement.adjustmentNote}</Text>
+              <TouchableOpacity onPress={clearAiRefinement}>
+                <Text style={R.clearRefinement}>Clear AI refinement →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {refinementError && (
+            <Text style={R.refinementError}>⚠️ {refinementError}</Text>
+          )}
         </View>
 
         {/* ── Products grouped by supplierId (FIX 11) ── */}
@@ -716,15 +855,29 @@ export default function FestivalPurchasingPredictionScreen() {
                   <Text style={R.supplierTotal}>{formatCurrency(supplierTotal)}</Text>
                 )}
               </View>
-              {items.map(r => (
-                <ProductRow
-                  key={r.productId}
-                  result={r}
-                  sellingPrice={sellingPrices[r.productId] || ''}
-                  onQtyChange={handleQtyChange}
-                  onSellPriceChange={handleSellPriceChange}
-                />
-              ))}
+              {items.map(r => {
+                const adj = aiRefinement?.adjustments?.find(a => a.productName === r.productName);
+                const mathQtyDisplay = adj
+                  ? r.predictedQty + (r.riderQty || 0) + (r.activationQty || 0)
+                  : null;
+                const aiQtyDisplay = adj
+                  ? getAiQtyForProduct(r, adj, results)
+                  : null;
+                return (
+                  <ProductRow
+                    key={r.productId}
+                    result={r}
+                    sellingPrice={sellingPrices[r.productId] || ''}
+                    onQtyChange={handleQtyChange}
+                    onSellPriceChange={handleSellPriceChange}
+                    aiAdjustment={adj ?? null}
+                    mathQtyDisplay={mathQtyDisplay}
+                    aiQtyDisplay={aiQtyDisplay}
+                    useAi={useAiSuggestion[r.productName] ?? true}
+                    onToggleAi={() => toggleAiForProduct(r.productName)}
+                  />
+                );
+              })}
             </View>
           );
         })}
@@ -859,4 +1012,25 @@ const R = StyleSheet.create({
 
   emptyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' },
   emptyText: { fontSize: 15, color: '#9ca3af', textAlign: 'center', fontWeight: '600' },
+
+  // AI refinement — summary card
+  refineBtn:         { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  refineBtnText:     { color: '#fff', fontWeight: '700', fontSize: 14 },
+  refinedBadge:      { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: 10, marginTop: 10 },
+  refinedBadgeTitle: { color: '#a5f3fc', fontWeight: '800', fontSize: 13, marginBottom: 3 },
+  refinedNote:       { color: '#e0f2fe', fontSize: 12, marginBottom: 6 },
+  clearRefinement:   { color: '#93c5fd', fontSize: 12, fontWeight: '600' },
+  refinementError:   { color: '#fca5a5', fontSize: 12, marginTop: 6, textAlign: 'center' },
+
+  // AI refinement — product row
+  aiCompareBox:     { backgroundColor: '#f0f9ff', borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#bae6fd' },
+  aiCompareRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  aiCompareLabel:   { fontSize: 13, color: '#9ca3af' },
+  aiActiveLabel:    { color: '#1b4f72', fontWeight: '800' },
+  aiArrow:          { fontSize: 12, color: '#9ca3af' },
+  aiReasoning:      { fontSize: 12, color: '#374151', fontStyle: 'italic', marginBottom: 6 },
+  aiConfidenceRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  aiConfidence:     { fontSize: 11, color: '#9ca3af' },
+  aiToggleBtn:      { backgroundColor: '#1b4f72', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 },
+  aiToggleBtnText:  { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
