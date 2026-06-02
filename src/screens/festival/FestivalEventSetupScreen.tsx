@@ -85,20 +85,40 @@ type Progress = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SectionHeader({ n, title, complete }: { n: string; title: string; complete: boolean }) {
-  return (
+function getFirstIncompleteSection(prog: Progress): number {
+  if (!prog.basics)         return 1;
+  if (!prog.bars)           return 2;
+  if (!prog.sourceLocations)return 3;
+  if (!prog.suppliers)      return 4;
+  if (!prog.productPlanning)return 5;
+  if (!prog.historicalData) return 6;
+  return 1;
+}
+
+function SectionHeader({ n, title, complete, expanded, onPress }: {
+  n: string; title: string; complete: boolean; expanded?: boolean; onPress?: () => void;
+}) {
+  const inner = (
     <View style={S.sectionHeader}>
       <View style={[S.badge, complete && S.badgeDone]}>
         <Text style={S.badgeText}>{complete ? '✓' : n}</Text>
       </View>
-      <Text style={S.sectionTitle}>{title}</Text>
-      {complete && (
+      <Text style={[S.sectionTitle, { flex: 1 }]}>{title}</Text>
+      {complete && !expanded && (
         <View style={S.doneTag}>
           <Text style={S.doneTagText}>Complete</Text>
         </View>
       )}
+      {!!onPress && (
+        <Text style={{ fontSize: 12, color: '#9ca3af', marginLeft: 8 }}>
+          {expanded ? '▲' : '▼'}
+        </Text>
+      )}
     </View>
   );
+  return onPress
+    ? <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{inner}</TouchableOpacity>
+    : inner;
 }
 
 function RadioCard({ label, sub, selected, onPress }: any) {
@@ -167,6 +187,13 @@ export default function FestivalEventSetupScreen() {
   const [venueSuppliers,  setVenueSuppliers]  = useState<any[]>([]);
   const [supplierCfg,     setSupplierCfg]     = useState<Record<string, any>>({});
   const [products,        setProducts]        = useState<any[]>([]);
+
+  // ── Collapsible section state ────────────────────────────────────────────
+  const [expandedSection, setExpandedSection] = useState(1);
+  // Sync to first incomplete section once progress loads from Firestore
+  useEffect(() => {
+    setExpandedSection(getFirstIncompleteSection(progress));
+  }, [progress.basics, progress.bars, progress.sourceLocations, progress.suppliers, progress.productPlanning, progress.historicalData]);
 
   // ── Contracts count (for Section 6 card) ─────────────────────────────────
   const [contractCount,   setContractCount]   = useState(0);
@@ -394,6 +421,7 @@ export default function FestivalEventSetupScreen() {
         ]);
       }
       showToast('✓ Event basics saved');
+      setExpandedSection(2);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -434,6 +462,7 @@ export default function FestivalEventSetupScreen() {
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), { setupProgress: newProgress, updatedAt: serverTimestamp() }, { merge: true });
       setProgress(newProgress);
       showToast('✓ Bars saved');
+      setExpandedSection(3);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -464,6 +493,7 @@ export default function FestivalEventSetupScreen() {
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), { setupProgress: newProgress, updatedAt: serverTimestamp() }, { merge: true });
       setProgress(newProgress);
       showToast('✓ Source locations saved');
+      setExpandedSection(4);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -483,6 +513,7 @@ export default function FestivalEventSetupScreen() {
       }, { merge: true });
       setProgress(newProgress);
       showToast('✓ Product planning saved');
+      setExpandedSection(6);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -516,6 +547,7 @@ export default function FestivalEventSetupScreen() {
       }, { merge: true });
       setProgress(newProgress);
       showToast('✓ Supplier config saved');
+      setExpandedSection(5);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -535,6 +567,7 @@ export default function FestivalEventSetupScreen() {
       }, { merge: true });
       setProgress(newProgress);
       showToast('✓ Historical data saved');
+      setExpandedSection(1);
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
     } finally { setSaving(null); }
@@ -619,7 +652,8 @@ export default function FestivalEventSetupScreen() {
 
         {/* ── SECTION 1: Event basics ── */}
         <View style={S.section}>
-          <SectionHeader n="1" title="Event basics" complete={progress.basics} />
+          <SectionHeader n="1" title="Event basics" complete={progress.basics} expanded={expandedSection === 1} onPress={() => setExpandedSection(expandedSection === 1 ? 0 : 1)} />
+          {expandedSection === 1 && (<>
 
           <Text style={S.label}>Event name *</Text>
           <TextInput value={eventName} onChangeText={setEventName} placeholder="e.g. Winery Summer Fest 2025" placeholderTextColor="#9ca3af" style={S.input} />
@@ -685,11 +719,13 @@ export default function FestivalEventSetupScreen() {
           ))}
 
           <SaveButton label="Save and continue →" savingKey="basics" saving={saving} onPress={saveBasics} />
+          </>)}
         </View>
 
         {/* ── SECTION 2: Bar configuration ── */}
         <View style={S.section}>
-          <SectionHeader n="2" title="Bar configuration" complete={progress.bars} />
+          <SectionHeader n="2" title="Bar configuration" complete={progress.bars} expanded={expandedSection === 2} onPress={() => setExpandedSection(expandedSection === 2 ? 0 : 2)} />
+          {expandedSection === 2 && (<>
           {!progress.basics ? (
             <LockedBox text="Complete Event Basics first to configure your bars." />
           ) : (
@@ -729,11 +765,13 @@ export default function FestivalEventSetupScreen() {
               <SaveButton label="Save bars →" savingKey="bars" saving={saving} onPress={saveBars} />
             </>
           )}
+          </>)}
         </View>
 
         {/* ── SECTION 3: Source locations ── */}
         <View style={S.section}>
-          <SectionHeader n="3" title="Source locations" complete={progress.sourceLocations} />
+          <SectionHeader n="3" title="Source locations" complete={progress.sourceLocations} expanded={expandedSection === 3} onPress={() => setExpandedSection(expandedSection === 3 ? 0 : 3)} />
+          {expandedSection === 3 && (<>
           {!progress.basics ? (
             <LockedBox text="Complete Event Basics first." />
           ) : (
@@ -819,11 +857,13 @@ export default function FestivalEventSetupScreen() {
               <SaveButton label="Save locations →" savingKey="locations" saving={saving} onPress={saveLocations} />
             </>
           )}
+          </>)}
         </View>
 
         {/* ── SECTION 4: Supplier setup ── */}
         <View style={S.section}>
-          <SectionHeader n="4" title="Supplier setup" complete={progress.suppliers} />
+          <SectionHeader n="4" title="Supplier setup" complete={progress.suppliers} expanded={expandedSection === 4} onPress={() => setExpandedSection(expandedSection === 4 ? 0 : 4)} />
+          {expandedSection === 4 && (<>
           <Text style={S.sectionIntro}>Which suppliers are delivering to this event?</Text>
 
           <Text style={S.helper}>{venueSuppliers.length} supplier{venueSuppliers.length !== 1 ? 's' : ''} configured</Text>
@@ -900,11 +940,13 @@ export default function FestivalEventSetupScreen() {
           )}
 
           <SaveButton label="Save supplier config →" savingKey="suppliers" saving={saving} onPress={saveSuppliers} />
+          </>)}
         </View>
 
         {/* ── SECTION 5: Product planning ── */}
         <View style={S.section}>
-          <SectionHeader n="5" title="Product planning" complete={progress.productPlanning} />
+          <SectionHeader n="5" title="Product planning" complete={progress.productPlanning} expanded={expandedSection === 5} onPress={() => setExpandedSection(expandedSection === 5 ? 0 : 5)} />
+          {expandedSection === 5 && (<>
 
           <Text style={S.helper}>{products.length} product{products.length !== 1 ? 's' : ''} in catalogue</Text>
           <TouchableOpacity style={S.navBtn} onPress={() => navigation.navigate('Products')}>
@@ -950,11 +992,13 @@ export default function FestivalEventSetupScreen() {
           )}
 
           <SaveButton label="Save product planning →" savingKey="products" saving={saving} onPress={saveProductPlanning} />
+          </>)}
         </View>
 
         {/* ── SECTION 6: Historical data ── */}
         <View style={S.section}>
-          <SectionHeader n="6" title="Historical data" complete={progress.historicalData} />
+          <SectionHeader n="6" title="Historical data" complete={progress.historicalData} expanded={expandedSection === 6} onPress={() => setExpandedSection(expandedSection === 6 ? 0 : 6)} />
+          {expandedSection === 6 && (<>
 
           <View style={S.comingSoonBadge}>
             <Text style={S.comingSoonBadgeText}>CSV import — Phase 4</Text>
@@ -1011,6 +1055,7 @@ export default function FestivalEventSetupScreen() {
           </View>
 
           <SaveButton label="Save →" savingKey="historical" saving={saving} onPress={saveHistorical} />
+          </>)}
         </View>
 
       </ScrollView>

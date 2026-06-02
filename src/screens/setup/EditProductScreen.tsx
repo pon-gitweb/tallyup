@@ -276,6 +276,7 @@ export default function EditProductScreen() {
       unit: clean(form.unit),
       size: form.size || null,               // free text "700ml"
       packSize: intOrNull(form.packSize),
+      caseSize: intOrNull(form.packSize),   // alias — prediction + packing slips read caseSize
       abv: numOrNull(form.abv),
       costPrice: numOrNull(form.costPrice),
       gstPercent: gstNum ?? 15,

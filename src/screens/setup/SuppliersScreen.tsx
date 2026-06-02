@@ -56,6 +56,7 @@ export default function SuppliersScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
   const [orderingMethod, setOrderingMethod] =
     useState<'email' | 'portal' | 'phone'>('email');
   const [portalUrl, setPortalUrl] = useState('');
@@ -141,6 +142,7 @@ export default function SuppliersScreen() {
     setName('');
     setEmail('');
     setPhone('');
+    setAccountNumber('');
     setOrderingMethod('email');
     setPortalUrl('');
     setLeadDays('2');
@@ -154,6 +156,7 @@ export default function SuppliersScreen() {
     setName(s.name || '');
     setEmail(s.email || '');
     setPhone(s.phone || '');
+    setAccountNumber((s as any).accountNumber || '');
     setOrderingMethod((s.orderingMethod as any) || 'email');
     setPortalUrl(s.portalUrl || '');
 
@@ -201,6 +204,7 @@ export default function SuppliersScreen() {
         name: name.trim(),
         email: email.trim() || null,
         phone: phone.trim() || null,
+        accountNumber: accountNumber.trim() || null,
         orderingMethod,
         portalUrl: portalUrl.trim() || null,
         defaultLeadDays: leadDays.trim() ? Number(leadDays) || 2 : 2,
@@ -712,6 +716,15 @@ export default function SuppliersScreen() {
               onChangeText={setPhone}
               keyboardType="phone-pad"
               placeholder="Phone"
+            />
+
+            <Text style={styles.lbl}>Account number (optional)</Text>
+            <TextInput
+              style={styles.inp}
+              value={accountNumber}
+              onChangeText={setAccountNumber}
+              placeholder="Your account number with this supplier"
+              autoCapitalize="characters"
             />
 
             <Text style={styles.lbl}>Ordering Method (email | portal | phone)</Text>

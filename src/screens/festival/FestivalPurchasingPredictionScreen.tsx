@@ -489,6 +489,22 @@ export default function FestivalPurchasingPredictionScreen() {
 
   // ── Generate orders (FIX 11 — grouped by supplierId) ─────────────────────
 
+  function confirmGenerateOrders() {
+    const supplierCount = new Set(results.map(r => r.supplierId || 'unknown')).size;
+    const totalUnits = results.reduce((s, r) => s + (r.totalQty ?? r.predictedQty ?? 0), 0);
+    Alert.alert(
+      'Generate draft orders?',
+      `This will create ${supplierCount} draft order${supplierCount !== 1 ? 's' : ''} across ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}.\n\n` +
+      `Total: ~${totalUnits.toLocaleString()} units\n` +
+      `Est. cost: ${formatCurrency(totalCost)}\n\n` +
+      `Orders are saved as drafts — you can review and edit before submitting to suppliers.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Generate orders', onPress: () => generateOrders() },
+      ],
+    );
+  }
+
   async function generateOrders() {
     if (!venueId || results.length === 0) return;
     setGenerating(true);
@@ -744,7 +760,7 @@ export default function FestivalPurchasingPredictionScreen() {
           <TouchableOpacity
             style={[R.generateBtn, generating && R.generateBtnDisabled]}
             disabled={generating}
-            onPress={generateOrders}
+            onPress={confirmGenerateOrders}
           >
             {generating
               ? <ActivityIndicator color="#fff" size="small" />

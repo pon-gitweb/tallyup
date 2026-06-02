@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { Alert, View, Text, TouchableOpacity, Modal } from 'react-native';
+import { useNavigation, useNavigationState } from '@react-navigation/native';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
@@ -32,10 +32,23 @@ async function loadVenueOptions(venueIds: string[]): Promise<VenueOption[]> {
   return results.filter(Boolean) as VenueOption[];
 }
 
+const FESTIVAL_ONLY_SCREENS = [
+  'FestivalPurchasingPrediction',
+  'FestivalGoodsIn',
+  'FestivalEndOfEventCount',
+  'FestivalWeekReview',
+  'FestivalStockOverview',
+  'FestivalOpeningStock',
+];
+
 export function VenueSwitcher() {
   const { activeVenueId, venueIds, switchVenue } = useVenue();
   const c = useColours();
   const nav = useNavigation<any>();
+
+  const currentRouteName = useNavigationState(
+    state => state?.routes?.[state.index]?.name ?? ''
+  );
 
   const [showPicker, setShowPicker] = useState(false);
   const [allVenues, setAllVenues] = useState<VenueOption[]>([]);
@@ -110,10 +123,24 @@ export function VenueSwitcher() {
                   borderWidth: 1.5,
                   borderColor: venue.id === activeVenueId ? '#16a34a' : '#e5e1d8',
                 }}
-                onPress={async () => {
+                onPress={() => {
                   if (venue.id === activeVenueId) { setShowPicker(false); return; }
+                  const isOnFestivalScreen = FESTIVAL_ONLY_SCREENS.includes(currentRouteName);
+                  const switchingToNonFestival = venue.type !== 'festival';
+                  if (isOnFestivalScreen && switchingToNonFestival) {
+                    setShowPicker(false);
+                    Alert.alert(
+                      'Switch venue?',
+                      `You are on a festival screen.\n\nSwitching to "${venue.name}" will leave this screen.\n\nAny unsaved changes will be lost.`,
+                      [
+                        { text: 'Stay here', style: 'cancel' },
+                        { text: 'Switch anyway', onPress: async () => { try { await switchVenue(venue.id); } catch {} } },
+                      ],
+                    );
+                    return;
+                  }
                   setShowPicker(false);
-                  try { await switchVenue(venue.id); } catch {}
+                  switchVenue(venue.id).catch(() => {});
                 }}
               >
                 <Text style={{ fontSize: 24, marginRight: 12 }}>

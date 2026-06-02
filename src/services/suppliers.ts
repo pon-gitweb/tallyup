@@ -18,6 +18,8 @@ export type Supplier = {
   portalUrl?: string | null;
   defaultLeadDays?: number;
 
+  accountNumber?: string | null;         // customer account number with this supplier
+
   // Timing policy (optional, used by ordering UX)
   orderCutoffLocalTime?: string | null; // "HH:mm" in venue local time
   mergeWindowHours?: number | null;     // how many hours to merge orders
@@ -41,6 +43,7 @@ export async function createSupplier(venueId: string, data: Supplier): Promise<s
     name: data.name,
     email: data.email ?? null,
     phone: data.phone ?? null,
+    accountNumber: data.accountNumber ?? null,
     orderingMethod: data.orderingMethod ?? 'email',
     portalUrl: data.portalUrl ?? null,
     defaultLeadDays: data.defaultLeadDays ?? 2,
