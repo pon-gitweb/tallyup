@@ -259,16 +259,23 @@ export default function FestivalOpsScreen() {
     }, 0);
   }
 
-  // Critical stock alerts: bars with any product < 1hr remaining
-  const stockAlerts: { barName: string; productName: string; hours: number }[] = [];
+  // Stock alerts: bars with any product < 2hr remaining (critical < 1hr, warning 1–2hr)
+  const stockAlerts: { barId: string; barName: string; productId: string; productName: string; hours: number; level: 'critical' | 'warning' }[] = [];
   for (const bar of bars) {
     if (bar.isHQ) continue;
     const stock = barStock[bar.id] ?? [];
     for (const item of stock) {
       if (item.velocity > 0 && item.lastCount != null) {
         const hrs = item.lastCount / item.velocity;
-        if (hrs < 1) {
-          stockAlerts.push({ barName: bar.name || bar.id, productName: item.name || item.id, hours: hrs });
+        if (hrs < 2) {
+          stockAlerts.push({
+            barId: bar.id,
+            barName: bar.name || bar.id,
+            productId: item.id,
+            productName: item.name || item.id,
+            hours: hrs,
+            level: hrs < 1 ? 'critical' : 'warning',
+          });
         }
       }
     }
@@ -292,16 +299,24 @@ export default function FestivalOpsScreen() {
           </View>
         </View>
 
-        {/* ── Critical stock alerts ─────────────────────────────────────── */}
+        {/* ── Stock alerts (critical < 1hr, warning < 2hr) ─────────────── */}
         {stockAlerts.length > 0 && (
           <View style={O.alertBanner}>
             <Text style={O.alertBannerText}>
-              🚨 {stockAlerts.length} product{stockAlerts.length !== 1 ? 's' : ''} running out within 1 hour
+              🚨 {stockAlerts.filter(a => a.level === 'critical').length > 0 ? 'CRITICAL' : '⚠️ WARNING'} — {stockAlerts.length} product{stockAlerts.length !== 1 ? 's' : ''} running low
             </Text>
             {stockAlerts.map((a, i) => (
-              <Text key={i} style={O.alertBannerSub}>
-                {a.barName} — {a.productName} (~{Math.round(a.hours * 60)}min)
-              </Text>
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                <Text style={[O.alertBannerSub, { flex: 1 }]}>
+                  {a.level === 'critical' ? '🔴' : '🟡'} {a.barName} — {a.productName} (~{Math.round(a.hours * 60)}min)
+                </Text>
+                <TouchableOpacity
+                  onPress={() => nav.navigate('FestivalDeliveryTasks', { prefilledBarId: a.barId, prefilledProductId: a.productId, urgency: a.level === 'critical' ? 'asap' : 'next-round' })}
+                  style={{ backgroundColor: a.level === 'critical' ? '#dc2626' : '#d97706', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 8, marginLeft: 8 }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>Send top-up →</Text>
+                </TouchableOpacity>
+              </View>
             ))}
           </View>
         )}

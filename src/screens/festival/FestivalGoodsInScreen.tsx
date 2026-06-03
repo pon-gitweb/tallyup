@@ -133,18 +133,40 @@ export default function FestivalGoodsInScreen() {
     if (!selectedLocation || !venueId) return;
     setSaving(true);
     try {
+      // Pre-fetch to determine which items already exist (use increment vs. set)
+      const receivingLines = lines.filter(l => l.receivedQty > 0);
+      const itemRefs = receivingLines.map(l =>
+        doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId)
+      );
+      const existingSnaps = await Promise.all(itemRefs.map(r => getDoc(r)));
+      const existingMap = new Map(
+        receivingLines.map((l, i) => [l.productId, existingSnaps[i].exists()])
+      );
+
       const batch = writeBatch(db);
       const now = serverTimestamp();
       lines.forEach(l => {
         if (l.receivedQty <= 0) return;
         const ref = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', l.productId);
-        batch.set(ref, {
-          name: l.productName,
-          unit: 'unit',
-          lastCount: l.receivedQty,
-          lastCountAt: now,
-          updatedAt: now,
-        }, { merge: true });
+        if (existingMap.get(l.productId)) {
+          // Second delivery to same location — increment, do not overwrite
+          batch.update(ref, {
+            lastCount: increment(l.receivedQty),
+            lastCountAt: now,
+            updatedAt: now,
+          });
+        } else {
+          // First receipt — set with openingStock baseline for velocity service
+          batch.set(ref, {
+            name: l.productName,
+            unit: 'unit',
+            lastCount: l.receivedQty,
+            openingStock: l.receivedQty,
+            lastCountAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
       });
       if (chepEnabled && chepReceived) {
         const chepRef = doc(db, 'venues', venueId, 'departments', 'hq', 'areas', selectedLocation.id, 'items', '_chep_pallets');

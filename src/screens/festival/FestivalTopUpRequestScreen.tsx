@@ -5,7 +5,7 @@ import {
   ScrollView, TextInput, Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -38,14 +38,17 @@ export default function FestivalTopUpRequestScreen() {
   const { barId, barName } = route.params || {};
   const venueId = useVenueId();
 
-  const [step,     setStep]     = useState(1);
-  const [products, setProducts] = useState<any[]>([]);
-  const [lines,    setLines]    = useState<LineItem[]>([]);
-  const [urgency,  setUrgency]  = useState<string>('asap');
-  const [note,     setNote]     = useState('');
-  const [saving,   setSaving]   = useState(false);
-  const [sent,     setSent]     = useState(false);
-  const [loading,  setLoading]  = useState(FESTIVAL_BETA);
+  const [step,              setStep]              = useState(1);
+  const [products,          setProducts]          = useState<any[]>([]);
+  const [lines,             setLines]             = useState<LineItem[]>([]);
+  const [urgency,           setUrgency]           = useState<string>('asap');
+  const [note,              setNote]              = useState('');
+  const [saving,            setSaving]            = useState(false);
+  const [sent,              setSent]              = useState(false);
+  const [loading,           setLoading]           = useState(FESTIVAL_BETA);
+  const [sourceLocationId,  setSourceLocationId]  = useState<string | null>(null);
+  const [sourceLocationName,setSourceLocationName]= useState<string>('Central Store');
+  const [excessSuggestion,  setExcessSuggestion]  = useState<{barId:string;barName:string;excessQty:number;hoursRemaining:number;productId:string}|null>(null);
 
   // Load products from all areas under this bar's department
   useEffect(() => {
@@ -61,6 +64,24 @@ export default function FestivalTopUpRequestScreen() {
         setProducts(allItems);
       } catch (_) {}
       setLoading(false);
+    })();
+  }, [venueId, barId]);
+
+  // Load HQ areas to determine default source location for this bar
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId || !barId) return;
+    (async () => {
+      try {
+        const hqAreasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', 'hq', 'areas'));
+        // Prefer the area whose servingBarIds includes this bar
+        const servingArea = hqAreasSnap.docs.find(a =>
+          (a.data().servingBarIds || []).includes(barId)
+        ) || hqAreasSnap.docs[0];
+        if (servingArea) {
+          setSourceLocationId(servingArea.id);
+          setSourceLocationName(servingArea.data().name || 'Central Store');
+        }
+      } catch (_) {}
     })();
   }, [venueId, barId]);
 
@@ -138,7 +159,8 @@ export default function FestivalTopUpRequestScreen() {
         urgency,
         note: note.trim() || null,
         status: 'pending',
-        sourceLocationId: null,
+        sourceLocationId: sourceLocationId || null,
+        sourceLocationName: sourceLocationName || null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -256,7 +278,42 @@ export default function FestivalTopUpRequestScreen() {
           <TouchableOpacity style={SS.secondaryBtn} onPress={() => setStep(1)}>
             <Text style={SS.secondaryBtnText}>← Back</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[SS.primaryBtn, { flex: 1 }]} onPress={() => setStep(3)}>
+          <TouchableOpacity style={[SS.primaryBtn, { flex: 1 }]} onPress={() => {
+            setStep(3);
+            // Check if any other bar has excess of the requested products
+            if (!venueId || !barId || lines.length === 0) return;
+            const firstLine = lines[0];
+            if (!firstLine?.productId) return;
+            (async () => {
+              try {
+                const barSnap = await getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true)));
+                for (const barDoc of barSnap.docs) {
+                  if (barDoc.id === barId) continue;
+                  const itemRef = doc(db, 'venues', venueId, 'departments', barDoc.id, 'areas', 'back-of-house', 'items', firstLine.productId);
+                  const itemSnap = await getDoc(itemRef);
+                  if (!itemSnap.exists()) continue;
+                  const item = itemSnap.data() as any;
+                  const stock = item.lastCount || 0;
+                  const velocity = item.velocity || 0;
+                  if (velocity <= 0 || stock <= 0) continue;
+                  const hoursRemaining = stock / velocity;
+                  if (hoursRemaining > 4) {
+                    const safeToGive = Math.max(0, Math.floor(stock - velocity * 3));
+                    if (safeToGive > 0) {
+                      setExcessSuggestion({
+                        barId: barDoc.id,
+                        barName: barDoc.data().name || barDoc.id,
+                        excessQty: safeToGive,
+                        hoursRemaining,
+                        productId: firstLine.productId,
+                      });
+                      return;
+                    }
+                  }
+                }
+              } catch (_) {}
+            })();
+          }}>
             <Text style={SS.primaryBtnText}>Next →</Text>
           </TouchableOpacity>
         </View>
@@ -284,6 +341,32 @@ export default function FestivalTopUpRequestScreen() {
             <Text style={SS.summaryRow}><Text style={SS.summaryKey}>Note:  </Text>{note}</Text>
           )}
         </View>
+
+        {/* Excess bar suggestion — pure velocity math */}
+        {excessSuggestion && (
+          <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1.5, borderColor: '#1b4f72' }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: '#1b4f72', marginBottom: 4 }}>
+              💡 {excessSuggestion.barName} has excess ({excessSuggestion.hoursRemaining.toFixed(1)}hrs supply)
+            </Text>
+            <Text style={{ fontSize: 13, color: '#374151', marginBottom: 10 }}>
+              Consider a bar transfer first — saves a trip to {sourceLocationName}.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{ flex: 1, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+                onPress={() => setExcessSuggestion(null)}
+              >
+                <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Request from HQ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+                onPress={() => nav.navigate('FestivalTransfer', { fromBarId: excessSuggestion.barId, fromBarName: excessSuggestion.barName })}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Transfer from {excessSuggestion.barName}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <TouchableOpacity style={SS.secondaryBtn} onPress={() => setStep(2)}>

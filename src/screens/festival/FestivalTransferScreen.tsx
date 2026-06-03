@@ -5,7 +5,7 @@ import {
   ScrollView, TextInput, Alert, Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
+import { collection, doc, getDocs, query, where, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -86,10 +86,10 @@ export default function FestivalTransferScreen() {
   const [showToPicker,   setShowToPicker]   = useState(false);
   const [showProdPicker, setShowProdPicker] = useState(false);
 
-  // Load bars
+  // Load bars from departments with isFestivalBar flag
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars')).then(snap => {
+    getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true))).then(snap => {
       setBars(snap.docs.map(d => {
         const data = d.data() as any;
         return { id: d.id, label: data.name || d.id, sub: data.location || '' };
@@ -98,17 +98,18 @@ export default function FestivalTransferScreen() {
     }).catch(() => setLoading(false));
   }, [venueId]);
 
-  // Load from-bar stock when fromBar changes
+  // Load from-bar stock from departments/back-of-house path
   useEffect(() => {
     if (!venueId || !fromBar) { setFromStock([]); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars', fromBar.id, 'stock')).then(snap => {
+    getDocs(collection(db, 'venues', venueId, 'departments', fromBar.id, 'areas', 'back-of-house', 'items')).then(snap => {
       setFromStock(snap.docs.map(d => {
         const data = d.data() as any;
+        const stock = data.lastCount ?? 0;
         return {
           id: d.id,
-          label: data.productName || d.id,
-          sub: `${data.currentStock ?? 0} units · ${data.velocity ? `${data.velocity.toFixed(1)}/hr` : 'no velocity'}`,
-          currentStock: data.currentStock ?? 0,
+          label: data.name || d.id,
+          sub: `${stock} units · ${data.velocity ? `${data.velocity.toFixed(1)}/hr` : 'no velocity'}`,
+          currentStock: stock,
           velocity: data.velocity ?? null,
         };
       }));
@@ -156,19 +157,19 @@ export default function FestivalTransferScreen() {
       const name = auth.currentUser?.displayName ?? 'Unknown';
       const transferId = `xfr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const result = check ?? velocityCheck(product.currentStock, product.velocity, q);
-      const fromRef = doc(db, 'venues', venueId, 'bars', fromBar.id, 'stock', product.id);
-      const toRef   = doc(db, 'venues', venueId, 'bars', toBar.id,   'stock', product.id);
+      const fromRef = doc(db, 'venues', venueId, 'departments', fromBar.id, 'areas', 'back-of-house', 'items', product.id);
+      const toRef   = doc(db, 'venues', venueId, 'departments', toBar.id,   'areas', 'back-of-house', 'items', product.id);
       await runTransaction(db, async (txn) => {
         const fromSnap = await txn.get(fromRef);
         if (!fromSnap.exists()) throw new Error(`${fromBar.label} has no stock record for ${product.label}.`);
-        const current = fromSnap.data()?.currentStock ?? 0;
+        const current = fromSnap.data()?.lastCount ?? 0;
         if (current < q) throw new Error(`Insufficient stock: ${fromBar.label} has ${current} units.`);
-        txn.update(fromRef, { currentStock: increment(-q), updatedAt: serverTimestamp() });
+        txn.update(fromRef, { lastCount: increment(-q), updatedAt: serverTimestamp() });
         const toSnap = await txn.get(toRef);
         if (toSnap.exists()) {
-          txn.update(toRef, { currentStock: increment(q), updatedAt: serverTimestamp() });
+          txn.update(toRef, { lastCount: increment(q), updatedAt: serverTimestamp() });
         } else {
-          txn.set(toRef, { productId: product.id, productName: product.label, currentStock: q, stockCategory: 'general', updatedAt: serverTimestamp() });
+          txn.set(toRef, { name: product.label, lastCount: q, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
         }
       });
       await setDoc(doc(db, 'venues', venueId, 'transfers', transferId), {
