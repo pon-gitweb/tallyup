@@ -2067,6 +2067,8 @@ async function handleFestivalSuitee(
   // Bar stock (reads from departments/{barId}/areas/back-of-house/items)
   try {
     const barStockByProduct: Record<string, { name: string; total: number; bars: string[] }> = {};
+    // Velocity tracking: barName → array of items with velocity
+    const barVelocity: Record<string, Array<{ name: string; velocity: number; hoursRemaining: number; confidence: string }>> = {};
     const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
     const barDepts = deptsSnap.docs.filter(d => (d.data() as any).isFestivalBar === true);
     for (const barDoc of barDepts) {
@@ -2081,6 +2083,16 @@ async function handleFestivalSuitee(
         const qty = data.lastCount ?? data.currentStock ?? 0;
         barStockByProduct[pid].total += qty;
         if (qty > 0) barStockByProduct[pid].bars.push(`${barName}:${qty}`);
+        // Track velocity if available
+        if (data.velocity && data.velocity > 0) {
+          if (!barVelocity[barName]) barVelocity[barName] = [];
+          barVelocity[barName].push({
+            name: data.name || data.productName || pid,
+            velocity: data.velocity,
+            hoursRemaining: qty / data.velocity,
+            confidence: data.velocityConfidence || 'unknown',
+          });
+        }
       });
     }
     const entries = Object.values(barStockByProduct).filter(e => e.total > 0).sort((a, b) => b.total - a.total);
@@ -2089,6 +2101,21 @@ async function handleFestivalSuitee(
       entries.slice(0, 30).forEach(e => {
         lines.push(`  ${e.name}: ${e.total} total (${e.bars.join(", ")})`);
       });
+    }
+    // Bar velocity section — enables Suitee to answer "how long until Bar X runs out?"
+    const velBarNames = Object.keys(barVelocity);
+    if (velBarNames.length > 0) {
+      lines.push("", "BAR VELOCITY (units/hr · hours remaining):");
+      for (const barName of velBarNames) {
+        const items = barVelocity[barName].sort((a, b) => a.hoursRemaining - b.hoursRemaining);
+        lines.push(`  ${barName}:`);
+        items.forEach(item => {
+          const alert = item.hoursRemaining < 1 ? " ⚠️ CRITICAL" : item.hoursRemaining < 2 ? " ⚠ watch" : "";
+          lines.push(`    ${item.name}: ${item.velocity.toFixed(1)}/hr · ~${item.hoursRemaining.toFixed(1)}hrs remaining${alert} (${item.confidence} confidence)`);
+        });
+      }
+    } else {
+      lines.push("", "BAR VELOCITY: Not yet calculated (session counts needed).");
     }
 
     // HQ storage locations (reads from departments/hq/areas/{areaId}/items)

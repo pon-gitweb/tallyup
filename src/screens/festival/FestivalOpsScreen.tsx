@@ -260,7 +260,16 @@ export default function FestivalOpsScreen() {
   }
 
   // Stock alerts: bars with any product < 2hr remaining (critical < 1hr, warning 1–2hr)
-  const stockAlerts: { barId: string; barName: string; productId: string; productName: string; hours: number; level: 'critical' | 'warning' }[] = [];
+  const hoursUntilEventClose = (() => {
+    if (!event?.endDate) return null;
+    try {
+      const [d, m, y] = event.endDate.split('/').map(Number);
+      const close = new Date(y, m - 1, d, 23, 59, 59);
+      return Math.max(0, (close.getTime() - Date.now()) / 3_600_000);
+    } catch { return null; }
+  })();
+
+  const stockAlerts: { barId: string; barName: string; productId: string; productName: string; hours: number; level: 'critical' | 'warning'; lostRevenue: string | null }[] = [];
   for (const bar of bars) {
     if (bar.isHQ) continue;
     const stock = barStock[bar.id] ?? [];
@@ -268,6 +277,16 @@ export default function FestivalOpsScreen() {
       if (item.velocity > 0 && item.lastCount != null) {
         const hrs = item.lastCount / item.velocity;
         if (hrs < 2) {
+          // Lost sales estimate if selling price available and event hours remain
+          let lostRevenue: string | null = null;
+          if (item.sellingPrice > 0 && hoursUntilEventClose != null) {
+            const hoursShort = Math.max(0, hoursUntilEventClose - hrs);
+            const projectedShortageDrinks = Math.ceil(item.velocity * hoursShort);
+            if (projectedShortageDrinks > 0) {
+              const revenue = projectedShortageDrinks * item.sellingPrice;
+              lostRevenue = `~${projectedShortageDrinks} drinks · ~$${Math.round(revenue).toLocaleString()} potential revenue`;
+            }
+          }
           stockAlerts.push({
             barId: bar.id,
             barName: bar.name || bar.id,
@@ -275,6 +294,7 @@ export default function FestivalOpsScreen() {
             productName: item.name || item.id,
             hours: hrs,
             level: hrs < 1 ? 'critical' : 'warning',
+            lostRevenue,
           });
         }
       }
@@ -306,7 +326,8 @@ export default function FestivalOpsScreen() {
               🚨 {stockAlerts.filter(a => a.level === 'critical').length > 0 ? 'CRITICAL' : '⚠️ WARNING'} — {stockAlerts.length} product{stockAlerts.length !== 1 ? 's' : ''} running low
             </Text>
             {stockAlerts.map((a, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+              <View key={i} style={{ marginTop: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text style={[O.alertBannerSub, { flex: 1 }]}>
                   {a.level === 'critical' ? '🔴' : '🟡'} {a.barName} — {a.productName} (~{Math.round(a.hours * 60)}min)
                 </Text>
@@ -316,6 +337,12 @@ export default function FestivalOpsScreen() {
                 >
                   <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>Send top-up →</Text>
                 </TouchableOpacity>
+                </View>
+                {a.lostRevenue && (
+                  <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 2, marginLeft: 16 }}>
+                    If not restocked: {a.lostRevenue}
+                  </Text>
+                )}
               </View>
             ))}
           </View>

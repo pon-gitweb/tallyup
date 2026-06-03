@@ -102,6 +102,9 @@ export default function FestivalReturnsScreen() {
         const prod = productMap[productId];
         const supplierName = prod?.supplierName || prod?.primarySupplierName || 'Other / Unknown';
         const costPrice: number | null = prod?.costPrice ?? null;
+        // Exclude non-general stock (rider, activation, promo) from return calculations
+        const stockCategory = prod?.stockCategory || 'general';
+        if (stockCategory !== 'general' && stockCategory !== undefined && stockCategory !== null) continue;
 
         const rp: ReturnProduct = {
           productId,

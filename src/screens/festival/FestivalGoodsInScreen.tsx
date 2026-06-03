@@ -6,8 +6,10 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
-  collection, doc, getDoc, getDocs, increment, onSnapshot, setDoc, writeBatch, serverTimestamp,
+  collection, doc, getDoc, getDocs, increment, onSnapshot, query, updateDoc, where,
+  setDoc, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
+import { auth } from '../../services/firebase';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -45,6 +47,9 @@ export default function FestivalGoodsInScreen() {
   const [loading, setLoading] = useState(true);
   const [chepReceived, setChepReceived] = useState('');
   const [chepEnabled, setChepEnabled] = useState(false);
+  // PO integration state
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -103,6 +108,30 @@ export default function FestivalGoodsInScreen() {
       }
     })();
   }, [selectedLocation?.id, bars.length]);
+
+  // Load submitted orders when a source location is selected
+  useEffect(() => {
+    if (!venueId || !selectedLocation) { setPendingOrders([]); return; }
+    (async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'venues', venueId, 'orders'), where('status', '==', 'submitted'))
+        );
+        setPendingOrders(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+      } catch (_) { setPendingOrders([]); }
+    })();
+  }, [venueId, selectedLocation?.id]);
+
+  function loadFromOrder(order: any) {
+    setSelectedOrder(order);
+    const orderLines: DeliveryLine[] = (order.products || order.items || []).map((p: any) => ({
+      productId: p.productId || p.id || '',
+      productName: p.productName || p.name || p.productId || '',
+      receivedQty: p.quantity || 0,      // pre-fill with ordered qty
+      expectedQty: p.quantity || 0,
+    })).filter((l: DeliveryLine) => l.productId);
+    if (orderLines.length > 0) setLines(orderLines);
+  }
 
   function updateReceivedQty(productId: string, text: string) {
     const n = parseFloat(text) || 0;
@@ -183,6 +212,41 @@ export default function FestivalGoodsInScreen() {
       batch.set(locResetRef, { distributionConfirmed: false }, { merge: true });
 
       await batch.commit();
+
+      // Record shortfalls and mark order as received if receiving against a PO
+      if (selectedOrder) {
+        const uid = auth.currentUser?.uid ?? 'unknown';
+        const shortfallLines = lines.filter(l => l.receivedQty > 0 && l.receivedQty < l.expectedQty);
+        for (const l of shortfallLines) {
+          try {
+            const sfRef = doc(collection(db, 'venues', venueId, 'event', 'shortfalls'));
+            await setDoc(sfRef, {
+              orderId:       selectedOrder.id,
+              supplierId:    selectedOrder.supplierId || null,
+              supplierName:  selectedOrder.supplierName || null,
+              productId:     l.productId,
+              productName:   l.productName,
+              orderedQty:    l.expectedQty,
+              receivedQty:   l.receivedQty,
+              shortfallQty:  l.expectedQty - l.receivedQty,
+              status:        'open',
+              note:          null,
+              createdAt:     serverTimestamp(),
+            });
+          } catch {}
+        }
+        try {
+          await updateDoc(doc(db, 'venues', venueId, 'orders', selectedOrder.id), {
+            status:          'received',
+            receivedAt:      serverTimestamp(),
+            receivedBy:      uid,
+            partialDelivery: shortfallLines.length > 0,
+            updatedAt:       serverTimestamp(),
+          });
+        } catch {}
+        setSelectedOrder(null);
+      }
+
       setPhase('distribute');
     } catch (e: any) {
       Alert.alert('Save failed', e?.message || 'Please try again.');
@@ -255,6 +319,8 @@ export default function FestivalGoodsInScreen() {
               name: l.productName,
               unit: 'unit',
               lastCount: a.qty,
+              openingStock: a.qty,    // baseline for velocity service
+              openingSetAt: now,
               lastCountAt: now,
               createdAt: now,
               updatedAt: now,
@@ -347,6 +413,41 @@ export default function FestivalGoodsInScreen() {
               </Text>
             </TouchableOpacity>
           ))
+        )}
+
+        {selectedLocation && pendingOrders.length > 0 && !selectedOrder && (
+          <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginTop: 16, borderWidth: 1, borderColor: '#bfdbfe' }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#1b4f72', marginBottom: 8 }}>
+              📋 {pendingOrders.length} pending order{pendingOrders.length !== 1 ? 's' : ''} found
+            </Text>
+            {pendingOrders.map(order => (
+              <TouchableOpacity
+                key={order.id}
+                style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: '#bfdbfe' }}
+                onPress={() => loadFromOrder(order)}
+              >
+                <Text style={{ fontWeight: '700', color: '#0B132B', fontSize: 13 }}>
+                  {order.supplierName || 'Unknown supplier'}
+                </Text>
+                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                  {(order.products || order.items || []).length} products · Receive against this PO
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={() => setPendingOrders([])}>
+              <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
+                Enter quantities manually instead →
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {selectedOrder && (
+          <View style={{ backgroundColor: '#f0fdf4', borderRadius: 8, padding: 10, marginTop: 12, borderWidth: 1, borderColor: '#86efac' }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>
+              ✓ Receiving against: {selectedOrder.supplierName || 'PO'} — edit actual quantities below
+            </Text>
+          </View>
         )}
 
         {selectedLocation && lines.length > 0 && (

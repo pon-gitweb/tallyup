@@ -4,10 +4,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { buildDepletionCurve } from '../../services/festival/depletionCurve';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,10 +67,13 @@ export default function FestivalBarDashboardScreen() {
   const { barId, barName, barLocation } = route.params || {};
   const venueId = useVenueId();
 
-  const [stock,   setStock]   = useState<StockItem[]>([]);
-  const [bar,     setBar]     = useState<any>(null);
-  const [loading, setLoading] = useState(FESTIVAL_BETA);
-  const [role,    setRole]    = useState<string>('staff');
+  const [stock,        setStock]        = useState<StockItem[]>([]);
+  const [bar,          setBar]          = useState<any>(null);
+  const [loading,      setLoading]      = useState(FESTIVAL_BETA);
+  const [role,         setRole]         = useState<string>('staff');
+  const [eventDetails, setEventDetails] = useState<any>(null);
+  const [inTransit,    setInTransit]    = useState<Record<string, number>>({}); // productId → in-transit qty
+  const [depletionMap, setDepletionMap] = useState<Record<string, any>>({}); // productId → DepletionCurve
 
   // Load role
   useEffect(() => {
@@ -115,6 +119,65 @@ export default function FestivalBarDashboardScreen() {
     );
     return () => unsub();
   }, [venueId, barId]);
+
+  // Load event details (for event end time used in depletion curve)
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) return;
+    const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), snap => {
+      setEventDetails(snap.exists() ? snap.data() : null);
+    });
+    return () => unsub();
+  }, [venueId]);
+
+  // Load in-transit requests for this bar (pending/accepted) + compute depletion when stock or velocity changes
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId || !barId || stock.length === 0) return;
+    (async () => {
+      // In-transit stock from pending/accepted requests
+      try {
+        const reqSnap = await getDocs(query(
+          collection(db, 'venues', venueId, 'requests'),
+          where('barId', '==', barId),
+          where('status', 'in', ['pending', 'accepted', 'collected'])
+        ));
+        const transit: Record<string, number> = {};
+        reqSnap.docs.forEach(d => {
+          const r = d.data() as any;
+          (r.products || []).forEach((p: any) => {
+            if (p.productId) transit[p.productId] = (transit[p.productId] || 0) + (p.quantity || 0);
+          });
+        });
+        setInTransit(transit);
+      } catch {}
+
+      // Compute depletion curves for items with velocity
+      try {
+        const sessSnap = await getDocs(query(
+          collection(db, 'venues', venueId, 'sessions'),
+          where('barId', '==', barId)
+        ));
+        const sessions = sessSnap.docs.map(d => d.data());
+        const endDate = eventDetails?.endDate;
+        const eventCloseTime = endDate ? (() => {
+          try {
+            const [d, m, y] = endDate.split('/').map(Number);
+            const t = new Date(y, m - 1, d, 23, 59, 59);
+            return isNaN(t.getTime()) ? null : t;
+          } catch { return null; }
+        })() : null;
+        if (!eventCloseTime) return;
+        const newDepletionMap: Record<string, any> = {};
+        for (const item of stock) {
+          if (!item.velocity || item.velocity <= 0) continue;
+          const transitQty = (inTransit[item.id] || 0);
+          const effectiveStock = item.currentStock + transitQty;
+          const curve = buildDepletionCurve(sessions, item.id, effectiveStock, item.velocity, eventCloseTime);
+          newDepletionMap[item.id] = { ...curve, inTransitAdded: transitQty };
+        }
+        setDepletionMap(newDepletionMap);
+      } catch {}
+    })();
+  }, [venueId, barId, stock, eventDetails]);
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -202,7 +265,10 @@ export default function FestivalBarDashboardScreen() {
                 )}
 
                 <View style={S.stockMeta}>
-                  <Text style={S.stockQty}>Stock: {item.currentStock} units</Text>
+                  <Text style={S.stockQty}>
+                    Stock: {item.currentStock} units
+                    {(inTransit[item.id] || 0) > 0 ? ` (+${inTransit[item.id]} in transit)` : ''}
+                  </Text>
                   {isOpsManager && item.velocity != null && item.velocity > 0 ? (
                     <>
                       <Text style={S.stockDetail}>Velocity: ~{item.velocity.toFixed(1)}/hr</Text>
@@ -216,6 +282,11 @@ export default function FestivalBarDashboardScreen() {
                     <Text style={S.stockDetail}>No velocity data yet</Text>
                   )}
                 </View>
+                {isOpsManager && depletionMap[item.id] && depletionMap[item.id].recommendationType !== 'on_track' && depletionMap[item.id].recommendationType !== 'no_data' && (
+                  <Text style={{ fontSize: 11, color: depletionMap[item.id].recommendationType === 'sellout_before_close' ? '#dc2626' : '#d97706', marginTop: 4, fontStyle: 'italic' }}>
+                    {depletionMap[item.id].recommendation}
+                  </Text>
+                )}
               </View>
             );
           })

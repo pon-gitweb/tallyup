@@ -1,10 +1,12 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
+  Alert, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
+import { writeWeeklySnapshot } from '../../services/festival/weeklySnapshot';
+import { apiBase } from '../../services/apiBase';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -185,6 +187,31 @@ export default function FestivalDashboardScreen() {
                   onPress={() => nav.navigate('FestivalWeekReview', { weekNumber: weekNum })}
                 >
                   <Text style={S.weekNudgeBtnText}>Review Week {weekNum} →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[S.weekNudgeBtn, { backgroundColor: '#16a34a' }]}
+                  onPress={() => {
+                    Alert.alert(
+                      `Close Week ${weekNum}?`,
+                      `This locks Week ${weekNum}'s data and updates the velocity model for ordering accuracy.`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Close week',
+                          onPress: async () => {
+                            try {
+                              await writeWeeklySnapshot(venueId!, weekNum);
+                              Alert.alert('Done', `Week ${weekNum} closed and snapshot saved.`);
+                            } catch (e: any) {
+                              Alert.alert('Error', e?.message || 'Could not close week.');
+                            }
+                          },
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={S.weekNudgeBtnText}>Close Week {weekNum} ✓</Text>
                 </TouchableOpacity>
               </View>
             </View>
