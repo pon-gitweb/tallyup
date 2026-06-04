@@ -9,34 +9,60 @@ const dlog = (...a:any[]) => { if (__DEV__) console.log('[variance.adapters]', .
 
 type Window = { from?: number; to?: number }; // epoch ms
 
-/** Counts adapter (end-of-window snapshot with expected/par) */
-export async function fetchCounts(venueId:string, window:Window, departmentId?:string): Promise<CountRow[]> {
+/** Counts adapter — traverses departments → areas → items live (same path as briefing.ts + Suitee) */
+export async function fetchCounts(venueId: string, window: Window, departmentId?: string): Promise<CountRow[]> {
   try {
-    // Try a few known shapes (document with arrays)
-    const docPaths = [
-      `venues/${venueId}/reports/latestCounts`,                 // { rows:[{sku,onHand,expected,unitCost,...}] }
-      `venues/${venueId}/computed/latestCounts`,
-      departmentId ? `venues/${venueId}/departments/${departmentId}/reports/latestCounts` : null,
-    ].filter(Boolean) as string[];
+    const results: CountRow[] = [];
 
-    for (const p of docPaths) {
-      const snap = await getDoc(doc(db, p));
-      if (snap.exists()) {
-        const rows = (snap.data()?.rows ?? snap.data()?.items ?? []) as any[];
-        return rows.map(r => ({
-          sku: String(r.sku || ''),
-          name: r.name,
-          unitCost: Number.isFinite(r.unitCost) ? r.unitCost : undefined,
-          departmentId: r.department,
-          onHand: Number(r.onHand || 0),
-          expected: Number.isFinite(r.expected) ? r.expected : undefined,
-        }));
+    // Load the target department(s)
+    let deptDocs: any[];
+    if (departmentId) {
+      const snap = await getDoc(doc(db, 'venues', venueId, 'departments', departmentId));
+      deptDocs = snap.exists() ? [snap] : [];
+    } else {
+      const snap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+      deptDocs = snap.docs;
+    }
+
+    for (const deptDoc of deptDocs) {
+      const areasSnap = await getDocs(
+        collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+      );
+      for (const areaDoc of areasSnap.docs) {
+        const itemsSnap = await getDocs(
+          collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
+        );
+        for (const itemDoc of itemsSnap.docs) {
+          const item = itemDoc.data();
+
+          // Only items that have been counted at least once this cycle
+          if (item.lastCount == null) continue;
+
+          const confirmedCount = typeof item.confirmedCount === 'number' ? item.confirmedCount : null;
+          const parLevel = typeof item.parLevel === 'number' ? item.parLevel : null;
+
+          // Baseline: previous cycle count takes priority; fall back to PAR level for first cycle.
+          // Skip items with no baseline — they would appear as false excess against zero.
+          const expected = confirmedCount != null ? confirmedCount : parLevel;
+          if (expected == null) continue;
+
+          results.push({
+            sku: itemDoc.id,
+            name: item.name,
+            unitCost: typeof item.costPrice === 'number' ? item.costPrice : undefined,
+            departmentId: deptDoc.id,
+            onHand: item.lastCount,
+            expected,
+          });
+        }
       }
     }
+
+    return results;
   } catch (e) {
     dlog('counts error', e?.message || String(e));
+    return [];
   }
-  return [];
 }
 
 /** Sales adapter (windowed) */

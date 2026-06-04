@@ -114,7 +114,7 @@ export default function ReportsIndexScreen() {
   const [slowMovers, setSlowMovers] = useState<any[]>([]);
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
-  const [reportsIntroSeen, setReportsIntroSeen] = useState(true);
+  const [reportsIntroSeen, setReportsIntroSeen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [recalcDismissed, setRecalcDismissed] = useState(false);
 
@@ -154,9 +154,9 @@ export default function ReportsIndexScreen() {
 
   // ── Reports intro (shown once) ──────────────────────────────────────────
   useEffect(() => {
-    AsyncStorage.getItem('tallyup_intro_reports_v1').then(v => {
-      if (v === null) setReportsIntroSeen(false);
-    }).catch(() => {});
+    AsyncStorage.getItem('tallyup_intro_reports_v1')
+      .then(v => { setReportsIntroSeen(v === '1'); })
+      .catch(() => { setReportsIntroSeen(false); }); // fail-safe: show intro rather than hide it
   }, []);
 
   // ── Price changes ────────────────────────────────────────────────────────
@@ -535,70 +535,6 @@ export default function ReportsIndexScreen() {
             </View>
           )}
 
-          {/* ── DEPARTMENT SELECTOR ── */}
-          {false && availableDepts.length > 1 && (
-            <View style={{ marginBottom: 14 }}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {[{ id: null, name: 'All departments' }, ...availableDepts].map(dept => {
-                    const selected = dept.id === selectedDeptId;
-                    return (
-                      <TouchableOpacity
-                        key={dept.id ?? '__all'}
-                        onPress={() => setSelectedDeptId(dept.id)}
-                        style={{
-                          paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
-                          backgroundColor: selected ? '#1b4f72' : '#f1f5f9',
-                          borderWidth: 1, borderColor: selected ? '#1b4f72' : '#e2e8f0',
-                        }}
-                      >
-                        <Text style={{ fontWeight: '700', fontSize: 13, color: selected ? '#fff' : '#374151' }}>
-                          {dept.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-              {/* Alignment warning when "All departments" but not all completed within 7 days */}
-              {selectedDeptId === null && (() => {
-                const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-                const cutoff = Date.now() - SEVEN_DAYS_MS;
-                const allAligned = availableDepts.every(d => {
-                  const ms = d.lastCycleAt?.toMillis?.() ?? d.lastCycleAt?.toDate?.()?.getTime?.() ?? 0;
-                  return ms > cutoff;
-                });
-                if (allAligned) return null;
-                const notDone = availableDepts.filter(d => {
-                  const ms = d.lastCycleAt?.toMillis?.() ?? d.lastCycleAt?.toDate?.()?.getTime?.() ?? 0;
-                  return ms <= cutoff;
-                });
-                return (
-                  <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#fde68a' }}>
-                    <Text style={{ color: '#92400e', fontSize: 12, fontWeight: '700' }}>
-                      Venue-wide report unavailable
-                    </Text>
-                    <Text style={{ color: '#92400e', fontSize: 12, marginTop: 2 }}>
-                      {notDone.map(d => d.name).join(', ')} {notDone.length === 1 ? 'hasn\'t' : 'haven\'t'} completed a stocktake in the last 7 days.
-                      Select a department to view its individual report.
-                    </Text>
-                  </View>
-                );
-              })()}
-              {/* Department-specific note */}
-              {selectedDeptId !== null && (
-                <View style={{ backgroundColor: '#eff6ff', borderRadius: 10, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
-                  <Text style={{ color: '#1e40af', fontSize: 12, fontWeight: '700' }}>
-                    Viewing {availableDepts.find(d => d.id === selectedDeptId)?.name ?? 'department'} only
-                  </Text>
-                  <Text style={{ color: '#1e40af', fontSize: 12, marginTop: 2 }}>
-                    Department-level filtering is coming soon. Select "All departments" to see the venue-wide report.
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-
           {/* ── ANCHOR METRIC (owner/manager only) ── */}
           {isManager && (
             <View style={styles.anchorCard}>
@@ -620,12 +556,19 @@ export default function ReportsIndexScreen() {
                 </>
               ) : (
                 <>
-                  <Text style={[styles.anchorValue, { color: '#94A3B8', fontSize: 28 }]}>
-                    No cost prices yet
+                  <Text style={[styles.anchorValue, { fontSize: 30, color: '#F9FAFB' }]}>
+                    {data.totalItemsCounted} items counted
                   </Text>
                   <Text style={styles.anchorMeta}>
-                    Add cost prices to products to see dollar variance.
+                    Add cost prices to see stock value · {data.totalAreasCompleted}/{data.totalAreas} areas done
                   </Text>
+                  <TouchableOpacity
+                    style={{ marginTop: 10, backgroundColor: '#14B8A6', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: 'flex-start' }}
+                    onPress={() => nav.navigate('BatchPriceEntry')}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add cost prices →</Text>
+                  </TouchableOpacity>
                 </>
               )}
             </View>
@@ -772,6 +715,7 @@ export default function ReportsIndexScreen() {
                   onPress={() => {
                     if (!data) return;
                     setAiLoading(true);
+                    const isFirstCycle = !data.hasPrevCycleData;
                     explainVariance({
                       venueId,
                       shortages: data.topShortages.map((s) => ({
@@ -782,14 +726,20 @@ export default function ReportsIndexScreen() {
                       totalVarianceDollars: data.shortfallDollars,
                       trendItems: data.trendItems.map((t) => t.name),
                       totalItemsCounted: data.totalItemsCounted,
-                      mode: 'briefing',
+                      mode: isFirstCycle ? 'first-cycle' : 'briefing',
+                      isFirstCycle,
+                      firstCycleNote: isFirstCycle
+                        ? 'This is the first stocktake. There is no prior cycle to compare to. Explain current stock levels relative to PAR levels only. Do not mention variance or losses — this is an opening baseline count.'
+                        : undefined,
                     })
                       .then((res) => setAiInsight(res.summary || null))
                       .catch(() => {})
                       .finally(() => setAiLoading(false));
                   }}
                 >
-                  <Text style={styles.explainBtnText}>Explain variance</Text>
+                  <Text style={styles.explainBtnText}>
+                    {data.hasPrevCycleData ? 'Explain variance' : 'Explain below-PAR items'}
+                  </Text>
                 </TouchableOpacity>
               )}
             </Lane>

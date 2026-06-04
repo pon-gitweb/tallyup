@@ -226,16 +226,20 @@ function DepartmentSummaryScreen() {
             )}
           </View>
 
-          {/* Top losses */}
+          {/* Top losses / below-PAR items (label differs by cycle) */}
           {(() => {
             const losses = (snapshot.items || [])
               .filter((i: any) => i.totalVarianceQty < 0)
               .sort((a: any, b: any) => a.totalVarianceQty - b.totalVarianceQty)
               .slice(0, 3);
             if (!losses.length) return null;
+            const isFirstCycle = !snapshot.cycleNumber || snapshot.cycleNumber === 1;
+            const lossLabel = isFirstCycle ? 'Items below PAR' : 'Top losses';
+            const lossSubtitle = isFirstCycle ? 'Stock below minimum levels' : 'Largest drops since last stocktake';
             return (
               <View>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Losses</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>{lossLabel}</Text>
+                <Text style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>{lossSubtitle}</Text>
                 {losses.map((item: any, i: number) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
                     <Text style={{ fontSize: 13, color: '#374151', flex: 1 }}>{item.name}</Text>
