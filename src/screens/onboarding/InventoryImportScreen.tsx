@@ -219,7 +219,7 @@ function InventoryImportScreen() {
   const onPickDocument = useCallback(async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/csv','text/plain'],
+        type: ['application/pdf','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/csv','text/plain','public.comma-separated-values-text','*/*'],
         copyToCacheDirectory: true,
       });
       if (!result.canceled && result.assets[0]) {

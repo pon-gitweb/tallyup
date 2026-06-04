@@ -15,6 +15,8 @@ function _splitLines(text:string): string[] {
 }
 
 export function parseCsv(text:string): { headers:string[]; rows:string[][] } {
+  // FIX 1: Strip UTF-8 BOM — Excel and Numbers add ﻿ at start of UTF-8 CSV exports
+  text = String(text || '').replace(/^﻿/, '');
   const out:string[][] = [];
   const lines = _splitLines(text);
 
@@ -109,15 +111,40 @@ export function autoHeaderMap(headers:string[], wanted:string[]): Record<string,
       // heuristics
       hit = H.find(x => x.n === nw + 'name') || H.find(x => x.n === nw + 'id');
       if (!hit) {
-        // some common aliases
+        // FIX 2: Expanded aliases covering multi-word headers common in NZ/AU supplier templates
+        // norm() strips spaces so "Product Name" → "productname", included below
         const aliases:Record<string,string[]> = {
-          name: ['product','item','title'],
-          unit: ['uom','measure','units'],
-          supplierid: ['supplier','vendor','suppliercode','supplier_id'],
-          suppliername: ['supplier','vendor','supplier_title'],
-          costprice: ['price','cost','unitcost'],
-          packsize: ['pack','case','carton','qtyperpack'],
-          parlevel: ['par','parqty','minstock'],
+          name: [
+            'product', 'item', 'title',
+            'productname', 'itemname', 'productdescription', 'description',
+            'stockitem', 'stockname', 'productcode', 'sku', 'itemdescription',
+          ],
+          unit: [
+            'uom', 'unitofmeasure', 'unitofmeasurement',
+            'measure', 'units', 'unitsize',
+          ],
+          supplierid: [
+            'supplier', 'vendor', 'suppliercode', 'supplier_id', 'vendorid',
+          ],
+          suppliername: [
+            'supplier', 'vendor', 'suppliername', 'vendorname', 'brand',
+            'brandname', 'suppliercompany',
+          ],
+          costprice: [
+            'price', 'cost', 'unitcost', 'unitprice',
+            'costperunit', 'buyprice', 'purchaseprice',
+            'exgst', 'excl', 'exclgst', 'nettcost', 'nett',
+            'pricelocalcurrency', 'buycost',
+          ],
+          packsize: [
+            'pack', 'case', 'carton', 'qtyperpack',
+            'casesize', 'unitspercase', 'casepack', 'packquantity',
+            'qtypercase', 'unitsperpack', 'cartonqty',
+          ],
+          parlevel: [
+            'par', 'parqty', 'minstock', 'reorder', 'minimum',
+            'reorderpoint', 'minqty', 'minimumstock',
+          ],
         };
         const list = aliases[nw] || [];
         hit = H.find(x => list.includes(x.n));

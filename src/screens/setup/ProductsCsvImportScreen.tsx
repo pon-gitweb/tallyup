@@ -1,4 +1,6 @@
 // @ts-nocheck
+// Single source of truth for client-side CSV product import.
+// The duplicate at src/screens/imports/ProductsCsvImportScreen.tsx has been removed.
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -11,6 +13,18 @@ import { uploadText } from '../../services/firebase/storage';
 import { listSuppliers } from '../../services/suppliers';
 
 const WANTED = ['name','unit','supplierId','supplierName','parLevel','costPrice','packSize'];
+const BATCH_SIZE = 400; // FIX 6: stay under Firestore 500-write limit per batch
+
+// FIX 5: Parse price strings — strips $, handles European decimal commas
+function parsePrice(raw: any): number | null {
+  if (raw == null || raw === '') return null;
+  const cleaned = String(raw)
+    .replace(/[$£€NZD\s]/g, '')            // strip currency symbols
+    .replace(/^([^.]+),(\d{1,2})$/, '$1.$2') // "24,50" → "24.50" (European decimal)
+    .replace(/,/g, '');                       // strip remaining thousand separators
+  const parsed = parseFloat(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 function slugId(s:string){
   return String(s||'')
@@ -34,11 +48,11 @@ export default function ProductsCsvImportScreen(){
   const [suppliers, setSuppliers] = useState([]);
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [loadingMessage, setLoadingMessage] = useState<string|null>(null); // FIX 7
 
   const parsedRows = useMemo(()=>{
     if(!headers.length || !rowsObj.length) return [];
-    const mapped = remapObjects(rowsObj, map);
-    return mapped;
+    return remapObjects(rowsObj, map);
   },[rowsObj, headers, map]);
 
   const onParse = useCallback(()=>{
@@ -55,29 +69,33 @@ export default function ProductsCsvImportScreen(){
     }
   },[csvText]);
 
-  // Load suppliers for picker
   useEffect(() => {
     if (!venueId) return;
     listSuppliers(venueId).then(setSuppliers).catch(() => {});
   }, [venueId]);
 
-  // Pick CSV file instead of pasting
+  // FIX 3: onPickFile now wired to the "Choose CSV file" button (was dead code before)
   const onPickFile = useCallback(async () => {
+    setLoadingMessage('Preparing file…'); // FIX 7
     try {
       const pick = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'],
         copyToCacheDirectory: true,
         multiple: false,
       });
-      const canceled = pick.canceled ?? pick.type === 'cancel';
-      if (canceled) return;
-      const asset = pick.assets ? pick.assets[0] : pick;
+      const canceled = pick.canceled ?? (pick as any).type === 'cancel';
+      if (canceled) {
+        setLoadingMessage(null);
+        return;
+      }
+      const asset = (pick as any).assets ? (pick as any).assets[0] : pick;
       const name = String(asset?.name || 'products.csv');
       const uri = String(asset?.uri || '');
+      setLoadingMessage('Reading file…'); // FIX 7
       const content = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
       setFilename(name);
       setCsvText(content);
-      // Auto-parse
+      setLoadingMessage('Parsing…'); // FIX 7
       try {
         const { parseCsv: pc, toObjects: to, autoHeaderMap: ahm } = require('../../services/imports/csv');
         const parsed = pc(content);
@@ -89,12 +107,13 @@ export default function ProductsCsvImportScreen(){
         setStage('map');
       } catch { /* will parse manually */ }
     } catch (e) {
-      Alert.alert('File pick failed', e && e.message ? e.message : 'Could not read file');
+      Alert.alert('File pick failed', (e as any)?.message || 'Could not read file');
+    } finally {
+      setLoadingMessage(null); // FIX 7
     }
   }, []);
 
   const cycleHeader = useCallback((key:string)=>{
-    // Cycle through headers + (none) sentinel
     const list = ['(none)', ...headers];
     const cur = map[key] || '(none)';
     const idx = list.indexOf(cur);
@@ -103,7 +122,6 @@ export default function ProductsCsvImportScreen(){
   },[headers, map]);
 
   const canUpload = useMemo(()=>{
-    // minimally need name
     const nameSrc = map['name'];
     return !!nameSrc && parsedRows.length>0 && !busy && !!venueId;
   },[map, parsedRows, busy, venueId]);
@@ -128,10 +146,10 @@ export default function ProductsCsvImportScreen(){
         errors: [],
       });
 
-      // 3) Write/merge products
-      const batch = writeBatch(db);
+      // 3) FIX 6: Prepare valid rows, then commit in BATCH_SIZE chunks
       let done = 0, errs = 0;
       const errors: any[] = [];
+      const validRows: Array<{ pref: any; data: any }> = [];
 
       for(const r of parsedRows){
         try{
@@ -142,22 +160,25 @@ export default function ProductsCsvImportScreen(){
           const supplierId = (r.supplierId || '').trim() || null;
           const supplierName = (r.supplierName || '').trim() || null;
           const parLevel = Number.isFinite(Number(r.parLevel)) ? Number(r.parLevel) : null;
-          const costPrice = Number.isFinite(Number(r.costPrice)) ? Number(r.costPrice) : null;
+          const costPrice = parsePrice(r.costPrice); // FIX 5
           const packSize = Number.isFinite(Number(r.packSize)) ? Number(r.packSize) : null;
 
           const pid = slugId(name);
           const pref = doc(db, 'venues', venueId, 'products', pid);
 
-          batch.set(pref, {
-            name,
-            ...(unit!=null?{unit}:{}),
-            supplierId: supplierId || null,
-            supplierName: supplierName || null,
-            ...(parLevel!=null?{parLevel}:{}),
-            ...(costPrice!=null?{costPrice}:{}),
-            ...(packSize!=null?{packSize}:{}),
-            updatedAt: serverTimestamp(),
-          }, { merge: true });
+          validRows.push({
+            pref,
+            data: {
+              name,
+              ...(unit!=null?{unit}:{}),
+              supplierId: supplierId || null,
+              supplierName: supplierName || null,
+              ...(parLevel!=null?{parLevel}:{}),
+              ...(costPrice!=null?{costPrice}:{}),
+              ...(packSize!=null?{packSize}:{}),
+              updatedAt: serverTimestamp(),
+            },
+          });
           done++;
         }catch(e:any){
           errs++;
@@ -165,7 +186,24 @@ export default function ProductsCsvImportScreen(){
         }
       }
 
-      await batch.commit();
+      // FIX 6: Chunk into BATCH_SIZE batches (safe below Firestore 500-write limit)
+      const chunks: Array<typeof validRows> = [];
+      for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+        chunks.push(validRows.slice(i, i + BATCH_SIZE));
+      }
+
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const batch = writeBatch(db);
+        for (const { pref, data } of chunks[ci]) {
+          batch.set(pref, data, { merge: true });
+        }
+        await batch.commit();
+        // FIX 7: Show progress for large imports
+        if (chunks.length > 1) {
+          const soFar = Math.min((ci + 1) * BATCH_SIZE, validRows.length);
+          setLoadingMessage(`Importing… ${soFar} of ${validRows.length} products`);
+        }
+      }
 
       // 4) Mark job complete
       await setDoc(jobRef, {
@@ -183,6 +221,7 @@ export default function ProductsCsvImportScreen(){
       Alert.alert('Import failed', e?.message || 'Please try again.');
     }finally{
       setBusy(false);
+      setLoadingMessage(null); // FIX 7
     }
   },[db, venueId, filename, csvText, parsedRows, canUpload]);
 
@@ -193,8 +232,27 @@ export default function ProductsCsvImportScreen(){
         <Text style={S.title}>Import Products (CSV)</Text>
       </View>
 
+      {/* FIX 7: Loading overlay for file reading and batch import progress */}
+      {!!loadingMessage && (
+        <View style={S.loadingOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={S.loadingText}>{loadingMessage}</Text>
+        </View>
+      )}
+
       {stage==='paste' && (
         <ScrollView contentContainerStyle={{padding:16}}>
+          {/* FIX 3: Primary file picker button — was dead code before, now wired */}
+          <TouchableOpacity
+            onPress={onPickFile}
+            style={S.pickFileBtn}
+            disabled={busy}
+          >
+            <Text style={S.pickFileBtnText}>📄  Choose CSV file</Text>
+            <Text style={S.pickFileBtnSub}>From Files, iCloud, or email</Text>
+          </TouchableOpacity>
+          <Text style={S.orDivider}>— or paste CSV text below —</Text>
+
           <Text style={S.label}>Filename (stored with upload):</Text>
           <TextInput
             style={S.input}
@@ -231,7 +289,7 @@ export default function ProductsCsvImportScreen(){
                 style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
               >
                 <Text style={{ color: selectedSupplier ? '#111' : '#9CA3AF' }}>
-                  {selectedSupplier ? selectedSupplier.name : 'No supplier (assign later)'}
+                  {selectedSupplier ? (selectedSupplier as any).name : 'No supplier (assign later)'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -270,9 +328,16 @@ export default function ProductsCsvImportScreen(){
               ) : null}
             </View>
           ))}
+          {parsedRows.length > 50 && (
+            <Text style={S.help}>…and {parsedRows.length - 50} more (all will be imported)</Text>
+          )}
 
           <TouchableOpacity onPress={onUpload} style={[S.btn,{marginTop:12}]} disabled={!canUpload}>
-            {busy ? <ActivityIndicator/> : <Text style={S.btnText}>Upload</Text>}
+            {busy ? <ActivityIndicator/> : (
+              <Text style={S.btnText}>
+                Upload{parsedRows.length > BATCH_SIZE ? ` (${parsedRows.length} — chunked)` : ''}
+              </Text>
+            )}
           </TouchableOpacity>
           <TouchableOpacity onPress={()=>setStage('map')} style={[S.btnGhost, {marginTop:8}]}>
             <Text style={S.btnGhostText}>Back</Text>
@@ -301,10 +366,10 @@ export default function ProductsCsvImportScreen(){
             <Text style={{ fontWeight: '700', color: !selectedSupplier ? '#0A84FF' : '#111' }}>No supplier</Text>
           </TouchableOpacity>
           <ScrollView>
-            {suppliers.map(s => (
+            {(suppliers as any[]).map(s => (
               <TouchableOpacity key={s.id} onPress={() => { setSelectedSupplier(s); setSupplierPickerOpen(false); }}
                 style={{ padding: 12, borderBottomWidth: 1, borderColor: '#F3F4F6' }}>
-                <Text style={{ fontWeight: '700', color: selectedSupplier && selectedSupplier.id === s.id ? '#0A84FF' : '#111' }}>{s.name}</Text>
+                <Text style={{ fontWeight: '700', color: selectedSupplier && (selectedSupplier as any).id === s.id ? '#0A84FF' : '#111' }}>{s.name}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -342,4 +407,14 @@ const S = StyleSheet.create({
   sub:{ color:'#6B7280', marginTop:4 },
   pill:{ marginTop:6, alignSelf:'flex-start', paddingHorizontal:8, paddingVertical:3, borderRadius:999, backgroundColor:'#F3F4F6' },
   pillText:{ fontSize:11, fontWeight:'700', color:'#374151' },
+
+  // FIX 3: File picker button
+  pickFileBtn:{ backgroundColor:'#111827', borderRadius:12, paddingVertical:14, paddingHorizontal:16, alignItems:'center', marginBottom:12 },
+  pickFileBtnText:{ color:'#fff', fontSize:15, fontWeight:'800' },
+  pickFileBtnSub:{ color:'rgba(255,255,255,0.75)', fontSize:12, marginTop:3 },
+  orDivider:{ textAlign:'center', color:'#9CA3AF', fontSize:13, marginVertical:12 },
+
+  // FIX 7: Loading overlay
+  loadingOverlay:{ position:'absolute', left:0, right:0, top:0, bottom:0, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center', zIndex:100 },
+  loadingText:{ color:'#fff', fontSize:15, fontWeight:'700', marginTop:12, textAlign:'center', paddingHorizontal:24 },
 });
