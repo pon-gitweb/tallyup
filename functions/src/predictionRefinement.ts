@@ -140,6 +140,34 @@ async function loadPriorYearData(
   db: admin.firestore.Firestore,
   eventDurationDays: number,
 ): Promise<PriorYearProduct[]> {
+
+  // PRIORITY 1: Imported historical data (CSV/photo/manual via FestivalHistoricalDataScreen)
+  try {
+    const historicalSnap = await db
+      .collection(`venues/${venueId}/event/historicalData`)
+      .orderBy("year", "desc")
+      .limit(3)
+      .get();
+
+    if (!historicalSnap.empty) {
+      const allProducts: PriorYearProduct[] = [];
+      historicalSnap.docs.forEach(docSnap => {
+        const data = docSnap.data() as any;
+        (data.products || []).forEach((p: any) => {
+          allProducts.push({
+            productName:      p.productName,
+            totalUsed:        p.totalSold || 0,
+            avgDailyVelocity: p.impliedDailyVelocity || 0,
+            dataSource:       `${data.year}-import` as any,
+            confidence:       "high",
+          });
+        });
+      });
+      if (allProducts.length > 0) return allProducts;
+    }
+  } catch {}
+
+  // PRIORITY 2: Weekly snapshots + sales uploads (existing logic)
   const productVelocity: Record<string, PriorYearProduct> = {};
 
   // Weekly snapshots (soldTotals per product)

@@ -45,6 +45,9 @@ export { seedGlobalSuppliers } from "./globalSuppliers";
 //   firebase ext:install firebase/firestore-bigquery-export
 export { onStocktakeCompleted, onOrderSubmitted, onAiFeatureUsed } from "./analytics";
 
+// === Bar item velocity threshold push notifications ===
+export { onBarItemVelocityUpdate } from "./barItemNotifications";
+
 // === Legacy functions — deployed directly, must remain exported to avoid deletion ===
 export {
   processInvoicesCsv,

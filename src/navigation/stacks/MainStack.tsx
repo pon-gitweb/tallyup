@@ -110,6 +110,7 @@ import FestivalDebriefScreen from '../../screens/festival/FestivalDebriefScreen'
 import FestivalReturnRiskScreen from '../../screens/festival/FestivalReturnRiskScreen';
 import FestivalSalesUploadScreen from '../../screens/festival/FestivalSalesUploadScreen';
 import FestivalOpeningStockScreen from '../../screens/festival/FestivalOpeningStockScreen';
+import FestivalHistoricalDataScreen from '../../screens/festival/FestivalHistoricalDataScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -259,6 +260,7 @@ export default function MainStack() {
       <Stack.Screen name="FestivalReturnRisk" component={FestivalReturnRiskScreen} options={{ title: 'Return Risk' }} />
       <Stack.Screen name="FestivalSalesUpload" component={FestivalSalesUploadScreen} options={{ title: 'Sales Data' }} />
       <Stack.Screen name="FestivalOpeningStock" component={FestivalOpeningStockScreen} options={{ title: 'Opening Stock' }} />
+      <Stack.Screen name="FestivalHistoricalData" component={FestivalHistoricalDataScreen} options={{ title: 'Prior Year Data' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

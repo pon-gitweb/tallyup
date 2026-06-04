@@ -25,7 +25,8 @@
         "NSBluetoothPeripheralUsageDescription": "Hosti-Stock connects to Bluetooth scales for automatic weight-based stock counting.",
         "NSMicrophoneUsageDescription": "Hosti-Stock uses your microphone for voice counting during stocktake.",
         "NSSpeechRecognitionUsageDescription": "Hosti uses speech recognition to let you count stock by speaking numbers out loud.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -42,7 +43,9 @@
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
       ]
     },
     "web": {
@@ -60,6 +63,13 @@
       "expo-asset",
       "expo-font",
       "expo-camera",
+      [
+        "expo-notifications",
+        {
+          "color": "#1b4f72",
+          "sounds": []
+        }
+      ],
       [
         "react-native-ble-plx",
         {

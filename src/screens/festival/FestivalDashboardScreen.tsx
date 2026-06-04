@@ -7,6 +7,11 @@ import { useNavigation } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
 import { writeWeeklySnapshot } from '../../services/festival/weeklySnapshot';
 import { apiBase } from '../../services/apiBase';
+import {
+  registerForPushNotifications,
+  setupNotificationResponseHandler,
+  setupForegroundHandler,
+} from '../../services/notifications';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -31,6 +36,17 @@ export default function FestivalDashboardScreen() {
   const [hasOrders, setHasOrders] = useState(false);
   // Only show loading spinner when beta mode is active
   const [loading, setLoading] = useState(FESTIVAL_BETA);
+
+  // Register device for push notifications and set up handlers
+  useEffect(() => {
+    registerForPushNotifications();
+    const cleanupForeground = setupForegroundHandler();
+    const cleanupResponse = setupNotificationResponseHandler(nav);
+    return () => {
+      cleanupForeground();
+      cleanupResponse();
+    };
+  }, []);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }

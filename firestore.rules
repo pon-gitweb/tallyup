@@ -105,7 +105,8 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'venueId','touchedAt','displayName',
-          'activeVenueId','venueIds'
+          'activeVenueId','venueIds',
+          'fcmTokens','fcmTokenUpdatedAt'
         ]);
       allow delete: if false;
     }
@@ -1120,6 +1121,10 @@ service cloud.firestore {
       match /event/{docId} {
         allow read: if isVenueMember(venueId);
         allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        match /historicalData/{yearId} {
+          allow read: if isVenueMember(venueId);
+          allow write: if hasVenueRole(venueId, ['owner', 'manager']);
+        }
         match /shortfalls/{id} {
           allow read, write: if hasVenueRole(venueId, ['owner', 'manager']);
         }

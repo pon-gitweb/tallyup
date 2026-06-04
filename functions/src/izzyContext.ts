@@ -282,6 +282,25 @@ WHAT SUITEE CAN ANSWER (festival mode):
 - Year-on-year velocity comparisons (if prior event data exists)
 - Obligation and rider fulfilment status
 
+HISTORICAL DATA IMPORT:
+If you have sales or stock data from a prior year you can import it to improve
+your order prediction accuracy. Go to Event Setup → Section 6 (Historical data)
+and tap "Import prior year data".
+
+Three ways to import:
+1. Upload a spreadsheet or CSV — Excel, Numbers, or any CSV from your POS or spreadsheet.
+   We detect columns automatically (product name, quantity sold).
+2. Photograph a printed stocktake sheet — we read the numbers using OCR.
+3. Type in the figures manually — enter quantities sold for each product from memory or notes.
+
+After importing, your AI prediction uses real historical velocity instead of industry
+benchmarks. Prediction confidence improves from MEDIUM to HIGH.
+
+You can import multiple years — the system uses the most recent year as primary reference.
+Leave quantity blank for products that weren't sold that year (blank = unknown, not zero).
+
+To import: go to Event Setup → Section 6 → Import prior year data.
+
 VELOCITY AND TIME-OF-DAY:
 Velocity calculations are based on average consumption since the last session count.
 They do not account for time-of-day variation (e.g. peak demand during headliner sets,

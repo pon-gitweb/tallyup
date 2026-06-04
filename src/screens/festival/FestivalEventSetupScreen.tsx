@@ -196,7 +196,8 @@ export default function FestivalEventSetupScreen() {
   }, [progress.basics, progress.bars, progress.sourceLocations, progress.suppliers, progress.productPlanning, progress.historicalData]);
 
   // ── Contracts count (for Section 6 card) ─────────────────────────────────
-  const [contractCount,   setContractCount]   = useState(0);
+  const [contractCount,        setContractCount]        = useState(0);
+  const [historicalDataCount,  setHistoricalDataCount]  = useState(0);
 
   // ── Section 6 state ──────────────────────────────────────────────────────
   const [isNewEvent,      setIsNewEvent]      = useState(true);
@@ -327,6 +328,15 @@ export default function FestivalEventSetupScreen() {
   }
   useEffect(() => { loadContracts(); }, [venueId]);
   useFocusEffect(useCallback(() => { loadContracts(); }, [venueId]));
+
+  function loadHistoricalData() {
+    if (!venueId) return;
+    getDocs(collection(db, 'venues', venueId, 'event', 'historicalData')).then(snap => {
+      setHistoricalDataCount(snap.size);
+    }).catch(() => {});
+  }
+  useEffect(() => { loadHistoricalData(); }, [venueId]);
+  useFocusEffect(useCallback(() => { loadHistoricalData(); }, [venueId]));
 
   // ── Date helpers ─────────────────────────────────────────────────────────
   function parseDuration(start: string, end: string): number {
@@ -1050,6 +1060,26 @@ export default function FestivalEventSetupScreen() {
             >
               <Text style={S.navBtnText}>
                 {contractCount > 0 ? `View contracts (${contractCount}) →` : 'Upload a contract →'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Historical data import — improves prediction accuracy */}
+          <View style={[S.infoBox, { marginTop: 16, borderColor: historicalDataCount > 0 ? '#86efac' : '#bfdbfe', backgroundColor: historicalDataCount > 0 ? '#f0fdf4' : '#eff6ff' }]}>
+            <Text style={[S.infoText, { fontWeight: '700', color: historicalDataCount > 0 ? '#16a34a' : '#1e40af', marginBottom: 4 }]}>
+              {historicalDataCount > 0 ? `✓ Prior year data imported` : 'Prior year data (optional)'}
+            </Text>
+            <Text style={[S.infoText, { color: '#374151' }]}>
+              {historicalDataCount > 0
+                ? `${historicalDataCount} year${historicalDataCount !== 1 ? 's' : ''} of data imported — your AI prediction uses actual history (HIGH confidence).`
+                : 'Import last year\'s sales figures to improve prediction accuracy from MEDIUM to HIGH confidence.'}
+            </Text>
+            <TouchableOpacity
+              style={S.navBtn}
+              onPress={() => navigation.navigate('FestivalHistoricalData')}
+            >
+              <Text style={S.navBtnText}>
+                {historicalDataCount > 0 ? `Manage historical data →` : 'Import prior year data →'}
               </Text>
             </TouchableOpacity>
           </View>
