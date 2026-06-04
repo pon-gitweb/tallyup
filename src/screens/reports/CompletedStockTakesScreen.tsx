@@ -30,39 +30,29 @@ function toDate(v: any): Date | null {
   }
 }
 
-function formatDuration(startRaw: any, endRaw: any): string | null {
-  const start = toDate(startRaw);
-  const end = toDate(endRaw);
-  if (!start || !end) return null;
-  const ms = end.getTime() - start.getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-
-  const totalMinutes = Math.round(ms / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours <= 0) {
-    return `${totalMinutes} min${totalMinutes === 1 ? '' : 's'}`;
-  }
-  if (minutes === 0) {
-    return `${hours} hour${hours === 1 ? '' : 's'}`;
-  }
-  return `${hours}h ${minutes}m`;
+function formatDate(v: any): string {
+  const d = toDate(v);
+  if (!d) return 'Unknown date';
+  return d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function sortByCompletedDesc(a: CompletedStockTakeRow, b: CompletedStockTakeRow) {
-  const aCompleted = toDate((a as any).completedAt);
-  const bCompleted = toDate((b as any).completedAt);
-  const aCreated = toDate((a as any).createdAt);
-  const bCreated = toDate((b as any).createdAt);
+function formatDateShort(v: any): string {
+  const d = toDate(v);
+  if (!d) return '—';
+  return d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
+}
 
-  const aTime = (aCompleted || aCreated)?.getTime() ?? 0;
-  const bTime = (bCompleted || bCreated)?.getTime() ?? 0;
+function formatCurrency(n: number): string {
+  if (n >= 1000) return '$' + (n / 1000).toFixed(1) + 'k';
+  return '$' + n.toFixed(2);
+}
 
-  // Descending (newest first)
-  if (aTime > bTime) return -1;
-  if (aTime < bTime) return 1;
-  return 0;
+function fmtDuration(mins: number | null): string | null {
+  if (mins == null || mins <= 0) return null;
+  if (mins < 60) return `${mins} min${mins !== 1 ? 's' : ''}`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h} hr` : `${h}h ${m}m`;
 }
 
 export default function CompletedStockTakesScreen() {
@@ -80,9 +70,7 @@ export default function CompletedStockTakesScreen() {
     try {
       const res = await listCompletedStockTakes(venueId);
       setRows(res || []);
-    } catch (e: any) {
-      // Defensive: if Firestore denies access or the doc doesn't exist,
-      // we just show an empty state. ReportsIndex already logs details in dev.
+    } catch {
       setRows([]);
     } finally {
       setLoading(false);
@@ -93,37 +81,34 @@ export default function CompletedStockTakesScreen() {
     load();
   }, [load]);
 
-  const onLongPressRow = () => {
+  const onPressRow = (item: CompletedStockTakeRow) => {
+    const lines: string[] = [];
+    lines.push(`Completed: ${formatDate(item.completedAt)}`);
+    if (item.completedByName) lines.push(`By: ${item.completedByName}`);
+    lines.push(`Items counted: ${item.totalItemsCounted}`);
+    if (item.totalStockValue != null && item.totalStockValue > 0) {
+      lines.push(`Stock value: ${formatCurrency(item.totalStockValue)}`);
+    }
+    if (item.itemsBelowPAR > 0) {
+      lines.push(`Below PAR: ${item.itemsBelowPAR} item${item.itemsBelowPAR !== 1 ? 's' : ''}`);
+    }
+    const dur = fmtDuration(item.durationMinutes);
+    if (dur) lines.push(`Duration: ${dur}`);
+
     Alert.alert(
-      'Deeper insights coming soon',
-      'Deeper insights are coming in a future update - drill into full variance, GP impact, and history per cycle.',
+      `${item.departmentName} — Cycle ${item.cycleNumber}`,
+      lines.join('\n'),
       [{ text: 'OK' }],
     );
   };
 
   const renderItem = ({ item }: { item: CompletedStockTakeRow }) => {
-    const completedAt = toDate((item as any).completedAt);
-    const createdAt = toDate((item as any).createdAt);
-    const whenBase = completedAt || createdAt;
-
-    const dateLabel = whenBase ? whenBase.toLocaleDateString() : 'Unknown date';
-    const timeLabel = whenBase ? whenBase.toLocaleTimeString() : '';
-    const when =
-      whenBase != null
-        ? `${dateLabel}${timeLabel ? ` · ${timeLabel}` : ''}`
-        : 'Completed time not recorded';
-
-    const durationLabel = formatDuration(createdAt, completedAt);
-    const completedBy =
-      (item as any).completedBy ||
-      (item as any).runBy ||
-      null;
-
-    const shortId = String(item.id || '').slice(-6) || '…';
+    const dateStr = formatDateShort(item.completedAt);
+    const dur = fmtDuration(item.durationMinutes);
 
     return (
       <TouchableOpacity
-        onLongPress={onLongPressRow}
+        onPress={() => onPressRow(item)}
         activeOpacity={0.8}
         style={{
           padding: 14,
@@ -134,78 +119,56 @@ export default function CompletedStockTakesScreen() {
           marginBottom: 10,
         }}
       >
-        <Text
-          style={{
-            color: '#E5E7EB',
-            fontWeight: '800',
-            marginBottom: 4,
-            fontSize: 15,
-          }}
-        >
-          Stock take · {dateLabel}
-        </Text>
+        {/* Header row */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#E5E7EB', fontWeight: '800', fontSize: 15 }}>
+              {item.departmentName}
+            </Text>
+            <Text style={{ color: '#64748B', fontSize: 12, marginTop: 1 }}>
+              Cycle {item.cycleNumber} · {dateStr}
+            </Text>
+          </View>
+          {item.totalStockValue != null && item.totalStockValue > 0 && (
+            <Text style={{ color: '#4ADE80', fontWeight: '800', fontSize: 15 }}>
+              {formatCurrency(item.totalStockValue)}
+            </Text>
+          )}
+        </View>
 
-        <Text
-          style={{
-            color: '#9CA3AF',
-            fontSize: 13,
-          }}
-        >
-          Status: {item.status || 'unknown'}
-        </Text>
+        {/* Stats row */}
+        <View style={{ flexDirection: 'row', gap: 16, flexWrap: 'wrap' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>
+              {item.totalItemsCounted}
+            </Text>
+            <Text style={{ color: '#64748B', fontSize: 12 }}>items</Text>
+          </View>
 
-        <Text
-          style={{
-            color: '#9CA3AF',
-            fontSize: 13,
-            marginTop: 2,
-          }}
-        >
-          Completed at: {when}
-        </Text>
+          {item.itemsBelowPAR > 0 && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#F87171', fontSize: 13, fontWeight: '700' }}>
+                {item.itemsBelowPAR}
+              </Text>
+              <Text style={{ color: '#64748B', fontSize: 12 }}>below PAR</Text>
+            </View>
+          )}
 
-        {durationLabel && (
-          <Text
-            style={{
-              color: '#9CA3AF',
-              fontSize: 13,
-              marginTop: 2,
-            }}
-          >
-            Duration: {durationLabel}
+          {dur && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#94A3B8', fontSize: 12 }}>⏱ {dur}</Text>
+            </View>
+          )}
+        </View>
+
+        {item.completedByName && (
+          <Text style={{ color: '#64748B', fontSize: 11, marginTop: 6 }}>
+            {item.completedByName}
           </Text>
         )}
 
-        {completedBy && (
-          <Text
-            style={{
-              color: '#9CA3AF',
-              fontSize: 13,
-              marginTop: 2,
-            }}
-          >
-            Completed by: {String(completedBy)}
-          </Text>
-        )}
-
-        <Text
-          style={{
-            color: '#64748B',
-            fontSize: 11,
-            marginTop: 6,
-          }}
-        >
-          Cycle ID: {shortId}
-        </Text>
-
-        <Text
-          style={{
-            color: '#64748B',
-            fontSize: 12,
-            marginTop: 8,
-          }}
-        >
-          Long-press for a preview of upcoming insights.
+        <Text style={{ color: '#334155', fontSize: 11, marginTop: 4 }}>
+          Tap for details
         </Text>
       </TouchableOpacity>
     );
@@ -219,30 +182,22 @@ export default function CompletedStockTakesScreen() {
         </Text>
       );
     }
-
-    if (loading) {
-      return null;
-    }
-
+    if (loading) return null;
     return (
       <View>
         <Text style={{ color: '#E5E7EB', fontWeight: '600', marginBottom: 4 }}>
-          No completed stock takes yet
+          No completed stocktakes yet
         </Text>
         <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
-          Once you run and finalize a full stock take, it will appear here as a
-          completed cycle.
+          Complete a stocktake and it will appear here with counts, stock value, and duration.
         </Text>
       </View>
     );
   };
 
-  const sortedRows = (rows || []).slice().sort(sortByCompletedDesc);
-
   return (
     <LocalThemeGate>
       <View style={{ flex: 1, backgroundColor: '#020617' }}>
-        {/* Header */}
         <View
           style={{
             padding: 16,
@@ -254,28 +209,20 @@ export default function CompletedStockTakesScreen() {
           }}
         >
           <View style={{ flex: 1, paddingRight: 12 }}>
-            <MaybeTText
-              style={{ color: 'white', fontSize: 20, fontWeight: '700' }}
-            >
-              Completed Stock Takes
+            <MaybeTText style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>
+              Stocktake History
             </MaybeTText>
             <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 13 }}>
-              Read-only list of fully completed stock takes under the new
-              session flow.
-            </Text>
-            <Text style={{ color: '#64748B', marginTop: 2, fontSize: 11 }}>
-              Deeper insights and history per cycle are coming in a future
-              update.
+              All completed stocktake cycles — tap any row for details.
             </Text>
           </View>
           <IdentityBadge align="right" />
         </View>
 
-        {/* Body */}
         <View style={{ flex: 1, padding: 16 }}>
           <FlatList
-            data={sortedRows}
-            keyExtractor={(r) => r.id}
+            data={rows}
+            keyExtractor={(r) => `${r.departmentId}-${r.id}`}
             renderItem={renderItem}
             refreshControl={
               <RefreshControl refreshing={loading} onRefresh={load} />

@@ -60,6 +60,16 @@ function formatCurrency(n: number): string {
   });
 }
 
+function formatTimeAgo(d: Date): string {
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins} mins ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs !== 1 ? 's' : ''} ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days !== 1 ? 's' : ''} ago`;
+}
+
 export default function DashboardScreen() {
   const nav = useNavigation<any>();
   const colours = useColours();
@@ -142,6 +152,7 @@ export default function DashboardScreen() {
 
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
   const [stockValue, setStockValue] = useState<number | null>(null);
+  const [snapshotUpdatedAt, setSnapshotUpdatedAt] = useState<Date | null>(null);
   const [onboardingRoad, setOnboardingRoad] = React.useState<string | null | undefined>(undefined);
   const [onboardingDismissed, setOnboardingDismissed] = React.useState(false);
   React.useEffect(() => {
@@ -157,12 +168,16 @@ export default function DashboardScreen() {
     }).catch(() => {});
     getDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current')).then(latestSnap => {
       if (latestSnap.exists()) {
-        const depts = latestSnap.data()?.departments ?? [];
+        const snapData = latestSnap.data() as any;
+        const depts = snapData?.departments ?? [];
         const total = depts.reduce(
           (sum: number, d: any) => sum + (d?.summary?.totalStockValue ?? 0),
           0
         );
         setStockValue(total);
+        const ts = snapData?.updatedAt;
+        if (ts?.toDate) setSnapshotUpdatedAt(ts.toDate());
+        else if (ts?._seconds) setSnapshotUpdatedAt(new Date(ts._seconds * 1000));
       }
     }).catch(() => {});
   }, [venueId]);
@@ -412,6 +427,11 @@ export default function DashboardScreen() {
                   ? `${stocktakeCount} count${stocktakeCount !== 1 ? 's' : ''} completed`
                   : 'Add product costs to see stock value'}
               </Text>
+              {stockValue !== null && stockValue > 0 && snapshotUpdatedAt && (
+                <Text style={{ fontSize: 11, color: 'rgba(245,243,238,0.3)', marginTop: 3 }}>
+                  {'Updated ' + formatTimeAgo(snapshotUpdatedAt)}
+                </Text>
+              )}
             </>
           )}
         </View>

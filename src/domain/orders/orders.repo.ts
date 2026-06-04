@@ -112,6 +112,27 @@ export const OrdersRepo = {
     const db = getFirestore(getApp());
     const ref = doc(db, 'venues', venueId, 'orders', orderId);
 
+    // Role check: staff cannot submit directly — route to pending_approval instead
+    if (uid && venueId) {
+      try {
+        const memberSnap = await getDoc(doc(db, 'venues', venueId, 'members', uid));
+        const role = memberSnap.exists() ? (memberSnap.data() as any)?.role : null;
+        if (role === 'staff') {
+          await updateDoc(ref, {
+            status: 'pending-approval',
+            displayStatus: 'pending-approval',
+            submittedBy: uid,
+            submittedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            updatedBy: uid,
+          });
+          return { pendingApproval: true };
+        }
+      } catch {
+        // Role read failed — proceed with normal submit to avoid blocking the order
+      }
+    }
+
     await updateDoc(ref, {
       status: 'submitted',
       displayStatus: 'submitted',

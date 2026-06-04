@@ -56,6 +56,28 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
   const isConfirmed = docData?.status === 'confirmed';
   const title = docData?.name || 'Recipe';
 
+  // ---------- Live GP% calculation from loaded prices ----------
+  const liveTotalCost = useMemo(() => {
+    if (!docData?.items?.length) return null;
+    let total = 0;
+    for (const it of docData.items) {
+      const livePrice = it.productId ? livePrices[it.productId] : undefined;
+      const hasLive = livePrice != null;
+      const liveCost = hasLive && it.qty != null && it.packSize > 0
+        ? (it.qty / it.packSize) * livePrice
+        : null;
+      const cost = liveCost ?? (Number.isFinite(Number(it.cost)) ? Number(it.cost) : 0);
+      total += cost;
+    }
+    return total;
+  }, [docData?.items, livePrices]);
+
+  const liveGP = useMemo(() => {
+    const sp = Number(docData?.rrp ?? docData?.sellingPrice ?? 0);
+    if (sp <= 0 || liveTotalCost == null) return null;
+    return ((sp - liveTotalCost) / sp) * 100;
+  }, [liveTotalCost, docData?.rrp, docData?.sellingPrice]);
+
   // ---------- POS & consumption clarity (read-only) ----------
   const hasConsumption = useMemo(() => {
     const c = docData?.consumptionPerServe;
@@ -114,9 +136,18 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
 
         <Card>
           <Text style={{ fontWeight:'800', marginBottom:6 }}>Pricing</Text>
-          <Row label="COGS (per serve)" value={fmtMoney(docData.cogs)} />
+          <Row label="COGS (per serve)" value={liveTotalCost != null ? fmtMoney(liveTotalCost) : fmtMoney(docData.cogs)} />
           <Row label="RRP" value={fmtMoney(docData.rrp)} />
-          <Row label="Target GP %" value={docData.gpPct != null ? `${Number(docData.gpPct).toFixed(1)}%` : '—'} />
+          <Row
+            label="GP %"
+            value={
+              liveGP != null
+                ? `${liveGP.toFixed(1)}% (live)`
+                : docData.gpPct != null
+                  ? `${Number(docData.gpPct).toFixed(1)}% (last saved)`
+                  : '—'
+            }
+          />
         </Card>
 
         <Card>

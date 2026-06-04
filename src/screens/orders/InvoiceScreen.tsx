@@ -169,6 +169,16 @@ export default function InvoiceScreen() {
       <Text style={styles.title}>Invoice</Text>
       <Text style={styles.sub}>Order: {orderId}</Text>
 
+      {/* Clarify what this screen does vs the Receive flow */}
+      <View style={{ backgroundColor: '#f0f9ff', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#bae6fd' }}>
+        <Text style={{ fontSize: 13, color: '#0369a1', fontWeight: '700' }}>📄 Records the invoice only</Text>
+        <Text style={{ fontSize: 12, color: '#0369a1', marginTop: 3, lineHeight: 17 }}>
+          This saves the invoice document against the order. Stock counts are NOT updated here.{'\n'}
+          To update your stock, use{' '}
+          <Text style={{ fontWeight: '700' }}>Orders → tap a submitted order → Receive delivery</Text>.
+        </Text>
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.label}>Invoice number</Text>
         <TextInput

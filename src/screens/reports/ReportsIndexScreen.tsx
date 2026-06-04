@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -117,6 +117,7 @@ export default function ReportsIndexScreen() {
   const [reportsIntroSeen, setReportsIntroSeen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [recalcDismissed, setRecalcDismissed] = useState(false);
+  const autoRecalcFiredRef = useRef(false);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -359,6 +360,15 @@ export default function ReportsIndexScreen() {
     } catch {}
     setRecalculating(false);
   }
+
+  // Auto-trigger recalculation silently when stale snapshots are detected on load
+  useEffect(() => {
+    if (autoRecalcFiredRef.current || recalculating || latestSnapshots.length === 0) return;
+    const stale = latestSnapshots.filter(s => s.requiresRecalculation && s.deptId && s.cycleNumber);
+    if (stale.length === 0) return;
+    autoRecalcFiredRef.current = true;
+    handleRecalculate();
+  }, [latestSnapshots]);
 
   function handleSuiteeClose() {
     setSuiteeOpen(false);

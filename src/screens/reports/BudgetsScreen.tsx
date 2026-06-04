@@ -198,11 +198,29 @@ export default function BudgetsScreen() {
               <Text style={styles.sub}>
                 Spent {prog ? prog.spent.toFixed(2) : '—'} / {Number(b.amount || 0).toFixed(2)} ({pct}%)
               </Text>
+              {prog && prog.spent === 0 && (
+                <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>
+                  Spend is tracked from submitted purchase orders. Place and submit your first order to see progress.
+                </Text>
+              )}
               {b.notes ? <Text style={styles.notes}>{b.notes}</Text> : null}
             </View>
           );
         }}
-        ListEmptyComponent={<Text>No budgets yet.</Text>}
+        ListEmptyComponent={
+          <View style={{ padding: 16 }}>
+            <Text style={{ fontWeight: '700', fontSize: 15, marginBottom: 6 }}>No budgets set yet</Text>
+            <Text style={{ color: '#6B7280', fontSize: 13, lineHeight: 19, marginBottom: 12 }}>
+              Create a budget to track your beverage spend against a target. Spend is calculated from submitted and received purchase orders.
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#0A84FF', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10, alignSelf: 'flex-start' }}
+              onPress={() => setIsCreating(true)}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>+ Create budget</Text>
+            </TouchableOpacity>
+          </View>
+        }
       />
 
       {/* Supplier picker modal */}

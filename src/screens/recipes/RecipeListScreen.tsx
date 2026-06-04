@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { getRecipes } from '../../services/recipes/getRecipes';
 
@@ -12,6 +13,7 @@ const filters = ['all','confirmed','draft'] as const;
 type Filter = typeof filters[number];
 
 export default function RecipeListScreen({ onOpen }: Props) {
+  const nav = useNavigation<any>();
   const venueId = useVenueId();
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
@@ -94,12 +96,42 @@ export default function RecipeListScreen({ onOpen }: Props) {
           data={rows}
           keyExtractor={(x) => x.id}
           renderItem={renderItem}
-          ListEmptyComponent={<Text style={{ padding:16, opacity:0.6 }}>No recipes</Text>}
+          contentContainerStyle={{ paddingBottom: 80 }}
+          ListEmptyComponent={<Text style={{ padding:16, opacity:0.6 }}>No recipes yet. Tap + to create one.</Text>}
         />
       )}
+
+      {/* FAB — create new recipe */}
+      <TouchableOpacity
+        style={fabStyles.fab}
+        onPress={() => nav.navigate('DraftRecipeDetail', { recipeId: 'new' })}
+        activeOpacity={0.85}
+      >
+        <Text style={fabStyles.fabText}>+</Text>
+      </TouchableOpacity>
     </View>
   );
 }
+
+const fabStyles = StyleSheet.create({
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  fabText: { color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 32 },
+});
 
 function Chip({ text, tone }:{ text:string; tone:'green'|'amber'|'gray' }) {
   const bg = tone === 'green' ? '#DCFCE7' : tone === 'amber' ? '#FEF3C7' : '#F3F4F6';

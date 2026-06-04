@@ -710,7 +710,13 @@ service cloud.firestore {
 
       match /orders/{orderId} {
         allow get, list: if isVenueMember(venueId) || supplierMatchesOrderData(resource.data);
-        allow create, update: if isVenueMember(venueId) || supplierAllowedOrderUpdate();
+        // Managers/owners: full create and update
+        allow create, update: if hasVenueRole(venueId, ['manager','owner']) || supplierAllowedOrderUpdate();
+        // Staff: can create draft orders and route to pending-approval only
+        allow create: if hasVenueRole(venueId, ['staff'])
+          && request.resource.data.status in ['draft', 'pending-approval'];
+        allow update: if hasVenueRole(venueId, ['staff'])
+          && request.resource.data.status in ['draft', 'pending-approval'];
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
         match /lines/{lineId} {
           allow get, list: if isVenueMember(venueId) ||

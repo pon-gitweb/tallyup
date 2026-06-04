@@ -9,10 +9,15 @@ import {
   collection,
   onSnapshot,
   deleteDoc,
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
   query,
   where,
   getDocs,
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 
@@ -130,7 +135,12 @@ const STATUS_GROUPS = {
   drafts: (r:OrderRow)=>{
     const s = (r.status||'').toLowerCase().trim();
     if (s === 'cancelled') return false;
-    return s === 'draft' || s === 'pending' || s === 'pending_merge' || s === 'pending-approval';
+    // pending-approval is now its own tab — exclude from Drafts
+    return s === 'draft' || s === 'pending' || s === 'pending_merge';
+  },
+  pending: (r:OrderRow)=>{
+    const s = (r.status||'').toLowerCase().trim();
+    return s === 'pending-approval';
   },
   submitted: (r:OrderRow)=>{
     const s = (r.status||'').toLowerCase().trim();
@@ -151,10 +161,56 @@ export default function OrdersScreen(){
   const colours = useColours();
   const db = getFirestore();
 
-  const [tab,setTab]=useState<'drafts'|'submitted'|'received'>('drafts');
+  const [tab,setTab]=useState<'drafts'|'pending'|'submitted'|'received'>('drafts');
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
   const [receiveFor,setReceiveFor] = useState<OrderRow|null>(null);
+  const [isManager,setIsManager]=useState(false);
+
+  useEffect(()=>{
+    const uid = getAuth().currentUser?.uid;
+    if (!venueId || !uid) return;
+    getDoc(doc(db, 'venues', venueId, 'members', uid)).then(snap => {
+      const role = snap.exists() ? (snap.data() as any)?.role : null;
+      setIsManager(role === 'manager' || role === 'owner');
+    }).catch(() => {});
+  }, [venueId]);
+
+  const approveOrder = useCallback(async(orderId: string) => {
+    if (!venueId) return;
+    const uid = getAuth().currentUser?.uid;
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+        status: 'submitted',
+        displayStatus: 'submitted',
+        submittedAt: serverTimestamp(),
+        approvedBy: uid ?? null,
+        approvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch(e:any) {
+      Alert.alert('Approve failed', e?.message || 'Could not approve order.');
+    }
+  }, [venueId, db]);
+
+  const rejectOrder = useCallback(async(orderId: string) => {
+    if (!venueId) return;
+    Alert.alert('Reject order', 'Return this order to draft so the staff member can edit it?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Return to draft', style: 'destructive', onPress: async () => {
+        try {
+          await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+            status: 'draft',
+            displayStatus: 'draft',
+            rejectedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch(e:any) {
+          Alert.alert('Reject failed', e?.message || 'Could not return order to draft.');
+        }
+      }},
+    ]);
+  }, [venueId, db]);
 
   useEffect(()=>{
     if(!venueId) return;
@@ -210,24 +266,20 @@ export default function OrdersScreen(){
   },[db,venueId]);
 
   const counts = useMemo(()=>{
-    let d=0,s=0,r=0;
+    let d=0,p=0,s=0,r=0;
     rowsAll.forEach(row=>{
       if (STATUS_GROUPS.drafts(row)) d++;
+      else if (STATUS_GROUPS.pending(row)) p++;
       else if (STATUS_GROUPS.received(row)) r++;
       else if (STATUS_GROUPS.submitted(row)) s++;
     });
-    if (__DEV__) console.log('[OrdersScreen] buckets', {drafts:d, submitted:s, received:r});
-    return {drafts:d, submitted:s, received:r};
+    return {drafts:d, pending:p, submitted:s, received:r};
   },[rowsAll]);
 
   const rows=useMemo(()=>{
-    const pick=STATUS_GROUPS[tab];
-    const filtered = rowsAll.filter(r=>pick(r));
-    if (__DEV__) {
-      const sample = filtered.slice(0,3).map(r=>({id:r.id,status:r.status,linesCount:r.linesCount,displayStatus:r.displayStatus}));
-      console.log(`[OrdersScreen] sample(${tab})`, sample);
-    }
-    return filtered;
+    const pick = STATUS_GROUPS[tab as keyof typeof STATUS_GROUPS];
+    if (!pick) return [];
+    return rowsAll.filter(r=>pick(r));
   },[rowsAll,tab]);
 
   const openRow=useCallback((row:OrderRow)=>{
@@ -303,11 +355,26 @@ export default function OrdersScreen(){
           </View>
         </TouchableOpacity>
 
-        {/* Right-side actions deliberately empty */}
-        <View />
+        {/* Approve/Reject for pending-approval orders (managers only) */}
+        {item.status === 'pending-approval' && isManager && (
+          <View style={{ flexDirection:'row', gap:6, marginTop:8 }}>
+            <TouchableOpacity
+              onPress={() => approveOrder(item.id)}
+              style={{ backgroundColor:'#065F46', paddingVertical:6, paddingHorizontal:12, borderRadius:8 }}
+            >
+              <Text style={{ color:'#fff', fontWeight:'700', fontSize:12 }}>Approve →</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => rejectOrder(item.id)}
+              style={{ backgroundColor:'#7F1D1D', paddingVertical:6, paddingHorizontal:12, borderRadius:8 }}
+            >
+              <Text style={{ color:'#fff', fontWeight:'700', fontSize:12 }}>Reject</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
-  },[openRow,confirmDelete]);
+  },[openRow,confirmDelete,isManager,approveOrder,rejectOrder]);
 
   const onRefresh=useCallback(()=>{ setRefreshing(true); setTimeout(()=>setRefreshing(false),200); },[]);
 
@@ -364,6 +431,9 @@ export default function OrdersScreen(){
         <Text style={S.title}>Orders</Text>
         <View style={S.segWrap}>
           <SegBtn label={`Drafts (${counts.drafts})`} active={tab==='drafts'} onPress={()=>setTab('drafts')} />
+          {(isManager || counts.pending > 0) && (
+            <SegBtn label={`Pending (${counts.pending})`} active={tab==='pending'} onPress={()=>setTab('pending')} />
+          )}
           <SegBtn label={`Submitted (${counts.submitted})`} active={tab==='submitted'} onPress={()=>setTab('submitted')} />
           <SegBtn label={`Received (${counts.received})`} active={tab==='received'} onPress={()=>setTab('received')} />
         </View>
@@ -379,6 +449,8 @@ export default function OrdersScreen(){
             <Text style={S.emptyText}>
               {tab==='submitted'
                 ? 'No submitted orders yet.\nSubmit an order, then tap it to open and Receive.'
+                : tab==='pending'
+                ? 'No orders awaiting approval.'
                 : 'No orders'}
             </Text>
           </View>
