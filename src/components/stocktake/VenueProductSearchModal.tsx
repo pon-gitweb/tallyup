@@ -114,6 +114,26 @@ export default function VenueProductSearchModal({
     if (onBatchSelect) onBatchSelect(products);
   };
 
+  const handleSelectAll = () => {
+    if (selected.size === filtered.length && filtered.length > 0) {
+      // Deselect all currently filtered
+      setSelected(prev => {
+        const n = new Map(prev);
+        filtered.forEach(p => n.delete(p.id));
+        return n;
+      });
+    } else {
+      // Select all currently filtered
+      setSelected(prev => {
+        const n = new Map(prev);
+        filtered.forEach(p => n.set(p.id, p));
+        return n;
+      });
+    }
+  };
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(p => selected.has(p.id));
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
       <View style={S.wrap}>
@@ -129,7 +149,7 @@ export default function VenueProductSearchModal({
                   : `Tap to add to ${areaName || 'this area'}`}
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {!!onBatchSelect && (
                 <TouchableOpacity
                   onPress={() => { setMultiMode(v => !v); setSelected(new Map()); }}
@@ -137,6 +157,13 @@ export default function VenueProductSearchModal({
                 >
                   <Text style={[S.doneBtnText, { color: multiMode ? '#fff' : '#374151' }]}>
                     {multiMode ? 'Cancel' : 'Multi'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {multiMode && filtered.length > 0 && (
+                <TouchableOpacity onPress={handleSelectAll} style={S.selectAllBtn}>
+                  <Text style={S.selectAllText}>
+                    {allFilteredSelected ? 'Deselect all' : `Select all (${filtered.length})`}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -287,6 +314,8 @@ const S = StyleSheet.create({
   rowName: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
   rowSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
   checkmark: { fontSize: 18, color: '#10b981', fontWeight: '800' },
+  selectAllBtn: { paddingHorizontal: 10, paddingVertical: 7 },
+  selectAllText: { color: '#1b4f72', fontSize: 13, fontWeight: '600' },
   toast: {
     position: 'absolute',
     bottom: 0,

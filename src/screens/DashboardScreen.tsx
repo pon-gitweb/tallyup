@@ -200,6 +200,15 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [venueId]);
 
+  const [deptNames, setDeptNames] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDocs(collection(db, 'venues', venueId, 'departments')).then(snap => {
+      setDeptNames(snap.docs.map(d => d.data().name as string).filter(Boolean).slice(0, 3));
+    }).catch(() => {});
+  }, [venueId]);
+
   const [priceChangeCount, setPriceChangeCount] = React.useState(0);
   const [openDisputeCount, setOpenDisputeCount] = React.useState(0);
   React.useEffect(() => {
@@ -409,13 +418,20 @@ export default function DashboardScreen() {
 
         {/* ── CTA button ───────────────────────────────────────────────── */}
         {primaryState === 'none' && (
-          <TouchableOpacity
-            style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}
-            onPress={onOpenStockTake}
-            disabled={busy}
-          >
-            {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start now →</Text>}
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: deptNames.length > 0 ? 6 : 16 }}
+              onPress={onOpenStockTake}
+              disabled={busy}
+            >
+              {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start now →</Text>}
+            </TouchableOpacity>
+            {deptNames.length > 0 && (
+              <Text style={{ fontSize: 12, color: colours.textSecondary, textAlign: 'center', marginBottom: 16 }}>
+                {deptNames.join(' · ')}
+              </Text>
+            )}
+          </>
         )}
         {primaryState === 'inProgress' && lastArea && (
           <TouchableOpacity
@@ -508,7 +524,15 @@ export default function DashboardScreen() {
 
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
         {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
-          <ContextNudge c={colours} message="💡 Tip: Scan an invoice to set up suppliers and products in one step — before your first stocktake." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
+          <>
+            <ContextNudge c={colours} message="💡 Tip: Scan an invoice to set up suppliers and products in one step — before your first stocktake." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
+            <TouchableOpacity
+              onPress={() => nav.navigate('ProductsCsvImport' as never)}
+              style={{ paddingHorizontal: 16, paddingBottom: 8, marginTop: -4 }}
+            >
+              <Text style={{ fontSize: 12, color: colours.textSecondary }}>Or import from a spreadsheet →</Text>
+            </TouchableOpacity>
+          </>
         )}
         {supplierCount > 0 && productCount === 0 && !nudgeDismissed.noProducts && (
           <ContextNudge c={colours} message="Add products to run your first stocktake and unlock AI reorder suggestions." cta="Add products →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('noProducts')} />

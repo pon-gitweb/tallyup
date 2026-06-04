@@ -2192,7 +2192,26 @@ const openHistory = throttleAction(async (item: Item) => {
       write: async ({ countingUnit, caseSize }) => {
         await addDoc(
           collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-          { name: product.name || '', unit: product.unit || null, supplierName: product.supplierName || null, productId: product.id || null, countingUnit, caseSize: caseSize ?? null, inductionStatus: 'pending', inductionSource: 'venue-search', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+          {
+            name: product.name || '',
+            unit: product.unit || null,
+            supplierId: product.supplierId || null,
+            supplierName: product.supplierName || null,
+            productId: product.id || null,
+            countingUnit,
+            caseSize: caseSize ?? null,
+            costPrice: product.costPrice || null,
+            parLevel: product.parLevel || null,
+            barcode: product.barcode || null,
+            barcodeNumber: product.barcodeNumber || product.barcode || null,
+            category: product.category || product.categorySuggested || null,
+            brand: product.brand || null,
+            size: product.size || null,
+            inductionStatus: 'pending',
+            inductionSource: 'venue-search',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
         );
         hapticSuccess();
       },
@@ -2218,38 +2237,70 @@ const openHistory = throttleAction(async (item: Item) => {
       return;
     }
     await ensureAreaStarted();
-    setCountingUnitPending({
-      name: newProducts.length === 1 ? (newProducts[0].name || '') : `${newProducts.length} products`,
-      unit: undefined,
-      write: async ({ countingUnit, caseSize }) => {
-        const { writeBatch: wb } = await import('firebase/firestore');
-        const batch = wb(db);
-        for (const product of newProducts) {
-          const newRef = doc(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
-          batch.set(newRef, {
-            name: product.name || '',
-            unit: product.unit || null,
-            supplierName: product.supplierName || null,
-            productId: product.id || null,
-            countingUnit,
-            caseSize: caseSize ?? null,
-            costPrice: product.costPrice || null,
-            parLevel: product.parLevel || null,
-            barcode: product.barcode || null,
-            barcodeNumber: product.barcodeNumber || product.barcode || null,
-            category: product.category || null,
-            inductionStatus: 'pending',
-            inductionSource: 'venue-search',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
-        await batch.commit();
-        hapticSuccess();
-        setBatchAddToast(`✓ ${newProducts.length} product${newProducts.length !== 1 ? 's' : ''} added to ${areaName || 'area'}`);
-      },
-    });
-    setCountingUnitVisible(true);
+
+    // Shared batch write — called by both "individual units" and "same unit for all" paths
+    const doBatchWrite = async (getUnitForProduct: (p: any) => { countingUnit: string; caseSize: number | null }) => {
+      const { writeBatch: wb } = await import('firebase/firestore');
+      const batch = wb(db);
+      for (const product of newProducts) {
+        const { countingUnit, caseSize } = getUnitForProduct(product);
+        const newRef = doc(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
+        batch.set(newRef, {
+          name: product.name || '',
+          unit: product.unit || null,
+          supplierId: product.supplierId || null,
+          supplierName: product.supplierName || null,
+          productId: product.id || null,
+          countingUnit,
+          caseSize: caseSize ?? null,
+          costPrice: product.costPrice || null,
+          parLevel: product.parLevel || null,
+          barcode: product.barcode || null,
+          barcodeNumber: product.barcodeNumber || product.barcode || null,
+          category: product.category || product.categorySuggested || null,
+          brand: product.brand || null,
+          size: product.size || null,
+          inductionStatus: 'pending',
+          inductionSource: 'venue-search-batch',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      hapticSuccess();
+      setBatchAddToast(`✓ ${newProducts.length} product${newProducts.length !== 1 ? 's' : ''} added to ${areaName || 'area'}`);
+    };
+
+    // Offer choice before forcing a single counting unit on a mixed batch
+    Alert.alert(
+      'Counting units',
+      `How would you like to set counting units for these ${newProducts.length} products?`,
+      [
+        {
+          text: "Use each product's own unit",
+          onPress: () => {
+            doBatchWrite(p => ({
+              countingUnit: p.unit || 'unit',
+              caseSize: p.packSize ? parseInt(String(p.packSize)) : null,
+            })).catch((e: any) => Alert.alert('Error', e?.message || 'Could not add products.'));
+          },
+        },
+        {
+          text: 'Set same unit for all',
+          onPress: () => {
+            setCountingUnitPending({
+              name: newProducts.length === 1 ? (newProducts[0].name || '') : `${newProducts.length} products`,
+              unit: undefined,
+              write: async ({ countingUnit, caseSize }) => {
+                await doBatchWrite(() => ({ countingUnit, caseSize }));
+              },
+            });
+            setCountingUnitVisible(true);
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2650,7 +2701,14 @@ const openHistory = throttleAction(async (item: Item) => {
           {
             icon: voiceSessionState.isActive ? '🔴' : '🎤',
             label: 'Voice',
-            onPress: toggleVoiceSession,
+            onPress: voiceAvailable
+              ? toggleVoiceSession
+              : () => Alert.alert(
+                  'Voice counting',
+                  "Voice counting lets you count hands-free by saying product names and quantities.\n\nIt's available in the full release build of the app.",
+                  [{ text: 'OK' }]
+                ),
+            dim: !voiceAvailable,
           },
           { icon: '⚡', label: 'Scale', onPress: () => nav.navigate('ScaleSettings' as never) },
         ].map(btn => (
@@ -2658,7 +2716,7 @@ const openHistory = throttleAction(async (item: Item) => {
             key={btn.label}
             onPress={btn.onPress}
             activeOpacity={0.7}
-            style={{ flex: 1, alignItems: 'center', paddingVertical: 4 }}
+            style={{ flex: 1, alignItems: 'center', paddingVertical: 4, opacity: (btn as any).dim ? 0.35 : 1 }}
           >
             <Text style={{ fontSize: 20 }}>{btn.icon}</Text>
             <Text style={{ fontSize: 10, fontWeight: '600', color: '#1b4f72', marginTop: 2 }}>{btn.label}</Text>

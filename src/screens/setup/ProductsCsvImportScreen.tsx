@@ -9,6 +9,7 @@ import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc, setDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { parseCsv, toObjects, autoHeaderMap, remapObjects } from '../../services/imports/csv';
+import { guessCategory } from '../../services/festival/purchasingPrediction';
 import { uploadText } from '../../services/firebase/storage';
 import { listSuppliers } from '../../services/suppliers';
 
@@ -166,6 +167,7 @@ export default function ProductsCsvImportScreen(){
           const pid = slugId(name);
           const pref = doc(db, 'venues', venueId, 'products', pid);
 
+          const inferredCategory = guessCategory(name) || null;
           validRows.push({
             pref,
             data: {
@@ -176,6 +178,9 @@ export default function ProductsCsvImportScreen(){
               ...(parLevel!=null?{parLevel}:{}),
               ...(costPrice!=null?{costPrice}:{}),
               ...(packSize!=null?{packSize}:{}),
+              category: inferredCategory,
+              categorySuggested: inferredCategory,
+              active: true,
               updatedAt: serverTimestamp(),
             },
           });
