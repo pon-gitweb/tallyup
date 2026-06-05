@@ -9,6 +9,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import { useFonts, PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic } from '@expo-google-fonts/playfair-display';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 
 export type ThemeColours = {
   primary: string;        // Action colour — buttons, active states
@@ -56,7 +57,10 @@ export type ThemeConfig = {
   //   npx expo install @expo-google-fonts/playfair-display @expo-google-fonts/inter
   //   then load PlayfairDisplay_700Bold + Inter_400Regular at app entry
   fontTitle: string;          // Playfair Display — screen titles, section headers
-  fontBody: string;           // Inter — body copy, labels, inputs
+  fontBody: string;           // Inter 400 — body copy, labels, inputs
+  fontBodyMedium: string;     // Inter 500 — subheadings, secondary labels
+  fontBodySemiBold: string;   // Inter 600 — buttons, emphasis
+  fontBodyBold: string;       // Inter 700 — strong emphasis, chips
 };
 
 export const DEFAULT_COLOURS: ThemeColours = {
@@ -110,8 +114,11 @@ export const DEFAULT_THEME: ThemeConfig = {
   fontScale: 1.0,
   cardRadius: 14,
   density: 'comfortable',
-  fontTitle: 'System',  // → 'PlayfairDisplay_700Bold' once @expo-google-fonts/playfair-display is installed
-  fontBody: 'System',   // → 'Inter_400Regular' once @expo-google-fonts/inter is installed
+  fontTitle: 'System',       // → 'PlayfairDisplay_500Medium' when fonts load
+  fontBody: 'System',        // → 'Inter_400Regular' when fonts load
+  fontBodyMedium: 'System',  // → 'Inter_500Medium' when fonts load
+  fontBodySemiBold: 'System',// → 'Inter_600SemiBold' when fonts load
+  fontBodyBold: 'System',    // → 'Inter_700Bold' when fonts load
 };
 
 const CACHE_KEY = '@hosti_theme';
@@ -139,9 +146,24 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
   const [isLoading, setIsLoading] = useState(true);
   const loadingRef = React.useRef(false);
   const db = getFirestore();
-  const [fontsLoaded] = useFonts({ PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic });
+  const [fontsLoaded] = useFonts({
+    PlayfairDisplay_400Regular,
+    PlayfairDisplay_500Medium,
+    PlayfairDisplay_400Regular_Italic,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
   const effectiveTheme = React.useMemo(
-    () => ({ ...theme, fontTitle: fontsLoaded ? 'PlayfairDisplay_500Medium' : 'System' }),
+    () => ({
+      ...theme,
+      fontTitle:       fontsLoaded ? 'PlayfairDisplay_500Medium' : 'System',
+      fontBody:        fontsLoaded ? 'Inter_400Regular'          : 'System',
+      fontBodyMedium:  fontsLoaded ? 'Inter_500Medium'           : 'System',
+      fontBodySemiBold:fontsLoaded ? 'Inter_600SemiBold'         : 'System',
+      fontBodyBold:    fontsLoaded ? 'Inter_700Bold'             : 'System',
+    }),
     [theme, fontsLoaded]
   );
 
