@@ -3,6 +3,7 @@ import React from 'react';
 import { Text, TouchableOpacity } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { openIzzy } from '../../components/IzzyAssistant';
 
 import DashboardScreen from '../../screens/DashboardScreen';
@@ -17,12 +18,12 @@ import { useFestivalMode } from '../../hooks/useFestivalMode';
 
 const Tab = createBottomTabNavigator();
 
-const TAB_ICONS: Record<string, string> = {
-  Home:    '🏠',
-  Stock:   '📦',
-  Orders:  '📋',
-  Reports: '📊',
-  More:    '⋯',
+const TAB_ICONS: Record<string, { default: string; focused: string }> = {
+  Home:    { default: 'home-outline',                focused: 'home' },
+  Stock:   { default: 'cube-outline',                focused: 'cube' },
+  Orders:  { default: 'cart-outline',                focused: 'cart' },
+  Reports: { default: 'bar-chart-outline',           focused: 'bar-chart' },
+  More:    { default: 'ellipsis-horizontal-outline', focused: 'ellipsis-horizontal' },
 };
 
 const IzzyHeaderButton = () => (
@@ -39,11 +40,11 @@ export default function MainTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarIcon: ({ focused, color }) => (
-          <Text style={{ fontSize: focused ? 22 : 19, color, marginBottom: -2 }}>
-            {TAB_ICONS[route.name] ?? '•'}
-          </Text>
-        ),
+        tabBarIcon: ({ focused, color, size }) => {
+          const icons = TAB_ICONS[route.name];
+          const name = icons ? (focused ? icons.focused : icons.default) : 'ellipsis-horizontal';
+          return <Ionicons name={name} size={size} color={color} />;
+        },
         tabBarLabel: ({ focused, color }) => (
           <Text style={{
             fontSize: 10, fontWeight: focused ? '700' : '500',
