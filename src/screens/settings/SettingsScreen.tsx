@@ -16,6 +16,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Share,
+  Linking,
   ActivityIndicator,
 } from 'react-native';
 import { HintService } from '../../services/hints/HintService';
@@ -927,11 +928,18 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Terms of Service */}
+        {/* Legal — Privacy Policy + Terms of Service */}
+        {/* TODO: replace with live URLs before App Store submission */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.navy }]}
-            onPress={() => nav.navigate('Terms')}
+            onPress={() => Linking.openURL('https://www.hostistock.com/privacy')}
+          >
+            <Text style={styles.btnText}>Privacy Policy</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: themeColours.navy }]}
+            onPress={() => Linking.openURL('https://www.hostistock.com/terms')}
           >
             <Text style={styles.btnText}>Terms of Service</Text>
           </TouchableOpacity>
@@ -985,11 +993,9 @@ export default function SettingsScreen() {
         </View>
 
         {/* App version */}
-        <View style={{ marginTop: 12, alignItems: 'center' }}>
-          <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>
-            Hosti v{Constants.expoConfig?.version ?? '—'}
-          </Text>
-        </View>
+        <Text style={styles.versionText}>
+          Hosti-Stock v{Constants.expoConfig?.version ?? '—'}
+        </Text>
 
         {/* APPEARANCE — temporarily hidden, not working.
             Restore when implemented. */}
@@ -1293,5 +1299,6 @@ function makeStyles(c: ReturnType<typeof useColours>) {
       alignItems: 'center',
     },
     aboutCloseText: { color: c.primaryText, fontWeight: '800' },
+    versionText: { fontSize: 12, color: c.textSecondary, textAlign: 'center', marginTop: 8 },
   });
 }
