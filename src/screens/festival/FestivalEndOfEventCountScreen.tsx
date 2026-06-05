@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
-  collection, getDocs, doc, setDoc, onSnapshot, serverTimestamp,
+  collection, getDocs, doc, setDoc, onSnapshot, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -35,7 +35,10 @@ export default function FestivalEndOfEventCountScreen() {
   // Load bars
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
-    getDocs(collection(db, 'venues', venueId, 'bars')).then(snap => {
+    getDocs(query(
+      collection(db, 'venues', venueId, 'departments'),
+      where('isFestivalBar', '==', true),
+    )).then(snap => {
       setBars(snap.docs.map(d => ({ barId: d.id, barName: (d.data() as any).name || d.id })));
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -59,12 +62,12 @@ export default function FestivalEndOfEventCountScreen() {
   useEffect(() => {
     if (!selectedBar || !venueId) return;
     setLoadingStock(true);
-    getDocs(collection(db, 'venues', venueId, 'bars', selectedBar.barId, 'stock')).then(snap => {
+    getDocs(collection(db, 'venues', venueId, 'departments', selectedBar.barId, 'areas', 'back-of-house', 'items')).then(snap => {
       setStockRows(snap.docs.map(d => {
         const data = d.data() as any;
         return {
           productId:   d.id,
-          productName: data.productName || d.id,
+          productName: data.name || data.productName || d.id,
           unit:        data.unit || 'units',
           finalCount:  0,
         };
