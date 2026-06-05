@@ -154,6 +154,11 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     }, (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       setSubscription(null);
+      setVenueType(null);
+      if (err?.code === 'permission-denied') {
+        // User has been removed from this venue — clear context so HomeRouter can redirect
+        setVenueId(null);
+      }
     });
     return () => {
       if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }

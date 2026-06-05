@@ -17,6 +17,7 @@ import { AI_BASE_URL } from '../config/ai';
 import { navigationRef } from '../navigation/RootNavigator';
 import { useVenueId } from '../context/VenueProvider';
 import { handleAiLimitError } from '../utils/aiLimitError';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const HIDDEN_ON = new Set([
   'OnboardingRoad',
@@ -66,7 +67,7 @@ export default function IzzyAssistant() {
     setLoading(true);
     try {
       const token = await getAuth().currentUser?.getIdToken();
-      const resp = await fetch(`${AI_BASE_URL}/api/izzy`, {
+      const resp = await fetchWithTimeout(`${AI_BASE_URL}/api/izzy`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -76,7 +77,7 @@ export default function IzzyAssistant() {
           question: `[Current screen: ${routeName || 'Unknown'}] ${text}`,
           venueId: venueId || undefined,
         }),
-      });
+      }, 30000);
       const json = await resp.json().catch(() => ({}));
       if (handleAiLimitError(json)) { setLoading(false); return; }
       const answer = json?.answer || "I'm having trouble right now. Please try again.";

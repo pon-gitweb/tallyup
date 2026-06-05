@@ -31,6 +31,7 @@ import { explainVariance } from '../../services/aiVariance';
 import { fetchAiInsights, AiInsight } from '../../services/reports/aiInsights';
 import { AI_BASE_URL } from '../../config/ai';
 import { handleAiLimitError } from '../../utils/aiLimitError';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
@@ -328,11 +329,11 @@ export default function ReportsIndexScreen() {
     setSuiteeLoading(true);
     try {
       const token = await getAuth().currentUser?.getIdToken();
-      const resp = await fetch(`${AI_BASE_URL}/api/suitee`, {
+      const resp = await fetchWithTimeout(`${AI_BASE_URL}/api/suitee`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ question: text, venueId, history: suiteeMessages }),
-      });
+      }, 30000);
       const json = await resp.json().catch(() => ({}));
       if (handleAiLimitError(json)) { setSuiteeLoading(false); return; }
       const answer = json?.answer || "I'm having trouble accessing your data right now. Please try again.";

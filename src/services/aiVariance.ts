@@ -1,5 +1,6 @@
 import { getAuth } from 'firebase/auth';
 import { getAIContext } from './aiContext';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 /**
  * Variance explainer client: Expo-safe fetch to local/remote server.
  * Returns: { summary, factors?: string[], missing?: string[], confidence?: number }
@@ -23,11 +24,11 @@ export async function explainVariance(input: ExplainInput): Promise<ExplainOut> 
     }
   } catch { /* non-fatal */ }
   const token = await getAuth().currentUser?.getIdToken();
-  const resp = await fetch(URL_EXPLAIN, {
+  const resp = await fetchWithTimeout(URL_EXPLAIN, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'Authorization': 'Bearer ' + (token ?? '') },
     body: JSON.stringify(enrichedInput),
-  }).catch((e) => { throw new Error('Network error: ' + String(e && e.message ? e.message : e)); });
+  }, 30000).catch((e) => { throw new Error(e?.message || 'Network error'); });
 
   if (!resp.ok) {
     const msg = await resp.text().catch(() => '');

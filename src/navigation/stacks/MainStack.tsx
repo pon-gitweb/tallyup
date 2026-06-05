@@ -1,8 +1,11 @@
 // @ts-nocheck
 import OrderEditorScreen from '../../screens/orders/OrderEditorScreen';
 import React from 'react';
-import { View, TouchableOpacity, Text } from 'react-native';
+import { View, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { useVenueId } from '../../context/VenueProvider';
 import IzzyAssistant, { openIzzy } from '../../components/IzzyAssistant';
 import MainTabs from './MainTabs';
 
@@ -114,6 +117,41 @@ import FestivalHistoricalDataScreen from '../../screens/festival/FestivalHistori
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
+import DraftRecipeDetailPanel from '../../screens/recipes/DraftRecipeDetailPanel';
+
+/** Wrapper that creates a blank draft recipe then opens the editor panel. */
+function DraftRecipeDetailScreen() {
+  const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const venueId = useVenueId();
+  const paramId: string = route.params?.recipeId ?? 'new';
+  const [recipeId, setRecipeId] = React.useState<string | null>(
+    paramId !== 'new' ? paramId : null,
+  );
+
+  React.useEffect(() => {
+    if (recipeId) return;
+    if (!venueId) { nav.goBack(); return; }
+    const db = getFirestore();
+    addDoc(collection(db, 'venues', venueId, 'recipes'), {
+      status: 'draft',
+      name: '',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+      .then(ref => setRecipeId(ref.id))
+      .catch(() => nav.goBack());
+  }, [venueId, recipeId]);
+
+  if (!recipeId) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+  return <DraftRecipeDetailPanel recipeId={recipeId} onClose={() => nav.goBack()} />;
+}
 
 // Products (setup area)
 import ProductsScreen from '../../screens/setup/ProductsScreen';
@@ -281,6 +319,7 @@ export default function MainStack() {
 
       {/* Recipes */}
       <Stack.Screen name="CraftUp" component={CraftUpListScreen} options={{ title: 'Recipes (CraftUp)' }} />
+      <Stack.Screen name="DraftRecipeDetail" component={DraftRecipeDetailScreen} options={{ title: 'New Recipe' }} />
 
       {/* Orders */}
       <Stack.Screen

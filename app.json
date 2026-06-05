@@ -39,6 +39,7 @@
       "package": "com.hostistock.tallyup",
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_SCAN",
@@ -88,8 +89,10 @@
       ]
     ],
     "updates": {
-      "enabled": false,
-      "fallbackToCacheTimeout": 0
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/f51fbba0-356b-46ef-9ef5-2017ee9ad59f",
+      "checkAutomatically": "ON_LOAD"
     }
   }
 }

@@ -20,7 +20,11 @@ import {
 } from 'react-native';
 import { HintService } from '../../services/hints/HintService';
 import { useNavigation } from '@react-navigation/native';
-import { getAuth, onAuthStateChanged, updateProfile } from 'firebase/auth';
+import {
+  getAuth, onAuthStateChanged, updateProfile,
+  EmailAuthProvider, reauthenticateWithCredential,
+  updatePassword, verifyBeforeUpdateEmail,
+} from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { AI_BASE_URL } from '../../config/ai';
@@ -161,6 +165,19 @@ export default function SettingsScreen() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [resettingCycle, setResettingCycle] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // Change password modal
+  const [changePwOpen, setChangePwOpen] = useState(false);
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [savingPw, setSavingPw] = useState(false);
+
+  // Change email modal
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false);
+  const [emailPwForAuth, setEmailPwForAuth] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
 
   useEffect(() => {
     let unsubMember: any;
@@ -311,6 +328,60 @@ export default function SettingsScreen() {
     }
   }
 
+  async function doChangePassword() {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) return;
+    if (!currentPw) { Alert.alert('Missing field', 'Enter your current password.'); return; }
+    if (newPw.length < 6) { Alert.alert('Password too short', 'New password must be at least 6 characters.'); return; }
+    if (newPw !== confirmPw) { Alert.alert('Passwords do not match', 'New password and confirmation must match.'); return; }
+    setSavingPw(true);
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPw);
+      await reauthenticateWithCredential(currentUser, credential);
+      await updatePassword(currentUser, newPw);
+      setChangePwOpen(false);
+      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      showToast('✓ Password updated');
+    } catch (e: any) {
+      const code = (e?.code || '').toString();
+      if (code.includes('wrong-password') || code.includes('invalid-credential')) {
+        Alert.alert('Incorrect password', 'Your current password is incorrect.');
+      } else {
+        Alert.alert('Could not update password', e?.message || 'Please try again.');
+      }
+    } finally {
+      setSavingPw(false);
+    }
+  }
+
+  async function doChangeEmail() {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) return;
+    const trimmedEmail = newEmail.trim();
+    if (!emailPwForAuth) { Alert.alert('Missing field', 'Enter your current password to verify.'); return; }
+    if (!trimmedEmail || !trimmedEmail.includes('@')) { Alert.alert('Invalid email', 'Enter a valid email address.'); return; }
+    setSavingEmail(true);
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, emailPwForAuth);
+      await reauthenticateWithCredential(currentUser, credential);
+      await verifyBeforeUpdateEmail(currentUser, trimmedEmail);
+      setChangeEmailOpen(false);
+      setEmailPwForAuth(''); setNewEmail('');
+      showToast('Verification sent — check ' + trimmedEmail);
+    } catch (e: any) {
+      const code = (e?.code || '').toString();
+      if (code.includes('wrong-password') || code.includes('invalid-credential')) {
+        Alert.alert('Incorrect password', 'Your current password is incorrect.');
+      } else if (code.includes('email-already-in-use')) {
+        Alert.alert('Email already registered', 'That address is already linked to another account.');
+      } else {
+        Alert.alert('Could not update email', e?.message || 'Please try again.');
+      }
+    } finally {
+      setSavingEmail(false);
+    }
+  }
+
   async function doResetCycle() {
     if (!venueId) return;
     try {
@@ -404,10 +475,22 @@ export default function SettingsScreen() {
             </View>
           ) : null}
 
-          {/* Email — read only */}
-          <Text style={{ color: themeColours.textSecondary, fontSize: 13, marginBottom: 12 }}>
-            Email: {user?.email || '—'}
-          </Text>
+          {/* Email with change option */}
+          <View style={{ marginBottom: 12 }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>Email</Text>
+            <TouchableOpacity onPress={() => { setNewEmail(''); setEmailPwForAuth(''); setChangeEmailOpen(true); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>{user?.email || '—'}</Text>
+              <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Change</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Change password row */}
+          <View style={{ marginBottom: 12 }}>
+            <TouchableOpacity onPress={() => { setCurrentPw(''); setNewPw(''); setConfirmPw(''); setChangePwOpen(true); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>Password</Text>
+              <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Change</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Display name */}
           <View style={{ marginBottom: 12 }}>
@@ -1031,6 +1114,83 @@ export default function SettingsScreen() {
           </LocalThemeGate>
         </Modal>
       </ScrollView>
+
+      {/* ── CHANGE PASSWORD MODAL ── */}
+      <Modal visible={changePwOpen} transparent animationType="slide" onRequestClose={() => setChangePwOpen(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }} activeOpacity={1} onPress={() => setChangePwOpen(false)} />
+          <View style={{ backgroundColor: themeColours.background, padding: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 40 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: themeColours.navy, marginBottom: 16 }}>Change password</Text>
+            {[
+              { label: 'Current password', value: currentPw, onChange: setCurrentPw },
+              { label: 'New password', value: newPw, onChange: setNewPw },
+              { label: 'Confirm new password', value: confirmPw, onChange: setConfirmPw },
+            ].map(({ label, value, onChange }) => (
+              <TextInput
+                key={label}
+                placeholder={label}
+                placeholderTextColor={themeColours.textSecondary}
+                secureTextEntry
+                value={value}
+                onChangeText={onChange}
+                style={{ height: 48, borderWidth: 1.5, borderColor: themeColours.border, borderRadius: 10, paddingHorizontal: 14, marginBottom: 10, backgroundColor: themeColours.surface, color: themeColours.text, fontSize: 15 }}
+              />
+            ))}
+            <TouchableOpacity
+              onPress={doChangePassword}
+              disabled={savingPw}
+              style={{ height: 50, borderRadius: 999, backgroundColor: themeColours.primary, alignItems: 'center', justifyContent: 'center', opacity: savingPw ? 0.6 : 1, marginTop: 4 }}
+            >
+              {savingPw ? <ActivityIndicator color={themeColours.primaryText} /> : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 15 }}>Update password</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setChangePwOpen(false)} style={{ alignItems: 'center', paddingTop: 14 }}>
+              <Text style={{ color: themeColours.textSecondary, fontSize: 14 }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── CHANGE EMAIL MODAL ── */}
+      <Modal visible={changeEmailOpen} transparent animationType="slide" onRequestClose={() => setChangeEmailOpen(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }} activeOpacity={1} onPress={() => setChangeEmailOpen(false)} />
+          <View style={{ backgroundColor: themeColours.background, padding: 20, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 40 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: themeColours.navy, marginBottom: 6 }}>Change email</Text>
+            <Text style={{ fontSize: 13, color: themeColours.textSecondary, marginBottom: 16, lineHeight: 18 }}>
+              A verification link will be sent to your new address. Your email won't change until you click it.
+            </Text>
+            <TextInput
+              placeholder="Current password"
+              placeholderTextColor={themeColours.textSecondary}
+              secureTextEntry
+              value={emailPwForAuth}
+              onChangeText={setEmailPwForAuth}
+              style={{ height: 48, borderWidth: 1.5, borderColor: themeColours.border, borderRadius: 10, paddingHorizontal: 14, marginBottom: 10, backgroundColor: themeColours.surface, color: themeColours.text, fontSize: 15 }}
+            />
+            <TextInput
+              placeholder="New email address"
+              placeholderTextColor={themeColours.textSecondary}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+              value={newEmail}
+              onChangeText={setNewEmail}
+              style={{ height: 48, borderWidth: 1.5, borderColor: themeColours.border, borderRadius: 10, paddingHorizontal: 14, marginBottom: 10, backgroundColor: themeColours.surface, color: themeColours.text, fontSize: 15 }}
+            />
+            <TouchableOpacity
+              onPress={doChangeEmail}
+              disabled={savingEmail}
+              style={{ height: 50, borderRadius: 999, backgroundColor: themeColours.primary, alignItems: 'center', justifyContent: 'center', opacity: savingEmail ? 0.6 : 1, marginTop: 4 }}
+            >
+              {savingEmail ? <ActivityIndicator color={themeColours.primaryText} /> : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 15 }}>Send verification</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setChangeEmailOpen(false)} style={{ alignItems: 'center', paddingTop: 14 }}>
+              <Text style={{ color: themeColours.textSecondary, fontSize: 14 }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       </KeyboardAvoidingView>
     </LocalThemeGate>
   );

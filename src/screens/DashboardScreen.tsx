@@ -285,7 +285,14 @@ export default function DashboardScreen() {
   const hour = new Date().getHours();
   const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const firstName = (liveDisplayName || user?.email || '').split(' ')[0] || '';
+  const firstName = (() => {
+    if (liveDisplayName) return liveDisplayName.split(' ')[0];
+    if (user?.email) {
+      const username = user.email.split('@')[0];
+      return username.charAt(0).toUpperCase() + username.slice(1);
+    }
+    return 'there';
+  })();
 
   // Primary action card state
   const primaryState: 'none' | 'inProgress' | 'done' =
