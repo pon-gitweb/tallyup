@@ -190,10 +190,12 @@ export default function FestivalEventSetupScreen() {
 
   // ── Collapsible section state ────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState(1);
-  // Sync to first incomplete section once progress loads from Firestore
+  // Sync to first incomplete section once progress loads from Firestore.
+  // Guard against undefined progress object in case of unexpected state shape.
   useEffect(() => {
+    if (!progress || typeof progress !== 'object') return;
     setExpandedSection(getFirstIncompleteSection(progress));
-  }, [progress.basics, progress.bars, progress.sourceLocations, progress.suppliers, progress.productPlanning, progress.historicalData]);
+  }, [progress?.basics, progress?.bars, progress?.sourceLocations, progress?.suppliers, progress?.productPlanning, progress?.historicalData]);
 
   // ── Contracts count (for Section 6 card) ─────────────────────────────────
   const [contractCount,        setContractCount]        = useState(0);

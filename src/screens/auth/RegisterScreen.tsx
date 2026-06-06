@@ -55,16 +55,34 @@ export default function RegisterScreen() {
     setBusy(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, em, pw);
-      await setDoc(doc(db, 'users', cred.user.uid), {
+
+      // Write the user doc, but don't block navigation on it.
+      // If the write is slow or fails, CreateVenueScreen re-creates it anyway.
+      const writePromise = setDoc(doc(db, 'users', cred.user.uid), {
         email: cred.user.email,
         createdAt: serverTimestamp(),
         venueId: null,
         activeVenueId: null,
         venueIds: [],
       });
+      const timeoutPromise = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('Write timed out')), 10000)
+      );
+
+      try {
+        await Promise.race([writePromise, timeoutPromise]);
+      } catch {
+        // Write timed out or failed — navigate anyway.
+        // CreateVenueScreen will ensure the user doc exists before creating the venue.
+      }
+
       navigation.navigate('CreateVenue');
     } catch (e: any) {
-      Alert.alert('Registration failed', mapRegisterError(e));
+      if (e?.code) {
+        // Firebase auth error — show to user
+        Alert.alert('Registration failed', mapRegisterError(e));
+      }
+      // else: navigate already happened (timeout path) or this is an unreachable catch
     } finally {
       setBusy(false);
     }

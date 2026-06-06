@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } fro
 import { getAuth, signOut } from 'firebase/auth';
 import { db } from '../services/firebase';
 import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 
 export default function CreateVenueScreen() {
@@ -102,6 +103,20 @@ export default function CreateVenueScreen() {
       }
 
       clearTimeout(timeoutId);
+
+      // Clear stale device state from any previous venue/account on this device.
+      // lastKnownVenueType must reflect the NEW venue so the HomeRouter timeout
+      // doesn't accidentally route to festival if the previous account was one.
+      await AsyncStorage.multiRemove([
+        'lastKnownVenueType',
+        'setup_wizard_seen',
+        'setupProgress',
+        'setupGuideStep',
+        'onboardingRoad',
+      ]).catch(() => {});
+      // Prime the correct type immediately so the 5s timeout also routes correctly.
+      await AsyncStorage.setItem('lastKnownVenueType', venueType).catch(() => {});
+
       navigation.reset({
         index: 0,
         routes: [{ name: 'HomeRouter' }],

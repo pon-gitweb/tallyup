@@ -55,10 +55,9 @@ export default function HomeRouterScreen() {
     getDoc(doc(db, 'venues', venueId))
       .then(snap => {
         const vt = snap.exists() ? (snap.data() as any)?.venueType : null;
-        nav.reset({
-          index: 0,
-          routes: [{ name: vt === 'festival' ? 'FestivalDashboard' : 'MainTabs' }],
-        });
+        // Festival ONLY when explicitly set. null/undefined/anything-else → venue app.
+        const destination = vt === 'festival' ? 'FestivalDashboard' : 'MainTabs';
+        nav.reset({ index: 0, routes: [{ name: destination }] });
       })
       .catch(() => {
         nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });

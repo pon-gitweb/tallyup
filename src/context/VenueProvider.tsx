@@ -136,12 +136,15 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
     if (!venueId) { setSubscription(null); setVenueType(null); return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
-      const data = snap.exists() ? snap.data() : null;
-      const vt = data?.venueType ?? null;
-      setVenueType(vt);
-      if (vt) {
-        AsyncStorage.setItem('lastKnownVenueType', vt).catch(() => {});
+      if (!snap.exists()) {
+        // Venue doc not yet written — keep loading, don't flip to null/festival
+        return;
       }
+      const data = snap.data();
+      // Default to 'venue' so null/undefined venueType never triggers festival routing
+      const vt = (data?.venueType as string) || 'venue';
+      setVenueType(vt);
+      AsyncStorage.setItem('lastKnownVenueType', vt).catch(() => {});
       const sub = data?.subscription ?? null;
       setSubscription(sub ? {
         status: sub.status || 'pilot',
