@@ -1349,13 +1349,47 @@ app.post("/suitee", async (req, res) => {
       }
     } catch {}
 
-    // ── Gather venue context ──────────────────────────────────────────────────
+    // ── Gather venue context (parallelised — departments fetched once) ──────────
 
-    // Products
+    const ninetyDaysTs = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    );
+
+    // STEP 1: All top-level collections in one parallel batch
+    const [
+      productsSnap,
+      suppliersSnap,
+      deptsSnap,
+      ordersSnap,
+      salesSnap,
+      slowMoversSnap,
+      priceChangedSnap,
+      invoicesSnap,
+      budgetsSnap,
+      wastageSnap,
+      recipesSnap,
+    ] = await Promise.all([
+      db.collection(`venues/${venueId}/products`).limit(200).get().catch(() => null),
+      db.collection(`venues/${venueId}/suppliers`).get().catch(() => null),
+      db.collection(`venues/${venueId}/departments`).get().catch(() => null),
+      // Orders with orderBy so most recent are returned (was unordered — bug fix)
+      db.collection(`venues/${venueId}/orders`).orderBy('createdAt', 'desc').limit(10).get()
+        .catch(() => db.collection(`venues/${venueId}/orders`).limit(10).get().catch(() => null)),
+      db.collection(`venues/${venueId}/salesReports`).orderBy('createdAt', 'desc').limit(3).get()
+        .catch(() => db.collection(`venues/${venueId}/salesReports`).limit(3).get().catch(() => null)),
+      db.collection(`venues/${venueId}/slowMovers`).limit(20).get().catch(() => null),
+      db.collection(`venues/${venueId}/products`).where('priceChanged', '==', true).limit(10).get().catch(() => null),
+      db.collection(`venues/${venueId}/invoices`).where('invoiceDateTimestamp', '>=', ninetyDaysTs).limit(200).get().catch(() => null),
+      db.collection(`venues/${venueId}/budgets`).get().catch(() => null),
+      db.collection(`venues/${venueId}/wastage`).where('createdAt', '>=', ninetyDaysTs).limit(50).get()
+        .catch(() => db.collection(`venues/${venueId}/wastage`).limit(50).get().catch(() => null)),
+      db.collection(`venues/${venueId}/recipes`).where('status', '==', 'confirmed').limit(20).get().catch(() => null),
+    ]);
+
+    // Process products
     let products: any[] = [];
-    try {
-      const snap = await db.collection(`venues/${venueId}/products`).limit(200).get();
-      products = snap.docs.map(d => {
+    if (productsSnap) {
+      products = productsSnap.docs.map(d => {
         const data = d.data();
         return {
           id: d.id,
@@ -1365,27 +1399,47 @@ app.post("/suitee", async (req, res) => {
           lastCountAt: data.lastCountAt?.toDate?.()?.toISOString() || null,
         };
       });
-    } catch {}
+    }
 
-    // Suppliers
-    let supplierNames: string[] = [];
-    try {
-      const snap = await db.collection(`venues/${venueId}/suppliers`).get();
-      supplierNames = snap.docs
-        .filter(d => !d.data().isHoldingSupplier)
-        .map(d => d.data().name || d.id);
-    } catch {}
+    // Process suppliers — full contact details (FIX 4)
+    const supplierContactLines: string[] = [];
+    const supplierNameById = new Map<string, string>();
+    if (suppliersSnap) {
+      suppliersSnap.docs.forEach(d => {
+        const s = d.data() as any;
+        supplierNameById.set(d.id, s.name || d.id);
+      });
+      suppliersSnap.docs
+        .filter(d => !(d.data() as any).isHoldingSupplier)
+        .forEach(d => {
+          const s = d.data() as any;
+          const parts: string[] = [s.name || d.id];
+          if (s.email) parts.push(`email: ${s.email}`);
+          if (s.phone) parts.push(`phone: ${s.phone}`);
+          if (s.accountNumber) parts.push(`account: ${s.accountNumber}`);
+          if (s.defaultLeadDays) parts.push(`lead: ${s.defaultLeadDays}d`);
+          supplierContactLines.push(`  ${parts.join(' | ')}`);
+        });
+    }
 
-    // FIX 7: Per-product supplier intelligence for top products
+    // Per-product supplier intelligence (top 20 by value, parallelised)
     const productSupplierLines: string[] = [];
     try {
       const topByValue = [...products]
         .filter(p => p.costPrice != null)
         .sort((a, b) => (b.costPrice || 0) - (a.costPrice || 0))
         .slice(0, 20);
-      for (const p of topByValue) {
-        const linksSnap = await db.collection(`venues/${venueId}/products/${p.id}/suppliers`).limit(10).get();
-        if (linksSnap.empty) continue;
+      const supplierLinkResults = await Promise.all(
+        topByValue.map(async p => {
+          try {
+            const linksSnap = await db.collection(`venues/${venueId}/products/${p.id}/suppliers`).limit(10).get();
+            return { p, linksSnap };
+          } catch { return null; }
+        })
+      );
+      for (const result of supplierLinkResults) {
+        if (!result || result.linksSnap.empty) continue;
+        const { p, linksSnap } = result;
         const links = linksSnap.docs.map(d => d.data() as any);
         const preferred = links.find(l => l.isPreferred);
         const cheapest = links.reduce((a: any, b: any) => ((a.unitCost || 999) <= (b.unitCost || 999) ? a : b));
@@ -1401,7 +1455,9 @@ app.post("/suitee", async (req, res) => {
       }
     } catch {}
 
-    // Variance data — traverse departments → areas → items (same logic as briefing service)
+    // STEP 2: Single parallel per-department traversal — replaces the previous 3 sequential
+    // passes over departments (variance, snapshots, velocity). Each department now fetches
+    // areas+items and snapshots in parallel.
     const allShortages: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
     const allExcesses: { name: string; varianceUnits: number; dollarVariance: number; deptName: string; areaName: string }[] = [];
     const trendItems: { name: string; deptName: string }[] = [];
@@ -1412,25 +1468,47 @@ app.post("/suitee", async (req, res) => {
     let hasCountData = false;
     let hasPrevCycle = false;
     const deptContextLines: string[] = [];
+    const snapshotContextLines: string[] = [];
+    const productCycles = new Map<string, { productId: string | null; velocities: number[]; lastStock: number; costPrice: number | null; parLevel: number | null }>();
 
-    try {
-      const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
-      for (const deptDoc of deptsSnap.docs) {
+    if (deptsSnap) {
+      const deptResults = await Promise.all(deptsSnap.docs.map(async deptDoc => {
+        try {
+          const [areasSnap, snapshotsSnap] = await Promise.all([
+            db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas`).get(),
+            db.collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
+              .orderBy('completedAt', 'desc').limit(6).get(),
+          ]);
+          const itemsByArea = await Promise.all(
+            areasSnap.docs.map(async areaDoc => ({
+              areaDoc,
+              itemsSnap: await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas/${areaDoc.id}/items`).get(),
+            }))
+          );
+          return { deptDoc, areasSnap, snapshotsSnap, itemsByArea };
+        } catch (e: any) {
+          console.log("[api/suitee] dept traversal error", deptDoc.id, e?.message);
+          return null;
+        }
+      }));
+
+      for (const result of deptResults) {
+        if (!result) continue;
+        const { deptDoc, snapshotsSnap, itemsByArea } = result;
         const deptData = deptDoc.data();
         const deptName: string = (deptData.name as string) || deptDoc.id;
         const totalCycles: number = typeof deptData.totalCyclesCompleted === "number" ? deptData.totalCyclesCompleted : 0;
         const lastCycleStr: string | null = deptData.lastCycleAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || null;
 
-        const areasSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas`).get();
+        // Variance + stock holding from area items
         let deptAreasTotal = 0, deptAreasCompleted = 0, deptActive = false;
-        for (const areaDoc of areasSnap.docs) {
+        for (const { areaDoc, itemsSnap } of itemsByArea) {
           deptAreasTotal++;
           const aData = areaDoc.data();
           if (aData.completedAt) deptAreasCompleted++;
           else if (aData.startedAt) deptActive = true;
-
           const areaName: string = (aData.name as string) || areaDoc.id;
-          const itemsSnap = await db.collection(`venues/${venueId}/departments/${deptDoc.id}/areas/${areaDoc.id}/items`).get();
+
           for (const itemDoc of itemsSnap.docs) {
             const d = itemDoc.data();
             const lastCount = typeof d.lastCount === "number" ? d.lastCount : null;
@@ -1439,11 +1517,9 @@ app.post("/suitee", async (req, res) => {
             const costPrice = typeof d.costPrice === "number" ? d.costPrice : null;
             const name: string = (d.name as string) || itemDoc.id;
 
-            // Stock holding value from latest known count
             const holdingCount = lastCount ?? confirmedCount ?? 0;
             if (costPrice) stockHoldingValue += holdingCount * costPrice;
 
-            // Count data check — survives reset (lastCount restored from confirmedCount after reset)
             if ((lastCount != null && lastCount > 0) || (confirmedCount != null && confirmedCount > 0)) hasCountData = true;
             if (confirmedCount != null && confirmedCount > 0) hasPrevCycle = true;
 
@@ -1453,13 +1529,11 @@ app.post("/suitee", async (req, res) => {
             if (!countedInCycle || lastCount == null) continue;
 
             totalItemsCounted++;
-
             const baseline: number | null = confirmedCount ?? parLevel ?? null;
             if (baseline == null) continue;
 
             const varianceUnits = lastCount - baseline;
             const dollar = costPrice != null ? Math.abs(varianceUnits) * costPrice : 0;
-
             if (varianceUnits < 0) {
               allShortages.push({ name, varianceUnits, dollarVariance: dollar, deptName, areaName });
               shortfallDollars += dollar;
@@ -1467,174 +1541,168 @@ app.post("/suitee", async (req, res) => {
               allExcesses.push({ name, varianceUnits, dollarVariance: dollar, deptName, areaName });
               excessDollars += dollar;
             }
-
             if (confirmedCount != null && parLevel != null && confirmedCount < parLevel && lastCount < parLevel) {
               trendItems.push({ name, deptName });
             }
           }
         }
 
-        // Collect per-department context for Suitee
         const activeFlag = deptActive ? " (in progress)" : deptAreasCompleted === deptAreasTotal && deptAreasTotal > 0 ? " (complete)" : "";
-        deptContextLines.push(
-          `  ${deptName}: ${totalCycles} cycle${totalCycles !== 1 ? "s" : ""} completed, last ${lastCycleStr ?? "never"}, areas ${deptAreasCompleted}/${deptAreasTotal}${activeFlag}`
-        );
+        deptContextLines.push(`  ${deptName}: ${totalCycles} cycle${totalCycles !== 1 ? "s" : ""} completed, last ${lastCycleStr ?? "never"}, areas ${deptAreasCompleted}/${deptAreasTotal}${activeFlag}`);
+
+        // Snapshot context + velocity from the same snapshotsSnap (no second fetch)
+        if (!snapshotsSnap.empty) {
+          const snapDocs = snapshotsSnap.docs.map(d => d.data() as any);
+          const latest = snapDocs[0];
+          const s = latest.summary || {};
+          const dc = latest.dataCompleteness || {};
+          const deptSnapLines = [
+            `  ${latest.departmentName || deptName}: ${snapDocs.length} cycle(s) on record, Tier ${dc.tier ?? 1}/4`,
+            `    Latest (Cycle ${latest.cycleNumber}): Items ${s.totalItemsCounted}, below PAR: ${s.itemsBelowPAR}, variance qty: ${s.totalVarianceQty}`,
+            s.totalVarianceDollars != null ? `    Latest variance value: $${(s.totalVarianceDollars as number).toFixed(2)}` : '    No cost prices set',
+            s.totalStockValue != null ? `    Latest stock value: $${(s.totalStockValue as number).toFixed(2)}` : null,
+            dc.hasInvoices ? '    Has invoice data.' : '    No invoice data for this cycle.',
+          ].filter(Boolean) as string[];
+          snapshotContextLines.push(...deptSnapLines);
+
+          const findings = latest.findings || {};
+          if ((findings.likelyMissingInvoices || []).length > 0) {
+            snapshotContextLines.push(`    Missing invoices: ${findings.likelyMissingInvoices.map((f: any) => `${f.productName} +${f.unexplainedGainQty}`).join(', ')}`);
+          }
+          if ((findings.poDiscrepancies || []).length > 0) {
+            snapshotContextLines.push(`    PO shortfalls: ${findings.poDiscrepancies.map((f: any) => `${f.productName} (ordered ${f.orderedQty}, got ${f.receivedQty})`).join(', ')}`);
+          }
+          if (snapDocs.length > 1) {
+            snapshotContextLines.push(`    CYCLE HISTORY (last ${snapDocs.length}):`);
+            snapDocs.forEach((snap: any) => {
+              const ss = snap.summary || {};
+              const completedDateStr = snap.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || "unknown";
+              const completedBy = snap.completedByName ? ` by ${snap.completedByName}` : '';
+              const valStr = ss.totalStockValue != null ? `, stock $${ss.totalStockValue.toFixed(0)}` : '';
+              const varStr = ss.totalVarianceQty != null ? `, var qty ${ss.totalVarianceQty > 0 ? '+' : ''}${ss.totalVarianceQty}` : '';
+              const varDolStr = ss.totalVarianceDollars != null ? ` ($${ss.totalVarianceDollars.toFixed(0)})` : '';
+              snapshotContextLines.push(`      Cycle ${snap.cycleNumber} (${completedDateStr}${completedBy}): ${ss.totalItemsCounted ?? 0} items${valStr}${varStr}${varDolStr}`);
+            });
+          }
+
+          // Velocity from snapshot items — filter v !== 0 before averaging (already correct)
+          for (const snapDoc of snapshotsSnap.docs) {
+            const snap = snapDoc.data() as any;
+            const daysSince: number | null = snap.daysSinceLastCycle != null ? snap.daysSinceLastCycle : null;
+            const cycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
+            for (const item of (snap.items || [])) {
+              const key = (item.name || '').toLowerCase().trim();
+              if (!key) continue;
+              const openingCount = typeof item.openingCount === 'number' ? item.openingCount : null;
+              const actualClosing = typeof item.actualClosing === 'number' ? item.actualClosing : 0;
+              const receivedQty = typeof item.receivedQty === 'number' ? item.receivedQty : 0;
+              let velocity = 0;
+              if (openingCount != null && cycleWeeks != null && cycleWeeks > 0) {
+                velocity = (openingCount + receivedQty - actualClosing) / cycleWeeks;
+              }
+              const productId: string | null = typeof item.productId === 'string' ? item.productId : null;
+              const existing = productCycles.get(key);
+              if (existing) {
+                existing.velocities.push(velocity);
+                existing.lastStock = actualClosing;
+                if (!existing.productId && productId) existing.productId = productId;
+              } else {
+                productCycles.set(key, { productId, velocities: [velocity], lastStock: actualClosing, costPrice: typeof item.costPrice === 'number' ? item.costPrice : null, parLevel: typeof item.parLevel === 'number' ? item.parLevel : null });
+              }
+            }
+          }
+        }
       }
-    } catch {}
+    }
 
     if (!hasCountData) {
       res.json({ ok: true, answer: "I don't have any stocktake data yet. Complete your first stocktake and I'll be able to answer questions about your venue." });
       return;
     }
 
-    // Read last 6 snapshots per department for historical context
-    const snapshotContextLines: string[] = [];
-    try {
-      const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
-      for (const deptDoc of deptsSnap.docs) {
-        const histSnap = await db
-          .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
-          .orderBy('completedAt', 'desc')
-          .limit(6)
-          .get();
-        if (histSnap.empty) continue;
-
-        const snapDocs = histSnap.docs.map(d => d.data() as any);
-        const latest = snapDocs[0];
-        const s = latest.summary || {};
-        const dc = latest.dataCompleteness || {};
-
-        const deptSnapLines = [
-          `  ${latest.departmentName}: ${snapDocs.length} cycle(s) on record, Tier ${dc.tier ?? 1}/4`,
-          `    Latest (Cycle ${latest.cycleNumber}): Items ${s.totalItemsCounted}, below PAR: ${s.itemsBelowPAR}, variance qty: ${s.totalVarianceQty}`,
-          s.totalVarianceDollars != null ? `    Latest variance value: $${(s.totalVarianceDollars as number).toFixed(2)}` : '    No cost prices set',
-          s.totalStockValue != null ? `    Latest stock value: $${(s.totalStockValue as number).toFixed(2)}` : null,
-          dc.hasInvoices ? '    Has invoice data.' : '    No invoice data for this cycle.',
-        ].filter(Boolean) as string[];
-        snapshotContextLines.push(...deptSnapLines);
-
-        // Findings from latest cycle
-        const findings = latest.findings || {};
-        if ((findings.likelyMissingInvoices || []).length > 0) {
-          snapshotContextLines.push(`    Missing invoices: ${findings.likelyMissingInvoices.map((f: any) => `${f.productName} +${f.unexplainedGainQty}`).join(', ')}`);
-        }
-        if ((findings.poDiscrepancies || []).length > 0) {
-          snapshotContextLines.push(`    PO shortfalls: ${findings.poDiscrepancies.map((f: any) => `${f.productName} (ordered ${f.orderedQty}, got ${f.receivedQty})`).join(', ')}`);
-        }
-
-        // Historical trend: stock value and variance across last N cycles
-        if (snapDocs.length > 1) {
-          snapshotContextLines.push(`    CYCLE HISTORY (last ${snapDocs.length}):`);
-          snapDocs.forEach((snap: any) => {
-            const ss = snap.summary || {};
-            const completedDateStr = snap.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || "unknown";
-            const completedBy = snap.completedByName ? ` by ${snap.completedByName}` : '';
-            const valStr = ss.totalStockValue != null ? `, stock $${ss.totalStockValue.toFixed(0)}` : '';
-            const varStr = ss.totalVarianceQty != null ? `, var qty ${ss.totalVarianceQty > 0 ? '+' : ''}${ss.totalVarianceQty}` : '';
-            const varDolStr = ss.totalVarianceDollars != null ? ` ($${ss.totalVarianceDollars.toFixed(0)})` : '';
-            snapshotContextLines.push(`      Cycle ${snap.cycleNumber} (${completedDateStr}${completedBy}): ${ss.totalItemsCounted ?? 0} items${valStr}${varStr}${varDolStr}`);
-          });
-        }
-      }
-    } catch {}
-
     allShortages.sort((a, b) => b.dollarVariance - a.dollarVariance);
     allExcesses.sort((a, b) => b.dollarVariance - a.dollarVariance);
 
-    // Slow movers — products not counted in 30+ days
+    // Slow movers from loaded snapshot
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const slowMovers = products
       .filter(p => !p.lastCountAt || new Date(p.lastCountAt).getTime() < thirtyDaysAgo)
       .slice(0, 10);
 
-    // Recent orders
-    let recentOrders: { supplierName: string; status: string; totalValue: number | null; createdAt: string | null }[] = [];
-    try {
-      const ordersSnap = await db.collection(`venues/${venueId}/orders`).limit(10).get();
-      recentOrders = ordersSnap.docs.map(d => {
+    // Tracked slow movers from loaded snapshot
+    const trackedSlowMoverLines: string[] = [];
+    if (slowMoversSnap && !slowMoversSnap.empty) {
+      const smList = slowMoversSnap.docs.map(d => d.data() as any).filter((sm: any) => {
+        if (!sm.dismissedUntil) return true;
+        const du: Date | null = sm.dismissedUntil?.toDate?.() ?? null;
+        return !du || du < new Date();
+      });
+      if (smList.length > 0) {
+        const totalValue = smList.reduce((sum: number, sm: any) => sum + ((sm.costPrice || 0) * (sm.currentCount || 0)), 0);
+        trackedSlowMoverLines.push(`SLOW MOVING STOCK (30+ days no movement): ${smList.length} lines, $${totalValue.toFixed(2)} total value`);
+        smList.slice(0, 10).forEach((sm: any) => {
+          trackedSlowMoverLines.push(`  - ${sm.productName}: ${sm.currentCount} on hand, ${sm.daysSinceMovement} days idle${sm.expiryRisk ? " ⚠ expiry risk" : ""}`);
+        });
+        const top = [...smList].sort((a: any, b: any) => b.daysSinceMovement - a.daysSinceMovement)[0];
+        if (top) trackedSlowMoverLines.push(`  Slowest: ${top.productName} — ${top.daysSinceMovement} days`);
+      }
+    }
+
+    // Recent orders from loaded snapshot (now orderBy createdAt desc)
+    const recentOrders: { supplierName: string; status: string; totalValue: number | null; createdAt: string | null }[] = [];
+    if (ordersSnap) {
+      ordersSnap.docs.forEach(d => {
         const od = d.data();
-        return {
+        recentOrders.push({
           supplierName: (od.supplierName as string) || (od.supplierId as string) || "Unknown",
           status: (od.status as string) || "unknown",
           totalValue: typeof od.totalValue === "number" ? od.totalValue : null,
           createdAt: od.createdAt?.toDate?.()?.toISOString()?.slice(0, 10) || null,
-        };
-      });
-    } catch {}
-
-    // Sales data
-    let salesSummary = "";
-    try {
-      const salesSnap = await db.collection(`venues/${venueId}/salesReports`).limit(3).get();
-      if (!salesSnap.empty) {
-        salesSummary = salesSnap.docs.map(d => JSON.stringify(d.data())).join("\n");
-      }
-    } catch {}
-
-    // Tracked slow movers from slowMovers collection
-    const trackedSlowMoverLines: string[] = [];
-    try {
-      const smSnap = await db.collection(`venues/${venueId}/slowMovers`).limit(20).get();
-      if (!smSnap.empty) {
-        const smList = smSnap.docs.map(d => d.data() as any).filter((sm: any) => {
-          if (!sm.dismissedUntil) return true;
-          const du: Date | null = sm.dismissedUntil?.toDate?.() ?? null;
-          return !du || du < new Date();
         });
-        if (smList.length > 0) {
-          const totalValue = smList.reduce((sum: number, sm: any) => sum + ((sm.costPrice || 0) * (sm.currentCount || 0)), 0);
-          trackedSlowMoverLines.push(`SLOW MOVING STOCK (30+ days no movement): ${smList.length} lines, $${totalValue.toFixed(2)} total value`);
-          smList.slice(0, 10).forEach((sm: any) => {
-            trackedSlowMoverLines.push(
-              `  - ${sm.productName}: ${sm.currentCount} on hand, ${sm.daysSinceMovement} days idle${sm.expiryRisk ? " ⚠ expiry risk" : ""}`
-            );
-          });
-          const top = [...smList].sort((a: any, b: any) => b.daysSinceMovement - a.daysSinceMovement)[0];
-          if (top) trackedSlowMoverLines.push(`  Slowest: ${top.productName} — ${top.daysSinceMovement} days`);
-        }
-      }
-    } catch (e: any) {
-      console.log("[api/suitee] slow movers query error", e?.message);
+      });
     }
 
-    // Price change data (last 90 days)
+    // Sales data from loaded snapshot
+    let salesSummary = "";
+    if (salesSnap && !salesSnap.empty) {
+      salesSummary = salesSnap.docs.map(d => JSON.stringify(d.data())).join("\n");
+    }
+
+    // Price change history (still N+1 for priceHistory subcollection, now parallelised)
     const priceChangeLines: string[] = [];
     try {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-      const changedSnap = await db.collection(`venues/${venueId}/products`)
-        .where("priceChanged", "==", true)
-        .limit(10)
-        .get();
-
-      if (!changedSnap.empty) {
+      if (priceChangedSnap && !priceChangedSnap.empty) {
         const supplierIncreases: Record<string, number> = {};
         const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null }[] = [];
 
-        for (const prodDoc of changedSnap.docs) {
-          try {
-            const histSnap = await db.collection(`venues/${venueId}/products/${prodDoc.id}/priceHistory`)
-              .orderBy("date", "desc")
-              .limit(3)
-              .get();
-            for (const h of histSnap.docs) {
-              const hd = h.data() as any;
-              const hDate: Date | null = hd.date?.toDate ? hd.date.toDate() : null;
-              if (hDate && hDate >= ninetyDaysAgo) {
-                recentChanges.push({
-                  productName: prodDoc.data().name || prodDoc.id,
-                  oldPrice: hd.oldPrice ?? 0,
-                  newPrice: hd.newPrice ?? 0,
-                  changePercent: hd.changePercent ?? 0,
-                  direction: hd.direction || "increase",
-                  supplierName: hd.supplierName || "Unknown",
-                  date: hDate,
-                });
-                if (hd.direction === "increase" && hd.supplierName) {
-                  supplierIncreases[hd.supplierName] = (supplierIncreases[hd.supplierName] || 0) + 1;
-                }
+        const priceHistories = await Promise.all(
+          priceChangedSnap.docs.map(async prodDoc => {
+            try {
+              const histSnap = await db.collection(`venues/${venueId}/products/${prodDoc.id}/priceHistory`)
+                .orderBy("date", "desc").limit(3).get();
+              return { prodDoc, histSnap };
+            } catch { return null; }
+          })
+        );
+
+        for (const r of priceHistories) {
+          if (!r) continue;
+          for (const h of r.histSnap.docs) {
+            const hd = h.data() as any;
+            const hDate: Date | null = hd.date?.toDate ? hd.date.toDate() : null;
+            if (hDate && hDate >= ninetyDaysAgo) {
+              recentChanges.push({
+                productName: r.prodDoc.data().name || r.prodDoc.id,
+                oldPrice: hd.oldPrice ?? 0, newPrice: hd.newPrice ?? 0,
+                changePercent: hd.changePercent ?? 0, direction: hd.direction || "increase",
+                supplierName: hd.supplierName || "Unknown", date: hDate,
+              });
+              if (hd.direction === "increase" && hd.supplierName) {
+                supplierIncreases[hd.supplierName] = (supplierIncreases[hd.supplierName] || 0) + 1;
               }
             }
-          } catch {}
+          }
         }
 
         if (recentChanges.length > 0) {
@@ -1643,55 +1711,32 @@ app.post("/suitee", async (req, res) => {
           recentChanges.slice(0, 8).forEach(c => {
             const sign = c.changePercent >= 0 ? "+" : "";
             const dateStr = c.date ? c.date.toISOString().slice(0, 10) : "–";
-            priceChangeLines.push(
-              `  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}`
-            );
+            priceChangeLines.push(`  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}`);
           });
-          if (topSupplier) {
-            priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
-          }
+          if (topSupplier) priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
         }
       }
     } catch (e: any) {
       console.log("[api/suitee] price change query error", e?.message);
     }
 
-    // Invoice spend per supplier (last 90 days)
+    // Invoice spend from loaded snapshot
     const invoiceSpendLines: string[] = [];
-    try {
-      const invNinetyDaysAgo = admin.firestore.Timestamp.fromDate(
-        new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
-      );
-      const invoicesSnap = await db.collection(`venues/${venueId}/invoices`)
-        .where("invoiceDateTimestamp", ">=", invNinetyDaysAgo)
-        .limit(200)
-        .get();
+    if (invoicesSnap) {
       const supplierSpend: Record<string, { name: string; totalSpend: number; invoiceCount: number; lastInvoiceDate: string }> = {};
       for (const invDoc of invoicesSnap.docs) {
         const d = invDoc.data() as any;
         const sid = d.supplierId || "unknown";
-        if (!supplierSpend[sid]) {
-          supplierSpend[sid] = { name: d.supplierName || "Unknown", totalSpend: 0, invoiceCount: 0, lastInvoiceDate: "" };
-        }
+        if (!supplierSpend[sid]) supplierSpend[sid] = { name: d.supplierName || "Unknown", totalSpend: 0, invoiceCount: 0, lastInvoiceDate: "" };
         supplierSpend[sid].totalSpend += typeof d.totalAmount === "number" ? d.totalAmount : 0;
         supplierSpend[sid].invoiceCount++;
-        if (d.invoiceDate && d.invoiceDate > supplierSpend[sid].lastInvoiceDate) {
-          supplierSpend[sid].lastInvoiceDate = d.invoiceDate;
-        }
+        if (d.invoiceDate && d.invoiceDate > supplierSpend[sid].lastInvoiceDate) supplierSpend[sid].lastInvoiceDate = d.invoiceDate;
       }
-      const spendEntries = Object.values(supplierSpend)
-        .filter(s => s.totalSpend > 0)
-        .sort((a, b) => b.totalSpend - a.totalSpend);
+      const spendEntries = Object.values(supplierSpend).filter(s => s.totalSpend > 0).sort((a, b) => b.totalSpend - a.totalSpend);
       if (spendEntries.length > 0) {
         invoiceSpendLines.push(`SUPPLIER SPEND (last 90 days, from scanned invoices):`);
-        spendEntries.forEach(s => {
-          invoiceSpendLines.push(
-            `  - ${s.name}: $${s.totalSpend.toFixed(2)} across ${s.invoiceCount} invoice${s.invoiceCount !== 1 ? "s" : ""}${s.lastInvoiceDate ? `, last invoice ${s.lastInvoiceDate}` : ""}`
-          );
-        });
+        spendEntries.forEach(s => invoiceSpendLines.push(`  - ${s.name}: $${s.totalSpend.toFixed(2)} across ${s.invoiceCount} invoice${s.invoiceCount !== 1 ? "s" : ""}${s.lastInvoiceDate ? `, last invoice ${s.lastInvoiceDate}` : ""}`));
       }
-    } catch (e: any) {
-      console.log("[api/suitee] invoice spend query error", e?.message);
     }
 
     // ── Build context payload ─────────────────────────────────────────────────
@@ -1725,8 +1770,14 @@ app.post("/suitee", async (req, res) => {
       trendItems.length ? trendItems.map(t => `  - ${t.name} (${t.deptName})`).join("\n") : "  None detected yet",
       "",
       `PRODUCTS IN SYSTEM: ${products.length}`,
-      `SUPPLIERS: ${supplierNames.join(", ") || "None"}`,
     ];
+
+    if (supplierContactLines.length > 0) {
+      lines.push("", "SUPPLIERS ON FILE (name | email | phone | account | lead time):");
+      lines.push(...supplierContactLines);
+    } else {
+      lines.push("SUPPLIERS: None");
+    }
 
     if (deptContextLines.length > 0) {
       lines.push("", "DEPARTMENTS (cycles completed, last cycle date, area progress):");
@@ -1743,7 +1794,7 @@ app.post("/suitee", async (req, res) => {
     }
 
     if (recentOrders.length > 0) {
-      lines.push("", "RECENT ORDERS:");
+      lines.push("", "RECENT ORDERS (newest first):");
       recentOrders.forEach(o =>
         lines.push(`  - ${o.supplierName}: ${o.status}${o.totalValue ? ` ($${o.totalValue.toFixed(2)})` : ""}${o.createdAt ? ` on ${o.createdAt}` : ""}`)
       );
@@ -1766,51 +1817,9 @@ app.post("/suitee", async (req, res) => {
       lines.push(...snapshotContextLines);
     }
 
-    // FIX 8: Velocity performance context derived from snapshot items (pure math, no AI)
+    // Velocity performance context (built from snapshot items during dept traversal above)
     const velocityLines: string[] = [];
     try {
-      // Gather all snapshot items across all departments (latest snapshot per dept)
-      const productCycles = new Map<string, { velocities: number[]; lastStock: number; costPrice: number | null; parLevel: number | null }>();
-
-      const velDeptsSnap = await db.collection(`venues/${venueId}/departments`).get();
-      for (const deptDoc of velDeptsSnap.docs) {
-        const snapHistSnap = await db
-          .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
-          .orderBy('completedAt', 'desc')
-          .limit(6)
-          .get();
-
-        for (const snapDoc of snapHistSnap.docs) {
-          const snap = snapDoc.data() as any;
-          const daysSince: number | null = snap.daysSinceLastCycle != null ? snap.daysSinceLastCycle : null;
-          const cycleWeeks = daysSince != null && daysSince > 0 ? daysSince / 7 : null;
-
-          for (const item of (snap.items || [])) {
-            const key = (item.name || '').toLowerCase().trim();
-            if (!key) continue;
-            const openingCount = typeof item.openingCount === 'number' ? item.openingCount : null;
-            const actualClosing = typeof item.actualClosing === 'number' ? item.actualClosing : 0;
-            const receivedQty = typeof item.receivedQty === 'number' ? item.receivedQty : 0;
-            let velocity = 0;
-            if (openingCount != null && cycleWeeks != null && cycleWeeks > 0) {
-              velocity = (openingCount + receivedQty - actualClosing) / cycleWeeks;
-            }
-            const existing = productCycles.get(key);
-            if (existing) {
-              existing.velocities.push(velocity);
-              existing.lastStock = actualClosing;
-            } else {
-              productCycles.set(key, {
-                velocities: [velocity],
-                lastStock: actualClosing,
-                costPrice: typeof item.costPrice === 'number' ? item.costPrice : null,
-                parLevel: typeof item.parLevel === 'number' ? item.parLevel : null,
-              });
-            }
-          }
-        }
-      }
-
       type VelItem = { name: string; avgVelocity: number; currentStock: number; daysToSell: number | null; status: string; costPrice: number | null; parLevel: number | null; belowPar: boolean };
       const velItems: VelItem[] = [];
       productCycles.forEach((data, name) => {
@@ -1861,10 +1870,200 @@ app.post("/suitee", async (req, res) => {
       lines.push(...velocityLines);
     }
 
-    // FIX 7: Supplier intelligence per product
     if (productSupplierLines.length > 0) {
       lines.push("", "SUPPLIER PRICING (top products — ⭐=preferred, format: supplier(relationship,$cost/unit)):");
       productSupplierLines.forEach(l => lines.push("  " + l));
+    }
+
+    // New data sources: budgets, wastage, recipes
+    if (budgetsSnap && !budgetsSnap.empty) {
+      lines.push("", "BUDGETS:");
+      budgetsSnap.docs.forEach(b => {
+        const d = b.data() as any;
+        const target = typeof d.amount === 'number' ? `$${d.amount.toFixed(2)}` : 'no amount';
+        const start = d.periodStart?.toDate?.()?.toISOString?.()?.slice(0, 10);
+        const end = d.periodEnd?.toDate?.()?.toISOString?.()?.slice(0, 10);
+        const period = [start, end].filter(Boolean).join(' → ');
+        const scope = d.supplierId ? `supplier: ${supplierNameById.get(d.supplierId) || d.supplierId}` : 'all suppliers';
+        lines.push(`  - target ${target}${period ? `, period ${period}` : ''}, ${scope}${d.notes ? ` — ${d.notes}` : ''}`);
+      });
+    }
+
+    if (wastageSnap && !wastageSnap.empty) {
+      const totalWasteQty = wastageSnap.docs.reduce((s, d) => s + ((d.data() as any).quantity || 0), 0);
+      lines.push("", `WASTAGE (last 90 days): ${wastageSnap.docs.length} records, ~${totalWasteQty.toFixed(1)} total units`);
+      const byProduct: Record<string, number> = {};
+      wastageSnap.docs.forEach(d => {
+        const wd = d.data() as any;
+        const name = wd.productName || 'Unknown';
+        byProduct[name] = (byProduct[name] || 0) + (wd.quantity || 0);
+      });
+      Object.entries(byProduct).sort((a, b) => b[1] - a[1]).slice(0, 5).forEach(([name, qty]) => {
+        lines.push(`  - ${name}: ${qty.toFixed(1)} units wasted`);
+      });
+    }
+
+    if (recipesSnap && !recipesSnap.empty) {
+      lines.push("", "CONFIRMED RECIPES (GP% from stored value — not from live sales):");
+      recipesSnap.docs.forEach(r => {
+        const d = r.data() as any;
+        const parts: string[] = [d.name || r.id];
+        if (typeof d.rrp === 'number') parts.push(`sell $${d.rrp.toFixed(2)}`);
+        if (typeof d.gpPct === 'number') parts.push(`GP ${d.gpPct.toFixed(1)}%`);
+        else parts.push('no GP set');
+        if (typeof d.cogs === 'number') parts.push(`COGS $${d.cogs.toFixed(2)}`);
+        lines.push(`  - ${parts.join(' | ')}`);
+      });
+    }
+
+    // Pour variance — compares theoretical ingredient usage (recipe spec qty × serves
+    // sold, derived from sales reports) against actual stock depletion rate (derived
+    // from stocktake velocity). Pure heuristic — needs confirmed recipes with linked
+    // products + pack sizes, sales reports with a period, and counted cycles.
+    try {
+      const confirmedRecipes = (recipesSnap?.docs || []).map(r => ({ id: r.id, ...(r.data() as any) }));
+
+      const cyclesByProductId = new Map<string, { velocities: number[] }>();
+      productCycles.forEach(entry => {
+        if (entry.productId && !cyclesByProductId.has(entry.productId)) cyclesByProductId.set(entry.productId, entry);
+      });
+
+      // Match sales report lines to confirmed recipe names (fuzzy), accumulating
+      // qty sold per recipe and total period length so we can derive serves/week.
+      const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+      const matchScore = (a: string, b: string): number => {
+        const x = norm(a), y = norm(b);
+        if (!x || !y) return 0;
+        if (x === y) return 1;
+        if (x.includes(y) || y.includes(x)) return 0.9;
+        const xWords = new Set(x.split(' '));
+        const yWords = y.split(' ');
+        const overlap = yWords.filter(w => xWords.has(w)).length;
+        return overlap > 0 ? (overlap / Math.max(xWords.size, yWords.length)) * 0.8 : 0;
+      };
+
+      let totalSalesWeeks = 0;
+      const recipeSales = new Map<string, { recipeName: string; qtySold: number }>();
+      (salesSnap?.docs || []).forEach(d => {
+        const data = d.data() as any;
+        const report = data.report;
+        if (!report || !Array.isArray(report.lines)) return;
+        const ps = report.period?.start ? new Date(report.period.start) : null;
+        const pe = report.period?.end ? new Date(report.period.end) : null;
+        let weeks = 0;
+        if (ps && pe && pe.getTime() > ps.getTime()) weeks = (pe.getTime() - ps.getTime()) / (7 * 24 * 60 * 60 * 1000);
+        if (weeks > 0) totalSalesWeeks += weeks;
+
+        for (const line of report.lines) {
+          const lineName = String(line?.name || '');
+          const qtySold = typeof line?.qtySold === 'number' ? line.qtySold : 0;
+          if (!lineName.trim() || qtySold <= 0) continue;
+          let bestRecipe: any = null, bestScore = 0;
+          for (const r of confirmedRecipes) {
+            const score = matchScore(lineName, r.name || '');
+            if (score > bestScore) { bestScore = score; bestRecipe = r; }
+          }
+          if (!bestRecipe || bestScore < 0.6) continue;
+          const existing = recipeSales.get(bestRecipe.id);
+          if (existing) existing.qtySold += qtySold;
+          else recipeSales.set(bestRecipe.id, { recipeName: bestRecipe.name || bestRecipe.id, qtySold });
+        }
+      });
+
+      type PourVar = {
+        recipeName: string; ingredientName: string; specQtyPerServe: number; unit: string;
+        serves: number; variancePct: number; impliedQtyPerServe: number | null; confidence: 'high' | 'medium' | 'low';
+      };
+      const pourVariance: PourVar[] = [];
+
+      if (totalSalesWeeks > 0) {
+        for (const recipe of confirmedRecipes) {
+          const stat = recipeSales.get(recipe.id);
+          if (!stat || stat.qtySold <= 0) continue;
+          const servesPerWeek = stat.qtySold / totalSalesWeeks;
+          if (servesPerWeek <= 0) continue;
+
+          const items: any[] = Array.isArray(recipe.items) ? recipe.items : [];
+          for (const ing of items) {
+            const productId: string | null = ing?.productId || null;
+            const specQty = typeof ing?.qty === 'number' ? ing.qty : 0;
+            if (!productId || specQty <= 0) continue;
+
+            const cycleEntry = cyclesByProductId.get(productId);
+            if (!cycleEntry) continue;
+            const validVel = cycleEntry.velocities.filter(v => v !== 0);
+            if (validVel.length === 0) continue;
+            const actualRateUnits = validVel.reduce((a, b) => a + b, 0) / validVel.length;
+            if (actualRateUnits <= 0) continue;
+
+            // Convert the per-serve spec (ml/g/each) into a theoretical depletion rate
+            // in stock units/week, using the pack size captured on the recipe item —
+            // this is the unit the operator actually counts in (e.g. bottles).
+            const unit = String(ing.unit || '').toLowerCase();
+            const theoreticalNativePerWeek = specQty * servesPerWeek;
+            let theoreticalRateUnits: number | null = null;
+            let impliedQtyPerServe: number | null = null;
+
+            if ((unit === 'ml' || unit === 'l') && typeof ing.packSizeMl === 'number' && ing.packSizeMl > 0) {
+              const mlPerWeek = unit === 'l' ? theoreticalNativePerWeek * 1000 : theoreticalNativePerWeek;
+              theoreticalRateUnits = mlPerWeek / ing.packSizeMl;
+              const impliedMl = (actualRateUnits * ing.packSizeMl) / servesPerWeek;
+              impliedQtyPerServe = unit === 'l' ? impliedMl / 1000 : impliedMl;
+            } else if ((unit === 'g' || unit === 'kg') && typeof ing.packSizeG === 'number' && ing.packSizeG > 0) {
+              const gPerWeek = unit === 'kg' ? theoreticalNativePerWeek * 1000 : theoreticalNativePerWeek;
+              theoreticalRateUnits = gPerWeek / ing.packSizeG;
+              const impliedG = (actualRateUnits * ing.packSizeG) / servesPerWeek;
+              impliedQtyPerServe = unit === 'kg' ? impliedG / 1000 : impliedG;
+            } else if (unit === 'each' || unit === 'ea' || unit === 'unit' || unit === 'count' || unit === '') {
+              theoreticalRateUnits = theoreticalNativePerWeek;
+              impliedQtyPerServe = actualRateUnits / servesPerWeek;
+            }
+            // Other units (no matching pack size on the recipe item): not enough
+            // data to convert between recipe spec and stock-counted units — skip.
+            if (theoreticalRateUnits == null || theoreticalRateUnits <= 0) continue;
+
+            const variancePct = ((actualRateUnits - theoreticalRateUnits) / theoreticalRateUnits) * 100;
+            const confidence: 'high' | 'medium' | 'low' =
+              stat.qtySold > 50 && (ing.packSizeMl || ing.packSizeG) ? 'high'
+              : stat.qtySold > 20 ? 'medium'
+              : 'low';
+
+            pourVariance.push({
+              recipeName: recipe.name || '',
+              ingredientName: ing.productName || '',
+              specQtyPerServe: specQty,
+              unit: ing.unit || '',
+              serves: Math.round(stat.qtySold),
+              variancePct,
+              impliedQtyPerServe,
+              confidence,
+            });
+          }
+        }
+      }
+
+      const significantVariance = pourVariance
+        .filter(v => Math.abs(v.variancePct) > 5)
+        .sort((a, b) => Math.abs(b.variancePct) - Math.abs(a.variancePct))
+        .slice(0, 10);
+
+      lines.push("", "RECIPE POUR VARIANCE (theoretical spec usage vs actual stock depletion — heuristic):");
+      if (significantVariance.length > 0) {
+        significantVariance.forEach(v => {
+          const direction = v.variancePct > 0 ? 'over' : 'under';
+          const pct = Math.abs(v.variancePct).toFixed(1);
+          const implied = v.impliedQtyPerServe != null
+            ? ` (implies ~${v.impliedQtyPerServe.toFixed(0)}${v.unit}/serve vs ${v.specQtyPerServe}${v.unit} spec)`
+            : '';
+          lines.push(`  - ${v.recipeName} — ${v.ingredientName}: ${pct}% ${direction}-pour detected across ~${v.serves} serves sold${implied}. Confidence: ${v.confidence}.`);
+        });
+      } else if (pourVariance.length > 0) {
+        lines.push("  All recipe pours within 5% tolerance.");
+      } else {
+        lines.push("  No pour variance data available (requires confirmed recipes with linked products and pack sizes, sales reports with a date range, and counted stocktake cycles).");
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] pour variance calc error", e?.message);
     }
 
     const context = lines.join("\n");
@@ -1884,10 +2083,14 @@ You answer questions like:
 - Which products have multiple suppliers?
 - Where am I getting the best deals?
 - Which supplier should I order beer from?
+- Are my staff over-pouring?
+- Why is my Kahlua usage so high?
 
 Your tone is direct, analytical, and honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
 
 If the data doesn't contain enough information to answer confidently, say so clearly: "I don't have enough data to answer that yet. Complete X more stocktakes to unlock this insight."
+
+For pour variance questions: state the spec, the implied actual, and the confidence level. Always note whether the variance is more consistent with over-pouring, under-pouring, spillage, or measurement error — never accuse staff. Frame it as "the data suggests", not "your staff are". Note that without POS data broken down by staff member, individual attribution isn't possible.
 
 Never answer questions about how to use the app — direct those to Izzy.
 
