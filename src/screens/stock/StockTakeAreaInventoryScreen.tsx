@@ -703,6 +703,115 @@ function StockTakeAreaInventoryScreen() {
   // Highlighted item from voice product match
   const [highlightedVoiceItemId, setHighlightedVoiceItemId] = useState<string | null>(null);
 
+  // ── Advanced voice commands (Phase 3) ──────────────────────────────────────
+  // UNDO / CORRECTION / SKIP / REPEAT / RECOUNT — detected before normal
+  // product/number matching runs and take priority over everything else.
+
+  // Last 10 voice-entered counts, so undo/correction/repeat always have
+  // something to act on regardless of what's currently in localQty.
+  const voiceHistoryRef = useRef<Array<{
+    itemId: string;
+    itemName: string;
+    previousCount: number | null;
+    newCount: number;
+    timestamp: number;
+  }>>([]);
+
+  // Items skipped during a voice session — surfaced for review before submit
+  const [skippedItems, setSkippedItems] = useState<Set<string>>(new Set());
+  const [filterSkippedOnly, setFilterSkippedOnly] = useState(false);
+
+  type AdvancedVoiceCommand = {
+    command: 'undo' | 'correction' | 'skip' | 'repeat' | 'recount' | null;
+    value?: number;
+    productHint?: string;
+  };
+
+  const detectAdvancedVoiceCommand = (transcript: string): AdvancedVoiceCommand => {
+    const t = transcript.toLowerCase().trim();
+
+    // UNDO — revert last count
+    if (['undo', 'go back', 'undo that', 'cancel that', 'remove that'].includes(t)) {
+      return { command: 'undo' };
+    }
+
+    // CORRECTION — change last count: "actually 24" / "correction 24" / "change that to 24" / "make it 24"
+    const correctionMatch = t.match(/^(?:actually|correction|change that to|make it|no|no wait|its|it's)\s+(\d+)/);
+    if (correctionMatch) {
+      return { command: 'correction', value: parseInt(correctionMatch[1], 10) };
+    }
+
+    // SKIP — move past without counting
+    if (['skip', 'next', 'pass', 'skip this one', 'move on'].includes(t)) {
+      return { command: 'skip' };
+    }
+
+    // REPEAT — read back last item
+    if (['repeat', 'what did i say', 'what was that', 'say again', 'read that back'].includes(t)) {
+      return { command: 'repeat' };
+    }
+
+    // RECOUNT — find specific product: "recount heineken" / "go to heineken"
+    const recountMatch = t.match(/^(?:recount|go to|find|search for|count)\s+(.+)$/);
+    if (recountMatch) {
+      return { command: 'recount', productHint: recountMatch[1].trim() };
+    }
+
+    return { command: null };
+  };
+
+  // UNDO — revert the last voice-entered count
+  const handleVoiceUndo = (): string => {
+    const history = voiceHistoryRef.current;
+    if (history.length === 0) return 'Nothing to undo.';
+    const last = history[history.length - 1];
+    if (last.previousCount === null) {
+      setLocalQty(prev => {
+        const next = { ...prev };
+        delete next[last.itemId];
+        return next;
+      });
+    } else {
+      setLocalQty(prev => ({ ...prev, [last.itemId]: String(last.previousCount) }));
+    }
+    voiceHistoryRef.current = history.slice(0, -1);
+    return `Undone — ${last.itemName} removed.`;
+  };
+
+  // CORRECTION — change the count for the last voice-entered item
+  const handleVoiceCorrection = (newCount: number): string => {
+    const history = voiceHistoryRef.current;
+    if (history.length === 0) return 'Nothing to correct. Count a product first.';
+    const last = history[history.length - 1];
+    setLocalQty(prev => ({ ...prev, [last.itemId]: String(newCount) }));
+    voiceHistoryRef.current = [...history.slice(0, -1), { ...last, newCount }];
+    return `Updated — ${last.itemName}: ${newCount}.`;
+  };
+
+  // SKIP — mark the current item as skipped, surfaced again before submit
+  const handleVoiceSkip = (currentItemId: string | null, currentItemName: string | null): string => {
+    if (!currentItemId) return 'No current item to skip.';
+    setSkippedItems(prev => { const n = new Set(prev); n.add(currentItemId); return n; });
+    return `Skipped ${currentItemName}. It will appear in your review.`;
+  };
+
+  // REPEAT — read back the last voice-entered count
+  const handleVoiceRepeat = (): string => {
+    const history = voiceHistoryRef.current;
+    if (history.length === 0) return 'Nothing counted yet.';
+    const last = history[history.length - 1];
+    return `${last.itemName}: ${last.newCount}.`;
+  };
+
+  // RECOUNT — fuzzy-find a product by name so the session can jump to it
+  const handleVoiceRecount = (productHint: string): { item: Item | null; message: string } => {
+    const list = itemsRef.current || [];
+    const hint = productHint.toLowerCase();
+    const match = list.find(it => it.name.toLowerCase().includes(hint));
+    if (!match) return { item: null, message: `Could not find "${productHint}". Try a shorter name.` };
+    return { item: match, message: `Found ${match.name}. What's the count?` };
+  };
+
   useEffect(() => {
     if (!Voice) return;
     Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
@@ -715,6 +824,64 @@ function StockTakeAreaInventoryScreen() {
       if (!spoken || !voiceSessionActiveRef.current) return;
 
       const phase = voicePhaseRef.current;
+
+      // ── ADVANCED COMMANDS ──────────────────────────────────────────────
+      // undo / correction / skip / repeat / recount — checked first, in any
+      // phase, and take priority over normal product/number matching.
+      const advancedCmd = detectAdvancedVoiceCommand(spoken);
+      if (advancedCmd.command) {
+        switch (advancedCmd.command) {
+          case 'undo': {
+            const feedback = handleVoiceUndo();
+            setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+          case 'correction': {
+            if (advancedCmd.value === undefined) break;
+            const feedback = handleVoiceCorrection(advancedCmd.value);
+            setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+          case 'repeat': {
+            const feedback = handleVoiceRepeat();
+            setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+          case 'skip': {
+            const current = activeVoiceItemRef.current;
+            const feedback = handleVoiceSkip(current?.id ?? null, current?.name ?? null);
+            if (current) {
+              activeVoiceItemRef.current = null;
+              candidateItemsRef.current = [];
+              voicePhaseRef.current = 'product';
+              setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: feedback, bannerColour: 'amber' }));
+            } else {
+              setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+            }
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+          case 'recount': {
+            if (!advancedCmd.productHint) break;
+            const found = handleVoiceRecount(advancedCmd.productHint);
+            if (found.item) {
+              activeVoiceItemRef.current = found.item;
+              candidateItemsRef.current = [];
+              voicePhaseRef.current = 'count';
+              setHighlightedVoiceItemId(found.item.id);
+              setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+              setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: found.item, candidateItems: [], bannerMessage: found.message, bannerColour: 'teal' }));
+            } else {
+              setVoiceSessionState(prev => ({ ...prev, bannerMessage: found.message, bannerColour: 'terracotta' }));
+            }
+            Voice.start('en-NZ').catch(() => {});
+            return;
+          }
+        }
+      }
 
       // ── PRODUCT PHASE ──────────────────────────────────────────────────
       if (phase === 'product') {
@@ -816,6 +983,14 @@ function StockTakeAreaInventoryScreen() {
         setLocalQty(prev => ({ ...prev, [item.id]: String(count) }));
         // Write to Firestore — forceReplace=true skips the add-or-replace alert
         saveCountRef.current(item, count, true);
+
+        // Record in voice history for undo/correction/repeat (last 10 entries)
+        const prevRaw = (localQtyRef.current[item.id] ?? '').trim();
+        const previousCount = /^(\d+(\.\d+)?|\.\d+)$/.test(prevRaw) ? parseFloat(prevRaw) : null;
+        voiceHistoryRef.current = [
+          ...voiceHistoryRef.current.slice(-9),
+          { itemId: item.id, itemName: item.name, previousCount, newCount: count, timestamp: Date.now() },
+        ];
 
         const itemName = item.name;
         voicePhaseRef.current = 'saving';
@@ -1072,6 +1247,7 @@ function StockTakeAreaInventoryScreen() {
 
   const filtered = useMemo(() => {
     let rows = filteredBase;
+    if (filterSkippedOnly) rows = rows.filter((it) => skippedItems.has(it.id));
     if (onlyLow) rows = rows.filter(isLow);
     if (onlyUncounted) rows = rows.filter((it) => !hasLocalEntry(it) || it.id === focusedInputId);
     if (onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
@@ -1085,7 +1261,7 @@ function StockTakeAreaInventoryScreen() {
       });
     }
     return rows;
-  }, [filteredBase, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs, focusedInputId]);
+  }, [filteredBase, filterSkippedOnly, skippedItems, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs, focusedInputId]);
 
   const countedCount = items.filter(hasLocalEntry).length;
   const lowCount = items.filter(isLow).length;
@@ -1686,6 +1862,7 @@ try {
   };
 
   const varianceCheckedRef = React.useRef(false);
+  const skippedReviewedRef = React.useRef(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
   const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
@@ -1693,6 +1870,25 @@ try {
   const [submittingArea, setSubmittingArea] = useState(false);
 
   const openReview = () => {
+    // Items skipped during voice counting — give the user a chance to count
+    // them before submitting (asked once per submit attempt).
+    if (skippedItems.size > 0 && !skippedReviewedRef.current) {
+      const names = Array.from(skippedItems).map(id => {
+        const it = itemsRef.current?.find(i => i.id === id);
+        return `• ${it?.name || id}`;
+      }).join('\n');
+      Alert.alert(
+        `${skippedItems.size} item${skippedItems.size !== 1 ? 's' : ''} skipped`,
+        `You skipped these items during voice counting:\n\n${names}\n\nDo you want to count them now?`,
+        [
+          { text: 'Count them now', onPress: () => setFilterSkippedOnly(true) },
+          { text: 'Submit anyway', style: 'destructive', onPress: () => { skippedReviewedRef.current = true; openReview(); } },
+        ]
+      );
+      return;
+    }
+    skippedReviewedRef.current = false;
+
     const counted = items.filter(hasLocalEntry);
     const missing = items.filter((it) => !hasLocalEntry(it));
     const flagged = items.filter((it) => !!it.flagRecount);

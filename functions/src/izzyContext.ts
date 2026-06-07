@@ -99,6 +99,26 @@ VOICE COUNTING (hands-free mode)
 - Works with AirPods and Bluetooth earphones automatically — no setup needed
 - Best in quieter environments (walk-in chiller, prep area, pre-service) — for noisy service use steppers
 
+Voice counting commands:
+ Say a product name then a number to count: "Heineken, 24"
+
+ Correction commands:
+ "undo" — removes the last count
+ "actually [number]" — corrects it, e.g. "actually 22"
+ "correction [number]" — same as above
+ "change that to [number]" — same
+
+ Navigation commands:
+ "skip" or "next" — skips current item
+ "recount [product]" — finds a product, e.g. "recount Heineken"
+ "go to [product]" — same as recount
+
+ Playback commands:
+ "repeat" — reads back last counted item
+ "what did I say" — same as repeat
+
+ Skipped items are shown before you submit so nothing gets missed.
+
 SETUP WIZARD
 - New users see a 3-step introduction to stocktaking on first login
 - Explains what a stocktake is, how the flow works, and how to add products
