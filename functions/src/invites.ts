@@ -33,20 +33,25 @@ async function sendInviteEmail(
     </div>
   `;
 
-  const resp = await fetch('https://api.resend.com/emails', {
+  const resp = await fetch('https://api.postmarkapp.com/email', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    headers: {
+      'X-Postmark-Server-Token': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
     body: JSON.stringify({
-      from: 'Hosti <invites@hosti.co.nz>',
-      to: [to],
-      subject: `You're invited to join ${venueName} on Hosti`,
-      html,
+      From: 'Hosti <invites@hosti.co.nz>',
+      To: to,
+      Subject: `You're invited to join ${venueName} on Hosti`,
+      HtmlBody: html,
+      MessageStream: 'outbound',
     }),
   });
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => '(no body)');
-    throw new Error(`Resend error ${resp.status}: ${body}`);
+    throw new Error(`Postmark error ${resp.status}: ${body}`);
   }
 }
 
@@ -55,10 +60,10 @@ function escHtml(s: string): string {
 }
 
 // Triggered when a new invite document is created under venues/{venueId}/invites/{inviteId}.
-// Sends the invite email via Resend and stamps emailStatus on the doc.
+// Sends the invite email via Postmark and stamps emailStatus on the doc.
 export const onInviteCreated = functions
   .region('us-central1')
-  .runWith({ secrets: ['RESEND_API_KEY'], timeoutSeconds: 30 })
+  .runWith({ secrets: ['POSTMARK_API_KEY'], timeoutSeconds: 30 })
   .firestore.document('venues/{venueId}/invites/{inviteId}')
   .onCreate(async (snap, ctx) => {
     const { venueId, inviteId } = ctx.params as { venueId: string; inviteId: string };
@@ -68,7 +73,7 @@ export const onInviteCreated = functions
       venueId, inviteId,
       status: data?.status,
       email: data?.email,
-      hasApiKey: !!process.env.RESEND_API_KEY,
+      hasApiKey: !!process.env.POSTMARK_API_KEY,
     });
 
     if (!data || data.status !== 'pending') {
@@ -76,9 +81,9 @@ export const onInviteCreated = functions
       return;
     }
 
-    const apiKey = process.env.RESEND_API_KEY;
+    const apiKey = process.env.POSTMARK_API_KEY;
     if (!apiKey) {
-      console.error('[onInviteCreated] RESEND_API_KEY not configured');
+      console.error('[onInviteCreated] POSTMARK_API_KEY not configured');
       await snap.ref.update({ emailStatus: 'skipped_no_key' });
       return;
     }

@@ -409,40 +409,44 @@ function buildEmailHtml(data: VenueSummary, weekOf: string): string {
 </html>`;
 }
 
-// ── Resend delivery ───────────────────────────────────────────────────────────
-// Resend uses a plain REST API — no SDK required, consistent with existing fetch calls.
-// Prerequisites: verify your sending domain in the Resend dashboard and update
-// the `from` address below to match (e.g. reports@yourdomain.com).
-async function sendViaResend(
+// ── Postmark delivery ─────────────────────────────────────────────────────────
+// Postmark uses a plain REST API — no SDK required, consistent with existing fetch calls.
+// Prerequisites: verify your sending domain in the Postmark dashboard and update
+// the `From` address below to match (e.g. reports@yourdomain.com).
+async function sendViaPostmark(
   apiKey: string,
   to: string[],
   subject: string,
   html: string
 ): Promise<void> {
-  const resp = await fetch("https://api.resend.com/emails", {
+  const resp = await fetch("https://api.postmarkapp.com/email", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      "X-Postmark-Server-Token": apiKey,
       "Content-Type": "application/json",
+      "Accept": "application/json",
     },
     body: JSON.stringify({
-      from: "Hosti <reports@hosti.co.nz>",
-      to,
-      subject,
-      html,
+      From: "Hosti <reports@hosti.co.nz>",
+      To: Array.isArray(to)
+        ? to.join(",")
+        : to,
+      Subject: subject,
+      HtmlBody: html,
+      MessageStream: "outbound",
     }),
   });
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => "(no body)");
-    throw new Error(`Resend error ${resp.status}: ${body}`);
+    throw new Error(`Postmark error ${resp.status}: ${body}`);
   }
 }
 
 // ── Scheduled function ────────────────────────────────────────────────────────
 // Runs every hour in UTC. For each opted-in venue, checks whether the current
 // moment is Monday 8:00 in the venue's local timezone before sending.
-// Set RESEND_API_KEY via: firebase functions:secrets:set RESEND_API_KEY
+// Set POSTMARK_API_KEY via: firebase functions:secrets:set POSTMARK_API_KEY
 export const weeklySummaryEmail = onSchedule(
   {
     schedule: "0 * * * *",
@@ -450,13 +454,13 @@ export const weeklySummaryEmail = onSchedule(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 540,
-    secrets: ["RESEND_API_KEY"],
+    secrets: ["POSTMARK_API_KEY"],
   },
   async () => {
     const db = admin.firestore();
-    const apiKey = process.env.RESEND_API_KEY;
+    const apiKey = process.env.POSTMARK_API_KEY;
     if (!apiKey) {
-      console.error("[weeklySummary] RESEND_API_KEY not configured — skipping run");
+      console.error("[weeklySummary] POSTMARK_API_KEY not configured — skipping run");
       return;
     }
 
@@ -510,7 +514,7 @@ export const weeklySummaryEmail = onSchedule(
         });
 
         const html = buildEmailHtml(summary, weekOf);
-        await sendViaResend(apiKey, emails, `Weekly Stock Summary — ${summary.venueName}`, html);
+        await sendViaPostmark(apiKey, emails, `Weekly Stock Summary — ${summary.venueName}`, html);
         console.log(`[weeklySummary] sent to [${emails.join(", ")}] for venue=${venueId}`);
       })
     );
