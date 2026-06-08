@@ -190,12 +190,6 @@ export default function FestivalEventSetupScreen() {
 
   // ── Collapsible section state ────────────────────────────────────────────
   const [expandedSection, setExpandedSection] = useState(1);
-  // Sync to first incomplete section once progress loads from Firestore.
-  // Guard against undefined progress object in case of unexpected state shape.
-  useEffect(() => {
-    if (!progress || typeof progress !== 'object') return;
-    setExpandedSection(getFirstIncompleteSection(progress));
-  }, [progress?.basics, progress?.bars, progress?.sourceLocations, progress?.suppliers, progress?.productPlanning, progress?.historicalData]);
 
   // ── Contracts count (for Section 6 card) ─────────────────────────────────
   const [contractCount,        setContractCount]        = useState(0);
@@ -213,9 +207,20 @@ export default function FestivalEventSetupScreen() {
   const [loadingEvent,  setLoadingEvent]  = useState(true);
   const toastTimer = useRef<any>(null);
 
+  // Sync expandedSection to the first incomplete section once, after the initial
+  // Firestore load — not on every progress change — so the explicit
+  // setExpandedSection() calls inside saveX() aren't immediately overridden.
+  const hasInitialisedSection = useRef(false);
+  useEffect(() => {
+    if (hasInitialisedSection.current) return;
+    if (loadingEvent) return;
+    hasInitialisedSection.current = true;
+    setExpandedSection(getFirstIncompleteSection(progress));
+  }, [loadingEvent, progress]);
+
   // ── Load existing event data ──────────────────────────────────────────────
   useEffect(() => {
-    if (!venueId) { setLoadingEvent(false); return; }
+    if (!venueId) return; // keep showing the loading state until venueId resolves
     const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), snap => {
       setLoadingEvent(false);
       if (!snap.exists()) return;
@@ -255,6 +260,18 @@ export default function FestivalEventSetupScreen() {
       }
     }, () => setLoadingEvent(false));
     return () => unsub();
+  }, [venueId]);
+
+  // Fail-safe: if venueId never resolves, tell the user instead of spinning forever.
+  useEffect(() => {
+    if (venueId) return;
+    const timeout = setTimeout(() => {
+      Alert.alert(
+        'Connection issue',
+        'Could not connect to your venue. Please close and reopen the app.',
+      );
+    }, 10000);
+    return () => clearTimeout(timeout);
   }, [venueId]);
 
   // ── Load existing bars (from departments) ─────────────────────────────────
@@ -361,7 +378,10 @@ export default function FestivalEventSetupScreen() {
   // ── Save functions ────────────────────────────────────────────────────────
 
   async function saveBasics() {
-    if (!venueId) return;
+    if (!venueId) {
+      Alert.alert('Not connected', 'Your venue is still loading. Please wait a moment and try again.');
+      return;
+    }
     if (!eventName.trim()) { Alert.alert('Required', 'Event name is required.'); return; }
     if (!startDate || !endDate) { Alert.alert('Required', 'Start and end dates are required.'); return; }
 

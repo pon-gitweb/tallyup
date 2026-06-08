@@ -80,14 +80,23 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Ensure users/{uid} exists
+      // Ensure users/{uid} exists — bounded so a hung getDoc/setDoc can't block
+      // bootstrap (and thus `loading`) forever on a bad connection.
+      const BOOTSTRAP_TIMEOUT = 8000;
       try {
         const uref = doc(db, 'users', u.uid);
-        const usnap = await getDoc(uref);
-        if (!usnap.exists()) {
-          await setDoc(uref, { createdAt: new Date(), email: u.email ?? null }, { merge: true });
-          if (__DEV__) console.log('[TallyUp VenueProvider] created users doc', JSON.stringify({ uid: u.uid }));
-        }
+        await Promise.race([
+          (async () => {
+            const usnap = await getDoc(uref);
+            if (!usnap.exists()) {
+              await setDoc(uref, { createdAt: new Date(), email: u.email ?? null }, { merge: true });
+              if (__DEV__) console.log('[TallyUp VenueProvider] created users doc', JSON.stringify({ uid: u.uid }));
+            }
+          })(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('bootstrap-timeout')), BOOTSTRAP_TIMEOUT)
+          ),
+        ]);
       } catch (e: any) {
         if (__DEV__) console.log('[TallyUp VenueProvider] ensure user doc error', JSON.stringify({ code: e?.code, message: e?.message }));
       }

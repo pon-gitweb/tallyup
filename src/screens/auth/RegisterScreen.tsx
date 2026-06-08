@@ -52,37 +52,36 @@ export default function RegisterScreen() {
       return;
     }
 
+    const AUTH_TIMEOUT = 15000; // bound the auth call itself — it has no built-in timeout
+
     setBusy(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, em, pw);
+      const authPromise = createUserWithEmailAndPassword(auth, em, pw);
+      const authTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('auth-timeout')), AUTH_TIMEOUT)
+      );
+      const cred = await Promise.race([authPromise, authTimeoutPromise]);
 
-      // Write the user doc, but don't block navigation on it.
-      // If the write is slow or fails, CreateVenueScreen re-creates it anyway.
-      const writePromise = setDoc(doc(db, 'users', cred.user.uid), {
+      // Navigate immediately — never block on the Firestore write.
+      // CreateVenueScreen ensures the user doc exists before creating the venue,
+      // so a slow/failed write here is non-fatal; fire-and-forget it.
+      setDoc(doc(db, 'users', cred.user.uid), {
         email: cred.user.email,
         createdAt: serverTimestamp(),
         venueId: null,
         activeVenueId: null,
         venueIds: [],
+      }).catch((e: any) => {
+        if (__DEV__) console.warn('[Register] user doc write failed:', e?.message);
       });
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('Write timed out')), 10000)
-      );
-
-      try {
-        await Promise.race([writePromise, timeoutPromise]);
-      } catch {
-        // Write timed out or failed — navigate anyway.
-        // CreateVenueScreen will ensure the user doc exists before creating the venue.
-      }
 
       navigation.navigate('CreateVenue');
     } catch (e: any) {
-      if (e?.code) {
-        // Firebase auth error — show to user
+      if (e?.message === 'auth-timeout') {
+        Alert.alert('Connection is slow', 'Please check your network and try again.');
+      } else if (e?.code) {
         Alert.alert('Registration failed', mapRegisterError(e));
       }
-      // else: navigate already happened (timeout path) or this is an unreachable catch
     } finally {
       setBusy(false);
     }
