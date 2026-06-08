@@ -44,6 +44,9 @@ import { approveDirectCount } from '../../services/adjustmentsDirect';
 import { openIzzy } from '../../components/IzzyAssistant';
 import { fetchRecentItemAudits, AuditEntry } from '../../services/audits';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
+import { toastService } from '../../utils/toastService';
 import { findMatchingProduct } from '../../services/matching';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import OfflineBanner from '../../components/OfflineBanner';
@@ -409,6 +412,8 @@ function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
   const colours = useColours();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueIdFromCtx = useVenueId();
@@ -1024,12 +1029,11 @@ function StockTakeAreaInventoryScreen() {
   // Called by the header mic button. Checks connection and Voice availability.
   const toggleVoiceSession = () => {
     if (!Voice || !voiceAvailable) {
-      Alert.alert('Voice not available', 'Your device does not support voice recognition.');
+      showInfo('Voice counting is not available on this device.');
       return;
     }
     if (offline) {
-      // Voice recognition requires a network connection on most devices
-      Alert.alert('No connection', 'Voice counting needs a connection. Use steppers instead.');
+      showInfo('Voice counting needs an internet connection.');
       return;
     }
     if (voiceSessionActiveRef.current) {
@@ -1048,7 +1052,7 @@ function StockTakeAreaInventoryScreen() {
         voicePhaseRef.current = 'idle';
         setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
         if (e?.code === 'permissions') {
-          Alert.alert('Microphone access needed', 'Enable it in Settings → Privacy → Microphone');
+          showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
         }
       });
     }
@@ -1346,7 +1350,7 @@ function StockTakeAreaInventoryScreen() {
         lastCountAt: prevAt ?? serverTimestamp()
       });
       hapticSuccess();
-    } catch (e:any) { Alert.alert('Undo failed', e?.message ?? String(e)); }
+    } catch (e:any) { toastService.error(e?.message ?? 'Undo failed.'); }
   };
 
   const saveCount = async (item: Item, overrideQty?: number, forceReplace?: boolean) => {
@@ -1402,7 +1406,7 @@ function StockTakeAreaInventoryScreen() {
         console.error('[SaveCount] FAILED:', e?.code, e?.message);
         // Firestore offline queue returns 'unavailable' — write is queued, don't alert
         if (e?.code !== 'unavailable' && e?.code !== 'failed-precondition') {
-          Alert.alert('Save failed', e?.message ?? String(e));
+          toastService.error(e?.message ?? 'Save failed.');
         }
       }
     };
@@ -1425,17 +1429,17 @@ function StockTakeAreaInventoryScreen() {
     const typed = (localQty[item.id] ?? '').trim();
 if (!ENABLE_MANAGER_INLINE_APPROVE) return;
 if (!isManager) {
-  return Alert.alert('Manager only', 'Only managers can approve directly.');
+  showInfo('Manager access required.'); return;
 }
 
 // Require something in the box
 if (!typed) {
-  return Alert.alert('No quantity', 'Enter a quantity to approve');
+  showInfo('Please enter a quantity.'); return;
 }
 
 // If NOT a valid number, show error
 if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
-  return Alert.alert('Invalid number', 'Enter a numeric quantity');
+  showInfo('Please enter a valid number.'); return;
 }
 
 const qty = parseFloat(typed);
@@ -1455,17 +1459,20 @@ const qty = parseFloat(typed);
         hapticSuccess();
         showUndo(item.id, prevQty, prevAt);
         focusNext(item.id);
-        Alert.alert('Saved', 'Count updated and audit logged.');
+        showSuccess('✓ Count updated and logged.');
       } catch (e: any) {
-        Alert.alert('Approve failed', e?.message ?? String(e));
+        toastService.error(e?.message ?? 'Approve failed.');
       }
     };
 
     if (needsDeltaConfirm(item.lastCount ?? null, qty)) {
-      Alert.alert('Large change', `Approve “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Approve', style: 'destructive', onPress: throttleAction(doApprove) }
-      ]);
+      confirm({
+        title: 'Large change',
+        message: `Approve “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`,
+        confirmLabel: 'Approve',
+        destructive: true,
+        onConfirm: throttleAction(doApprove),
+      });
     } else { await doApprove(); }
   };
 
@@ -1476,12 +1483,12 @@ const qty = parseFloat(typed);
   const qtyStr = (addingQty || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
-    Alert.alert('Missing context', 'Venue, department or area is missing.');
+    showInfo('Missing area context. Please go back and re-enter this area.');
     return;
   }
 
   if (!nm) {
-    Alert.alert('Name required', 'Please enter an item name first.');
+    showInfo('Please enter a product name.');
     return;
   }
 
@@ -1489,7 +1496,7 @@ const qty = parseFloat(typed);
   let qty: number | null = null;
   if (qtyStr) {
     if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
-      Alert.alert('Invalid quantity', 'Enter a numeric quantity for Qty now.');
+      showInfo('Please enter a valid quantity.');
       return;
     }
     qty = parseFloat(qtyStr);
@@ -1522,7 +1529,7 @@ const qty = parseFloat(typed);
   const writePath = `venues/${venueId}/departments/${departmentId}/areas/${areaId}/items`;
   console.log('[Area quick add] path=', writePath, 'venueId=', venueId, 'departmentId=', departmentId, 'areaId=', areaId, 'data=', JSON.stringify(payload));
   if (!venueId || !departmentId || !areaId) {
-    Alert.alert('Cannot add item', 'Missing venue, department, or area context. Please go back and re-enter this area.');
+    showInfo('Missing area context. Please go back and re-enter this area.');
     return;
   }
 
@@ -1566,7 +1573,7 @@ const qty = parseFloat(typed);
     const docRef = await addDoc(colRef, payload);
 
     console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
-    Alert.alert('Added', `”${nm}” was added to this area.`);
+    showSuccess(`✓ “${nm}” added to this area.`);
 
     // Clear name, qty, supplier — keep unit (user likely counting same type of product)
     setAddingName('');
@@ -1579,18 +1586,21 @@ const qty = parseFloat(typed);
     hapticSuccess?.();
   } catch (e: any) {
     console.log('[Area quick add] FAILED', e?.code, e?.message);
-    Alert.alert('Could not add item', e?.message ?? String(e));
+    toastService.error(e?.message ?? 'Could not add item.');
   }
 };
 
-  const removeItem = async (itemId: string) => {
-    Alert.alert('Delete item', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
+  const removeItem = (itemId: string) => {
+    confirm({
+      title: 'Delete item',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
         try { await deleteDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',itemId)); }
-        catch (e:any) { Alert.alert('Could not delete', e?.message ?? String(e)); }
-      } },
-    ]);
+        catch (e:any) { toastService.error(e?.message ?? 'Could not delete.'); }
+      },
+    });
   };
 
   const openAdjustment = (item: Item) => { setAdjModalFor(item); setAdjQty(''); setAdjReason(''); };
@@ -1599,15 +1609,17 @@ const qty = parseFloat(typed);
   const qtyStr = adjQty.trim();
 
 if (!qtyStr) {
-  return Alert.alert('No quantity', 'Enter a proposed quantity');
+  showInfo('Please enter a quantity.');
+  return;
 }
 
 // If NOT a valid number, show error
 if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
-  return Alert.alert('Invalid number');
+  showInfo('Please enter a valid number.');
+  return;
 }
 
-if (!adjReason.trim()) return Alert.alert('Reason required');
+if (!adjReason.trim()) { showInfo('Please enter a reason.'); return; }
 
 try {
   await addDoc(collection(db, 'venues', venueId!, 'sessions'), {
@@ -1618,7 +1630,7 @@ try {
     requestedAt: serverTimestamp(), createdAt: serverTimestamp(),
   });
       setAdjModalFor(null);
-    } catch (e: any) { Alert.alert('Could not submit request', e?.message ?? String(e)); }
+    } catch (e: any) { toastService.error(e?.message ?? 'Could not submit request.'); }
   };
 
   const maybeFinalizeDepartment = async () => {
@@ -2004,19 +2016,15 @@ try {
           return false;
         });
         if (highVarianceGuard.length > 0) {
-          return new Promise<void>(resolve => {
-            Alert.alert(
-              '⚠️ High variance detected',
-              `${highVarianceGuard.length} item(s) have significant variance. Proceed with submission?`,
-              [
-                { text: 'Go back', style: 'cancel', onPress: () => resolve() },
-                { text: 'Submit anyway', style: 'destructive', onPress: () => {
-                  varianceCheckedRef.current = true;
-                  perform().then(resolve);
-                }},
-              ]
-            );
+          confirm({
+            title: '⚠️ High variance detected',
+            message: `${highVarianceGuard.length} item(s) have significant variance. Proceed with submission?`,
+            confirmLabel: 'Submit anyway',
+            cancelLabel: 'Go back',
+            destructive: true,
+            onConfirm: () => { varianceCheckedRef.current = true; perform(); },
           });
+          return;
         }
       }
       varianceCheckedRef.current = false;
@@ -2073,7 +2081,7 @@ try {
         }
         if (!finalized) nav.goBack();
       } catch (e: any) {
-        Alert.alert('Could not complete area', e?.message ?? String(e));
+        toastService.error(e?.message ?? 'Could not complete area.');
       } finally {
         setSubmittingArea(false);
       }
@@ -2085,10 +2093,13 @@ try {
       const msg = missing.length === items.length
         ? `No items have been entered yet. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
         : `These ${missing.length.toLocaleString()} item${missing.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`;
-      Alert.alert('Incomplete counts', msg, [
-        { text: 'Go back', style: 'cancel' },
-        { text: 'Continue', onPress: perform }
-      ]);
+      confirm({
+        title: 'Incomplete counts',
+        message: msg,
+        confirmLabel: 'Continue',
+        cancelLabel: 'Go back',
+        onConfirm: () => perform(),
+      });
     } else {
       await perform();
     }
@@ -2104,24 +2115,23 @@ try {
       try {
         await ensureAreaStarted();
         const toZero = items.filter((it) => !countedInThisCycle(it));
-        if (toZero.length === 0) { Alert.alert('Nothing to do', 'Everything already has a count.'); return; }
+        if (toZero.length === 0) { showInfo('No items to update — everything already has a count.'); return; }
         const _zcu = getAuth().currentUser;
         await Promise.all(toZero.map((it) =>
           updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id),
             { lastCount: 0, lastCountAt: serverTimestamp(), lastCountBy: _zcu?.uid ?? 'unknown', lastCountByName: _zcu?.displayName || 'Unknown', updatedAt: serverTimestamp() })
         ));
-        hapticSuccess(); Alert.alert('Done', `${toZero.length} item(s) saved as 0.`);
-      } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
+        hapticSuccess(); showSuccess(`✓ ${toZero.length} item(s) saved as 0.`);
+      } catch (e:any) { toastService.error(e?.message ?? 'Failed.'); }
     };
 
-   Alert.alert(
-  'Initialise with zeros',
-  msg,
-  [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Confirm', style: 'destructive', onPress: throttleAction(doIt) },
-  ],
-);
+   confirm({
+  title: 'Initialise with zeros',
+  message: msg,
+  confirmLabel: 'Confirm',
+  destructive: true,
+  onConfirm: throttleAction(doIt),
+});
   };
 
   const useBluetoothFor = (_item: Item) => {
@@ -2168,7 +2178,7 @@ const openHistory = throttleAction(async (item: Item) => {
     if (!editFor) return;
     const par = (editPar ?? '').trim();
     const parNum = par === '' ? null : Number(par);
-    if (par !== '' && !/^\d+(\.\d+)?$/.test(par)) return Alert.alert('Invalid par', 'Par level must be a number');
+    if (par !== '' && !/^\d+(\.\d+)?$/.test(par)) { showInfo('Par level must be a number.'); return; }
     try {
       await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',editFor.id), {
         name: (editName || '').trim() || editFor.name || '',
@@ -2178,7 +2188,7 @@ const openHistory = throttleAction(async (item: Item) => {
         updatedAt: serverTimestamp(),
       });
       setEditFor(null); hapticSuccess();
-    } catch (e:any) { Alert.alert('Update failed', e?.message ?? String(e)); }
+    } catch (e:any) { toastService.error(e?.message ?? 'Update failed.'); }
   };
 
   const toCsv = (rows: Array<Record<string, any>>) => {
@@ -2204,23 +2214,23 @@ const openHistory = throttleAction(async (item: Item) => {
         };
       });
       const csv = toCsv(rows);
-      if (!csv) { Alert.alert('Nothing to export', 'No rows in the current view.'); return; }
-      if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
+      if (!csv) { showInfo('Nothing to export in the current view.'); return; }
+      if (!FS || !FS.cacheDirectory) { showError('Export unavailable — FileSystem not found.'); return; }
       const fname = `tallyup-area-${areaId}-${Date.now()}.csv`;
       const path = FS.cacheDirectory + fname;
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Current view' });
-      } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
-    } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
+      } else { showSuccess('✓ Exported to device.'); }
+    } catch (e:any) { toastService.error(e?.message ?? 'Export failed.'); }
   });
 
   const exportCsvChangesOnly = throttleAction(async () => {
     try {
       showExportToast('Export ready');
-      if (!areaStarted) { Alert.alert('Nothing to export', 'This area has not been started yet.'); return; }
+      if (!areaStarted) { showInfo('Nothing to export — area not started yet.'); return; }
       const changed = filtered.filter(countedInThisCycle);
-      if (changed.length === 0) { Alert.alert('Nothing to export', 'No items counted in this cycle for the current view.'); return; }
+      if (changed.length === 0) { showInfo('Nothing to export — no items counted this cycle.'); return; }
       const rows = changed.map((it) => ({
         name: it.name || '', unit: it.unit || '',
         newCount: typeof it.lastCount === 'number' ? it.lastCount : '',
@@ -2228,14 +2238,14 @@ const openHistory = throttleAction(async (item: Item) => {
         flagged: it.flagRecount ? 'yes' : 'no',
       }));
       const csv = toCsv(rows);
-      if (!FS || !FS.cacheDirectory) { Alert.alert('Export unavailable', 'FileSystem not available.'); return; }
+      if (!FS || !FS.cacheDirectory) { showError('Export unavailable — FileSystem not found.'); return; }
       const fname = `tallyup-area-${areaId}-changes-${Date.now()}.csv`;
       const path = FS.cacheDirectory + fname;
       await FS.writeAsStringAsync(path, csv, { encoding: FS.EncodingType.UTF8 });
       if (Sharing?.isAvailableAsync && await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export CSV — Changes only' } as any);
-      } else { Alert.alert('Exported', `Saved to cache: ${fname}`); }
-    } catch (e:any) { Alert.alert('Export failed', e?.message ?? String(e)); }
+      } else { showSuccess('✓ Exported to device.'); }
+    } catch (e:any) { toastService.error(e?.message ?? 'Export failed.'); }
   });
 
   const clampNonNegative = (n:number) => (isNaN(n) ? 0 : Math.max(0, n));
@@ -2247,7 +2257,7 @@ const openHistory = throttleAction(async (item: Item) => {
         updatedAt: serverTimestamp(),
       });
       hapticSuccess();
-    } catch (e:any) { Alert.alert('Failed', e?.message ?? String(e)); }
+    } catch (e:any) { toastService.error(e?.message ?? 'Failed.'); }
   };
 
   const logEditToArea = async (
@@ -2320,7 +2330,7 @@ const openHistory = throttleAction(async (item: Item) => {
       added++;
     }
     if (skipped > 0) {
-      Alert.alert('Shelf scan complete', `${added} product${added !== 1 ? 's' : ''} added, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
+      showSuccess(`✓ ${added} product${added !== 1 ? 's' : ''} added, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
     }
   };
 
@@ -2372,11 +2382,11 @@ const openHistory = throttleAction(async (item: Item) => {
 
   const handleVenueProductSelected = async (product: any) => {
     if (!venueId || !departmentId || !areaId) {
-      Alert.alert('Error', 'Missing area information. Please go back and reopen this area.');
+      showError('Missing area information. Please go back and reopen this area.');
       return;
     }
     const already = items.find(it => it.name?.toLowerCase() === (product.name || '').toLowerCase());
-    if (already) { Alert.alert('Already here', `${product.name} is already in this area.`); return; }
+    if (already) { showInfo(`${product.name} is already in this area.`); return; }
     await ensureAreaStarted();
     setCountingUnitPending({
       name: product.name || '',
@@ -2429,7 +2439,7 @@ const openHistory = throttleAction(async (item: Item) => {
       !items.find(it => it.name?.toLowerCase() === (p.name || '').toLowerCase())
     );
     if (!newProducts.length) {
-      Alert.alert('Already here', 'All selected products are already in this area.');
+      showInfo('All selected products are already in this area.');
       return;
     }
     await ensureAreaStarted();
@@ -2478,7 +2488,7 @@ const openHistory = throttleAction(async (item: Item) => {
             doBatchWrite(p => ({
               countingUnit: p.unit || 'unit',
               caseSize: p.packSize ? parseInt(String(p.packSize)) : null,
-            })).catch((e: any) => Alert.alert('Error', e?.message || 'Could not add products.'));
+            })).catch((e: any) => toastService.error(e?.message || 'Could not add products.'));
           },
         },
         {
@@ -2662,11 +2672,7 @@ const openHistory = throttleAction(async (item: Item) => {
           setUnifiedSearch('');
         } catch (error: any) {
           console.error('[SearchBar] write failed:', error);
-          Alert.alert(
-            'Could not add product',
-            'There was a problem adding this product. Please try again.',
-            [{ text: 'OK' }]
-          );
+          toastService.error('Could not add product. Please try again.');
         }
       },
     });
@@ -2899,11 +2905,7 @@ const openHistory = throttleAction(async (item: Item) => {
             label: 'Voice',
             onPress: voiceAvailable
               ? toggleVoiceSession
-              : () => Alert.alert(
-                  'Voice counting',
-                  "Voice counting lets you count hands-free by saying product names and quantities.\n\nIt's available in the full release build of the app.",
-                  [{ text: 'OK' }]
-                ),
+              : () => showInfo('Voice counting is available in the full release build.'),
             dim: !voiceAvailable,
           },
           { icon: '⚡', label: 'Scale', onPress: () => nav.navigate('ScaleSettings' as never) },
@@ -3014,7 +3016,7 @@ const openHistory = throttleAction(async (item: Item) => {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  if (!overrideReasonInput.trim()) { Alert.alert('Reason required', 'Enter a reason for the override.'); return; }
+                  if (!overrideReasonInput.trim()) { showInfo('Please enter a reason for the override.'); return; }
                   setCurrentOverrideReason(overrideReasonInput.trim());
                   setOverrideActive(true);
                   setOverrideModalOpen(false);
@@ -3770,17 +3772,12 @@ const openHistory = throttleAction(async (item: Item) => {
                 doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', countingUnitForItem.id),
                 { countingUnit: config.countingUnit, caseSize: config.caseSize ?? null, updatedAt: serverTimestamp() }
               );
-            } catch (e: any) { Alert.alert('Could not update', e?.message || 'Please try again.'); }
+            } catch (e: any) { toastService.error(e?.message || 'Could not update.'); }
             setCountingUnitForItem(null);
           } else if (countingUnitPending) {
             try { await countingUnitPending.write(config); } catch (error: any) {
               console.error('[AreaInventory] write failed:', error);
-              Alert.alert(
-                'Could not add product',
-                'There was a problem adding this product to the area. ' +
-                'Please try again or contact support if this continues.',
-                [{ text: 'OK' }]
-              );
+              toastService.error('Could not add product. Please try again.');
             }
             setCountingUnitPending(null);
           }
@@ -3791,12 +3788,7 @@ const openHistory = throttleAction(async (item: Item) => {
           if (countingUnitPending && !countingUnitForItem) {
             countingUnitPending.write({ countingUnit: 'unit', caseSize: null }).catch((error: any) => {
               console.error('[AreaInventory] write failed (cancel path):', error);
-              Alert.alert(
-                'Could not add product',
-                'There was a problem adding this product to the area. ' +
-                'Please try again or contact support if this continues.',
-                [{ text: 'OK' }]
-              );
+              toastService.error('Could not add product. Please try again.');
             });
             setCountingUnitPending(null);
           }
@@ -3810,7 +3802,7 @@ const openHistory = throttleAction(async (item: Item) => {
         onCaptured={async ({ fileUri }) => {
           if (!venueId) throw new Error("Missing venueId");
           if (!uid) throw new Error("Missing user");
-          if (offline) return Alert.alert("Offline", "You are offline. Smart Shelf needs internet to upload.");
+          if (offline) { showInfo('You are offline. Smart Shelf needs internet to upload.'); return; }
 
           const scanId = String(Date.now());
           setShelfLoading(true);
@@ -3872,9 +3864,11 @@ const openHistory = throttleAction(async (item: Item) => {
             await addDoc(colRef, payload);
           }
 
-          Alert.alert(Saved, `Applied  shelf count(s).`);
+          showSuccess('✓ Shelf counts applied.');
         }}
       />
+
+      {modal}
 
       <PhotoCountModal
         visible={photoOpen}
@@ -3887,10 +3881,7 @@ const openHistory = throttleAction(async (item: Item) => {
           if (!venueId) throw new Error('Missing venueId');
 
           if (offline) {
-            Alert.alert(
-              'Offline',
-              'You are offline. You can still save the count normally, but photo evidence needs internet to upload.'
-            );
+            showInfo('Offline. You can still save the count normally, but photo evidence needs internet.');
             return;
           }
 
