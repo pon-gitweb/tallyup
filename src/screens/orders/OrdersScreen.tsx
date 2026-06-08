@@ -20,6 +20,8 @@ import {
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 function normalizeDisplayStatus(o:any){
   const s = (o?.status || "draft");
@@ -160,6 +162,8 @@ export default function OrdersScreen(){
   const venueId = useVenueId();
   const colours = useColours();
   const db = getFirestore();
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [tab,setTab]=useState<'drafts'|'pending'|'submitted'|'received'>('drafts');
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
@@ -189,15 +193,18 @@ export default function OrdersScreen(){
         updatedAt: serverTimestamp(),
       });
     } catch(e:any) {
-      Alert.alert('Approve failed', e?.message || 'Could not approve order.');
+      showError('Could not approve order.');
     }
-  }, [venueId, db]);
+  }, [venueId, db, showError]);
 
   const rejectOrder = useCallback(async(orderId: string) => {
     if (!venueId) return;
-    Alert.alert('Reject order', 'Return this order to draft so the staff member can edit it?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Return to draft', style: 'destructive', onPress: async () => {
+    confirm({
+      title: 'Reject order?',
+      message: 'This will return the order to draft status.',
+      confirmLabel: 'Return to draft',
+      destructive: true,
+      onConfirm: async () => {
         try {
           await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
             status: 'draft',
@@ -206,11 +213,11 @@ export default function OrdersScreen(){
             updatedAt: serverTimestamp(),
           });
         } catch(e:any) {
-          Alert.alert('Reject failed', e?.message || 'Could not return order to draft.');
+          showError('Could not reject order.');
         }
-      }},
-    ]);
-  }, [venueId, db]);
+      },
+    });
+  }, [venueId, db, confirm, showError]);
 
   useEffect(()=>{
     if(!venueId) return;
@@ -293,19 +300,21 @@ export default function OrdersScreen(){
 
   const startReceive=useCallback((row:OrderRow)=>{ setReceiveFor(row); },[]);
   const confirmDelete=useCallback(async (row:OrderRow)=>{
-    Alert.alert('Delete draft','This will permanently delete the draft and its lines.',[
-      { text:'Cancel', style:'cancel' },
-      { text:'Delete', style:'destructive', onPress: async ()=>{
+    confirm({
+      title: 'Delete order?',
+      message: 'This draft will be permanently deleted.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
         try{
           if (!venueId) return;
           await OrdersService.OrdersService.deleteDraft(venueId, row.id);
         }catch(e){
-          const msg = (e && (e as any).message) ? (e as any).message : 'Could not delete draft.';
-          Alert.alert('Delete failed', msg);
+          showError('Could not delete order.');
         }
-      }}
-    ]);
-  },[venueId]);
+      },
+    });
+  },[venueId, confirm, showError]);
 
   const renderItem=useCallback(({item}:{item:OrderRow})=>{
     const bits:string[]=[];
@@ -461,6 +470,8 @@ export default function OrdersScreen(){
       <TouchableOpacity style={S.fab} onPress={()=>nav.navigate('NewOrderStart' as never)}>
         <Text style={S.fabText}>New Order</Text>
       </TouchableOpacity>
+
+      {modal}
 
       {/* Receive Options Modal remains available (opened from OrderDetail) */}
       <Modal visible={!!receiveFor} transparent animationType="fade" onRequestClose={()=>setReceiveFor(null)}>

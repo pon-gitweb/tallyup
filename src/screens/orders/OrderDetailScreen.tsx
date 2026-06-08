@@ -5,6 +5,8 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndi
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -107,6 +109,9 @@ export default function OrderDetailScreen() {
   const colours = useColours();
   const orderId = (route.params as any)?.orderId as string;
 
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+
   const [orderMeta, setOrderMeta] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,10 +191,7 @@ export default function OrderDetailScreen() {
 
       // 🚦 Guard: no lines parsed → explain and bail
       if (!Array.isArray(review?.lines) || review.lines.length === 0) {
-        Alert.alert(
-          'No invoice lines found',
-          'We uploaded the file but could not detect any invoice lines. Please check the file or use Manual Receive instead.'
-        );
+        showInfo('No invoice lines found. Please check the file or use Manual Receive.');
         return;
       }
 
@@ -197,6 +199,7 @@ export default function OrderDetailScreen() {
       const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
 
       // If both exist and differ → hard block
+      // TODO: replace with branded modal when order detail is redesigned
       if (orderPo && parsedPo && orderPo !== parsedPo) {
         Alert.alert(
           'PO mismatch',
@@ -252,17 +255,9 @@ export default function OrderDetailScreen() {
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] csv pick/process fail', e);
-      const msg = humanizeInvoiceError(e);
-      Alert.alert(
-        'Invoice reader issue',
-        msg,
-        [
-          { text:'OK', style:'cancel' },
-          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
-        ]
-      );
+      showError(humanizeInvoiceError(e));
     }
-  },[venueId,orderId,orderMeta,lines]);
+  },[venueId,orderId,orderMeta,lines,showInfo,showError]);
 
   /** PDF: pick -> upload URI (no Blob) -> process -> optional PO guard -> stage review */
   const pickPdfAndUpload = useCallback(async ()=>{
@@ -283,15 +278,13 @@ export default function OrderDetailScreen() {
 
       // 🚦 Guard: no lines parsed → explain and bail
       if (!Array.isArray(parsed?.lines) || parsed.lines.length === 0) {
-        Alert.alert(
-          'No invoice lines found',
-          'We uploaded the PDF but could not detect any invoice lines. Please check the file or use Manual Receive instead.'
-        );
+        showInfo('No invoice lines found. Please check the file or use Manual Receive.');
         return;
       }
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
+      // TODO: replace with branded modal when order detail is redesigned
       if (orderPo && parsedPo && orderPo !== parsedPo) {
         Alert.alert(
           'PO mismatch',
@@ -318,17 +311,9 @@ export default function OrderDetailScreen() {
       setReceiveOpen(false);
     }catch(e){
       console.error('[OrderDetail] pdf upload/parse fail', e);
-      const msg = humanizeInvoiceError(e);
-      Alert.alert(
-        'Invoice reader issue',
-        msg,
-        [
-          { text:'OK', style:'cancel' },
-          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
-        ]
-      );
+      showError(humanizeInvoiceError(e));
     }
-  },[venueId,orderId,orderMeta]);
+  },[venueId,orderId,orderMeta,showInfo,showError]);
 
   /** Unified file picker routes to PDF/CSV flows */
   const pickFileAndRoute = useCallback(async ()=>{
@@ -355,15 +340,13 @@ export default function OrderDetailScreen() {
 
         // 🚦 Guard: no lines parsed → explain and bail
         if (!Array.isArray(parsed?.lines) || parsed.lines.length === 0) {
-          Alert.alert(
-            'No invoice lines found',
-            'We uploaded the PDF but could not detect any invoice lines. Please check the file or use Manual Receive instead.'
-          );
+          showInfo('No invoice lines found. Please check the file or use Manual Receive.');
           return;
         }
 
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
+        // TODO: replace with branded modal when order detail is redesigned
         if (orderPo && parsedPo && orderPo !== parsedPo) {
           Alert.alert(
             'PO mismatch',
@@ -399,16 +382,14 @@ export default function OrderDetailScreen() {
 
         // 🚦 Guard: no lines parsed → explain and bail
         if (!Array.isArray(review?.lines) || review.lines.length === 0) {
-          Alert.alert(
-            'No invoice lines found',
-            'We uploaded the file but could not detect any invoice lines. Please check the file or use Manual Receive instead.'
-          );
+          showInfo('No invoice lines found. Please check the file or use Manual Receive.');
           return;
         }
 
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
 
+        // TODO: replace with branded modal when order detail is redesigned
         if (orderPo && parsedPo && orderPo !== parsedPo) {
           Alert.alert(
             'PO mismatch',
@@ -456,20 +437,12 @@ export default function OrderDetailScreen() {
         return;
       }
 
-      Alert.alert('Unsupported file', 'Please choose a PDF or CSV invoice.');
+      showInfo('Please choose a PDF or CSV invoice.');
     }catch(e){
       console.error('[OrderDetail] file pick route fail', e);
-      const msg = humanizeInvoiceError(e);
-      Alert.alert(
-        'Invoice reader issue',
-        msg,
-        [
-          { text:'OK', style:'cancel' },
-          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
-        ]
-      );
+      showError(humanizeInvoiceError(e));
     }
-  },[venueId, orderId, orderMeta, lines]);
+  },[venueId, orderId, orderMeta, lines, showInfo, showError]);
 
   const ConfidenceBanner = ({ kind, score }:{ kind:'csv'|'pdf'; score?:number })=>{
     const t = tierForConfidence(score);
@@ -533,23 +506,15 @@ export default function OrderDetailScreen() {
           warnings: csvReview.warnings
         }
       });
-      Alert.alert('Received', 'Invoice posted and order marked received.');
+      showSuccess('✓ Invoice posted. Order marked received.');
       setReceiveOpen(false);
       setCsvReview(null);
       nav.goBack();
     }catch(e:any){
       autoConfirmedRef.current = false;
-      const msg = humanizeInvoiceError(e);
-      Alert.alert(
-        'Receive failed',
-        msg,
-        [
-          { text:'OK', style:'cancel' },
-          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
-        ]
-      );
+      showError(humanizeInvoiceError(e));
     }
-  }, [csvReview, venueId, orderId, nav]);
+  }, [csvReview, venueId, orderId, nav, showSuccess, showError]);
 
   // helper to post a PDF review (manual confirm only)
   const postPdfReview = useCallback(async () => {
@@ -566,22 +531,14 @@ export default function OrderDetailScreen() {
           warnings: pdfReview.warnings
         }
       });
-      Alert.alert('Received', 'Invoice posted and order marked received.');
+      showSuccess('✓ Invoice posted. Order marked received.');
       setReceiveOpen(false);
       setPdfReview(null);
       nav.goBack();
     }catch(e:any){
-      const msg = humanizeInvoiceError(e);
-      Alert.alert(
-        'Receive failed',
-        msg,
-        [
-          { text:'OK', style:'cancel' },
-          { text:'Manual Receive', onPress: ()=>setManualOpen(true) },
-        ]
-      );
+      showError(humanizeInvoiceError(e));
     }
-  }, [pdfReview, venueId, orderId, nav]);
+  }, [pdfReview, venueId, orderId, nav, showSuccess, showError]);
 
   // Auto-confirm CSV on very high confidence, *unless* invoice looks weird
   useEffect(()=>{
@@ -593,10 +550,7 @@ export default function OrderDetailScreen() {
       const stats = analyseParsedInvoice(csvReview.lines || []);
       const weirdMsg = parsedInvoiceWeirdMessage(stats);
       if (weirdMsg) {
-        Alert.alert(
-          'Please review invoice',
-          `${weirdMsg}\n\nWe’ve saved the parsed invoice, but automatic posting was disabled so you can double-check first.`
-        );
+        showInfo(`${weirdMsg} Automatic posting disabled — please review before confirming.`);
         autoConfirmedRef.current = true;
         return;
       }
@@ -787,6 +741,8 @@ export default function OrderDetailScreen() {
           onDone={()=>{ setManualOpen(false); nav.goBack(); }}
         />
       </Modal>
+
+      {modal}
     </View>
   );
 }
