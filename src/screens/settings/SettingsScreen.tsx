@@ -933,13 +933,13 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.navy }]}
-            onPress={() => Linking.openURL('https://www.hostistock.com/privacy')}
+            onPress={() => Linking.openURL('https://www.hosti.co.nz/legal/privacy')}
           >
             <Text style={styles.btnText}>Privacy Policy</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.navy }]}
-            onPress={() => Linking.openURL('https://www.hostistock.com/terms')}
+            onPress={() => Linking.openURL('https://www.hosti.co.nz/legal/terms')}
           >
             <Text style={styles.btnText}>Terms of Service</Text>
           </TouchableOpacity>
