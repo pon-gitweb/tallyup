@@ -59,6 +59,14 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const lastVenueIdRef = useRef<string | null>(undefined as any);
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
   const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
+  const userSnapshotFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearUserSnapshotFailsafe() {
+    if (userSnapshotFailsafeRef.current) {
+      clearTimeout(userSnapshotFailsafeRef.current);
+      userSnapshotFailsafeRef.current = null;
+    }
+  }
 
   useEffect(() => {
     if (__DEV__) console.log('[TallyUp VenueProvider] mount');
@@ -76,6 +84,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
       if (!u) {
         setLoading(false);
+        clearUserSnapshotFailsafe();
         if (unsubUserDocRef.current) { unsubUserDocRef.current(); unsubUserDocRef.current = null; }
         return;
       }
@@ -102,7 +111,19 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       }
 
       const uref = doc(db, 'users', u.uid);
+
+      // Failsafe — if the first user-doc snapshot never arrives (e.g. a
+      // dead connection that never invokes the error callback either),
+      // `loading` would otherwise stay true forever. Bound it to 10s.
+      clearUserSnapshotFailsafe();
+      userSnapshotFailsafeRef.current = setTimeout(() => {
+        userSnapshotFailsafeRef.current = null;
+        if (__DEV__) console.warn('[TallyUp VenueProvider] user snapshot timeout — proceeding without user data');
+        setLoading(false);
+      }, 10000);
+
       unsubUserDocRef.current = onSnapshot(uref, async (snap) => {
+        clearUserSnapshotFailsafe();
         const data = snap.exists() ? (snap.data() as any) : null;
         const currentVenue: string | null = data?.activeVenueId ?? data?.venueId ?? null;
         const currentVenueIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
@@ -129,6 +150,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
           await attemptAutoAttach(u);
         }
       }, (err) => {
+        clearUserSnapshotFailsafe();
         if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
         setVenueId(null);
         setLoading(false);
@@ -137,6 +159,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       unsubAuth();
+      clearUserSnapshotFailsafe();
       if (unsubUserDocRef.current) { unsubUserDocRef.current(); unsubUserDocRef.current = null; }
     };
   }, [nonce]);

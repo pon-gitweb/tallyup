@@ -50,7 +50,12 @@ function AuthedStack({ pendingInvite, clearPendingInvite }: {
     let isMounted = true;
     async function checkWelcome() {
       try {
-        const seen = await AsyncStorage.getItem(WELCOME_STORAGE_KEY);
+        // Bounded — AsyncStorage should never take 3s, but this prevents
+        // an indefinite hang on a broken store from blocking app open.
+        const seen = await Promise.race([
+          AsyncStorage.getItem(WELCOME_STORAGE_KEY),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]);
         if (!isMounted) return;
         setInitialRoute(seen ? 'Main' : 'WelcomeBeta');
       } catch {
@@ -77,8 +82,8 @@ function AuthedStack({ pendingInvite, clearPendingInvite }: {
 
   if (initialRoute == null) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
-        <ActivityIndicator size="large" color="#0F172A" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f3ee' }}>
+        <ActivityIndicator size="large" color="#1b4f72" />
       </View>
     );
   }

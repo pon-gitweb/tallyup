@@ -18,50 +18,65 @@ export default function HomeRouterScreen() {
   const { loading, venueId, venueIds } = useVenue();
   const routed = useRef(false);
 
-  // Fallback: if loading never resolves, route based on last known venue type after 5s
+  // Emergency last-resort fallback — the venue-doc fetch below has its own
+  // 8s internal timeout, so this should never fire in practice. It exists
+  // only to guarantee `loading` can never spin forever (10s > 8s getDoc bound).
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (!routed.current) {
-        routed.current = true;
-        let lastKnownType: string | null = null;
-        try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
-        console.warn('[HomeRouter] timeout — routing to', lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs');
-        if (lastKnownType === 'festival') {
-          nav.reset({ index: 0, routes: [{ name: 'FestivalDashboard' }] });
-        } else {
-          nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
-        }
-      }
-    }, 5000);
+      if (routed.current) return;
+      routed.current = true;
+      let lastKnownType: string | null = null;
+      try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
+      console.warn('[HomeRouter] emergency fallback — routing to', lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs');
+      nav.reset({ index: 0, routes: [{ name: lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs' }] });
+    }, 10000);
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (loading || routed.current) return;
-    routed.current = true;
 
     if (!venueId) {
       if (venueIds && venueIds.length > 0) {
         // User has venues but activeVenueId not set yet — VenueProvider is auto-selecting.
         // Don't route yet; wait for the next context update with a resolved venueId.
-        routed.current = false;
         return;
       }
       // Truly new user — no venue created yet. Send to venue creation.
+      routed.current = true;
       nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
       return;
     }
 
-    getDoc(doc(db, 'venues', venueId))
-      .then(snap => {
-        const vt = snap.exists() ? (snap.data() as any)?.venueType : null;
-        // Festival ONLY when explicitly set. null/undefined/anything-else → venue app.
-        const destination = vt === 'festival' ? 'FestivalDashboard' : 'MainTabs';
-        nav.reset({ index: 0, routes: [{ name: destination }] });
-      })
-      .catch(() => {
-        nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
-      });
+    (async () => {
+      // Bounded — if Firestore hangs, fall back to the cached venue type
+      // instead of leaving the spinner up indefinitely.
+      const venueSnap = await Promise.race([
+        getDoc(doc(db, 'venues', venueId)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+
+      // Guard against double-navigation if the emergency fallback already routed
+      if (routed.current) return;
+
+      if (!venueSnap || !venueSnap.exists()) {
+        let lastKnownType: string | null = null;
+        try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
+        routed.current = true;
+        nav.reset({ index: 0, routes: [{ name: lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs' }] });
+        return;
+      }
+
+      const vt = (venueSnap.data() as any)?.venueType;
+      // Festival ONLY when explicitly set. null/undefined/anything-else → venue app.
+      const destination = vt === 'festival' ? 'FestivalDashboard' : 'MainTabs';
+      routed.current = true;
+      nav.reset({ index: 0, routes: [{ name: destination }] });
+    })().catch(() => {
+      if (routed.current) return;
+      routed.current = true;
+      nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
+    });
   }, [loading, venueId]);
 
   return (
