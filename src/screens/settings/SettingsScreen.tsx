@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  Pressable,
   ScrollView,
   Switch,
   KeyboardAvoidingView,
@@ -39,13 +40,28 @@ import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 import { usePendingBudgetApprovalsCount } from '../../hooks/usePendingBudgetApprovals';
 import { useVenueId, useVenueType } from '../../context/VenueProvider';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type MemberDoc = { role?: string };
+
+const TIMEZONE_OPTIONS = [
+  { value: 'Pacific/Auckland', label: 'NZ — Auckland' },
+  { value: 'Pacific/Chatham', label: 'NZ — Chatham Islands' },
+  { value: 'Australia/Sydney', label: 'AU — Sydney / Melbourne' },
+  { value: 'Australia/Brisbane', label: 'AU — Brisbane' },
+  { value: 'Australia/Perth', label: 'AU — Perth' },
+];
 
 export default function SettingsScreen() {
   const themeColours = useColours();
   const insets = useSafeAreaInsets() ?? { bottom: 0, top: 0 };
   const styles = makeStyles(themeColours);
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+
+  const [showTimezonePicker, setShowTimezonePicker] = useState(false);
+
   const onShare = React.useCallback(async () => {
     try {
       await Share.share({
@@ -53,9 +69,9 @@ export default function SettingsScreen() {
         title: 'Hosti — Inventory for hospitality',
       });
     } catch (e: any) {
-      Alert.alert('Could not share', e?.message || 'Please try again.');
+      showError('Could not share.');
     }
-  }, []);
+  }, [showError]);
   const nav = useNavigation<any>();
   const auth = getAuth();
   const user = auth.currentUser;
@@ -104,7 +120,7 @@ export default function SettingsScreen() {
   const handleToggleWeeklySummary = async (value: boolean) => {
     if (!venueId) return;
     if (!isManager) {
-      Alert.alert('Manager only', 'Only managers and owners can change email preferences.');
+      showInfo('Manager access required.');
       return;
     }
     try {
@@ -113,42 +129,33 @@ export default function SettingsScreen() {
       if (value) update.timezone = venueTimezone || 'Pacific/Auckland';
       await updateDoc(doc(db, 'venues', venueId), update);
     } catch (e: any) {
-      Alert.alert('Could not update preference', e?.message ?? String(e));
+      showError('Could not update preference.');
     }
   };
 
   const handleChangeTimezone = () => {
     if (!venueId || !isManager) return;
-    const save = async (tz: string) => {
-      try {
-        await updateDoc(doc(db, 'venues', venueId), { timezone: tz });
-      } catch (e: any) {
-        Alert.alert('Could not save timezone', e?.message ?? String(e));
-      }
-    };
-    Alert.alert(
-      'Select Timezone',
-      'Choose your venue timezone for the Monday 8am email.',
-      [
-        { text: 'NZ — Auckland',            onPress: () => save('Pacific/Auckland') },
-        { text: 'NZ — Chatham Islands',     onPress: () => save('Pacific/Chatham') },
-        { text: 'AU — Sydney / Melbourne',  onPress: () => save('Australia/Sydney') },
-        { text: 'AU — Brisbane',            onPress: () => save('Australia/Brisbane') },
-        { text: 'AU — Perth',               onPress: () => save('Australia/Perth') },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
+    setShowTimezonePicker(true);
+  };
+
+  const saveTimezone = async (tz: string) => {
+    if (!venueId) return;
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { timezone: tz });
+    } catch (e: any) {
+      showError('Could not save timezone.');
+    }
   };
 
   const handleToggleAutoSuggestPar = async (value: boolean) => {
     if (!venueId || !isManager) {
-      Alert.alert('Manager only', 'Only managers and owners can change this setting.');
+      showInfo('Manager access required.');
       return;
     }
     try {
       await updateDoc(doc(db, 'venues', venueId), { autoSuggestPar: value });
     } catch (e: any) {
-      Alert.alert('Could not update preference', e?.message ?? String(e));
+      showError('Could not update preference.');
     }
   };
 
@@ -210,8 +217,8 @@ export default function SettingsScreen() {
 
   async function saveDisplayName() {
     const name = displayNameInput.trim();
-    if (name.length < 2) { Alert.alert('Name too short', 'Please enter at least 2 characters.'); return; }
-    if (name.length > 50) { Alert.alert('Name too long', 'Maximum 50 characters.'); return; }
+    if (name.length < 2) { showInfo('Name must be at least 2 characters.'); return; }
+    if (name.length > 50) { showInfo('Name must be under 50 characters.'); return; }
     setSavingDisplayName(true);
     try {
       const currentUser = auth.currentUser;
@@ -221,7 +228,7 @@ export default function SettingsScreen() {
       setEditingDisplayName(false);
       showToast('Name updated ✓');
     } catch (e: any) {
-      Alert.alert('Could not save name', e?.message || 'Please try again.');
+      showError('Could not save name.');
     } finally {
       setSavingDisplayName(false);
     }
@@ -230,15 +237,15 @@ export default function SettingsScreen() {
   async function saveVenueName() {
     if (!venueId) return;
     const name = venueNameInput.trim();
-    if (name.length < 2) { Alert.alert('Name too short', 'Please enter at least 2 characters.'); return; }
-    if (name.length > 100) { Alert.alert('Name too long', 'Maximum 100 characters.'); return; }
+    if (name.length < 2) { showInfo('Venue name must be at least 2 characters.'); return; }
+    if (name.length > 100) { showInfo('Venue name must be under 100 characters.'); return; }
     setSavingVenueName(true);
     try {
       await updateDoc(doc(db, 'venues', venueId), { name });
       setEditingVenueName(false);
       showToast('Venue name updated ✓');
     } catch (e: any) {
-      Alert.alert('Could not save venue name', e?.message || 'Please try again.');
+      showError('Could not save venue name.');
     } finally {
       setSavingVenueName(false);
     }
@@ -250,65 +257,19 @@ export default function SettingsScreen() {
       if (__DEV__) console.log('[TallyUp Settings] signOut success');
     } catch (e:any) {
       if (__DEV__) console.log('[TallyUp Settings] signOut error', JSON.stringify({ code: e?.code, message: e?.message }));
-      Alert.alert('Sign Out Failed', e?.message || 'Unknown error');
+      showError('Sign out failed.');
     }
   }
 
   function doSetupWizardStub() {
-    Alert.alert(
-      'Setup Wizard',
-      'We are refreshing the setup flow. For now, use Stock Control to manage suppliers and products.'
-    );
+    showInfo('Setup wizard coming soon.');
   }
 
   function doFullResetStub() {
-    Alert.alert(
-      'Full Reset',
-      'The full venue-wide stock-take reset is not available here. Use per-department long-press reset from the Departments screen.'
-    );
+    showInfo('Use per-department long-press reset from the Departments screen.');
   }
 
-  async function doDeleteAccount() {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return;
-
-    // Step 1 — initial confirmation
-    const step1 = await new Promise<boolean>(resolve =>
-      Alert.alert(
-        'Delete your account?',
-        'This will permanently delete your account and remove you from all venues. This cannot be undone.',
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Delete Account', style: 'destructive', onPress: () => resolve(true) },
-        ],
-        { cancelable: false }
-      )
-    );
-    if (!step1) return;
-
-    // Step 2 — extra warning if user is venue owner
-    if (venueId) {
-      try {
-        const venueSnap = await getDoc(doc(db, 'venues', venueId));
-        const ownerUid = (venueSnap.data() as any)?.ownerUid;
-        if (ownerUid === currentUser.uid) {
-          const step2 = await new Promise<boolean>(resolve =>
-            Alert.alert(
-              `You are the owner of ${venueName || 'this venue'}`,
-              `Deleting your account will also delete this venue and all its data including stocktakes, products, orders and reports.\n\nAre you absolutely sure?`,
-              [
-                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-                { text: 'Yes, delete everything', style: 'destructive', onPress: () => resolve(true) },
-              ],
-              { cancelable: false }
-            )
-          );
-          if (!step2) return;
-        }
-      } catch {}
-    }
-
-    // Step 3 — execute deletion via backend
+  async function executeAccountDeletion(currentUser: any) {
     setDeletingAccount(true);
     try {
       const idToken = await currentUser.getIdToken();
@@ -320,21 +281,53 @@ export default function SettingsScreen() {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err?.error || 'Account deletion failed');
       }
-      Alert.alert('Account deleted', 'Your account has been permanently deleted.');
+      showSuccess('✓ Account deleted.');
       await auth.signOut();
     } catch (e: any) {
-      Alert.alert('Deletion failed', e?.message || 'Please try again or contact support at office@hosti.co.nz.');
+      showError('Could not delete account.');
     } finally {
       setDeletingAccount(false);
     }
   }
 
+  async function proceedToStep2Delete(currentUser: any) {
+    if (venueId) {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', venueId));
+        const ownerUid = (venueSnap.data() as any)?.ownerUid;
+        if (ownerUid === currentUser.uid) {
+          confirm({
+            title: `You are the owner of ${venueName || 'this venue'}`,
+            message: `Deleting your account will also delete this venue and all its data including stocktakes, products, orders and reports.\n\nAre you absolutely sure?`,
+            confirmLabel: 'Delete everything',
+            destructive: true,
+            onConfirm: () => executeAccountDeletion(currentUser),
+          });
+          return;
+        }
+      } catch {}
+    }
+    executeAccountDeletion(currentUser);
+  }
+
+  function doDeleteAccount() {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    confirm({
+      title: 'Delete your account?',
+      message: 'This will permanently delete your account and remove you from all venues. This cannot be undone.',
+      confirmLabel: 'Delete Account',
+      destructive: true,
+      onConfirm: () => proceedToStep2Delete(currentUser),
+    });
+  }
+
   async function doChangePassword() {
     const currentUser = auth.currentUser;
     if (!currentUser || !currentUser.email) return;
-    if (!currentPw) { Alert.alert('Missing field', 'Enter your current password.'); return; }
-    if (newPw.length < 6) { Alert.alert('Password too short', 'New password must be at least 6 characters.'); return; }
-    if (newPw !== confirmPw) { Alert.alert('Passwords do not match', 'New password and confirmation must match.'); return; }
+    if (!currentPw) { showInfo('Please enter your current password.'); return; }
+    if (newPw.length < 6) { showInfo('New password must be at least 6 characters.'); return; }
+    if (newPw !== confirmPw) { showInfo('Passwords do not match.'); return; }
     setSavingPw(true);
     try {
       const credential = EmailAuthProvider.credential(currentUser.email, currentPw);
@@ -346,9 +339,9 @@ export default function SettingsScreen() {
     } catch (e: any) {
       const code = (e?.code || '').toString();
       if (code.includes('wrong-password') || code.includes('invalid-credential')) {
-        Alert.alert('Incorrect password', 'Your current password is incorrect.');
+        showError('Incorrect password.');
       } else {
-        Alert.alert('Could not update password', e?.message || 'Please try again.');
+        showError('Could not update password.');
       }
     } finally {
       setSavingPw(false);
@@ -359,8 +352,8 @@ export default function SettingsScreen() {
     const currentUser = auth.currentUser;
     if (!currentUser || !currentUser.email) return;
     const trimmedEmail = newEmail.trim();
-    if (!emailPwForAuth) { Alert.alert('Missing field', 'Enter your current password to verify.'); return; }
-    if (!trimmedEmail || !trimmedEmail.includes('@')) { Alert.alert('Invalid email', 'Enter a valid email address.'); return; }
+    if (!emailPwForAuth) { showInfo('Please enter your password to confirm.'); return; }
+    if (!trimmedEmail || !trimmedEmail.includes('@')) { showInfo('Please enter a valid email address.'); return; }
     setSavingEmail(true);
     try {
       const credential = EmailAuthProvider.credential(currentUser.email, emailPwForAuth);
@@ -372,11 +365,11 @@ export default function SettingsScreen() {
     } catch (e: any) {
       const code = (e?.code || '').toString();
       if (code.includes('wrong-password') || code.includes('invalid-credential')) {
-        Alert.alert('Incorrect password', 'Your current password is incorrect.');
+        showError('Incorrect password.');
       } else if (code.includes('email-already-in-use')) {
-        Alert.alert('Email already registered', 'That address is already linked to another account.');
+        showError('That email is already registered.');
       } else {
-        Alert.alert('Could not update email', e?.message || 'Please try again.');
+        showError('Could not update email.');
       }
     } finally {
       setSavingEmail(false);
@@ -385,6 +378,19 @@ export default function SettingsScreen() {
 
   async function doResetCycle() {
     if (!venueId) return;
+
+    const performReset = async () => {
+      setResettingCycle(true);
+      try {
+        await resetAllDepartmentsStockTake(venueId);
+        showSuccess('✓ Cycle reset. Ready for new stocktake.');
+      } catch (e: any) {
+        showError('Could not reset cycle.');
+      } finally {
+        setResettingCycle(false);
+      }
+    };
+
     try {
       const currentUid = auth.currentUser?.uid ?? null;
       const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
@@ -403,42 +409,20 @@ export default function SettingsScreen() {
       const message = inProgressUser
         ? `${inProgressUser} is currently counting. Resetting now will discard their in-progress count. Are you sure?`
         : 'This resets all areas for a fresh count. Completed data is saved.';
-      Alert.alert('Start new stocktake?', message, [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: inProgressUser ? 'Reset anyway' : 'Start new cycle',
-          style: inProgressUser ? 'destructive' : 'default',
-          onPress: async () => {
-            setResettingCycle(true);
-            try {
-              await resetAllDepartmentsStockTake(venueId);
-              Alert.alert('Cycle reset', 'All areas have been reset. You can start a fresh stocktake.');
-            } catch (e: any) {
-              Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown'));
-            } finally {
-              setResettingCycle(false);
-            }
-          },
-        },
-      ]);
+      confirm({
+        title: 'Start new stocktake?',
+        message,
+        confirmLabel: inProgressUser ? 'Reset anyway' : 'Start new cycle',
+        destructive: !!inProgressUser,
+        onConfirm: performReset,
+      });
     } catch {
-      Alert.alert('Start new stocktake?', 'This resets all areas for a fresh count.', [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start new cycle',
-          onPress: async () => {
-            setResettingCycle(true);
-            try {
-              await resetAllDepartmentsStockTake(venueId);
-              Alert.alert('Cycle reset', 'All areas have been reset. You can start a fresh stocktake.');
-            } catch (e: any) {
-              Alert.alert('Error', 'Could not reset: ' + (e?.message || e?.code || 'unknown'));
-            } finally {
-              setResettingCycle(false);
-            }
-          },
-        },
-      ]);
+      confirm({
+        title: 'Start new stocktake?',
+        message: 'This resets all areas for a fresh count.',
+        confirmLabel: 'Start new cycle',
+        onConfirm: performReset,
+      });
     }
   }
 
@@ -603,14 +587,11 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <TouchableOpacity
             style={styles.btn}
-            onPress={() => Alert.alert(
-              'Sign out of Hosti?',
-              '',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign out', style: 'default', onPress: doSignOut },
-              ]
-            )}
+            onPress={() => confirm({
+              title: 'Sign out?',
+              confirmLabel: 'Sign out',
+              onConfirm: doSignOut,
+            })}
           >
             <Text style={styles.btnText}>Sign Out</Text>
           </TouchableOpacity>
@@ -660,7 +641,7 @@ export default function SettingsScreen() {
               style={[styles.btn, { backgroundColor: themeColours.primary }]}
               onPress={() => {
                 if (!isManager) {
-                  Alert.alert('Manager access required', 'Only managers and owners can view and action adjustments.');
+                  showInfo('Manager access required.');
                   return;
                 }
                 nav.navigate('Adjustments');
@@ -738,6 +719,7 @@ export default function SettingsScreen() {
                   }}>
                     <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontWeight: '700' }}>Coming soon</Text>
                   </View>
+                  {/* TODO: replace with branded modal when POS integration is built */}
                   <TouchableOpacity
                     onPress={() => Alert.alert(
                       `Connect ${label}`,
@@ -962,9 +944,9 @@ export default function SettingsScreen() {
             onPress={async () => {
               try {
                 await HintService.resetAll();
-                Alert.alert('Done', 'Tips have been reset.');
+                showSuccess('✓ Tips reset.');
               } catch (e: any) {
-                Alert.alert('Error', 'Could not reset tips. Please try again.');
+                showError('Could not reset tips.');
               }
             }}
           >
@@ -1197,6 +1179,40 @@ export default function SettingsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* ── TIMEZONE PICKER ── */}
+      <Modal
+        visible={showTimezonePicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTimezonePicker(false)}
+      >
+        <Pressable style={styles.pickerOverlay} onPress={() => setShowTimezonePicker(false)}>
+          <Pressable style={[styles.pickerSheet, { backgroundColor: themeColours.surface }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={[styles.pickerTitle, { color: themeColours.text }]}>Select timezone</Text>
+            {TIMEZONE_OPTIONS.map(({ value, label }) => (
+              <TouchableOpacity
+                key={value}
+                style={[
+                  styles.pickerOption,
+                  { borderBottomColor: themeColours.border },
+                  venueTimezone === value && { backgroundColor: themeColours.background },
+                ]}
+                onPress={async () => {
+                  setShowTimezonePicker(false);
+                  await saveTimezone(value);
+                }}
+              >
+                <Text style={[styles.pickerOptionText, { color: themeColours.text }]}>{label}</Text>
+                {venueTimezone === value && (
+                  <Text style={{ color: themeColours.primary }}>✓</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {modal}
       </KeyboardAvoidingView>
     </LocalThemeGate>
   );
@@ -1300,5 +1316,33 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     },
     aboutCloseText: { color: c.primaryText, fontWeight: '800' },
     versionText: { fontSize: 12, color: c.textSecondary, textAlign: 'center', marginTop: 8 },
+
+    pickerOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'flex-end',
+    },
+    pickerSheet: {
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: 24,
+      paddingBottom: 40,
+    },
+    pickerTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 16,
+    },
+    pickerOption: {
+      paddingVertical: 14,
+      paddingHorizontal: 4,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottomWidth: 0.5,
+    },
+    pickerOptionText: {
+      fontSize: 15,
+    },
   });
 }
