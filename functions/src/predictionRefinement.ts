@@ -144,7 +144,7 @@ async function loadPriorYearData(
   // PRIORITY 1: Imported historical data (CSV/photo/manual via FestivalHistoricalDataScreen)
   try {
     const historicalSnap = await db
-      .collection(`venues/${venueId}/event/historicalData`)
+      .collection(`venues/${venueId}/event/details/historicalData`)
       .orderBy("year", "desc")
       .limit(3)
       .get();

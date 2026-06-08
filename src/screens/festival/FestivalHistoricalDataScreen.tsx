@@ -71,7 +71,7 @@ export default function FestivalHistoricalDataScreen() {
     if (!venueId) return;
     (async () => {
       try {
-        const histSnap = await getDocs(collection(db, 'venues', venueId, 'event', 'historicalData'));
+        const histSnap = await getDocs(collection(db, 'venues', venueId, 'event', 'details', 'historicalData'));
         setExistingYears(histSnap.docs.map(d => (d.data() as any).year).filter(Boolean).sort((a, b) => b - a));
       } catch {}
       try {
@@ -171,7 +171,7 @@ export default function FestivalHistoricalDataScreen() {
     setSaving(true);
     try {
       const uid = auth.currentUser?.uid ?? 'unknown';
-      const yearRef = doc(collection(db, 'venues', venueId, 'event', 'historicalData'));
+      const yearRef = doc(collection(db, 'venues', venueId, 'event', 'details', 'historicalData'));
       await setDoc(yearRef, {
         year: yearNum,
         source: mode,

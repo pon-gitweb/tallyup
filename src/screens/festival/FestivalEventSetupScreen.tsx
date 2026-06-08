@@ -350,7 +350,7 @@ export default function FestivalEventSetupScreen() {
 
   function loadHistoricalData() {
     if (!venueId) return;
-    getDocs(collection(db, 'venues', venueId, 'event', 'historicalData')).then(snap => {
+    getDocs(collection(db, 'venues', venueId, 'event', 'details', 'historicalData')).then(snap => {
       setHistoricalDataCount(snap.size);
     }).catch(() => {});
   }
