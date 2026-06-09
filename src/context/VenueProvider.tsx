@@ -89,6 +89,13 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Authenticated but email not verified — set user, skip all venue loading.
+      // HomeRouter will catch this and redirect to EmailVerificationScreen.
+      if (!u.emailVerified) {
+        setLoading(false);
+        return;
+      }
+
       // Ensure users/{uid} exists — bounded so a hung getDoc/setDoc can't block
       // bootstrap (and thus `loading`) forever on a bad connection.
       const BOOTSTRAP_TIMEOUT = 8000;

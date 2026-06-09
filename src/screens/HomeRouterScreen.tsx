@@ -15,7 +15,7 @@ import { useVenue } from '../context/VenueProvider';
  */
 export default function HomeRouterScreen() {
   const nav = useNavigation<any>();
-  const { loading, venueId, venueIds } = useVenue();
+  const { loading, venueId, venueIds, user } = useVenue();
   const routed = useRef(false);
 
   // Emergency last-resort fallback — the venue-doc fetch below has its own
@@ -35,6 +35,13 @@ export default function HomeRouterScreen() {
 
   useEffect(() => {
     if (loading || routed.current) return;
+
+    // Authenticated but email not yet verified — hold here until confirmed
+    if (user && !user.emailVerified) {
+      routed.current = true;
+      nav.reset({ index: 0, routes: [{ name: 'EmailVerification' }] });
+      return;
+    }
 
     if (!venueId) {
       if (venueIds && venueIds.length > 0) {
@@ -77,7 +84,7 @@ export default function HomeRouterScreen() {
       routed.current = true;
       nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
     });
-  }, [loading, venueId]);
+  }, [loading, venueId, user]);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center' }}>

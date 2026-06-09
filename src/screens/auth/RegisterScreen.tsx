@@ -10,7 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
@@ -75,7 +75,13 @@ export default function RegisterScreen() {
         if (__DEV__) console.warn('[Register] user doc write failed:', e?.message);
       });
 
-      navigation.navigate('CreateVenue');
+      // Send verification email — fire and forget.
+      // If it fails, the user can resend from the verification screen.
+      sendEmailVerification(cred.user).catch(e =>
+        console.warn('[Register] verification email failed:', e?.message)
+      );
+
+      navigation.navigate('EmailVerification');
     } catch (e: any) {
       if (e?.message === 'auth-timeout') {
         Alert.alert('Connection is slow', 'Please check your network and try again.');

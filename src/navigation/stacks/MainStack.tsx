@@ -76,6 +76,7 @@ import OrderDetailScreen from '../../screens/orders/OrderDetailScreen';
 // Home router (venueType-based routing)
 import HomeRouterScreen from '../../screens/HomeRouterScreen';
 import CreateVenueScreen from '../../screens/CreateVenueScreen';
+import EmailVerificationScreen from '../../screens/auth/EmailVerificationScreen';
 import VenueListScreen from '../../screens/venues/VenueListScreen';
 
 // Festival
@@ -176,6 +177,8 @@ export default function MainStack() {
     >
       {/* Routing screen — reads venueType and resets to MainTabs or FestivalDashboard */}
       <Stack.Screen name="HomeRouter" component={HomeRouterScreen} options={{ headerShown: false }} />
+      {/* Email verification — shown after registration before venue creation */}
+      <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} options={{ headerShown: false }} />
       {/* Venue creation — reachable for new users with no venue */}
       <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue', headerShown: false }} />
       {/* Venue list — manage all venues for this account */}
