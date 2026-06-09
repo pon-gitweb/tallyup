@@ -2,8 +2,10 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView,
-  ActivityIndicator, Alert, TextInput, Modal,
+  ActivityIndicator, TextInput, Modal,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation } from '@react-navigation/native';
 import {
   doc, updateDoc, serverTimestamp, collection, addDoc,
@@ -46,6 +48,8 @@ export default function BringYourDataScreen() {
   const venueId = useVenueId();
   const colours = useColours();
   const S = makeStyles(colours);
+  const { showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [step, setStep] = useState<Step>('intro');
   const [busy, setBusy] = useState(false);
@@ -97,7 +101,7 @@ export default function BringYourDataScreen() {
       setProductsMode('csv');
       setProductsExtracted([]);
     } catch (e: any) {
-      Alert.alert('File error', e?.message || 'Could not read file');
+      showError(e?.message || 'Could not read file');
     }
   }, []);
 
@@ -134,7 +138,7 @@ export default function BringYourDataScreen() {
         if (!processRes.ok) throw new Error('Could not read PDF');
         const result = await processRes.json();
         if (result.scannedPdf) {
-          Alert.alert('Scanned PDF detected', result.message || 'Upload a digital PDF or CSV for best results.');
+          showInfo(result.message || 'Upload a digital PDF or CSV for best results.');
           setProductsMode(null);
           return;
         }
@@ -145,7 +149,7 @@ export default function BringYourDataScreen() {
         setProductsCsv(null);
       }
     } catch (e: any) {
-      Alert.alert('Could not read file', e?.message || 'Try a CSV export instead.');
+      showError(e?.message || 'Try a CSV export instead.');
       setProductsMode(null);
     } finally {
       setProcessingProducts(false);
@@ -159,14 +163,14 @@ export default function BringYourDataScreen() {
       const asset = pick.assets?.[0] ?? pick;
       await extractProductsFromFile(String(asset.uri), 'pdf', String(asset.name || 'stocktake.pdf'));
     } catch (e: any) {
-      Alert.alert('File error', e?.message || 'Could not open file');
+      showError(e?.message || 'Could not open file');
     }
   }, [venueId]);
 
   const captureProductsPhoto = useCallback(async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Camera required', 'Allow camera access to photograph your stocktake sheet.');
+      showInfo('Camera access is required to photograph your stocktake sheet.');
       return;
     }
     const pic = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.9 });
@@ -210,7 +214,7 @@ export default function BringYourDataScreen() {
       if (!processRes.ok) throw new Error('Processing failed');
       const result = await processRes.json();
       if (result.scannedPdf) {
-        Alert.alert('Scanned PDF detected', result.message || 'Upload a digital PDF or CSV from your supplier for best results.');
+        showInfo(result.message || 'Upload a digital PDF or CSV from your supplier for best results.');
         return;
       }
       // Deduplication check
@@ -234,7 +238,7 @@ export default function BringYourDataScreen() {
       setInvoicesFileName(name);
       setInvoicesType(type);
     } catch (e: any) {
-      Alert.alert('Could not process invoice', e?.message || 'Saved — you can match it later from Orders.');
+      showError(e?.message || 'Saved — you can match it later from Orders.');
       setInvoicesFileName(name);
       setInvoicesType(type);
       setInvoiceLines([]);
@@ -251,7 +255,7 @@ export default function BringYourDataScreen() {
       const asset = pick.assets?.[0] ?? pick;
       await processInvoiceFile(String(asset.uri), 'csv', String(asset.name || 'invoices.csv'));
     } catch (e: any) {
-      Alert.alert('File error', e?.message || 'Could not open file');
+      showError(e?.message || 'Could not open file');
     }
   }, [venueId]);
 
@@ -262,7 +266,7 @@ export default function BringYourDataScreen() {
       const asset = pick.assets?.[0] ?? pick;
       await processInvoiceFile(String(asset.uri), 'pdf', String(asset.name || 'invoice.pdf'));
     } catch (e: any) {
-      Alert.alert('File error', e?.message || 'Could not open file');
+      showError(e?.message || 'Could not open file');
     }
   }, [venueId]);
 
@@ -292,7 +296,7 @@ export default function BringYourDataScreen() {
       setInvoicesFileName('invoice-photo.jpg');
       setInvoicesType('photo');
     } catch (e: any) {
-      Alert.alert('Photo scan failed', e?.message || 'Could not read this invoice photo.');
+      showError(e?.message || 'Could not read this invoice photo.');
       setInvoicesFileName('invoice-photo.jpg');
       setInvoicesType('photo');
       setInvoiceLines([]);
@@ -305,7 +309,7 @@ export default function BringYourDataScreen() {
   const captureInvoicePhoto = useCallback(async () => {
     if (!venueId) return;
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Camera required', 'Allow camera access to photograph an invoice.'); return; }
+    if (!perm.granted) { showInfo('Camera access is required to photograph an invoice.'); return; }
     const pic = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
     if (pic.canceled || !pic.assets?.[0]) return;
     await processInvoicePhoto(pic.assets[0].uri);
@@ -314,7 +318,7 @@ export default function BringYourDataScreen() {
   const pickInvoicePhoto = useCallback(async () => {
     if (!venueId) return;
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { Alert.alert('Photo library required', 'Allow photo access to select an invoice image.'); return; }
+    if (!perm.granted) { showInfo('Photo library access is required to select an invoice image.'); return; }
     const pic = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
     if (pic.canceled || !pic.assets?.[0]) return;
     await processInvoicePhoto(pic.assets[0].uri);
@@ -360,7 +364,7 @@ export default function BringYourDataScreen() {
       setSalesReport(report);
       setSalesFileName(String(asset.name || 'sales.csv'));
     } catch (e: any) {
-      Alert.alert('Could not read sales file', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not read sales file.');
     } finally {
       setSalesProcessing(false);
     }
@@ -561,7 +565,7 @@ export default function BringYourDataScreen() {
       setImportGuideInfo({ productCount: totalProductsCount, areaName: areaNameForMsg, alreadyHasBaseline });
       setShowImportGuide(true);
     } catch (e: any) {
-      Alert.alert('Setup failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Please try again.');
     } finally {
       setBusy(false);
     }
@@ -1034,6 +1038,7 @@ export default function BringYourDataScreen() {
           </View>
         </View>
       </Modal>
+      {modal}
     </SafeAreaView>
   );
 }

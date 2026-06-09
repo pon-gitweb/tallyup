@@ -5,13 +5,14 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   FlatList,
   Modal,
   TextInput,
   ScrollView,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
@@ -80,6 +81,9 @@ export default function TeamMembersScreen() {
   const [inviteRole, setInviteRole] = useState<Role>('staff');
   const [sending, setSending] = useState(false);
 
+  const { showError, showSuccess, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+
   const isOwner = myRole === 'owner';
   const canInvite = myRole === 'owner' || myRole === 'manager';
 
@@ -122,34 +126,34 @@ export default function TeamMembersScreen() {
   const sendInvite = async () => {
     const email = inviteEmail.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      showInfo('Please enter a valid email address.');
       return;
     }
     if (!canInvite) {
-      Alert.alert('Permission denied', 'Only owners and managers can invite staff.');
+      showInfo('Only owners and managers can invite staff.');
       return;
     }
     // Only owners can invite managers
     if (inviteRole === 'manager' && !isOwner) {
-      Alert.alert('Permission denied', 'Only owners can invite managers.');
+      showInfo('Only owners can invite managers.');
       return;
     }
     if (inviteRole === 'owner' && !isOwner) {
-      Alert.alert('Permission denied', 'Only owners can invite owners.');
+      showInfo('Only owners can invite owners.');
       return;
     }
 
     // Check not already a member
     const alreadyMember = members.some((m) => m.uid === email || (m as any).email?.toLowerCase() === email);
     if (alreadyMember) {
-      Alert.alert('Already a member', 'This person is already in your venue.');
+      showInfo('This person is already in your venue.');
       return;
     }
 
     // Check no pending invite for same email
     const alreadyInvited = invites.some((i) => i.email.toLowerCase() === email);
     if (alreadyInvited) {
-      Alert.alert('Already invited', 'There is already a pending invite for this email.');
+      showInfo('There is already a pending invite for this email.');
       return;
     }
 
@@ -165,38 +169,41 @@ export default function TeamMembersScreen() {
       setInviteEmail('');
       setInviteRole('staff');
       setInviteModalOpen(false);
-      Alert.alert('Invite sent', `An invite email has been sent to ${email}.`);
+      showSuccess(`An invite email has been sent to ${email}.`);
     } catch (e: any) {
-      Alert.alert('Failed to send invite', e?.message ?? String(e));
+      showError(e?.message ?? String(e));
     } finally {
       setSending(false);
     }
   };
 
   const cancelInvite = (invite: Invite) => {
-    Alert.alert('Cancel invite', `Cancel the invite for ${invite.email}?`, [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Cancel invite', style: 'destructive', onPress: async () => {
-          try {
-            await deleteDoc(doc(db, 'venues', venueId, 'invites', invite.id));
-          } catch (e: any) {
-            Alert.alert('Error', e?.message ?? String(e));
-          }
-        },
+    confirm({
+      title: 'Cancel invite',
+      message: `Cancel the invite for ${invite.email}?`,
+      confirmLabel: 'Cancel invite',
+      cancelLabel: 'Keep',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'venues', venueId, 'invites', invite.id));
+        } catch (e: any) {
+          showError(e?.message ?? String(e));
+        }
       },
-    ]);
+    });
   };
 
   const changeRole = (member: Member) => {
     if (!isOwner) {
-      Alert.alert('Permission denied', 'Only owners can change roles.');
+      showInfo('Only owners can change roles.');
       return;
     }
     if (member.uid === currentUid) {
-      Alert.alert('Cannot change your own role', 'Ask another owner to change your role.');
+      showInfo('Ask another owner to change your role.');
       return;
     }
+    // TODO: replace with branded modal when role picker is redesigned
     Alert.alert(
       'Change role',
       `Change role for ${member.displayName || member.email || member.uid}`,
@@ -207,7 +214,7 @@ export default function TeamMembersScreen() {
             try {
               await updateDoc(doc(db, 'venues', venueId, 'members', member.uid), { role: r });
             } catch (e: any) {
-              Alert.alert('Error', e?.message ?? String(e));
+              showError(e?.message ?? String(e));
             }
           },
         })),
@@ -218,29 +225,27 @@ export default function TeamMembersScreen() {
 
   const removeMember = (member: Member) => {
     if (!isOwner) {
-      Alert.alert('Permission denied', 'Only owners can remove members.');
+      showInfo('Only owners can remove members.');
       return;
     }
     if (member.uid === currentUid) {
-      Alert.alert('Cannot remove yourself', 'Ask another owner to remove you.');
+      showInfo('Ask another owner to remove you.');
       return;
     }
-    Alert.alert(
-      'Remove member',
-      `Remove ${member.displayName || member.email || member.uid} from this venue?`,
-      [
-        { text: 'Keep', style: 'cancel' },
-        {
-          text: 'Remove', style: 'destructive', onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'venues', venueId, 'members', member.uid));
-            } catch (e: any) {
-              Alert.alert('Error', e?.message ?? String(e));
-            }
-          },
-        },
-      ]
-    );
+    confirm({
+      title: 'Remove member',
+      message: `Remove ${member.displayName || member.email || member.uid} from this venue?`,
+      confirmLabel: 'Remove',
+      cancelLabel: 'Keep',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'venues', venueId, 'members', member.uid));
+        } catch (e: any) {
+          showError(e?.message ?? String(e));
+        }
+      },
+    });
   };
 
   const S = makeStyles(colours);
@@ -274,6 +279,7 @@ export default function TeamMembersScreen() {
 
   const showMemberActions = (member: Member) => {
     const name = member.displayName || member.email || member.uid;
+    // TODO: replace with branded modal when member actions are redesigned
     Alert.alert(name, ROLE_LABELS[member.role], [
       { text: 'Change role', onPress: () => changeRole(member) },
       { text: 'Remove member', style: 'destructive', onPress: () => removeMember(member) },
@@ -421,6 +427,7 @@ export default function TeamMembersScreen() {
           </ScrollView>
         </View>
       </Modal>
+      {modal}
     </View>
   );
 }

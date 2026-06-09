@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   FlatList,
   Modal,
@@ -13,6 +12,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc } from 'firebase/firestore';
@@ -201,6 +202,8 @@ export default function ProductsScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<any[]>([]);
@@ -286,7 +289,7 @@ export default function ProductsScreen() {
       setRows(data);
       runUnassignedCheck(data);
     } catch (e: any) {
-      Alert.alert('Load Failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Failed to load products.');
     } finally {
       setLoading(false);
     }
@@ -338,34 +341,29 @@ export default function ProductsScreen() {
 
   async function handleAdoptCatalogue(supplier: GlobalSupplier) {
     if (!venueId || adoptingId) return;
-    Alert.alert(
-      'Add catalogue?',
-      `This will add ${supplier.name}'s products to your venue.\n\nExisting products are kept.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Add products',
-          onPress: async () => {
-            setAdoptingId(supplier.id);
-            try {
-              const summary = await adoptGlobalCatalogToVenue({
-                venueId,
-                globalSupplierId: supplier.id,
-              });
-              setCatalogueOpen(false);
-              await load();
-              if (summary.created > 0) {
-                showImportToast(`${summary.created} product${summary.created !== 1 ? 's' : ''} added to your venue. Find them in any area by searching during your stocktake.`);
-              }
-            } catch (e: any) {
-              Alert.alert('Failed', e?.message || 'Could not import catalogue.');
-            } finally {
-              setAdoptingId(null);
-            }
-          },
-        },
-      ]
-    );
+    confirm({
+      title: 'Add catalogue?',
+      message: `This will add ${supplier.name}'s products to your venue.\n\nExisting products are kept.`,
+      confirmLabel: 'Add products',
+      onConfirm: async () => {
+        setAdoptingId(supplier.id);
+        try {
+          const summary = await adoptGlobalCatalogToVenue({
+            venueId,
+            globalSupplierId: supplier.id,
+          });
+          setCatalogueOpen(false);
+          await load();
+          if (summary.created > 0) {
+            showImportToast(`${summary.created} product${summary.created !== 1 ? 's' : ''} added to your venue. Find them in any area by searching during your stocktake.`);
+          }
+        } catch (e: any) {
+          showError(e?.message || 'Could not import catalogue.');
+        } finally {
+          setAdoptingId(null);
+        }
+      },
+    });
   }
 
   function onNew() {
@@ -409,41 +407,36 @@ export default function ProductsScreen() {
         ? `\n\nThis will also remove it from:\n${affectedAreas.slice(0, 5).map(a => `• ${a}`).join('\n')}${affectedAreas.length > 5 ? `\n• ...and ${affectedAreas.length - 5} more` : ''}`
         : '';
 
-      Alert.alert(
-        'Delete Product',
-        `Delete "${p.name}"?${areaNote}`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: affectedAreas.length > 0 ? 'Delete product and area items' : 'Delete',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                if (affectedAreas.length > 0) {
-                  const db3 = getFirestore();
-                  const deptsSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments'));
-                  for (const deptDoc of deptsSnap2.docs) {
-                    const areasSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
-                    for (const areaDoc of areasSnap2.docs) {
-                      const itemsSnap = await getDocs(
-                        query(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
-                          where('productId', '==', p.id))
-                      );
-                      for (const itemDoc of itemsSnap.docs) {
-                        await deleteDoc(itemDoc.ref);
-                      }
-                    }
+      confirm({
+        title: 'Delete Product',
+        message: `Delete "${p.name}"?${areaNote}`,
+        confirmLabel: affectedAreas.length > 0 ? 'Delete product and area items' : 'Delete',
+        destructive: true,
+        onConfirm: async () => {
+          try {
+            if (affectedAreas.length > 0) {
+              const db3 = getFirestore();
+              const deptsSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments'));
+              for (const deptDoc of deptsSnap2.docs) {
+                const areasSnap2 = await getDocs(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+                for (const areaDoc of areasSnap2.docs) {
+                  const itemsSnap = await getDocs(
+                    query(collection(db3, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'),
+                      where('productId', '==', p.id))
+                  );
+                  for (const itemDoc of itemsSnap.docs) {
+                    await deleteDoc(itemDoc.ref);
                   }
                 }
-                await deleteProductById(venueId, p.id);
-                await load();
-              } catch (e: any) {
-                Alert.alert('Delete Failed', e?.message || 'Unknown error');
               }
-            },
-          },
-        ]
-      );
+            }
+            await deleteProductById(venueId, p.id);
+            await load();
+          } catch (e: any) {
+            showError(e?.message || 'Could not delete product.');
+          }
+        },
+      });
     })();
   }
 
@@ -459,6 +452,7 @@ export default function ProductsScreen() {
         setCatalogueOpen(true);
         break;
       case 'scan':
+        // TODO: replace with branded modal when scan flow is redesigned
         Alert.alert('Scan a product', 'How would you like to identify it?', [
           { text: 'Cancel', style: 'cancel' },
           { text: '📸 Photo identify', onPress: () => nav.navigate('InventoryImport') },
@@ -521,14 +515,12 @@ export default function ProductsScreen() {
 
   function confirmAndAssign(supplier: { id: string; name: string }) {
     const count = selectedIds.size;
-    Alert.alert(
-      'Assign supplier?',
-      `Assign ${count} product${count !== 1 ? 's' : ''} to ${supplier.name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Assign', onPress: () => doAssign(supplier) },
-      ]
-    );
+    confirm({
+      title: 'Assign supplier?',
+      message: `Assign ${count} product${count !== 1 ? 's' : ''} to ${supplier.name}?`,
+      confirmLabel: 'Assign',
+      onConfirm: () => doAssign(supplier),
+    });
   }
 
   async function executeAssign(supplier: { id: string; name: string }) {
@@ -552,7 +544,7 @@ export default function ProductsScreen() {
       showImportToast(`✓ ${count} product${count !== 1 ? 's' : ''} assigned to ${supplier.name}`);
       await load({ silent: true });
     } catch (e: any) {
-      Alert.alert('Assignment failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Assignment failed.');
     } finally {
       setAssigning(false);
     }
@@ -566,18 +558,13 @@ export default function ProductsScreen() {
     );
 
     if (alreadyAssigned.length > 0) {
-      Alert.alert(
-        'Overwrite existing suppliers?',
-        `${alreadyAssigned.length} selected product${alreadyAssigned.length > 1 ? 's' : ''} already ${alreadyAssigned.length > 1 ? 'have' : 'has'} a supplier assigned.\n\nContinuing will overwrite ${alreadyAssigned.length > 1 ? 'them' : 'it'}.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Overwrite anyway',
-            style: 'destructive',
-            onPress: () => executeAssign(supplier),
-          },
-        ]
-      );
+      confirm({
+        title: 'Overwrite existing suppliers?',
+        message: `${alreadyAssigned.length} selected product${alreadyAssigned.length > 1 ? 's' : ''} already ${alreadyAssigned.length > 1 ? 'have' : 'has'} a supplier assigned.\n\nContinuing will overwrite ${alreadyAssigned.length > 1 ? 'them' : 'it'}.`,
+        confirmLabel: 'Overwrite anyway',
+        destructive: true,
+        onConfirm: () => executeAssign(supplier),
+      });
       return;
     }
 
@@ -646,7 +633,7 @@ export default function ProductsScreen() {
       exitMultiSelect();
       showImportToast(`✓ ${count} product${count !== 1 ? 's' : ''} added to ${areaName}`);
     } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not add products to area.');
+      showError(e?.message || 'Could not add products to area.');
     } finally {
       setAddingToArea(false);
       setPendingAreaAssign(null);
@@ -1157,16 +1144,15 @@ export default function ProductsScreen() {
         }}
         onNotFound={barcode => {
           setBarcodeOpen(false);
-          Alert.alert(
-            'Not found',
-            `No product with barcode ${barcode}. Add it manually?`,
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Add manually', onPress: onNew },
-            ]
-          );
+          confirm({
+            title: 'Not found',
+            message: `No product with barcode ${barcode}. Add it manually?`,
+            confirmLabel: 'Add manually',
+            onConfirm: onNew,
+          });
         }}
       />
+      {modal}
     </View>
   );
 }

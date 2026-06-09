@@ -6,12 +6,13 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   FlatList,
   TextInput,
   Modal,
   ScrollView,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -45,6 +46,8 @@ function isValidHHmm(s: string) {
 export default function SuppliersScreen() {
   const venueId = useVenueId();
   const nav = useNavigation<any>();
+  const { showError, showSuccess, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Supplier[]>([]);
@@ -94,7 +97,7 @@ export default function SuppliersScreen() {
       setRows(data);
     } catch (e: any) {
       console.log('[Suppliers] load error', e?.message);
-      Alert.alert('Load Failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Failed to load suppliers.');
     } finally {
       setLoading(false);
     }
@@ -178,23 +181,20 @@ export default function SuppliersScreen() {
 
   async function onSaveForm() {
     if (!venueId) {
-      Alert.alert('No Venue', 'Attach or create a venue first.');
+      showInfo('Attach or create a venue first.');
       return;
     }
     if (!name.trim()) {
-      Alert.alert('Name required', 'Enter supplier name.');
+      showInfo('Enter supplier name.');
       return;
     }
     if (!isValidHHmm(orderCutoffLocalTime)) {
-      Alert.alert('Invalid cutoff', 'Use HH:mm in 24-hour format (e.g., 16:00).');
+      showInfo('Use HH:mm in 24-hour format (e.g., 16:00).');
       return;
     }
     const mergeNum = mergeWindowHours.trim() ? Number(mergeWindowHours) : null;
     if (mergeNum != null && !Number.isFinite(mergeNum)) {
-      Alert.alert(
-        'Invalid merge hours',
-        'Enter a whole number of hours or leave blank.'
-      );
+      showInfo('Enter a whole number of hours or leave blank.');
       return;
     }
 
@@ -225,6 +225,7 @@ export default function SuppliersScreen() {
         });
         if (mr.confidence >= 0.85 && mr.match) {
           setSaving(false);
+          // TODO: replace with branded modal when supplier matching is redesigned
           Alert.alert(
             'Similar supplier exists',
             `"${mr.match.name}" looks like the same supplier (${Math.round(mr.confidence * 100)}% match).\n\nDo you want to edit the existing supplier or create a new one?`,
@@ -239,7 +240,7 @@ export default function SuppliersScreen() {
                     setFormVisible(false);
                     await load();
                   } catch (e2: any) {
-                    Alert.alert('Save Failed', e2?.message || 'Unknown error');
+                    showError(e2?.message || 'Could not save supplier.');
                   } finally { setSaving(false); }
                 },
               },
@@ -252,45 +253,41 @@ export default function SuppliersScreen() {
         await load();
       }
     } catch (e: any) {
-      Alert.alert('Save Failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Could not save supplier.');
     } finally {
       setSaving(false);
     }
   }
 
   function onDelete(s: Supplier) {
-    Alert.alert('Delete Supplier', `Delete ${s.name}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (!venueId || !s.id) return;
-            await deleteSupplierById(venueId, s.id);
-            await load();
-          } catch (e: any) {
-            Alert.alert('Delete Failed', e?.message || 'Unknown error');
-          }
-        },
+    confirm({
+      title: 'Delete Supplier',
+      message: `Delete ${s.name}?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          if (!venueId || !s.id) return;
+          await deleteSupplierById(venueId, s.id);
+          await load();
+        } catch (e: any) {
+          showError(e?.message || 'Could not delete supplier.');
+        }
       },
-    ]);
+    });
   }
 
   // Photo OCR scan for business card / invoice → prefill supplier fields
   async function scanFromPhoto(kind: 'card' | 'invoice') {
     try {
       if (!venueId) {
-        Alert.alert('No Venue', 'Attach or create a venue first.');
+        showInfo('Attach or create a venue first.');
         return;
       }
 
       const camPerm = await ImagePicker.requestCameraPermissionsAsync();
       if (camPerm.status !== 'granted') {
-        Alert.alert(
-          'Camera permission',
-          'Camera access is required to scan a business card or invoice.'
-        );
+        showInfo('Camera access is required to scan a business card or invoice.');
         return;
       }
 
@@ -347,20 +344,12 @@ export default function SuppliersScreen() {
       }
 
       if (filled.length) {
-        Alert.alert(
-          'Details added',
-          `We used the ${kind === 'card' ? 'card' : 'invoice'} to fill: ${filled.join(
-            ', '
-          )}. You can edit anything before saving.`
-        );
+        showSuccess(`We used the ${kind === 'card' ? 'card' : 'invoice'} to fill: ${filled.join(', ')}. You can edit anything before saving.`);
       } else {
-        Alert.alert(
-          'No obvious details',
-          'We ran OCR but could not confidently pick out supplier details. You can still fill the form manually.'
-        );
+        showInfo('We ran OCR but could not confidently pick out supplier details. You can still fill the form manually.');
       }
     } catch (e: any) {
-      Alert.alert('Scan failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Scan failed.');
     } finally {
       setScanBusy(false);
     }
@@ -369,48 +358,42 @@ export default function SuppliersScreen() {
   // Save extracted catalogue products to global_suppliers Firestore collection
   async function saveCatalogueToFirestore(supplierLabel: string, products: any[]) {
     if (!products.length) {
-      Alert.alert('No products found', "We couldn't extract any products from this file. Try better lighting or a clearer photo.");
+      showInfo("We couldn't extract any products from this file. Try better lighting or a clearer photo.");
       return;
     }
-    Alert.alert(
-      'Save catalogue?',
-      `We found ${products.length} product${products.length !== 1 ? 's' : ''} in this catalogue.\n\nSave as "${supplierLabel}" so it appears in the Supplier Catalogues browser?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: `Save ${products.length} products`,
-          onPress: async () => {
-            try {
-              const db = getFirestore();
-              // Create or overwrite the global_suppliers doc with a unique-ish id
-              const safeId = supplierLabel.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 40) + '_' + Date.now();
-              const supRef = doc(db, 'global_suppliers', safeId);
-              await setDoc(supRef, { name: supplierLabel, source: 'user-upload', createdAt: fsServerTimestamp() });
-              const itemsCol = collection(db, 'global_suppliers', safeId, 'items');
-              for (const p of products) {
-                await addDoc(itemsCol, {
-                  name: p.name || '',
-                  size: p.size || null,
-                  unit: p.unit || null,
-                  category: p.category || null,
-                  sku: p.sku || null,
-                  priceBottleExGst: p.price ? parseFloat(String(p.price).replace(/[^0-9.]/g, '')) || null : null,
-                  gstPercent: 15,
-                  supplier: supplierLabel,
-                });
-              }
-              Alert.alert('Saved', `"${supplierLabel}" catalogue saved with ${products.length} products. It now appears in Supplier Catalogues.`);
-            } catch (e: any) {
-              Alert.alert('Save failed', e?.message || 'Could not save catalogue.');
-            }
-          },
-        },
-      ]
-    );
+    confirm({
+      title: 'Save catalogue?',
+      message: `We found ${products.length} product${products.length !== 1 ? 's' : ''} in this catalogue.\n\nSave as "${supplierLabel}" so it appears in the Supplier Catalogues browser?`,
+      confirmLabel: `Save ${products.length} products`,
+      onConfirm: async () => {
+        try {
+          const db = getFirestore();
+          const safeId = supplierLabel.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 40) + '_' + Date.now();
+          const supRef = doc(db, 'global_suppliers', safeId);
+          await setDoc(supRef, { name: supplierLabel, source: 'user-upload', createdAt: fsServerTimestamp() });
+          const itemsCol = collection(db, 'global_suppliers', safeId, 'items');
+          for (const p of products) {
+            await addDoc(itemsCol, {
+              name: p.name || '',
+              size: p.size || null,
+              unit: p.unit || null,
+              category: p.category || null,
+              sku: p.sku || null,
+              priceBottleExGst: p.price ? parseFloat(String(p.price).replace(/[^0-9.]/g, '')) || null : null,
+              gstPercent: 15,
+              supplier: supplierLabel,
+            });
+          }
+          showSuccess(`"${supplierLabel}" catalogue saved with ${products.length} products. It now appears in Supplier Catalogues.`);
+        } catch (e: any) {
+          showError(e?.message || 'Could not save catalogue.');
+        }
+      },
+    });
   }
 
   async function uploadCataloguePdf() {
-    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+    if (!venueId) { showInfo('Attach or create a venue first.'); return; }
     const supplierLabel = (name || '').trim() || 'Uploaded Catalogue';
     try {
       setCatalogueBusy(true);
@@ -428,18 +411,18 @@ export default function SuppliersScreen() {
       const products = json?.products || [];
       await saveCatalogueToFirestore(supplierLabel, products);
     } catch (e: any) {
-      Alert.alert('Upload failed', e?.message || 'Could not process PDF.');
+      showError(e?.message || 'Could not process PDF.');
     } finally {
       setCatalogueBusy(false);
     }
   }
 
   async function photographCataloguePage() {
-    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
+    if (!venueId) { showInfo('Attach or create a venue first.'); return; }
     const supplierLabel = (name || '').trim() || 'Photographed Catalogue';
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (perm.status !== 'granted') { Alert.alert('Camera needed', 'Allow camera access to photograph catalogue pages.'); return; }
+      if (perm.status !== 'granted') { showInfo('Allow camera access to photograph catalogue pages.'); return; }
       const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.8 });
       if (res.canceled || !res.assets?.length) return;
       setCatalogueBusy(true);
@@ -454,7 +437,7 @@ export default function SuppliersScreen() {
       const products = json?.products || [];
       await saveCatalogueToFirestore(supplierLabel, products);
     } catch (e: any) {
-      Alert.alert('Photo failed', e?.message || 'Could not process photo.');
+      showError(e?.message || 'Could not process photo.');
     } finally {
       setCatalogueBusy(false);
     }
@@ -480,7 +463,7 @@ export default function SuppliersScreen() {
   async function uploadSupplierCsv() {
     try {
       if (!venueId) {
-        Alert.alert('No Venue', 'Attach or create a venue first.');
+        showInfo('Attach or create a venue first.');
         return;
       }
       setUploadBusy(true);
@@ -492,12 +475,9 @@ export default function SuppliersScreen() {
 
       // We don't yet attach it per-supplier; server stores against venue/catalogue.
       // Later we can extend the function to tag supplierId.
-      Alert.alert(
-        'Catalogue uploaded',
-        'We have uploaded this CSV for this venue. Next, go to Stock Control → Manage Products → Supplier Tools to map items to this supplier.'
-      );
+      showSuccess('Catalogue uploaded. Go to Stock Control → Manage Products → Supplier Tools to map items to this supplier.');
     } catch (e: any) {
-      Alert.alert('Upload failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Upload failed.');
     } finally {
       setUploadBusy(false);
     }
@@ -964,6 +944,7 @@ export default function SuppliersScreen() {
           )}
         </View>
       </Modal>
+      {modal}
     </View>
   );
 }
