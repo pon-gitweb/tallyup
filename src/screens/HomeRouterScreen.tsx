@@ -36,26 +36,38 @@ export default function HomeRouterScreen() {
   useEffect(() => {
     if (loading || routed.current) return;
 
-    // Authenticated but email not yet verified — hold here until confirmed
-    if (user && !user.emailVerified) {
-      routed.current = true;
-      nav.reset({ index: 0, routes: [{ name: 'EmailVerification' }] });
-      return;
-    }
+    (async () => {
+      // Only require verification for accounts created after email verification
+      // was introduced. Existing users (no flag) pass through.
+      if (user && !user.emailVerified) {
+        try {
+          const userSnap = await getDoc(doc(db, 'users', user.uid));
+          const requiresVerification = userSnap.data()?.requiresEmailVerification === true;
+          if (requiresVerification) {
+            if (routed.current) return;
+            routed.current = true;
+            nav.reset({ index: 0, routes: [{ name: 'EmailVerification' }] });
+            return;
+          }
+          // Flag not set = existing user — fall through to normal routing
+        } catch (e) {
+          // If doc read fails — don't block, fall through to normal routing
+          console.warn('[HomeRouter] could not check verification flag:', e);
+        }
+      }
 
-    if (!venueId) {
-      if (venueIds && venueIds.length > 0) {
-        // User has venues but activeVenueId not set yet — VenueProvider is auto-selecting.
-        // Don't route yet; wait for the next context update with a resolved venueId.
+      if (!venueId) {
+        if (venueIds && venueIds.length > 0) {
+          // User has venues but activeVenueId not set yet — VenueProvider is auto-selecting.
+          // Don't route yet; wait for the next context update with a resolved venueId.
+          return;
+        }
+        // Truly new user — no venue created yet. Send to venue creation.
+        routed.current = true;
+        nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
         return;
       }
-      // Truly new user — no venue created yet. Send to venue creation.
-      routed.current = true;
-      nav.reset({ index: 0, routes: [{ name: 'CreateVenue' }] });
-      return;
-    }
 
-    (async () => {
       // Bounded — if Firestore hangs, fall back to the cached venue type
       // instead of leaving the spinner up indefinitely.
       const venueSnap = await Promise.race([

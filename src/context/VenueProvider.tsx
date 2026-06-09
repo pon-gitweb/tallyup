@@ -89,11 +89,23 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Authenticated but email not verified — set user, skip all venue loading.
-      // HomeRouter will catch this and redirect to EmailVerificationScreen.
+      // Only skip venue loading for new accounts that require email verification.
+      // Existing users (no flag) proceed with normal bootstrap.
       if (!u.emailVerified) {
-        setLoading(false);
-        return;
+        try {
+          const userSnap = await getDoc(doc(db, 'users', u.uid));
+          const requiresVerification = userSnap.data()?.requiresEmailVerification === true;
+          if (requiresVerification) {
+            // New unverified account — skip venue bootstrap
+            setUser(u);
+            setLoading(false);
+            return;
+          }
+          // Existing user without flag — proceed with normal bootstrap
+        } catch (e) {
+          // Doc read failed — proceed anyway, don't block existing users
+          console.warn('[VenueProvider] flag check failed:', e);
+        }
       }
 
       // Ensure users/{uid} exists — bounded so a hung getDoc/setDoc can't block

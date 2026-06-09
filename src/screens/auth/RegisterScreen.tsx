@@ -71,6 +71,7 @@ export default function RegisterScreen() {
         venueId: null,
         activeVenueId: null,
         venueIds: [],
+        requiresEmailVerification: true,
       }).catch((e: any) => {
         if (__DEV__) console.warn('[Register] user doc write failed:', e?.message);
       });
