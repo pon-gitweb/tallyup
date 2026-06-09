@@ -1230,15 +1230,30 @@ app.delete("/account", async (req, res) => {
     const allVenueIds: string[] = userData?.venueIds ?? (legacyVenueId ? [legacyVenueId] : []);
 
     for (const venueId of allVenueIds) {
-      const venueSnap = await db.doc(`venues/${venueId}`).get();
-      const ownerUid: string | null = venueSnap.exists ? (venueSnap.data() as any)?.ownerUid ?? null : null;
+      try {
+        const venueSnap = await db.doc(`venues/${venueId}`).get();
+        const ownerUid: string | null = venueSnap.exists ? (venueSnap.data() as any)?.ownerUid ?? null : null;
 
-      if (ownerUid === uid) {
-        // Owner — delete everything under this venue
-        await deleteVenueAllData(db, venueId);
-      } else {
-        // Member — remove from members subcollection only
-        await db.doc(`venues/${venueId}/members/${uid}`).delete().catch(() => {});
+        if (ownerUid === uid) {
+          // Write archive marker before deleting venue data
+          await db.collection('deletedVenues').doc(venueId).set({
+            venueId,
+            venueName: venueSnap.data()?.name || 'Unknown venue',
+            ownerUid: uid,
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            retainUntil: new Date(Date.now() + 7 * 365 * 24 * 60 * 60 * 1000),
+            archiveStatus: 'marker_only',
+            note: 'Full archive generation pending implementation',
+          });
+          // Owner — delete everything under this venue
+          await deleteVenueAllData(db, venueId);
+        } else {
+          // Member — remove from members subcollection only
+          await db.doc(`venues/${venueId}/members/${uid}`).delete().catch(() => {});
+        }
+      } catch (e: any) {
+        console.error(`[api/account] failed to delete venue ${venueId}:`, e?.message);
+        // Log and continue — do not abort entire deletion for one venue failure
       }
     }
 
@@ -1292,8 +1307,13 @@ async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string
   await deleteSubcollection(`venues/${venueId}/products`, 'suppliers');
   await deleteSubcollection(`venues/${venueId}/bars`, 'stock');
 
-  await admin.firestore().doc(`venues/${venueId}/settings/config`).delete().catch(() => {});
-  await admin.firestore().doc(`venues/${venueId}/settings/theme`).delete().catch(() => {});
+  // Delete all settings docs
+  const settingsSnap = await db.collection(`venues/${venueId}/settings`).get();
+  const settingsBatch = db.batch();
+  settingsSnap.docs.forEach(d => settingsBatch.delete(d.ref));
+  if (settingsSnap.docs.length > 0) {
+    await settingsBatch.commit();
+  }
   await admin.firestore().doc(`venues/${venueId}/event/details`).delete().catch(() => {});
 
   await db.doc(`venues/${venueId}`).delete();
