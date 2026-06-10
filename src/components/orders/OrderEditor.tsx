@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { getApp } from 'firebase/app';
 import {
   getFirestore,
@@ -18,11 +18,13 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import SupplierBadge from '../SupplierBadge';
 import { savedToast } from '../../utils/toast';
+import { useToast } from '../common/Toast';
 
 type Line = { productId: string; name?: string | null; qty: number };
 type Props = { orderId: string; onSubmitted?: () => void };
 
 export default function OrderEditor({ orderId, onSubmitted }: Props) {
+  const { showSuccess, showError, showInfo } = useToast();
   const venueId = useVenueId();
   const [order, setOrder] = useState<any>(null);
   const [lines, setLines] = useState<Line[]>([]);
@@ -85,7 +87,7 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
     try {
       if (!orderRef) throw new Error('No order');
       if (!lines.length) {
-        Alert.alert('Submit', 'This draft has no lines.');
+        showInfo('This draft has no lines.');
         return;
       }
       await updateDoc(orderRef, {
@@ -94,10 +96,10 @@ export default function OrderEditor({ orderId, onSubmitted }: Props) {
         submittedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      Alert.alert('Order', 'Order marked as submitted.');
+      showSuccess('✓ Order marked as submitted.');
       onSubmitted?.();
     } catch (e: any) {
-      Alert.alert('Order', e?.message ?? 'Failed to submit order.');
+      showError(e?.message ?? 'Failed to submit order.');
     }
   }, [orderRef, lines, onSubmitted]);
 

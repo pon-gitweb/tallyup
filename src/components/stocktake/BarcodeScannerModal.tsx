@@ -7,7 +7,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated, Easing, Modal, Text, TouchableOpacity,
-  View, ActivityIndicator, StyleSheet, Alert,
+  View, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +16,7 @@ import {
   setDoc, where,
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useToast } from '../common/Toast';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ export default function BarcodeScannerModal({
   visible, onClose, venueId, departmentId, areaId,
   areaItems, onProductAddedToArea, onOpenPhotoModal, onBeforeAddToArea,
 }: Props) {
+  const { showError } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>('scanning');
   const [torchOn, setTorchOn] = useState(false);
@@ -158,7 +160,7 @@ export default function BarcodeScannerModal({
       if (e?.code === 'unavailable' || e?.code === 'failed-precondition') {
         showToast('📵 No connection — add this product manually when back online');
       } else {
-        Alert.alert('Scan error', e?.message || 'Could not look up barcode. Try again.');
+        showError(e?.message || 'Could not look up barcode. Try again.');
       }
     }
   };
@@ -199,7 +201,7 @@ export default function BarcodeScannerModal({
     try {
       await doWrite({ countingUnit: 'unit', caseSize: null });
     } catch (e: any) {
-      Alert.alert('Could not add product', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not add product. Please try again.');
       setAdding(false);
     }
   }
@@ -244,7 +246,7 @@ export default function BarcodeScannerModal({
       showToast(`✓ ${g.name} added to your venue — update the count below`);
       setTimeout(onClose, 2000);
     } catch (e: any) {
-      Alert.alert('Could not add product', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not add product. Please try again.');
       setAdding(false);
     }
   }

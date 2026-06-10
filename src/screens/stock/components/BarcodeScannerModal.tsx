@@ -11,6 +11,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../../services/firebase';
+import { useToast } from '../../../components/common/Toast';
 
 type Props = {
   visible: boolean;
@@ -29,6 +30,7 @@ type Props = {
 };
 
 export default function BarcodeScannerModal({ visible, onClose, venueId, onFound, onNotFound }: Props) {
+  const { showError } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -80,6 +82,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
           const gd = globalSnap.docs[0];
           const gp = gd.data() as any;
           const displayName = [gp.name, gp.brand, gp.size].filter(Boolean).join(' ') || data;
+          // TODO: replace with branded modal — 4-button menu
           Alert.alert(
             'Found in catalogue',
             `We found this product in our catalogue:\n\n${displayName}\n\nIs this correct?`,
@@ -105,6 +108,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
             ]
           );
         } else {
+          // TODO: replace with branded modal — 3-button menu
           Alert.alert(
             'Product not found',
             'Barcode: ' + data + '\n\nNo product with this barcode exists in your venue. Would you like to add it as a new product?',
@@ -118,7 +122,7 @@ export default function BarcodeScannerModal({ visible, onClose, venueId, onFound
       }
     } catch (e: any) {
       setLoading(false);
-      Alert.alert('Scan error', e?.message || 'Could not look up barcode.');
+      showError(e?.message || 'Could not look up barcode.');
       cooldown.current = false;
     } finally {
       setLoading(false);

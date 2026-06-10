@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
+import { Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, ActivityIndicator } from "react-native";
 import { validatePromoCode, createCheckout, fetchEntitlement } from "../../services/payments";
+import { useToast } from "../common/Toast";
 
 type Plan = "monthly" | "yearly";
 
@@ -19,6 +20,7 @@ type Props = {
 export default function PaymentSheet(props: Props) {
   const { visible, onClose, uid, venueId, onUnlocked, onEntitled, defaultPlan = "monthly" } = props;
 
+  const { showSuccess, showError } = useToast();
   const [promo, setPromo] = useState<string>("");
   const [plan, setPlan] = useState<Plan>(defaultPlan);
   const [busy, setBusy] = useState(false);
@@ -55,7 +57,7 @@ export default function PaymentSheet(props: Props) {
         const { entitled } = await fetchEntitlement(venueId);
         if (entitled) {
           notifyUnlocked(true);
-          Alert.alert("AI unlocked", "This venue now has AI access.");
+          showSuccess('✓ AI features unlocked.');
           onClose();
           return;
         }
@@ -67,7 +69,7 @@ export default function PaymentSheet(props: Props) {
       if (c.promoApplied && (c.amountCents ?? 0) === 0 && !c.checkoutUrl) {
         const { entitled } = await fetchEntitlement(venueId);
         notifyUnlocked(!!entitled);
-        Alert.alert("AI unlocked", "Promo applied. AI access enabled for this venue.");
+        showSuccess('✓ AI features unlocked.');
         onClose();
         return;
       }
@@ -81,7 +83,7 @@ export default function PaymentSheet(props: Props) {
         try { const { entitled } = await fetchEntitlement(venueId); if (entitled) notifyUnlocked(true); } catch {}
       }, 1200);
     } catch (err: any) {
-      Alert.alert("Could not continue", String(err?.message || err || "Unknown error"));
+      showError(String(err?.message || err || "Unknown error"));
     } finally {
       setBusy(false);
     }

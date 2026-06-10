@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Alert, ViewStyle, TextStyle } from 'react-native';
+import { View, Text, TouchableOpacity, ViewStyle, TextStyle } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../context/VenueProvider';
 import { useIdentityLabels, useVenueInfo } from '../hooks/useIdentityLabels';
+import { useToast } from './common/Toast';
 
 const dlog = (...a:any[]) => { if (__DEV__) console.log('[IdentityBadge]', ...a); };
 
@@ -13,6 +14,7 @@ type Props = {
 };
 
 export default function IdentityBadge({ style, textStyle, compactMaxWidth = 140 }: Props) {
+  const { showInfo } = useToast();
   const auth = getAuth();
   const user = auth.currentUser;
   const venueId = useVenueId() || null;
@@ -33,7 +35,7 @@ export default function IdentityBadge({ style, textStyle, compactMaxWidth = 140 
 
   const onPress = () => {
     dlog('press');
-    Alert.alert('Signed in', friendly);
+    showInfo(friendly);
   };
 
   return (

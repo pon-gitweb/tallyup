@@ -21,6 +21,7 @@ import { getFirestore, collection, query, where, getDocs, addDoc, serverTimestam
 import { findMatchingProduct, type ProductMatchResult } from '../../services/matching';
 import { AI_BASE_URL } from '../../config/ai';
 import { useNetworkState } from '../../hooks/useNetworkState';
+import { useToast } from '../common/Toast';
 
 type ProductDetails = {
   name: string;
@@ -47,6 +48,7 @@ const BLANK: ProductDetails = { name: '', brand: '', size: '', category: '', bar
 
 export default function ProductPhotoModal({ visible, onClose, venueId, areaName, initialBarcode, onConfirm }: Props) {
   const { isOnline } = useNetworkState();
+  const { showError, showInfo } = useToast();
   const [step, setStep] = useState<Step>('front-prompt');
   const [frontB64, setFrontB64] = useState<string | null>(null);
   const [product, setProduct] = useState<ProductDetails>(BLANK);
@@ -77,6 +79,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const ensureCamera = async (): Promise<boolean> => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (perm.status === 'granted') return true;
+    // TODO: replace with branded modal — OS Settings deep-link
     Alert.alert('Camera access needed', 'Allow camera access to photograph products.', [
       { text: 'Cancel', style: 'cancel' },
       ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
@@ -98,6 +101,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const pickFrontFromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
+      // TODO: replace with branded modal — OS Settings deep-link
       Alert.alert('Photo library access needed', 'Allow photo library access to choose a photo.', [
         { text: 'Cancel', style: 'cancel' },
         ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
@@ -126,6 +130,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const pickBackFromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (perm.status !== 'granted') {
+      // TODO: replace with branded modal — OS Settings deep-link
       Alert.alert('Photo library access needed', 'Allow photo library access to choose a photo.', [
         { text: 'Cancel', style: 'cancel' },
         ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
@@ -194,7 +199,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
   const handleSaveCount = async () => {
     const countNum = parseFloat(count);
     if (isNaN(countNum) || countNum < 0) {
-      Alert.alert('Invalid count', 'Enter a valid count.');
+      showInfo('Enter a valid count.');
       return;
     }
     setConfirming(true);
@@ -231,7 +236,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
       }
       handleClose();
     } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not save product.');
+      showError(e?.message || 'Could not save product.');
     } finally {
       setConfirming(false);
     }
@@ -408,7 +413,7 @@ export default function ProductPhotoModal({ visible, onClose, venueId, areaName,
             <TouchableOpacity
               style={[S.btn, { marginTop: 8 }]}
               onPress={() => {
-                if (!product.name.trim()) { Alert.alert('Name required', 'Enter a product name.'); return; }
+                if (!product.name.trim()) { showInfo('Enter a product name.'); return; }
                 setStep('count');
               }}
             >

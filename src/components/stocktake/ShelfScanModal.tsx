@@ -19,6 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../../config/ai';
+import { useToast } from '../common/Toast';
 
 type ShelfProduct = { key: string; name: string; brand: string; size: string; category: string };
 type Step = 'camera' | 'processing' | 'review' | 'failed';
@@ -32,6 +33,7 @@ type Props = {
 };
 
 export default function ShelfScanModal({ visible, onClose, venueId, areaName, onConfirm }: Props) {
+  const { showError, showInfo } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [step, setStep] = useState<Step>('camera');
@@ -65,6 +67,7 @@ export default function ShelfScanModal({ visible, onClose, venueId, areaName, on
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
+        // TODO: replace with branded modal — OS Settings deep-link
         Alert.alert('Photo library access needed', 'Allow photo library access to choose a shelf photo.', [
           { text: 'Cancel', style: 'cancel' },
           ...(Platform.OS !== 'web' ? [{ text: 'Open Settings', onPress: () => Linking.openSettings() }] : []),
@@ -125,7 +128,7 @@ export default function ShelfScanModal({ visible, onClose, venueId, areaName, on
   const handleConfirm = async () => {
     const valid = products.filter(p => p.name.trim());
     if (!valid.length) {
-      Alert.alert('No products', 'Add at least one product name before confirming.');
+      showInfo('Add at least one product name before confirming.');
       return;
     }
     setConfirming(true);
@@ -133,7 +136,7 @@ export default function ShelfScanModal({ visible, onClose, venueId, areaName, on
       await onConfirm(valid.map(({ key, ...rest }) => rest));
       handleClose();
     } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not save products.');
+      showError(e?.message || 'Could not save products.');
     } finally {
       setConfirming(false);
     }

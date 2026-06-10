@@ -9,13 +9,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   FlatList,
-  Alert,
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { getAuth } from 'firebase/auth';
 import { isEntitled } from '../../services/entitlement';
 import PaymentSheet from '../paywall/PaymentSheet';
 import { explainVariance } from '../../services/aiExplain';
+import { useToast } from '../common/Toast';
 
 type Props = {
   departmentId?: string | null;
@@ -33,6 +33,7 @@ export default function AiExplainButton({
 }: Props) {
   const venueId = useVenueId();
   const uid = getAuth()?.currentUser?.uid || '';
+  const { showError, showInfo } = useToast();
 
   const [loading, setLoading] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
@@ -45,7 +46,7 @@ export default function AiExplainButton({
 
   const onPress = useCallback(async () => {
     if (!venueId || !uid) {
-      Alert.alert('Not signed in', 'Please sign in and try again.');
+      showInfo('Please sign in and try again.');
       return;
     }
 
@@ -65,7 +66,7 @@ export default function AiExplainButton({
       setResult(res);
       setModalOpen(true);
     } catch (e: any) {
-      Alert.alert('Could not get AI explanation', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not get AI explanation. Please try again.');
     } finally {
       setLoading(false);
     }

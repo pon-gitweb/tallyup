@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { TouchableOpacity, Text, ActivityIndicator, View, Alert } from 'react-native';
+import { TouchableOpacity, Text, ActivityIndicator, View } from 'react-native';
 import { db } from '../services/firebase';
 import { createDraftForSupplier, DraftLine } from '../services/orderDrafts';
+import { useToast } from './common/Toast';
 
 type Props = {
   venueId: string;
@@ -15,11 +16,12 @@ type Props = {
 export default function SupplierDraftButton({
   venueId, supplierId, supplierName, lines, deliveryDate, onDrafted,
 }: Props) {
+  const { showSuccess, showError, showInfo } = useToast();
   const [busy, setBusy] = useState(false);
 
   const onPress = async () => {
     if (!venueId || !supplierId || lines.length === 0) {
-      Alert.alert('Nothing to draft', 'No items selected for this supplier.');
+      showInfo('No items selected for this supplier.');
       return;
     }
     try {
@@ -34,10 +36,10 @@ export default function SupplierDraftButton({
       );
       setBusy(false);
       if (onDrafted) onDrafted(orderId);
-      else Alert.alert('Draft created', `Supplier: ${supplierName}\nOrder: ${orderId}`);
+      else showSuccess(`✓ Draft created — ${supplierName} (${orderId})`);
     } catch (e: any) {
       setBusy(false);
-      Alert.alert('Failed to create draft', e?.message ?? 'Unknown error');
+      showError(e?.message ?? 'Failed to create draft.');
     }
   };
 
