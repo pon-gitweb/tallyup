@@ -20,6 +20,8 @@ import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { AI_BASE_URL } from '../../config/ai';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { stocktakeFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 
 const EXTRACT_URL = `${AI_BASE_URL}/api/extract-inventory`;
@@ -78,6 +80,8 @@ function InventoryImportScreen() {
   const venueId = useVenueId();
   const nav = useNavigation<any>();
   const themeColours = useColours();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
 
@@ -108,11 +112,7 @@ function InventoryImportScreen() {
       const result: ExtractionResult = await resp.json();
       if ((result as any).scannedPdf) {
         setLoading(false);
-        Alert.alert(
-          'Scanned PDF detected',
-          (result as any).message || 'For best results upload a digital PDF or CSV export from your POS or spreadsheet.',
-          [{ text: 'OK' }],
-        );
+        showInfo((result as any).message || 'For best results upload a digital PDF or CSV export from your POS or spreadsheet.');
         return;
       }
       // Stocktake deduplication check
@@ -133,7 +133,7 @@ function InventoryImportScreen() {
       nav.navigate('InventoryImportPreview', { result, venueId });
     } catch (e: any) {
       setLoading(false);
-      Alert.alert('Could not read file', e?.message || 'Please try again or use a different format.');
+      showError(e?.message || 'Could not read file — please try again or use a different format.');
     }
   }, [venueId, nav]);
 
@@ -188,7 +188,7 @@ function InventoryImportScreen() {
       nav.navigate('InventoryImportPreview', { result, venueId });
     } catch (e: any) {
       setLoading(false);
-      Alert.alert('Processing failed', e?.message || 'Please try again or use a different format.');
+      showError(e?.message || 'Processing failed — please try again or use a different format.');
     }
   }, [venueId, nav]);
 
@@ -197,22 +197,24 @@ function InventoryImportScreen() {
       let res;
       if (source === 'camera') {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
+        // TODO: replace with branded modal — OS Settings deep-link
         if (!perm.granted) { Alert.alert('Camera access required', 'Please allow camera access in Settings.'); return; }
         res = await ImagePicker.launchCameraAsync({ quality: 0.85, allowsEditing: false });
       } else {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        // TODO: replace with branded modal — OS Settings deep-link
         if (!perm.granted) { Alert.alert('Photo library access required', 'Please allow photo access in Settings.'); return; }
         res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
       }
       if (res.canceled || !res.assets?.[0]) return;
       const uri = res.assets[0].uri;
       setPages(prev => {
-        if (prev.length >= MAX_PAGES) { Alert.alert('Maximum pages reached', `You can add up to ${MAX_PAGES} pages.`); return prev; }
+        if (prev.length >= MAX_PAGES) { showInfo(`You can add up to ${MAX_PAGES} pages.`); return prev; }
         return [...prev, { uri }];
       });
       setPhotoStage('capturing');
     } catch (e: any) {
-      Alert.alert('Could not capture photo', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not capture photo — please try again.');
     }
   }, []);
 
@@ -226,7 +228,7 @@ function InventoryImportScreen() {
         const asset = result.assets[0];
         await processFile(asset.uri, asset.name, asset.mimeType || 'application/octet-stream');
       }
-    } catch { Alert.alert('Could not open file picker', 'Please try again.'); }
+    } catch { showError('Could not open file picker — please try again.'); }
   }, [processFile]);
 
   if (loading) {
@@ -307,6 +309,7 @@ function InventoryImportScreen() {
   }
 
   return (
+    <>
     <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
       <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
         <Text style={{ fontSize: 26, fontWeight: '900', color: themeColours.primaryText }}>Import your inventory</Text>
@@ -384,6 +387,8 @@ function InventoryImportScreen() {
       </TouchableOpacity>
       <View style={{ height: 20 }} />
     </ScrollView>
+    {modal}
+    </>
   );
 }
 

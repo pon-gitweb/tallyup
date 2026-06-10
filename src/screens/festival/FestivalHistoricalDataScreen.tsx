@@ -14,6 +14,8 @@ import { apiBase } from '../../services/apiBase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { guessCategory } from '../../services/festival/purchasingPrediction';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Simple CSV parser ────────────────────────────────────────────────────────
 
@@ -52,6 +54,8 @@ type Mode = null | 'csv' | 'photo' | 'manual';
 export default function FestivalHistoricalDataScreen() {
   const nav     = useNavigation<any>();
   const venueId = useVenueId();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [mode,       setMode]       = useState<Mode>(null);
   const [products,   setProducts]   = useState<any[]>([]);        // venue products for manual entry
@@ -89,7 +93,7 @@ export default function FestivalHistoricalDataScreen() {
       setLoading(true);
       const content = await FileSystem.readAsStringAsync(result.assets[0].uri);
       const rows = parseCSV(content);
-      if (rows.length < 2) { Alert.alert('Could not read file', 'No data rows found.'); return; }
+      if (rows.length < 2) { showError('Could not read file — no data rows found.'); return; }
       const { nameCol, qtyCol } = detectProductAndQtyColumns(rows);
       const dataRows = rows.slice(1);
       const detected: ImportedProduct[] = dataRows
@@ -98,7 +102,7 @@ export default function FestivalHistoricalDataScreen() {
       setImported(detected);
       setMode('csv');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not read file.');
+      showError(e?.message || 'Could not read file.');
     } finally {
       setLoading(false);
     }
@@ -110,7 +114,7 @@ export default function FestivalHistoricalDataScreen() {
       let result: any;
       if (source === 'camera') {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (perm.status !== 'granted') { Alert.alert('Camera permission required'); return; }
+        if (perm.status !== 'granted') { showInfo('Camera permission required'); return; }
         result = await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: false });
       } else {
         result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: 'images', quality: 0.7 });
@@ -130,16 +134,16 @@ export default function FestivalHistoricalDataScreen() {
           .filter((p: any) => p.name && p.price)
           .map((p: any) => ({ productName: p.name, qtySold: parseFloat(p.price) || 0 }));
         if (detected.length === 0) {
-          Alert.alert('No data detected', 'Try a clearer photo or use manual entry.');
+          showInfo('No data detected — try a clearer photo or use manual entry.');
           return;
         }
         setImported(detected);
         setMode('photo');
       } else {
-        Alert.alert('OCR failed', 'Could not extract data from photo. Try manual entry.');
+        showError('OCR failed — could not extract data from photo. Try manual entry.');
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not process photo.');
+      showError(e?.message || 'Could not process photo.');
     } finally {
       setLoading(false);
     }
@@ -150,9 +154,9 @@ export default function FestivalHistoricalDataScreen() {
     const yearNum = parseInt(year, 10);
     const attendNum = parseInt(attendance, 10);
     const durNum = parseInt(duration, 10);
-    if (!yearNum || yearNum < 2000 || yearNum > 2100) { Alert.alert('Invalid year'); return; }
-    if (!attendNum || attendNum <= 0) { Alert.alert('Attendance required', 'Enter the total daily attendance for that year.'); return; }
-    if (!durNum || durNum <= 0) { Alert.alert('Duration required'); return; }
+    if (!yearNum || yearNum < 2000 || yearNum > 2100) { showInfo('Invalid year'); return; }
+    if (!attendNum || attendNum <= 0) { showInfo('Attendance required — enter the total daily attendance for that year.'); return; }
+    if (!durNum || durNum <= 0) { showInfo('Duration required'); return; }
 
     let productList: ImportedProduct[] = [];
     if (mode === 'csv' || mode === 'photo') {
@@ -166,7 +170,7 @@ export default function FestivalHistoricalDataScreen() {
         });
     }
 
-    if (productList.length === 0) { Alert.alert('No products', 'Add at least one product quantity.'); return; }
+    if (productList.length === 0) { showInfo('No products — add at least one product quantity.'); return; }
 
     setSaving(true);
     try {
@@ -188,10 +192,10 @@ export default function FestivalHistoricalDataScreen() {
         importedAt: serverTimestamp(),
         importedBy: uid,
       });
-      Alert.alert('Saved', `${productList.length} products from ${yearNum} imported successfully. Your AI prediction will now use this data.`,
-        [{ text: 'Done', onPress: () => nav.goBack() }]);
+      showSuccess(`✓ ${productList.length} products from ${yearNum} imported successfully`);
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save historical data.');
+      showError(e?.message || 'Could not save historical data.');
     } finally {
       setSaving(false);
     }
@@ -229,6 +233,7 @@ export default function FestivalHistoricalDataScreen() {
   // ── SELECT mode ───────────────────────────────────────────────────────────
   if (mode === null) {
     return (
+      <>
       <ScrollView style={H.screen} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
         <Text style={H.title}>Prior year data</Text>
         <Text style={H.sub}>Import sales or stock data from a previous event to improve your AI prediction accuracy.</Text>
@@ -252,6 +257,7 @@ export default function FestivalHistoricalDataScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity style={H.pathCard} onPress={() => {
+          // TODO: replace with branded modal — 3-button source picker
           Alert.alert('Photograph stocktake sheet', 'Choose source:', [
             { text: 'Take photo', onPress: () => handlePhotoOCR('camera') },
             { text: 'Choose from library', onPress: () => handlePhotoOCR('library') },
@@ -275,12 +281,15 @@ export default function FestivalHistoricalDataScreen() {
           <Text style={H.pathArrow}>›</Text>
         </TouchableOpacity>
       </ScrollView>
+      {modal}
+      </>
     );
   }
 
   // ── CSV / PHOTO PREVIEW ───────────────────────────────────────────────────
   if (mode === 'csv' || mode === 'photo') {
     return (
+      <>
       <ScrollView style={H.screen} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Text style={H.title}>{mode === 'csv' ? 'Preview CSV data' : 'Preview OCR data'}</Text>
         <Text style={H.sub}>{imported.length} products detected. Edit quantities if needed, then add the prior year details.</Text>
@@ -315,11 +324,14 @@ export default function FestivalHistoricalDataScreen() {
           <Text style={H.backTxt}>← Choose different method</Text>
         </TouchableOpacity>
       </ScrollView>
+      {modal}
+      </>
     );
   }
 
   // ── MANUAL ENTRY ──────────────────────────────────────────────────────────
   return (
+    <>
     <ScrollView style={H.screen} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <Text style={H.title}>Manual entry</Text>
       <Text style={H.sub}>Enter quantities sold last year. Leave blank if unknown — blank = unknown (not zero).</Text>
@@ -363,6 +375,8 @@ export default function FestivalHistoricalDataScreen() {
         <Text style={H.backTxt}>← Back</Text>
       </TouchableOpacity>
     </ScrollView>
+    {modal}
+    </>
   );
 }
 

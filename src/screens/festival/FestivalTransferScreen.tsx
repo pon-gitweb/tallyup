@@ -9,6 +9,8 @@ import { collection, doc, getDocs, query, where, setDoc, serverTimestamp, runTra
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,6 +74,8 @@ export default function FestivalTransferScreen() {
   const route  = useRoute<any>();
   const { fromBarId: initFromId, fromBarName: initFromName } = route.params || {};
   const venueId = useVenueId();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [bars,        setBars]        = useState<any[]>([]);
   const [fromBar,     setFromBar]     = useState<any>(initFromId ? { id: initFromId, label: initFromName || '' } : null);
@@ -181,11 +185,10 @@ export default function FestivalTransferScreen() {
         overrideReason, approvedBy: uid, approvedByName: name,
         status: 'completed', createdAt: serverTimestamp(), completedAt: serverTimestamp(),
       });
-      Alert.alert('Transfer complete', `${q} × ${product.label} moved from ${fromBar.label} to ${toBar.label}.`, [
-        { text: 'Done', onPress: () => nav.goBack() },
-      ]);
+      showSuccess(`✓ ${q} × ${product.label} moved from ${fromBar.label} to ${toBar.label}.`);
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Transfer failed. Please try again.');
+      showError(e?.message || 'Transfer failed — please try again.');
     } finally {
       setSaving(false);
     }
@@ -193,11 +196,11 @@ export default function FestivalTransferScreen() {
 
   function handleTransfer() {
     const q = parseFloat(qty);
-    if (!fromBar) { Alert.alert('Required', 'Select a from bar.'); return; }
-    if (!toBar)   { Alert.alert('Required', 'Select a to bar.'); return; }
-    if (fromBar.id === toBar.id) { Alert.alert('Invalid', 'From and to bars must be different.'); return; }
-    if (!product) { Alert.alert('Required', 'Select a product.'); return; }
-    if (!q || q <= 0) { Alert.alert('Required', 'Enter a valid quantity.'); return; }
+    if (!fromBar) { showInfo('Select a from bar.'); return; }
+    if (!toBar)   { showInfo('Select a to bar.'); return; }
+    if (fromBar.id === toBar.id) { showInfo('From and to bars must be different.'); return; }
+    if (!product) { showInfo('Select a product.'); return; }
+    if (!q || q <= 0) { showInfo('Enter a valid quantity.'); return; }
     if (!check || check.level === 'safe') {
       doTransfer(null);
       return;
@@ -209,6 +212,7 @@ export default function FestivalTransferScreen() {
 
     if (check.level === 'caution') {
       const safeQty = product.velocity ? Math.floor((product.currentStock - product.velocity * 4)) : null;
+      // TODO: replace with branded modal — multi-action alert (Cancel / Transfer reduced / Transfer anyway)
       Alert.alert(
         '⚠️ Caution',
         `${fromName} will have approximately ${hrs} hours of ${product.label} remaining after this transfer.`,
@@ -228,6 +232,7 @@ export default function FestivalTransferScreen() {
     const velocity = product.velocity ?? 1;
     const hoursNeeded = velocity > 0 ? (product.currentStock / velocity).toFixed(1) : '?';
     const safeQty = product.velocity ? Math.max(0, Math.floor(product.currentStock - product.velocity * 2)) : null;
+    // TODO: replace with branded modal — multi-action alert (Cancel / Transfer reduced / Transfer anyway)
     Alert.alert(
       '🚫 High Risk',
       `Transferring ${q} may leave ${fromName} short before close.\n\nAt current pace ${fromName} needs approximately ${hoursNeeded} units for the remaining time.\n\nGiving away ${q} leaves only ${remaining} units — about ${hrs} hours supply.`,
@@ -350,6 +355,7 @@ export default function FestivalTransferScreen() {
         onSelect={(p: any) => { setProduct(p); setShowProdPicker(false); }}
         onClose={() => setShowProdPicker(false)}
       />
+      {modal}
     </View>
   );
 }

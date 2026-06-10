@@ -8,6 +8,8 @@ import { useVenueId } from '../../context/VenueProvider';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
@@ -58,6 +60,8 @@ function Tabs({ tab, onChange }:{ tab: TabKey; onChange:(k:TabKey)=>void }) {
 /* ---------------- Tab 1: Create (baseline) ---------------- */
 function CreateStart({ onClose }:{ onClose:()=>void }) {
   const venueId = useVenueId();
+  const { showError } = useToast();
+  const { modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState<'food' | 'beverage' | null>(null);
   const [mode, setMode] = useState<'batch' | 'single' | 'dish' | null>(null);
@@ -78,7 +82,7 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
       if (!res?.id) throw new Error('Draft not created');
       setDetailId(res.id);
     } catch (e:any) {
-      Alert.alert('Could not start Craft-It', String(e?.message || e));
+      showError(String(e?.message || e) || 'Could not start Craft-It');
     } finally {
       setBusy(false);
     }
@@ -155,6 +159,7 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
           {detailId ? <DraftRecipeDetailPanel recipeId={detailId} onClose={() => setDetailId(null)} /> : null}
         </SafeAreaView>
       </Modal>
+      {modal}
     </ScrollView>
   );
 }
@@ -164,6 +169,8 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
 ----------------------------------------------------------------------- */
 function RecipesListTab() {
   const venueId = useVenueId();
+  const { showSuccess, showError } = useToast();
+  const { modal } = useConfirmModal();
   const colours = useColours();
   const styles = makeStyles(colours);
   const [rows, setRows] = useState<any[]>([]);
@@ -202,12 +209,12 @@ function RecipesListTab() {
     try{
       if (!venueId) throw new Error('No venue');
       const { id:newId } = await duplicateToDraft(venueId, r.id);
-      Alert.alert('Duplicated', 'A new draft was created from this recipe.');
+      showSuccess('✓ A new draft was created from this recipe.');
       setViewId(null); setViewDoc(null);
       await load();
       setEditId(newId);
     }catch(e:any){
-      Alert.alert('Duplicate failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Duplicate failed');
     }
   },[venueId, load]);
 
@@ -265,6 +272,7 @@ function RecipesListTab() {
           {editId ? <DraftRecipeDetailPanel recipeId={editId} onClose={() => setEditId(null)} /> : null}
         </SafeAreaView>
       </Modal>
+      {modal}
     </SafeAreaView>
   );
 }
@@ -399,6 +407,8 @@ function RecipeCardView({ recipe, onClose }) {
 -------------------------------------------------------------- */
 function DraftsTab() {
   const venueId = useVenueId();
+  const { showSuccess, showError } = useToast();
+  const { modal } = useConfirmModal();
   const colours = useColours();
   const styles = makeStyles(colours);
   const [rows, setRows] = useState<any[]>([]);
@@ -439,10 +449,10 @@ function DraftsTab() {
         gpPct:  typeof r?.gpPct === 'number' ? r.gpPct : null,
         rrpIncludesGst: !!r?.rrpIncludesGst,
       });
-      Alert.alert('Confirmed', `${r?.name || 'Recipe'} confirmed.`);
+      showSuccess(`✓ ${r?.name || 'Recipe'} confirmed.`);
       await load();
     } catch (e:any) {
-      Alert.alert('Confirm failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Confirm failed');
     }
   }, [venueId, load]);
 
@@ -450,10 +460,10 @@ function DraftsTab() {
     try {
       if (!venueId) throw new Error('No venue');
       await deleteDraft(venueId, r.id);
-      Alert.alert('Deleted', 'Draft removed.');
+      showSuccess('✓ Draft removed.');
       await load();
     } catch (e:any) {
-      Alert.alert('Delete failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Delete failed');
     }
   }, [venueId, load]);
 
@@ -461,6 +471,7 @@ function DraftsTab() {
     <TouchableOpacity
       onPress={() => setOpenId(r.id)} // tap = edit
       onLongPress={() =>
+        // TODO: replace with branded modal — 3-action menu (Cancel / Delete / Confirm)
         Alert.alert(
           r?.name || 'Draft',
           'Choose an action',
@@ -510,6 +521,7 @@ function DraftsTab() {
           {openId ? <DraftRecipeDetailPanel recipeId={openId} onClose={() => setOpenId(null)} /> : null}
         </SafeAreaView>
       </Modal>
+      {modal}
     </SafeAreaView>
   );
 }

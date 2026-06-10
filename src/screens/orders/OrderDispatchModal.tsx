@@ -8,10 +8,12 @@
 import React, { useCallback, useState } from 'react';
 import { getFirestore, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import {
-  ActivityIndicator, Alert, Linking, Modal,
+  ActivityIndicator, Linking, Modal,
   ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type OrderLine = { name: string; qty: number; unit?: string; unitCost?: number };
 
@@ -60,6 +62,8 @@ export default function OrderDispatchModal({
   const [busy, setBusy] = useState(false);
   const colours = useColours();
   const db = getFirestore();
+  const { showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const markPlaced = useCallback(async (method: string) => {
     try {
@@ -75,7 +79,7 @@ export default function OrderDispatchModal({
 
   const onEmail = useCallback(async () => {
     if (!supplierEmail) {
-      Alert.alert('No email', 'Add a supplier email address in Supplier settings first.');
+      showInfo('Add a supplier email address in Supplier settings first.');
       return;
     }
     setBusy(true);
@@ -86,18 +90,17 @@ export default function OrderDispatchModal({
       await Linking.openURL(mailto);
       // Give email app time to open then confirm
       setTimeout(() => {
-        Alert.alert(
-          'Order sent?',
-          'Once you have sent the email, tap confirm to mark this order as placed.',
-          [
-            { text: 'Confirm — order placed', onPress: async () => { await markPlaced('email'); onPlaced(); } },
-            { text: 'Not yet', style: 'cancel' },
-          ]
-        );
+        confirm({
+          title: 'Order sent?',
+          message: 'Once you have sent the email, tap confirm to mark this order as placed.',
+          confirmLabel: 'Confirm — order placed',
+          cancelLabel: 'Not yet',
+          onConfirm: async () => { await markPlaced('email'); onPlaced(); },
+        });
         setBusy(false);
       }, 1500);
     } catch {
-      Alert.alert('Could not open email', 'Please send the order manually.');
+      showError('Could not open email — please send the order manually.');
       setBusy(false);
     }
   }, [supplierEmail, poNumber, supplierName, lines, totalCost, markPlaced, onPlaced]);
@@ -105,25 +108,24 @@ export default function OrderDispatchModal({
   const onPortal = useCallback(async () => {
     const url = supplierPortalUrl || null;
     if (!url) {
-      Alert.alert('No portal URL', 'Add the supplier portal URL in Supplier settings first.');
+      showInfo('Add the supplier portal URL in Supplier settings first.');
       return;
     }
     setBusy(true);
     try {
       await Linking.openURL(url);
       setTimeout(() => {
-        Alert.alert(
-          'Order placed on portal?',
-          'Once you have placed the order on the supplier portal, tap confirm.',
-          [
-            { text: 'Confirm — order placed', onPress: async () => { await markPlaced('portal'); onPlaced(); } },
-            { text: 'Not yet', style: 'cancel' },
-          ]
-        );
+        confirm({
+          title: 'Order placed on portal?',
+          message: 'Once you have placed the order on the supplier portal, tap confirm.',
+          confirmLabel: 'Confirm — order placed',
+          cancelLabel: 'Not yet',
+          onConfirm: async () => { await markPlaced('portal'); onPlaced(); },
+        });
         setBusy(false);
       }, 1500);
     } catch {
-      Alert.alert('Could not open portal', 'Please visit the portal manually.');
+      showError('Could not open portal — please visit the portal manually.');
       setBusy(false);
     }
   }, [supplierPortalUrl, markPlaced, onPlaced]);
@@ -137,28 +139,26 @@ export default function OrderDispatchModal({
         message: text,
         title: `PO ${poNumber} — ${supplierName}`,
       });
-      Alert.alert(
-        'Order shared?',
-        'Once you have placed the order, tap confirm to record it.',
-        [
-          { text: 'Confirm — order placed', onPress: async () => { await markPlaced('print'); onPlaced(); } },
-          { text: 'Not yet', style: 'cancel' },
-        ]
-      );
+      confirm({
+        title: 'Order shared?',
+        message: 'Once you have placed the order, tap confirm to record it.',
+        confirmLabel: 'Confirm — order placed',
+        cancelLabel: 'Not yet',
+        onConfirm: async () => { await markPlaced('print'); onPlaced(); },
+      });
     } catch {}
     setBusy(false);
   }, [poNumber, supplierName, lines, totalCost, markPlaced, onPlaced]);
 
   const onPhone = useCallback(() => {
     const text = formatOrderBody(poNumber, supplierName, lines, totalCost);
-    Alert.alert(
-      'Call your order in',
-      'Here is your order summary. Read it to your supplier then confirm below.\n\n' + text,
-      [
-        { text: 'Confirm — order placed', onPress: async () => { await markPlaced('phone'); onPlaced(); } },
-        { text: 'Not yet', style: 'cancel' },
-      ]
-    );
+    confirm({
+      title: 'Call your order in',
+      message: 'Here is your order summary. Read it to your supplier then confirm below.\n\n' + text,
+      confirmLabel: 'Confirm — order placed',
+      cancelLabel: 'Not yet',
+      onConfirm: async () => { await markPlaced('phone'); onPlaced(); },
+    });
   }, [poNumber, supplierName, lines, totalCost, markPlaced, onPlaced]);
 
   const activeLines = lines.filter(l => l.qty > 0);
@@ -269,6 +269,7 @@ export default function OrderDispatchModal({
           </ScrollView>
         </View>
       </View>
+      {modal}
     </Modal>
   );
 }

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet,
+  ActivityIndicator, ScrollView, StyleSheet,
   Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -10,6 +10,8 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { determineCycleLength, getCycleConfig } from '../../services/festival/cycleConfig';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -153,6 +155,8 @@ function LockedBox({ text }: { text: string }) {
 export default function FestivalEventSetupScreen() {
   const venueId = useVenueId();
   const navigation = useNavigation<any>();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   // ── Section 1 state ──────────────────────────────────────────────────────
   const [eventName,      setEventName]      = useState('');
@@ -266,10 +270,7 @@ export default function FestivalEventSetupScreen() {
   useEffect(() => {
     if (venueId) return;
     const timeout = setTimeout(() => {
-      Alert.alert(
-        'Connection issue',
-        'Could not connect to your venue. Please close and reopen the app.',
-      );
+      showError('Connection issue — could not connect to your venue. Please close and reopen the app.');
     }, 10000);
     return () => clearTimeout(timeout);
   }, [venueId]);
@@ -379,11 +380,11 @@ export default function FestivalEventSetupScreen() {
 
   async function saveBasics() {
     if (!venueId) {
-      Alert.alert('Not connected', 'Your venue is still loading. Please wait a moment and try again.');
+      showInfo('Not connected — your venue is still loading. Please wait a moment and try again.');
       return;
     }
-    if (!eventName.trim()) { Alert.alert('Required', 'Event name is required.'); return; }
-    if (!startDate || !endDate) { Alert.alert('Required', 'Start and end dates are required.'); return; }
+    if (!eventName.trim()) { showInfo('Event name is required.'); return; }
+    if (!startDate || !endDate) { showInfo('Start and end dates are required.'); return; }
 
     // Validate DD/MM/YYYY format and produce real Date objects
     const parseEventDate = (s: string): Date | null => {
@@ -395,11 +396,11 @@ export default function FestivalEventSetupScreen() {
     const startParsed = parseEventDate(startDate);
     const endParsed   = parseEventDate(endDate);
     if (!startParsed || !endParsed) {
-      Alert.alert('Invalid dates', 'Please enter dates as DD/MM/YYYY\nExample: 13/04/2027');
+      showInfo('Invalid dates — please enter dates as DD/MM/YYYY (e.g. 13/04/2027).');
       return;
     }
     if (endParsed < startParsed) {
-      Alert.alert('Invalid dates', 'End date must be on or after start date.');
+      showInfo('Invalid dates — end date must be on or after start date.');
       return;
     }
     const eventDurationDays = Math.ceil((endParsed.getTime() - startParsed.getTime()) / 86400000) + 1;
@@ -455,7 +456,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Event basics saved');
       setExpandedSection(2);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -496,7 +497,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Bars saved');
       setExpandedSection(3);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -527,7 +528,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Source locations saved');
       setExpandedSection(4);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -547,7 +548,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Product planning saved');
       setExpandedSection(6);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -581,7 +582,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Supplier config saved');
       setExpandedSection(5);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -601,7 +602,7 @@ export default function FestivalEventSetupScreen() {
       showToast('✓ Historical data saved');
       setExpandedSection(1);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally { setSaving(null); }
   }
 
@@ -1118,6 +1119,7 @@ export default function FestivalEventSetupScreen() {
           <Text style={S.toastText}>{toast}</Text>
         </View>
       ) : null}
+      {modal}
     </View>
   );
 }

@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, TextInput, Modal, FlatList,
+  ActivityIndicator, TextInput, Modal, FlatList,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -17,6 +17,8 @@ import { matchProductInList } from '../../services/matching';
 import {
   detectSalesPeriod, detectPOSFormat, detectColumns,
 } from '../../services/festival/salesData';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +101,8 @@ export default function FestivalSalesUploadScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const uid = auth.currentUser?.uid ?? 'unknown';
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [phase, setPhase] = useState<Phase>('choose');
   const [saving, setSaving] = useState(false);
@@ -195,7 +199,7 @@ export default function FestivalSalesUploadScreen() {
 
       const { headers, rows } = parseCSV(content);
       if (headers.length === 0) {
-        Alert.alert('Could not read file', 'Make sure the file is a CSV with column headers in the first row.');
+        showError('Could not read file — make sure it is a CSV with column headers in the first row.');
         setPhase('choose');
         return;
       }
@@ -281,7 +285,7 @@ export default function FestivalSalesUploadScreen() {
 
       setPhase('upload-period');
     } catch (e: any) {
-      Alert.alert('Error reading file', e?.message || 'Please try a different file.');
+      showError(e?.message || 'Error reading file — please try a different file.');
       setPhase('choose');
     }
   }
@@ -298,7 +302,7 @@ export default function FestivalSalesUploadScreen() {
 
   function applyColumnMapAndProceed() {
     if (colProduct < 0 || colQty < 0) {
-      Alert.alert('Required columns missing', 'Please select the product name column and quantity column.');
+      showInfo('Please select the product name column and quantity column.');
       return;
     }
     // Re-parse unique products/locations with new column indices
@@ -432,11 +436,10 @@ export default function FestivalSalesUploadScreen() {
         lastUpdated: now,
       }, { merge: true });
 
-      Alert.alert('Sales data applied', `${lineItems.length} product entries recorded for ${periodLabel}.`, [
-        { text: 'Done', onPress: () => nav.goBack() },
-      ]);
+      showSuccess(`✓ ${lineItems.length} product entries recorded for ${periodLabel}.`);
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally {
       setSaving(false);
     }
@@ -464,7 +467,7 @@ export default function FestivalSalesUploadScreen() {
       }
 
       if (lineItems.length === 0) {
-        Alert.alert('No sales entered', 'Enter at least one non-zero quantity.');
+        showInfo('Enter at least one non-zero quantity.');
         setSaving(false);
         return;
       }
@@ -484,11 +487,10 @@ export default function FestivalSalesUploadScreen() {
         status: 'applied',
       });
 
-      Alert.alert('Sales saved', `${lineItems.length} products recorded for ${manualPeriodLabel}.`, [
-        { text: 'Done', onPress: () => nav.goBack() },
-      ]);
+      showSuccess(`✓ ${lineItems.length} products recorded for ${manualPeriodLabel}.`);
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Save failed — please try again.');
     } finally {
       setSaving(false);
     }
@@ -1057,6 +1059,7 @@ export default function FestivalSalesUploadScreen() {
           />
         </View>
       </Modal>
+      {modal}
     </View>
   );
 }

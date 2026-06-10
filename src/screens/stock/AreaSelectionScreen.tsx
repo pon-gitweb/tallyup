@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
-  Modal, Pressable, Alert, RefreshControl, ActivityIndicator
+  Modal, Pressable, RefreshControl, ActivityIndicator
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
@@ -16,6 +16,8 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type Params = { venueId: string; departmentId: string };
 type AreaRow = {
@@ -63,6 +65,8 @@ function AreaSelectionInner() {
   const styles = makeStyles(colours);
 
   const uid = getAuth().currentUser?.uid || null;
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const [areas, setAreas] = useState<AreaRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,7 +109,7 @@ function AreaSelectionInner() {
 
   async function doRename() {
     const name = renameName.trim();
-    if (!name) { Alert.alert('Name required', 'Enter an area name.'); return; }
+    if (!name) { showInfo('Name required — enter an area name.'); return; }
     setRenaming(true);
     try {
       await updateDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', renameId!), {
@@ -113,7 +117,7 @@ function AreaSelectionInner() {
       });
       setShowRename(false);
     } catch (e: any) {
-      Alert.alert('Rename failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Rename failed — unknown error');
     } finally {
       setRenaming(false);
     }
@@ -143,7 +147,7 @@ function AreaSelectionInner() {
         setLoading(false);
         if (!didAlertRef.current) {
           didAlertRef.current = true;
-          Alert.alert('Could not load areas', e?.message || 'Permission or connectivity issue');
+          showError(e?.message || 'Could not load areas — permission or connectivity issue');
         }
       });
       return () => unsub();
@@ -173,42 +177,36 @@ function AreaSelectionInner() {
 
     // Hard lock at selection level: if someone else holds the lock, block.
     if (lockUid && lockUid !== uid) {
-      Alert.alert(
-        'Area in use',
-        `“${area.name || area.id}” is currently being counted by ${lockName || 'another user'}.`,
-      );
+      showInfo(`“${area.name || area.id}” is currently being counted by ${lockName || 'another user'}.`);
       return;
     }
 
     nav.navigate('AreaInventory', { venueId, departmentId, areaId: area.id });
   }, [nav, venueId, departmentId, uid]);
 
-  const deleteArea = useCallback(async (id: string, name: string) => {
-    Alert.alert(
-      `Delete ${name}?`,
-      'Any counted stock in this area will be lost.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive', onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
-            } catch (e:any) {
-              Alert.alert('Delete failed', e?.message || 'Unknown error');
-            }
-          }
+  const deleteArea = useCallback((id: string, name: string) => {
+    confirm({
+      title: `Delete ${name}?`,
+      message: 'Any counted stock in this area will be lost.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', id));
+        } catch (e:any) {
+          showError(e?.message || 'Delete failed — unknown error');
         }
-      ]
-    );
-  }, [venueId, departmentId]);
+      },
+    });
+  }, [venueId, departmentId, confirm, showError]);
 
   async function addArea() {
     if (!newName.trim()) {
-      Alert.alert('Name required', 'Please enter an area name.');
+      showInfo('Name required — please enter an area name.');
       return;
     }
     if (paramsMissing) {
-      Alert.alert('Missing details', 'Please go back and reopen this department from Stock Control.');
+      showInfo('Missing details — please go back and reopen this department from Stock Control.');
       return;
     }
     setAdding(true);
@@ -227,7 +225,7 @@ function AreaSelectionInner() {
       setShowAdd(false);
       setNewName('');
     } catch (e:any) {
-      Alert.alert('Add failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Add failed — unknown error');
     } finally {
       setAdding(false);
     }
@@ -235,7 +233,7 @@ function AreaSelectionInner() {
 
   async function fixLegacyNulls() {
     if (paramsMissing) {
-      Alert.alert('Missing details', 'Please go back and reopen this department from Stock Control.');
+      showInfo('Missing details — please go back and reopen this department from Stock Control.');
       return;
     }
     try {
@@ -258,9 +256,9 @@ function AreaSelectionInner() {
           count++;
         }
       }
-      Alert.alert('Fixed', `Updated ${count} area(s).`);
+      showSuccess(`✓ Updated ${count} area(s)`);
     } catch (e:any) {
-      Alert.alert('Fix failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Fix failed — unknown error');
     }
   }
 
@@ -463,6 +461,7 @@ function AreaSelectionInner() {
           </Pressable>
         </Pressable>
       </Modal>
+      {modal}
     </View>
   );
 }

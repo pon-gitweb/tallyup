@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +18,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 import * as svc from '../../services/products';
 import { listSuppliers, createSupplier, Supplier } from '../../services/suppliers';
@@ -80,6 +81,8 @@ export default function EditProductScreen() {
   const route = useRoute<any>();
   const venueId = useVenueId();
   const colours = useColours();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const params: NavParams = route?.params || {};
   const editingId = params?.productId || null;
@@ -173,7 +176,7 @@ export default function EditProductScreen() {
       const links = await listProductSuppliers(venueId, editingId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not link supplier.');
+      showError(e?.message || 'Could not link supplier.');
     }
   }
 
@@ -183,20 +186,23 @@ export default function EditProductScreen() {
       await setPreferredProductSupplier(venueId, editingId, supplierId);
       const links = await listProductSuppliers(venueId, editingId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
-    } catch (e: any) { Alert.alert('Error', e?.message); }
+    } catch (e: any) { showError(e?.message || 'Something went wrong'); }
   }
 
   async function handleRemoveSupplierLink(supplierId: string) {
     if (!editingId || !venueId) return;
-    Alert.alert('Remove supplier link?', 'This removes the link between this product and the supplier.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: async () => {
+    confirm({
+      title: 'Remove supplier link?',
+      message: 'This removes the link between this product and the supplier.',
+      confirmLabel: 'Remove',
+      destructive: true,
+      onConfirm: async () => {
         try {
           await removeProductSupplier(venueId, editingId, supplierId);
           setProductSuppliers(prev => prev.filter(l => l.supplierId !== supplierId));
-        } catch (e: any) { Alert.alert('Error', e?.message); }
-      }},
-    ]);
+        } catch (e: any) { showError(e?.message || 'Something went wrong'); }
+      },
+    });
   }
 
   async function handleSaveRelationship(relationship: string) {
@@ -205,7 +211,7 @@ export default function EditProductScreen() {
       await upsertProductSupplier(venueId, editingId, editingRelationshipLink.supplierId, { relationship: relationship as any });
       const links = await listProductSuppliers(venueId, editingId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
-    } catch (e: any) { Alert.alert('Error', e?.message); }
+    } catch (e: any) { showError(e?.message || 'Something went wrong'); }
     setRelationshipPickerVisible(false);
     setEditingRelationshipLink(null);
   }
@@ -238,7 +244,7 @@ export default function EditProductScreen() {
       setNewSupplierEmail('');
       setNewSupplierPhone('');
     } catch (e: any) {
-      Alert.alert('Could not save supplier', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not save supplier — please try again.');
     } finally {
       setSavingSupplier(false);
     }
@@ -247,11 +253,11 @@ export default function EditProductScreen() {
   // -------- Save (service first, then Firestore fallback)
   async function save() {
     if (!venueId) {
-      Alert.alert('Missing venue', 'No venue selected.');
+      showInfo('No venue selected.');
       return;
     }
     if (!canSave) {
-      Alert.alert('Missing name', 'Please enter a product name.');
+      showInfo('Please enter a product name.');
       return;
     }
 
@@ -345,7 +351,7 @@ export default function EditProductScreen() {
         throw new Error('No create method available.');
       }
     } catch (e:any) {
-      Alert.alert('Save failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Save failed — unknown error');
     } finally {
       setSaving(false);
     }
@@ -840,6 +846,7 @@ export default function EditProductScreen() {
           </View>
         </Modal>
       )}
+      {modal}
     </KeyboardAvoidingView>
   );
 }

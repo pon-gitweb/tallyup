@@ -1,6 +1,8 @@
 // @ts-nocheck
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
@@ -13,6 +15,8 @@ import { invoiceFingerprint, checkProcessed, writeProcessed, confirmDuplicateImp
 
 export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
 
   // CAMERA: capture, upload JPEG, create pending snapshot (OCR comes later)
@@ -22,7 +26,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
 
       const cam = await ImagePicker.requestCameraPermissionsAsync();
       if (cam.status !== 'granted') {
-        Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+        showInfo('Camera access is required to take a photo.');
         return;
       }
 
@@ -58,13 +62,10 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
 
-      Alert.alert(
-        'Photo saved',
-        'Snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.'
-      );
+      showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
       onClose();
     } catch (e: any) {
-      Alert.alert('Photo capture failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Photo capture failed');
     } finally {
       setBusy(false);
     }
@@ -77,7 +78,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
 
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
-        Alert.alert('Permission needed', 'Photo library access is required to choose a photo.');
+        showInfo('Photo library access is required to choose a photo.');
         return;
       }
 
@@ -113,13 +114,10 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
 
-      Alert.alert(
-        'Photo saved',
-        'Snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.'
-      );
+      showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
       onClose();
     } catch (e: any) {
-      Alert.alert('Photo select failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Photo select failed');
     } finally {
       setBusy(false);
     }
@@ -157,6 +155,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         : await processInvoicesPdf({ venueId, orderId: 'UNSET', storagePath: up.fullPath });
 
       if (parsed?.scannedPdf) {
+        // TODO: replace with branded modal — 2-action alert (OK / Upload different file)
         Alert.alert(
           'Scanned PDF detected',
           parsed.message || 'This PDF appears to be a scanned image. For best results: use a digital PDF or CSV from your supplier.',
@@ -216,18 +215,15 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
 
       if (result.attached) {
-        Alert.alert('Fast Receive', `Attached to order ${result.orderId} and sent for reconciliation.`);
+        showSuccess(`✓ Attached to order ${result.orderId} and sent for reconciliation.`);
         onClose();
       } else {
         const nLines = Array.isArray(parsed?.lines) ? parsed.lines.length : 0;
-        Alert.alert(
-          'Saved for Review',
-          `No submitted PO found. Saved as Pending Fast Receive (${nLines} lines). Managers can attach later from Fast Receives (Pending).`
-        );
+        showSuccess(`✓ Saved as Pending Fast Receive (${nLines} lines). No submitted PO found — managers can attach later from Fast Receives (Pending).`);
         onClose();
       }
     } catch (e: any) {
-      Alert.alert('Fast Receive failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Fast Receive failed');
     } finally {
       setBusy(false);
     }
@@ -341,6 +337,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           <Text style={{ color: '#111', fontWeight: '800', textAlign: 'center' }}>Close</Text>
         </TouchableOpacity>
       </ScrollView>
+      {modal}
     </View>
   );
 }
