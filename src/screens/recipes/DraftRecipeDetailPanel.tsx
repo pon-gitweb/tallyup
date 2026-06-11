@@ -16,23 +16,61 @@ type Props = {
   initialName?: string | null;
   initialCategory?: 'food' | 'beverage' | null;
   initialMode?: 'batch' | 'single' | 'dish' | null;
+  prefill?: any | null;
 };
 
 const GST_RATE = 0.15; // NZ
 
+function buildPrefillMethod(p: any): string {
+  if (!p) return '';
+  const parts: string[] = [];
+  if (p.description) parts.push(String(p.description));
+  if (p.method) parts.push(String(p.method));
+
+  const meta: string[] = [];
+  if (p.glassware) meta.push(`Glassware: ${p.glassware}`);
+  if (p.garnish) meta.push(`Garnish: ${p.garnish}`);
+  if (meta.length) parts.push(meta.join('\n'));
+
+  if (p.iceIngredient) {
+    const ice: string[] = [];
+    if (p.iceIngredient.dilutionPct != null) ice.push(`Dilution: ${p.iceIngredient.dilutionPct}%`);
+    if (p.iceIngredient.volumeNote) ice.push(String(p.iceIngredient.volumeNote));
+    if (p.iceIngredient.batchColdWaterNote) ice.push(String(p.iceIngredient.batchColdWaterNote));
+    if (ice.length) parts.push(`Ice & dilution:\n${ice.join('\n')}`);
+  }
+
+  if (p.batchRecipe) {
+    const b = p.batchRecipe;
+    const lines = [`Batch recipe (×${b.serves || 10} serves):`];
+    (Array.isArray(b.ingredients) ? b.ingredients : []).forEach((i: any) => lines.push(`- ${i.name}: ${i.qty} ${i.unit}`));
+    if (b.coldWaterMl) lines.push(`- Cold water: ${b.coldWaterMl} ml`);
+    if (b.storageNotes) lines.push(String(b.storageNotes));
+    if (b.shelfLife) lines.push(`Shelf life: ${b.shelfLife}`);
+    parts.push(lines.join('\n'));
+  }
+
+  if (p.bartenderNotes) parts.push(`Notes: ${p.bartenderNotes}`);
+
+  return parts.join('\n\n');
+}
+
 export default function DraftRecipeDetailPanel({
-  recipeId, onClose, initialName = null, initialCategory = null, initialMode = null
+  recipeId, onClose, initialName = null, initialCategory = null, initialMode = null, prefill = null
 }: Props) {
   const venueId = useVenueId();
   const colours = useColours();
 
   // Prefill & state
-  const [name, setName] = useState<string>(initialName || '');
+  const [name, setName] = useState<string>(initialName || prefill?.name || '');
   const [mode] = useState<'batch' | 'single' | 'dish' | null>(initialMode ?? null);
   const [category] = useState<'food' | 'beverage' | null>(initialCategory ?? null);
 
+  // AI prefill banner
+  const [showAiBanner, setShowAiBanner] = useState<boolean>(!!prefill?.aiGenerated);
+
   // Items are now controlled here
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>(() => Array.isArray(prefill?.items) ? prefill.items : []);
 
   // Yield/portion (drives per-serve math)
   const [yieldQty, setYieldQty] = useState<string>('');
@@ -48,7 +86,7 @@ export default function DraftRecipeDetailPanel({
 
     // Pricing: GP ↔︎ RRP (with GST toggle)
   const [gpPct, setGpPct] = useState<string>('70');
-  const [rrp, setRrp] = useState<string>('');
+  const [rrp, setRrp] = useState<string>(prefill?.rrp != null ? String(prefill.rrp) : '');
   const [rrpIncludesGst, setRrpIncludesGst] = useState<boolean>(true);
 
   // POS linkage — which POS/menu item this recipe feeds + how many portions per sale
@@ -56,7 +94,7 @@ export default function DraftRecipeDetailPanel({
   const [outputPortionQty, setOutputPortionQty] = useState<string>('1'); // how many recipe "serves" per POS sale
 
   // Notes
-  const [method, setMethod] = useState<string>('');
+  const [method, setMethod] = useState<string>(() => buildPrefillMethod(prefill));
 
   const [busy, setBusy] = useState(false);
 
@@ -79,10 +117,10 @@ export default function DraftRecipeDetailPanel({
         if (!alive || !snap.exists()) return;
 
         const data:any = snap.data() || {};
-        if (data.name && !initialName) setName(String(data.name));
+        if (data.name && !initialName && !prefill?.name) setName(String(data.name));
         if (data.yield != null) setYieldQty(String(data.yield));
         if (data.unit) setUnit(String(data.unit));
-        if (Array.isArray(data.items)) {
+        if (Array.isArray(data.items) && (data.items.length > 0 || !Array.isArray(prefill?.items) || prefill.items.length === 0)) {
           setItems(
             data.items.map((r:any, i:number) => ({
               key:`i${i}_${Date.now()}`,
@@ -317,6 +355,22 @@ const isRrpManual =
       <Header title="Craft-It: Draft" onBack={onClose} />
 
       <ScrollView contentContainerStyle={{ padding:16, gap:12 }} keyboardShouldPersistTaps="handled">
+        {showAiBanner && (
+          <View style={{
+            flexDirection:'row', alignItems:'center', justifyContent:'space-between',
+            padding:8, borderRadius:8,
+            backgroundColor: colours.stellarAmber + '22',
+            borderWidth:1, borderColor: colours.stellarAmber,
+          }}>
+            <Text style={{ fontSize:12, fontWeight:'700', color: colours.stellarAmber, flex:1 }}>
+              ✦ AI generated — edit anything before saving
+            </Text>
+            <TouchableOpacity onPress={() => setShowAiBanner(false)} hitSlop={{top:8,bottom:8,left:8,right:8}}>
+              <Text style={{ fontSize:14, fontWeight:'800', color: colours.stellarAmber, paddingHorizontal:6 }}>×</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <Field label="Name">
           <TextInput
             value={name}

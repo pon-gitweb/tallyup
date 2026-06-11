@@ -7,7 +7,7 @@ import {
 import { useVenueId } from '../../context/VenueProvider';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useColours } from '../../context/ThemeContext';
+import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -16,6 +16,9 @@ import { confirmRecipe } from '../../services/recipes/confirmRecipe';
 import { duplicateToDraft } from '../../services/recipes/duplicateToDraft';
 import { deleteDraft } from '../../services/recipes/deleteDraft';
 import DraftRecipeDetailPanel from './DraftRecipeDetailPanel';
+import RecipeGenerationModal from '../../components/recipes/RecipeGenerationModal';
+import RecipeVariantSelector from '../../components/recipes/RecipeVariantSelector';
+import RecipeGenerationResult from '../../components/recipes/RecipeGenerationResult';
 
 type TabKey = 'create' | 'recipes' | 'drafts';
 
@@ -60,12 +63,91 @@ function Tabs({ tab, onChange }:{ tab: TabKey; onChange:(k:TabKey)=>void }) {
 /* ---------------- Tab 1: Create (baseline) ---------------- */
 function CreateStart({ onClose }:{ onClose:()=>void }) {
   const venueId = useVenueId();
+  const { theme } = useTheme();
+  const c = theme.colours;
   const { showError } = useToast();
   const { modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState<'food' | 'beverage' | null>(null);
   const [mode, setMode] = useState<'batch' | 'single' | 'dish' | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+
+  // AI recipe generation state
+  const [showGenModal, setShowGenModal] = useState(false);
+  const [generatedRecipe, setGeneratedRecipe] = useState<any | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<any | null>(null);
+  const [showVariants, setShowVariants] = useState(false);
+  const [genResult, setGenResult] = useState<{ id: string; prefill: any } | null>(null);
+
+  const onRecipeGenerated = (recipe: any) => {
+    setGeneratedRecipe(recipe);
+    if (Array.isArray(recipe?.variants) && recipe.variants.length > 1) {
+      setShowVariants(true);
+    } else {
+      setSelectedVariant(recipe?.variants?.[0] ?? null);
+    }
+  };
+
+  const handleSaveGenerated = async (aiRecipe: any) => {
+    try {
+      if (!venueId) throw new Error('No venue');
+
+      const aiType: string = generatedRecipe?._type || 'cocktail';
+      const isDrink = aiType === 'cocktail' || aiType === 'drink';
+      const recCategory: 'food' | 'beverage' = isDrink || !!aiRecipe.iceIngredient ? 'beverage' : 'food';
+      const recMode: 'batch' | 'single' | 'dish' = aiType === 'batch' ? 'batch' : (isDrink ? 'single' : 'dish');
+
+      const products: any[] = Array.isArray(generatedRecipe?._products) ? generatedRecipe._products : [];
+      const productByName = new Map(products.map((p) => [String(p.name).toLowerCase().trim(), p]));
+
+      const items = (aiRecipe.ingredients || []).map((ing: any) => {
+        const matched = ing.matchedProductName
+          ? productByName.get(String(ing.matchedProductName).toLowerCase().trim())
+          : null;
+        const qty = Number(ing.qty) || 0;
+        const cost = Number(ing.costPerServe) || 0;
+        const pricePerUnit = qty > 0 ? cost / qty : cost;
+
+        return {
+          key: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: matched ? matched.name : ing.name,
+          qty,
+          unit: ing.unit || 'ml',
+          link: matched
+            ? { productId: matched.id, packSize: matched.packSize ?? null, packUnit: matched.unit ?? null, packPrice: matched.costPrice ?? null }
+            : (cost > 0 ? { productId: 'misc', packSize: 1, packUnit: ing.unit || 'ml', packPrice: pricePerUnit } : undefined),
+        };
+      });
+
+      const { id: newId } = await createRecipeDraft({
+        venueId,
+        name: aiRecipe.name || 'Untitled',
+        category: recCategory,
+        mode: recMode,
+      });
+
+      const prefill = {
+        name: aiRecipe.name,
+        method: aiRecipe.method,
+        glassware: aiRecipe.glassware,
+        garnish: aiRecipe.garnish,
+        description: aiRecipe.description,
+        bartenderNotes: aiRecipe.bartenderNotes,
+        rrp: aiRecipe.pricing?.suggestedSellingPrice ?? null,
+        items,
+        batchRecipe: aiRecipe.batchRecipe ?? null,
+        iceIngredient: aiRecipe.iceIngredient ?? null,
+        aiGenerated: true,
+      };
+
+      setGeneratedRecipe(null);
+      setSelectedVariant(null);
+      setShowVariants(false);
+      setGenResult({ id: newId, prefill });
+    } catch (e: any) {
+      showError(String(e?.message || e) || 'Could not save generated recipe');
+    }
+  };
 
   const tip = useMemo(
     () => "Craft-It: choose type and mode, we'll handle the rest. Name + ingredients are set in the draft screen.",
@@ -105,6 +187,23 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
     <ScrollView contentContainerStyle={{ padding: 16 }}>
       <Text style={{ fontSize:18, fontWeight:'900', marginBottom:8 }}>Craft-It (Recipe Creator)</Text>
       <Text style={{ color:'#6B7280', marginBottom:12 }}>{tip}</Text>
+
+      <TouchableOpacity
+        onPress={() => setShowGenModal(true)}
+        style={{
+          padding: 16,
+          borderRadius: 14,
+          backgroundColor: c.deepBlue || '#1b4f72',
+          marginBottom: 16,
+        }}
+      >
+        <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 16, color: c.primaryText, marginBottom: 4 }}>
+          ✦ Generate with AI
+        </Text>
+        <Text style={{ fontFamily: theme.fontBody, fontSize: 13, color: c.primaryText, opacity: 0.85 }}>
+          Describe what you want to make — we'll build the whole recipe for you.
+        </Text>
+      </TouchableOpacity>
 
       <View style={{ padding:12, borderRadius:12, borderWidth:1, borderColor:'#E5E7EB', backgroundColor:'#F9FAFB', marginBottom:12 }}>
         <Text style={{ fontWeight:'700' }}>Planned data path</Text>
@@ -157,6 +256,40 @@ function CreateStart({ onClose }:{ onClose:()=>void }) {
       <Modal visible={!!detailId} animationType="slide" onRequestClose={() => setDetailId(null)}>
         <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
           {detailId ? <DraftRecipeDetailPanel recipeId={detailId} onClose={() => setDetailId(null)} /> : null}
+        </SafeAreaView>
+      </Modal>
+
+      <RecipeGenerationModal
+        visible={showGenModal}
+        onClose={() => setShowGenModal(false)}
+        onRecipeGenerated={(recipe) => { setShowGenModal(false); onRecipeGenerated(recipe); }}
+        onBuildManually={() => setShowGenModal(false)}
+      />
+
+      {generatedRecipe && (
+        <RecipeVariantSelector
+          visible={showVariants}
+          variants={generatedRecipe.variants || []}
+          onSelect={(variant) => { setSelectedVariant(variant); setShowVariants(false); }}
+          onCancel={() => { setShowVariants(false); setGeneratedRecipe(null); setSelectedVariant(null); }}
+        />
+      )}
+
+      {generatedRecipe && !showVariants && (
+        <RecipeGenerationResult
+          visible={!!generatedRecipe && !showVariants}
+          recipeData={generatedRecipe}
+          selectedVariant={selectedVariant}
+          onSave={handleSaveGenerated}
+          onDiscard={() => { setGeneratedRecipe(null); setSelectedVariant(null); }}
+        />
+      )}
+
+      <Modal visible={!!genResult} animationType="slide" onRequestClose={() => setGenResult(null)}>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
+          {genResult ? (
+            <DraftRecipeDetailPanel recipeId={genResult.id} prefill={genResult.prefill} onClose={() => setGenResult(null)} />
+          ) : null}
         </SafeAreaView>
       </Modal>
       {modal}

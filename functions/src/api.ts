@@ -59,7 +59,7 @@ type AiCallType =
   | 'invoice_ocr' | 'product_photo' | 'shelf_scan' | 'stocktake_photo'
   | 'sales_report' | 'izzy' | 'suitee' | 'ai_insights'
   | 'suggest_orders' | 'variance_explain' | 'budget_suggest' | 'photo_count'
-  | 'prediction_refinement';
+  | 'prediction_refinement' | 'recipe_generation';
 
 interface MeterState {
   aiUsed: number;
@@ -75,19 +75,19 @@ const PLAN_LIMITS: Record<string, Record<string, number>> = {
     total: 300, invoice_ocr: 50, product_photo: 75, shelf_scan: 15,
     stocktake_photo: 40, sales_report: 10, izzy: 150, suitee: 50,
     ai_insights: 12, suggest_orders: 20, variance_explain: 12,
-    prediction_refinement: 10,
+    prediction_refinement: 10, recipe_generation: 50,
   },
   core: {
     total: 200, invoice_ocr: 30, product_photo: 30, shelf_scan: 10,
     stocktake_photo: 20, sales_report: 5, izzy: 100, suitee: 30,
     ai_insights: 8, suggest_orders: 15, variance_explain: 8,
-    prediction_refinement: 5,
+    prediction_refinement: 5, recipe_generation: 10,
   },
   core_plus: {
     total: 500, invoice_ocr: 80, product_photo: 100, shelf_scan: 30,
     stocktake_photo: 60, sales_report: 15, izzy: 300, suitee: 100,
     ai_insights: 20, suggest_orders: 40, variance_explain: 20,
-    prediction_refinement: 20,
+    prediction_refinement: 20, recipe_generation: 30,
   },
 };
 
@@ -98,6 +98,7 @@ const FEATURE_LABELS: Record<string, string> = {
   suitee: 'Suitee queries', ai_insights: 'AI insights',
   suggest_orders: 'order suggestions', variance_explain: 'variance explanations',
   prediction_refinement: 'AI prediction refinement',
+  recipe_generation: 'recipe generation',
 };
 
 function buildLimitMessage(feature: string, used: number, limit: number, resetAt: string): string {
@@ -412,6 +413,171 @@ app.post("/variance-explain", async (req, res) => {
   } catch (e: any) {
     console.error("[api/variance-explain] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Explanation failed" });
+  }
+});
+
+// ── POST /generate-recipe ────────────────────────────────────────
+// Body: { venueId, name, type: 'cocktail'|'drink'|'dish'|'batch', products: [{name,costPrice,unit,packSize,size}], suppliers: [{name}] }
+// Returns: { ok: true, recipe, variants, ingredients, iceIngredient, pricing, batchRecipe }
+app.post("/generate-recipe", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, name, type, products, suppliers } = req.body || {};
+    if (!venueId || !name || typeof name !== "string" || !name.trim()) {
+      res.status(400).json({ ok: false, error: "Missing venueId or name" });
+      return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const lcRG = await checkAiLimit(venueId, 'recipe_generation');
+    if (!lcRG.allowed) {
+      res.status(429).json({
+        ...lcRG.limitError,
+        message: "Recipe generation limit reached for this month.",
+      });
+      return;
+    }
+
+    const recipeType: string = ['cocktail', 'drink', 'dish', 'batch'].includes(type) ? type : 'cocktail';
+    const isCocktail = recipeType === 'cocktail' || recipeType === 'drink';
+
+    const productList = Array.isArray(products) ? products.slice(0, 250) : [];
+    const supplierList = Array.isArray(suppliers) ? suppliers.slice(0, 100) : [];
+
+    const productLines = productList.map((p: any) => {
+      const cost = Number(p?.costPrice ?? 0);
+      const bits = [
+        `${p?.name ?? 'Unnamed product'}`,
+        `cost $${Number.isFinite(cost) ? cost.toFixed(2) : '0.00'} per ${p?.unit || 'unit'}`,
+      ];
+      if (p?.packSize) bits.push(`pack size ${p.packSize}`);
+      if (p?.size) bits.push(`size ${p.size}`);
+      return `- ${bits.join(" | ")}`;
+    }).join("\n") || "(no products on file)";
+
+    const supplierLines = supplierList.map((s: any) => `- ${s?.name ?? 'Unnamed supplier'}`).join("\n") || "(no suppliers on file)";
+
+    const systemPrompt = [
+      "You are an expert bar/kitchen consultant for Hosti, a hospitality inventory and recipe management app for NZ venues.",
+      "Generate a complete, ready-to-use recipe specification matched to the venue's existing products wherever possible.",
+      "",
+      "Core principles:",
+      "- Match ingredients to the venue's product list by name when there is a clear match. Use the EXACT product name from the list when matching.",
+      "- If an ingredient cannot be matched to a venue product, mark it unmatched and suggest a supplier from the venue's supplier list if relevant (or null if none fit).",
+      "- 'In-house' ingredients are things venues typically make/stock themselves (e.g. simple syrup, garnish, ice) that don't need a supplier match — mark isInHouse true for these.",
+      "- Always include realistic NZ hospitality pricing (NZD).",
+      `- Recipe type is "${recipeType}".`,
+      isCocktail
+        ? "- Since this is a drink, include an iceIngredient block describing dilution % and ice handling."
+        : "- Set iceIngredient to null for non-drink recipes.",
+      "- If the request is ambiguous or could mean multiple distinct drinks/dishes (e.g. 'Margarita' could be Classic, Spicy, Frozen, Tommy's), return 2-4 variants. If there's really only one sensible interpretation, return a single variant.",
+      "- Always include a batchRecipe scaled to 10 serves, with a short shelf life / storage note. For cocktails include a coldWaterMl figure for batch dilution.",
+      "",
+      "Respond with ONLY valid JSON (no markdown fences, no commentary) matching exactly this shape:",
+      `{
+  "recipe": {
+    "name": "string",
+    "method": "string - step by step, newline separated",
+    "glassware": "string",
+    "garnish": "string",
+    "description": "string - 1 sentence",
+    "bartenderNotes": "string - tips, substitutions, notes"
+  },
+  "variants": [
+    {
+      "name": "string",
+      "differentiator": "string - what makes this variant different",
+      "estimatedGpPct": number,
+      "estimatedSellPrice": number
+    }
+  ],
+  "ingredients": [
+    {
+      "name": "string",
+      "qty": number,
+      "unit": "ml" | "g" | "each",
+      "matchedProductId": "string or null - use the exact product name from the venue list if matched, else null",
+      "matchedProductName": "string or null",
+      "costPerServe": number,
+      "isInHouse": boolean,
+      "supplierSuggestion": "string or null"
+    }
+  ],
+  "iceIngredient": {
+    "dilutionPct": number,
+    "volumeNote": "string",
+    "batchColdWaterNote": "string"
+  } | null,
+  "pricing": {
+    "estimatedCostPerServe": number,
+    "suggestedSellingPrice": number,
+    "estimatedGpPct": number,
+    "priceGuide": { "budget": number, "mid": number, "premium": number }
+  },
+  "batchRecipe": {
+    "serves": 10,
+    "ingredients": [ { "name": "string", "qty": number, "unit": "string" } ],
+    "coldWaterMl": number | null,
+    "storageNotes": "string",
+    "shelfLife": "string"
+  }
+}`,
+      "",
+      "For matchedProductId: since you don't have real product IDs, set it to the exact venue product name string when matched (the app will resolve this to the real ID), or null if unmatched.",
+    ].filter(Boolean).join("\n");
+
+    const userMessage = [
+      `Generate a ${recipeType} recipe for: "${name.trim()}"`,
+      "",
+      "Venue products on file:",
+      productLines,
+      "",
+      "Venue suppliers on file:",
+      supplierLines,
+    ].join("\n");
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2500,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error("Claude API error: " + errText);
+    }
+    const data = await resp.json() as any;
+    let raw: string = data?.content?.[0]?.text || "";
+    raw = raw.trim().replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
+
+    let recipeJson: any;
+    try {
+      recipeJson = JSON.parse(raw);
+    } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("Could not parse AI response");
+      recipeJson = JSON.parse(m[0]);
+    }
+
+    await trackAiCall(venueId, 'recipe_generation');
+    console.log("[api/generate-recipe] OK", { uid, venueId, name, type: recipeType });
+    res.json({ ok: true, ...recipeJson });
+  } catch (e: any) {
+    console.error("[api/generate-recipe] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Recipe generation failed" });
   }
 });
 
