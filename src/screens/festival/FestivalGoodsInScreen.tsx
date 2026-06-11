@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet,
+  ActivityIndicator, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -13,6 +13,9 @@ import { auth } from '../../services/firebase';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type SourceLocation = { id: string; name: string; type: string; distributionConfirmed?: boolean };
 type Bar = { id: string; name: string };
@@ -36,6 +39,11 @@ type AllocationMap = Record<string, Allocation[]>; // productId → allocations 
 export default function FestivalGoodsInScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [phase, setPhase] = useState<'receive' | 'distribute'>('receive');
   const [sourceLocations, setSourceLocations] = useState<SourceLocation[]>([]);
@@ -104,7 +112,7 @@ export default function FestivalGoodsInScreen() {
         });
         setAllocations(initial);
       } catch (e: any) {
-        Alert.alert('Error', e?.message || 'Could not load stock.');
+        showError(e?.message || 'Could not load stock.');
       }
     })();
   }, [selectedLocation?.id, bars.length]);
@@ -249,7 +257,7 @@ export default function FestivalGoodsInScreen() {
 
       setPhase('distribute');
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -259,24 +267,20 @@ export default function FestivalGoodsInScreen() {
     if (!selectedLocation || !venueId) return;
     const shortfalls = getShortfalls();
     if (shortfalls.length > 0) {
-      Alert.alert(
-        'Allocation exceeds received',
-        `The following products are over-allocated:\n${shortfalls.map(n => `• ${n}`).join('\n')}\n\nAdjust quantities before saving.`,
-        [{ text: 'OK' }]
-      );
+      showInfo(`Over-allocated: ${shortfalls.join(', ')}. Adjust quantities before saving.`);
       return;
     }
 
     // FIX 2: Guard against double-distribution
     if (!forceDistribute && selectedLocation.distributionConfirmed) {
-      Alert.alert(
-        'Already distributed',
-        'This delivery has already been distributed to bars. Distributing again will add to existing bar stock.\n\nAre you sure you want to continue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Add to existing stock', style: 'destructive', onPress: () => saveDistribute(true) },
-        ]
-      );
+      confirm({
+        title: 'Already distributed',
+        message: 'This delivery has already been distributed to bars. Distributing again will add to existing bar stock.\n\nAre you sure you want to continue?',
+        confirmLabel: 'Add to existing stock',
+        cancelLabel: 'Cancel',
+        destructive: true,
+        onConfirm: () => saveDistribute(true),
+      });
       return;
     }
 
@@ -367,9 +371,10 @@ export default function FestivalGoodsInScreen() {
         } catch {}
       }
 
-      Alert.alert('Done', 'Stock allocated to bars.', [{ text: 'OK', onPress: () => nav.goBack() }]);
+      showSuccess('✓ Stock allocated to bars.');
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -386,7 +391,7 @@ export default function FestivalGoodsInScreen() {
   if (loading) {
     return (
       <View style={S.center}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -395,6 +400,7 @@ export default function FestivalGoodsInScreen() {
   if (phase === 'receive') {
     return (
       <ScrollView style={S.screen} contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+        {modal}
         <Text style={S.heading}>Goods In — Receive</Text>
         <Text style={S.sub}>Select where stock is arriving from, then enter quantities received.</Text>
 
@@ -416,26 +422,26 @@ export default function FestivalGoodsInScreen() {
         )}
 
         {selectedLocation && pendingOrders.length > 0 && !selectedOrder && (
-          <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginTop: 16, borderWidth: 1, borderColor: '#bfdbfe' }}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: '#1b4f72', marginBottom: 8 }}>
+          <View style={{ backgroundColor: c.surface, borderRadius: 12, padding: 14, marginTop: 16, borderWidth: 1, borderColor: c.border }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: c.deepBlue, marginBottom: 8 }}>
               📋 {pendingOrders.length} pending order{pendingOrders.length !== 1 ? 's' : ''} found
             </Text>
             {pendingOrders.map(order => (
               <TouchableOpacity
                 key={order.id}
-                style={{ backgroundColor: '#fff', borderRadius: 8, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: '#bfdbfe' }}
+                style={{ backgroundColor: c.surface, borderRadius: 8, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: c.border }}
                 onPress={() => loadFromOrder(order)}
               >
-                <Text style={{ fontWeight: '700', color: '#0B132B', fontSize: 13 }}>
+                <Text style={{ fontWeight: '700', color: c.navy, fontSize: 13 }}>
                   {order.supplierName || 'Unknown supplier'}
                 </Text>
-                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                <Text style={{ fontSize: 12, color: c.slateMid, marginTop: 2 }}>
                   {(order.products || order.items || []).length} products · Receive against this PO
                 </Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity onPress={() => setPendingOrders([])}>
-              <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
+              <Text style={{ fontSize: 12, color: c.slateMid, marginTop: 4, textAlign: 'center' }}>
                 Enter quantities manually instead →
               </Text>
             </TouchableOpacity>
@@ -443,8 +449,8 @@ export default function FestivalGoodsInScreen() {
         )}
 
         {selectedOrder && (
-          <View style={{ backgroundColor: '#f0fdf4', borderRadius: 8, padding: 10, marginTop: 12, borderWidth: 1, borderColor: '#86efac' }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>
+          <View style={{ backgroundColor: c.positiveSoft, borderRadius: 8, padding: 10, marginTop: 12, borderWidth: 1, borderColor: c.success }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: c.success }}>
               ✓ Receiving against: {selectedOrder.supplierName || 'PO'} — edit actual quantities below
             </Text>
           </View>
@@ -467,7 +473,7 @@ export default function FestivalGoodsInScreen() {
                   value={l.receivedQty > 0 ? String(l.receivedQty) : ''}
                   onChangeText={t => updateReceivedQty(l.productId, t)}
                   placeholder="0"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={c.slateMid}
                 />
               </View>
             ))}
@@ -489,7 +495,7 @@ export default function FestivalGoodsInScreen() {
                   value={chepReceived}
                   onChangeText={setChepReceived}
                   placeholder="0"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={c.slateMid}
                 />
               )}
             </View>
@@ -515,6 +521,7 @@ export default function FestivalGoodsInScreen() {
   const shortfalls = getShortfalls();
   return (
     <ScrollView style={S.screen} contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+      {modal}
       <Text style={S.heading}>Goods In — Distribute</Text>
       <Text style={S.sub}>Allocate received stock to bars. Total allocated cannot exceed received.</Text>
 
@@ -551,7 +558,7 @@ export default function FestivalGoodsInScreen() {
                   }
                   onChangeText={t => updateAllocation(l.productId, bar.id, t)}
                   placeholder="0"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={c.slateMid}
                 />
               </View>
             ))}
@@ -574,54 +581,56 @@ export default function FestivalGoodsInScreen() {
   );
 }
 
-const S = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f5f3ee' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f5f3ee', padding: 24 },
-  heading: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 6 },
-  sub: { fontSize: 14, color: '#6b7280', marginBottom: 20, lineHeight: 20 },
-  label: { fontSize: 12, fontWeight: '700', color: '#9ca3af', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 },
-  body: { fontSize: 15, color: '#6b7280', textAlign: 'center' },
-  empty: { fontSize: 14, color: '#9ca3af', fontStyle: 'italic', marginTop: 8 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: c.oat },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.oat, padding: 24 },
+    heading: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 6 },
+    sub: { fontSize: 14, color: c.slateMid, marginBottom: 20, lineHeight: 20 },
+    label: { fontSize: 12, fontWeight: '700', color: c.slateMid, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 },
+    body: { fontSize: 15, color: c.slateMid, textAlign: 'center' },
+    empty: { fontSize: 14, color: c.slateMid, fontStyle: 'italic', marginTop: 8 },
 
-  option: {
-    backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e5e1d8',
-    paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8,
-  },
-  optionSelected: { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  optionText: { fontSize: 15, color: '#374151', fontWeight: '500' },
-  optionTextSelected: { color: '#1b4f72', fontWeight: '700' },
+    option: {
+      backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+      paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8,
+    },
+    optionSelected: { borderColor: c.deepBlue, backgroundColor: c.surface },
+    optionText: { fontSize: 15, color: c.text, fontWeight: '500' },
+    optionTextSelected: { color: c.deepBlue, fontWeight: '700' },
 
-  lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0ede8' },
-  lineName: { fontSize: 14, fontWeight: '600', color: '#0B132B' },
-  lineSub: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  qtyInput: {
-    width: 72, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
-    backgroundColor: '#fff', textAlign: 'center', fontSize: 15, fontWeight: '600', color: '#0B132B',
-  },
+    lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
+    lineName: { fontSize: 14, fontWeight: '600', color: c.navy },
+    lineSub: { fontSize: 12, color: c.slateMid, marginTop: 2 },
+    qtyInput: {
+      width: 72, height: 40, borderRadius: 8, borderWidth: 1, borderColor: c.border,
+      backgroundColor: c.surface, textAlign: 'center', fontSize: 15, fontWeight: '600', color: c.navy,
+    },
 
-  chepRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, marginTop: 8 },
-  chepLabel: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  checkbox: {
-    width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: '#d1d5db',
-    alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff',
-  },
-  checkboxOn: { backgroundColor: '#1b4f72', borderColor: '#1b4f72' },
-  checkmark: { color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 16 },
+    chepRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, marginTop: 8 },
+    chepLabel: { fontSize: 14, color: c.text, fontWeight: '500' },
+    checkbox: {
+      width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface,
+    },
+    checkboxOn: { backgroundColor: c.deepBlue, borderColor: c.deepBlue },
+    checkmark: { color: c.primaryText, fontSize: 11, fontWeight: '900', lineHeight: 16 },
 
-  productBlock: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e1d8', padding: 14, marginBottom: 12 },
-  productBlockHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  remaining: { fontSize: 12, fontWeight: '700', color: '#1b4f72' },
-  remainingOver: { color: '#dc2626' },
+    productBlock: { backgroundColor: c.surface, borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, marginBottom: 12 },
+    productBlockHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    remaining: { fontSize: 12, fontWeight: '700', color: c.deepBlue },
+    remainingOver: { color: c.error },
 
-  shortfallBanner: { backgroundColor: '#fef2f2', borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fca5a5' },
-  shortfallText: { fontSize: 13, color: '#dc2626', fontWeight: '600' },
+    shortfallBanner: { backgroundColor: c.negativeSoft, borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: c.error },
+    shortfallText: { fontSize: 13, color: c.error, fontWeight: '600' },
 
-  cta: {
-    backgroundColor: '#1b4f72', borderRadius: 12, padding: 16,
-    alignItems: 'center', marginTop: 20,
-  },
-  ctaDisabled: { opacity: 0.5 },
-  ctaText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  backBtn: { alignItems: 'center', marginTop: 12, paddingVertical: 8 },
-  backBtnText: { fontSize: 14, color: '#6b7280', fontWeight: '500' },
-});
+    cta: {
+      backgroundColor: c.deepBlue, borderRadius: 12, padding: 16,
+      alignItems: 'center', marginTop: 20,
+    },
+    ctaDisabled: { opacity: 0.5 },
+    ctaText: { color: c.primaryText, fontWeight: '700', fontSize: 16 },
+    backBtn: { alignItems: 'center', marginTop: 12, paddingVertical: 8 },
+    backBtnText: { fontSize: 14, color: c.slateMid, fontWeight: '500' },
+  });
+}

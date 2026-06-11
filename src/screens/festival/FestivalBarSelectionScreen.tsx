@@ -8,6 +8,9 @@ import { collection, doc, getDocs, onSnapshot, query, orderBy, limit } from 'fir
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,6 +42,11 @@ function formatCountTime(iso: string | null | undefined): string {
 export default function FestivalBarSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [event,   setEvent]   = useState<any>(null);
   const [bars,    setBars]    = useState<Bar[]>([]);
@@ -108,7 +116,7 @@ export default function FestivalBarSelectionScreen() {
   if (loading) {
     return (
       <View style={S.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -133,7 +141,8 @@ export default function FestivalBarSelectionScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
 
         {/* Event header */}
@@ -211,41 +220,43 @@ export default function FestivalBarSelectionScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll: { padding: 16, paddingBottom: 40 },
+    scroll: { padding: 16, paddingBottom: 40 },
 
-  eventHeader: { marginBottom: 20 },
-  eventName:   { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 2 },
-  eventDate:   { fontSize: 14, color: '#6b7280' },
+    eventHeader: { marginBottom: 20 },
+    eventName:   { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 2 },
+    eventDate:   { fontSize: 14, color: c.slateMid },
 
-  barCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16,
-    marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8',
-  },
-  barCardTop:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  barName:     { fontSize: 16, fontWeight: '800', color: '#0B132B' },
-  barLocation: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  chevron:     { fontSize: 22, color: '#9ca3af', marginLeft: 8 },
-  alertBadge:  { backgroundColor: '#fef3c7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6, borderWidth: 1, borderColor: '#fde68a' },
-  alertBadgeText: { fontSize: 11, fontWeight: '700', color: '#92400e' },
-  countTime:   { fontSize: 12, color: '#6b7280' },
-  countTimeEmpty: { color: '#9ca3af', fontStyle: 'italic' },
+    barCard: {
+      backgroundColor: c.surface, borderRadius: 14, padding: 16,
+      marginBottom: 10, borderWidth: 1, borderColor: c.border,
+    },
+    barCardTop:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+    barName:     { fontSize: 16, fontWeight: '800', color: c.navy },
+    barLocation: { fontSize: 13, color: c.slateMid, marginTop: 2 },
+    chevron:     { fontSize: 22, color: c.slateMid, marginLeft: 8 },
+    alertBadge:  { backgroundColor: c.stellarAmber + '22', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6, borderWidth: 1, borderColor: c.stellarAmber },
+    alertBadgeText: { fontSize: 11, fontWeight: '700', color: c.stellarAmber },
+    countTime:   { fontSize: 12, color: c.slateMid },
+    countTimeEmpty: { color: c.slateMid, fontStyle: 'italic' },
 
-  emptyCard:  { backgroundColor: '#fff', borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', marginBottom: 12 },
-  emptyText:  { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22, marginBottom: 16 },
+    emptyCard:  { backgroundColor: c.surface, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border, marginBottom: 12 },
+    emptyText:  { fontSize: 15, color: c.slateMid, textAlign: 'center', lineHeight: 22, marginBottom: 16 },
 
-  secondaryBtn:     { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignItems: 'center' },
-  secondaryBtnText: { color: '#1b4f72', fontWeight: '700', fontSize: 14 },
+    secondaryBtn:     { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignItems: 'center' },
+    secondaryBtnText: { color: c.deepBlue, fontWeight: '700', fontSize: 14 },
 
-  opsRow: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  opsBtn: { flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
-  opsBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#1b4f72' },
-  opsBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  opsBtnTextSecondary: { color: '#1b4f72' },
-});
+    opsRow: { flexDirection: 'row', gap: 10, marginTop: 8 },
+    opsBtn: { flex: 1, backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
+    opsBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: c.deepBlue },
+    opsBtnText: { color: c.primaryText, fontWeight: '700', fontSize: 14 },
+    opsBtnTextSecondary: { color: c.deepBlue },
+  });
+}

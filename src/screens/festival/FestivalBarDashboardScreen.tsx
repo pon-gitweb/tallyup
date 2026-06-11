@@ -9,6 +9,9 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { buildDepletionCurve } from '../../services/festival/depletionCurve';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,18 +32,18 @@ function hoursRemaining(stock: number, velocity: number | null): number | null {
   return stock / velocity;
 }
 
-function stockColor(hrs: number | null): string {
-  if (hrs === null) return '#16a34a';
-  if (hrs < 2)  return '#dc2626';
-  if (hrs < 4)  return '#d97706';
-  return '#16a34a';
+function stockColor(hrs: number | null, c: any): string {
+  if (hrs === null) return c.success;
+  if (hrs < 2)  return c.error;
+  if (hrs < 4)  return c.stellarAmber;
+  return c.success;
 }
 
-function stockBg(hrs: number | null): string {
-  if (hrs === null) return '#f0fdf4';
-  if (hrs < 2)  return '#fef2f2';
-  if (hrs < 4)  return '#fef3c7';
-  return '#f0fdf4';
+function stockBg(hrs: number | null, c: any): string {
+  if (hrs === null) return c.positiveSoft;
+  if (hrs < 2)  return c.negativeSoft;
+  if (hrs < 4)  return c.stellarAmber + '22';
+  return c.positiveSoft;
 }
 
 function fillPct(item: StockItem): number | null {
@@ -66,6 +69,11 @@ export default function FestivalBarDashboardScreen() {
   const route  = useRoute<any>();
   const { barId, barName, barLocation } = route.params || {};
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [stock,        setStock]        = useState<StockItem[]>([]);
   const [bar,          setBar]          = useState<any>(null);
@@ -197,7 +205,7 @@ export default function FestivalBarDashboardScreen() {
   if (loading) {
     return (
       <View style={S.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -210,7 +218,8 @@ export default function FestivalBarDashboardScreen() {
   }, 0);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
 
         {/* Header */}
@@ -241,8 +250,8 @@ export default function FestivalBarDashboardScreen() {
           stock.map(item => {
             const hrs  = hoursRemaining(item.currentStock, item.velocity);
             const fill = fillPct(item);
-            const col  = stockColor(hrs);
-            const bg   = stockBg(hrs);
+            const col  = stockColor(hrs, c);
+            const bg   = stockBg(hrs, c);
 
             return (
               <View key={item.id} style={[S.stockCard, { backgroundColor: bg }]}>
@@ -283,7 +292,7 @@ export default function FestivalBarDashboardScreen() {
                   )}
                 </View>
                 {isOpsManager && depletionMap[item.id] && depletionMap[item.id].recommendationType !== 'on_track' && depletionMap[item.id].recommendationType !== 'no_data' && (
-                  <Text style={{ fontSize: 11, color: depletionMap[item.id].recommendationType === 'sellout_before_close' ? '#dc2626' : '#d97706', marginTop: 4, fontStyle: 'italic' }}>
+                  <Text style={{ fontSize: 11, color: depletionMap[item.id].recommendationType === 'sellout_before_close' ? c.error : c.stellarAmber, marginTop: 4, fontStyle: 'italic' }}>
                     {depletionMap[item.id].recommendation}
                   </Text>
                 )}
@@ -340,41 +349,43 @@ export default function FestivalBarDashboardScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll: { padding: 16, paddingBottom: 40 },
+    scroll: { padding: 16, paddingBottom: 40 },
 
-  header:      { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 20, gap: 12 },
-  barName:     { fontSize: 22, fontWeight: '800', color: '#0B132B' },
-  barLocation: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  lastCount:   { fontSize: 12, color: '#9ca3af', marginTop: 4 },
-  countBtn:    { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, marginTop: 4 },
-  countBtnText:{ color: '#fff', fontWeight: '700', fontSize: 13 },
+    header:      { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 20, gap: 12 },
+    barName:     { fontSize: 22, fontWeight: '800', color: c.navy },
+    barLocation: { fontSize: 13, color: c.slateMid, marginTop: 2 },
+    lastCount:   { fontSize: 12, color: c.slateMid, marginTop: 4 },
+    countBtn:    { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 16, marginTop: 4 },
+    countBtnText:{ color: c.primaryText, fontWeight: '700', fontSize: 13 },
 
-  stockCard:    { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  stockCardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
-  productName:  { flex: 1, fontSize: 15, fontWeight: '700', color: '#0B132B' },
-  alertPill:    { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  alertPillText:{ fontSize: 11, fontWeight: '700' },
+    stockCard:    { borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    stockCardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+    productName:  { flex: 1, fontSize: 15, fontWeight: '700', color: c.navy },
+    alertPill:    { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+    alertPillText:{ fontSize: 11, fontWeight: '700' },
 
-  fillTrack: { height: 8, backgroundColor: '#e5e7eb', borderRadius: 4, marginBottom: 8, overflow: 'hidden' },
-  fillBar:   { height: 8, borderRadius: 4 },
+    fillTrack: { height: 8, backgroundColor: c.border, borderRadius: 4, marginBottom: 8, overflow: 'hidden' },
+    fillBar:   { height: 8, borderRadius: 4 },
 
-  stockMeta:   { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  stockQty:    { fontSize: 13, color: '#374151', fontWeight: '600' },
-  stockDetail: { fontSize: 13, color: '#6b7280' },
+    stockMeta:   { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    stockQty:    { fontSize: 13, color: c.text, fontWeight: '600' },
+    stockDetail: { fontSize: 13, color: c.slateMid },
 
-  emptyCard:  { backgroundColor: '#fff', borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', marginBottom: 12 },
-  emptyText:  { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22 },
+    emptyCard:  { backgroundColor: c.surface, borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border, marginBottom: 12 },
+    emptyText:  { fontSize: 15, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  actions:              { gap: 8, marginTop: 4 },
-  actionBtn:            { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 14, alignItems: 'center' },
-  actionBtnSecondary:   { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#1b4f72' },
-  actionBtnText:        { color: '#fff', fontWeight: '700', fontSize: 15 },
-  actionBtnTextSecondary: { color: '#1b4f72' },
-});
+    actions:              { gap: 8, marginTop: 4 },
+    actionBtn:            { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 14, alignItems: 'center' },
+    actionBtnSecondary:   { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: c.deepBlue },
+    actionBtnText:        { color: c.primaryText, fontWeight: '700', fontSize: 15 },
+    actionBtnTextSecondary: { color: c.deepBlue },
+  });
+}

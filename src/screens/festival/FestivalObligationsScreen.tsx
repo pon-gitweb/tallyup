@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -10,15 +10,18 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { calculateObligationProgress, type ObligationProgress } from '../../services/festival/obligationTracker';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function statusConfig(s: string): { color: string; icon: string; label: string } {
-  if (s === 'met')         return { color: '#16a34a', icon: '✓',  label: 'Met' };
-  if (s === 'on_track')    return { color: '#1b4f72', icon: '→',  label: 'On track' };
-  if (s === 'at_risk')     return { color: '#d97706', icon: '⚠️', label: 'At risk' };
-  if (s === 'missed')      return { color: '#dc2626', icon: '✗',  label: 'Missed' };
-  return                          { color: '#9ca3af', icon: '○',  label: 'Not started' };
+function statusConfig(s: string, c: any): { color: string; icon: string; label: string } {
+  if (s === 'met')         return { color: c.success,      icon: '✓',  label: 'Met' };
+  if (s === 'on_track')    return { color: c.deepBlue,     icon: '→',  label: 'On track' };
+  if (s === 'at_risk')     return { color: c.stellarAmber, icon: '⚠️', label: 'At risk' };
+  if (s === 'missed')      return { color: c.error,        icon: '✗',  label: 'Missed' };
+  return                          { color: c.slateMid,      icon: '○',  label: 'Not started' };
 }
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
@@ -37,6 +40,11 @@ export default function FestivalObligationsScreen() {
   const nav     = useNavigation<any>();
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const OB = makeStyles(c);
 
   const [role,        setRole]        = useState<string | null>(null);
   const [obligations, setObligations] = useState<any[]>([]);
@@ -121,7 +129,7 @@ export default function FestivalObligationsScreen() {
         updatedAt:       serverTimestamp(),
       });
     } catch (e: any) {
-      Alert.alert('Error', e?.message);
+      showError(e?.message || 'Please try again.');
     } finally {
       setConfirming(null);
     }
@@ -145,7 +153,7 @@ export default function FestivalObligationsScreen() {
   if (loading) {
     return (
       <View style={OB.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -180,7 +188,8 @@ export default function FestivalObligationsScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={OB.scroll}>
 
         <Text style={OB.screenTitle}>Sponsor obligations</Text>
@@ -209,7 +218,7 @@ export default function FestivalObligationsScreen() {
 
             {obls.map(obl => {
               const prog = progress[obl.id];
-              const sc = statusConfig(prog?.status ?? obl.status ?? 'not_started');
+              const sc = statusConfig(prog?.status ?? obl.status ?? 'not_started', c);
               const isDisplay = obl.type === 'display_requirement';
               const isConfirming = confirming === obl.id;
 
@@ -251,14 +260,14 @@ export default function FestivalObligationsScreen() {
                       onPress={() => confirmDisplayRequirement(obl.id)}
                     >
                       {isConfirming
-                        ? <ActivityIndicator color="#fff" size="small" />
+                        ? <ActivityIndicator color={c.primaryText} size="small" />
                         : <Text style={OB.confirmBtnText}>Mark as confirmed</Text>}
                     </TouchableOpacity>
                   )}
 
                   {/* Recommendation */}
                   {prog?.recommendation && (
-                    <Text style={[OB.recommendation, { color: sc.color === '#16a34a' ? '#6b7280' : sc.color }]}>
+                    <Text style={[OB.recommendation, { color: sc.color === c.success ? c.slateMid : sc.color }]}>
                       {prog.recommendation}
                     </Text>
                   )}
@@ -306,50 +315,52 @@ function formatType(t: string): string {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const OB = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll:      { padding: 16, paddingBottom: 40 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  eventName:   { fontSize: 14, color: '#6b7280', marginBottom: 16 },
+    scroll:      { padding: 16, paddingBottom: 40 },
+    screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    eventName:   { fontSize: 14, color: c.slateMid, marginBottom: 16 },
 
-  supplierSection: { marginBottom: 20 },
-  supplierName:    { fontSize: 17, fontWeight: '800', color: '#0B132B', marginBottom: 8 },
-  divider:         { height: 2, backgroundColor: '#e5e1d8', marginBottom: 10, borderRadius: 1 },
+    supplierSection: { marginBottom: 20 },
+    supplierName:    { fontSize: 17, fontWeight: '800', color: c.navy, marginBottom: 8 },
+    divider:         { height: 2, backgroundColor: c.border, marginBottom: 10, borderRadius: 1 },
 
-  oblCard:   { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  oblHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  oblType:   { fontSize: 13, fontWeight: '800', color: '#0B132B', flex: 1, marginRight: 8 },
-  statusBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  statusText:  { fontSize: 11, fontWeight: '700' },
-  requirement: { fontSize: 13, color: '#374151', lineHeight: 19, marginBottom: 8 },
+    oblCard:   { backgroundColor: c.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    oblHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    oblType:   { fontSize: 13, fontWeight: '800', color: c.navy, flex: 1, marginRight: 8 },
+    statusBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+    statusText:  { fontSize: 11, fontWeight: '700' },
+    requirement: { fontSize: 13, color: c.text, lineHeight: 19, marginBottom: 8 },
 
-  progressSection: { marginTop: 4, marginBottom: 8 },
-  progressRow:     { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  progressLabel:   { fontSize: 12, color: '#6b7280' },
-  progressBg:      { height: 8, backgroundColor: '#e5e7eb', borderRadius: 4, overflow: 'hidden', marginBottom: 4 },
-  progressFill:    { height: 8, borderRadius: 4 },
-  projectedText:   { fontSize: 11, color: '#9ca3af', marginTop: 2 },
+    progressSection: { marginTop: 4, marginBottom: 8 },
+    progressRow:     { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+    progressLabel:   { fontSize: 12, color: c.slateMid },
+    progressBg:      { height: 8, backgroundColor: c.border, borderRadius: 4, overflow: 'hidden', marginBottom: 4 },
+    progressFill:    { height: 8, borderRadius: 4 },
+    projectedText:   { fontSize: 11, color: c.slateMid, marginTop: 2 },
 
-  confirmBtn:     { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center', marginTop: 8 },
-  confirmBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  btnDisabled:    { opacity: 0.5 },
+    confirmBtn:     { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, alignItems: 'center', marginTop: 8 },
+    confirmBtnText: { color: c.primaryText, fontWeight: '700', fontSize: 13 },
+    btnDisabled:    { opacity: 0.5 },
 
-  recommendation: { fontSize: 12, fontStyle: 'italic', marginTop: 4, lineHeight: 17 },
+    recommendation: { fontSize: 12, fontStyle: 'italic', marginTop: 4, lineHeight: 17 },
 
-  rebateCard:   { backgroundColor: '#eff6ff', borderRadius: 12, padding: 12, marginTop: 6, borderWidth: 1, borderColor: '#bfdbfe' },
-  rebateCardMgr:{ backgroundColor: '#f9fafb', borderRadius: 12, padding: 12, marginTop: 6, borderWidth: 1, borderColor: '#e5e7eb' },
-  rebateTitle:  { fontSize: 12, fontWeight: '800', color: '#1b4f72', marginBottom: 6 },
-  rebateRow:    { fontSize: 13, color: '#1e40af', lineHeight: 20 },
-  rebateRowMgr: { fontSize: 12, color: '#9ca3af', fontStyle: 'italic' },
+    rebateCard:   { backgroundColor: c.surface, borderRadius: 12, padding: 12, marginTop: 6, borderWidth: 1, borderColor: c.border },
+    rebateCardMgr:{ backgroundColor: c.surface, borderRadius: 12, padding: 12, marginTop: 6, borderWidth: 1, borderColor: c.border },
+    rebateTitle:  { fontSize: 12, fontWeight: '800', color: c.deepBlue, marginBottom: 6 },
+    rebateRow:    { fontSize: 13, color: c.deepBlue, lineHeight: 20 },
+    rebateRowMgr: { fontSize: 12, color: c.slateMid, fontStyle: 'italic' },
 
-  emptyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' },
-  emptyText: { fontSize: 15, fontWeight: '700', color: '#0B132B', marginBottom: 6 },
-  emptyHint: { fontSize: 13, color: '#9ca3af', textAlign: 'center', lineHeight: 18, marginBottom: 12 },
-  emptyBtn:     { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20 },
-  emptyBtnText: { color: '#1b4f72', fontWeight: '700', fontSize: 13 },
-});
+    emptyCard: { backgroundColor: c.surface, borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border },
+    emptyText: { fontSize: 15, fontWeight: '700', color: c.navy, marginBottom: 6 },
+    emptyHint: { fontSize: 13, color: c.slateMid, textAlign: 'center', lineHeight: 18, marginBottom: 12 },
+    emptyBtn:     { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20 },
+    emptyBtnText: { color: c.deepBlue, fontWeight: '700', fontSize: 13 },
+  });
+}
