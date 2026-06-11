@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
 import { VenueProvider } from './src/context/VenueProvider';
+import { ToastProvider } from './src/components/common/Toast';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
 import { initCrashReporting } from './src/services/crashReporting';
 
@@ -12,11 +13,13 @@ function App() {
   console.log('[TallyUp App] mount');
   return (
     <SafeAreaProvider>
-      <VenueProvider>
-        <AppErrorBoundary>
-          <RootNavigator />
-        </AppErrorBoundary>
-      </VenueProvider>
+      <ToastProvider>
+        <VenueProvider>
+          <AppErrorBoundary>
+            <RootNavigator />
+          </AppErrorBoundary>
+        </VenueProvider>
+      </ToastProvider>
     </SafeAreaProvider>
   );
 }
