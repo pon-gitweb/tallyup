@@ -85,7 +85,7 @@ export default function MoreScreen() {
           >
             <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>🍹</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, color: c.navy, fontWeight: '700' }}>CraftUp — Recipe costing</Text>
+              <Text style={{ fontSize: 15, color: c.navy, fontWeight: '700' }}>CraftIt — Recipe costing</Text>
               <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2, lineHeight: 17 }}>
                 Build recipes, calculate COGS, set selling prices
               </Text>

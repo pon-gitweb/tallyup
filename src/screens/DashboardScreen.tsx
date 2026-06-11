@@ -543,7 +543,7 @@ export default function DashboardScreen() {
         >
           <Text style={{ fontSize: 22 }}>🍹</Text>
           <View style={{ flex: 1 }}>
-            <Text style={styles.gridLabel}>CraftUp — Recipes</Text>
+            <Text style={styles.gridLabel}>CraftIt — Recipes</Text>
             <Text style={styles.gridSub}>Calculate COGS, set selling prices</Text>
           </View>
           <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>

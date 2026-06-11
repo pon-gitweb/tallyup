@@ -130,7 +130,7 @@ BATCH PRICE ENTRY
 - Enter prices inline without leaving the screen
 - Save all prices in one tap
 
-RECIPE COSTS (CraftUp)
+RECIPE COSTS (CraftIt)
 - Recipes linked to venue products show live cost prices
 - COGS updates automatically when invoice prices change
 - Ingredients show whether their cost is live (linked to a product) or manual

@@ -321,7 +321,7 @@ export default function MainStack() {
       />
 
       {/* Recipes */}
-      <Stack.Screen name="CraftUp" component={CraftUpListScreen} options={{ title: 'Recipes (CraftUp)' }} />
+      <Stack.Screen name="CraftUp" component={CraftUpListScreen} options={{ title: 'Recipes (CraftIt)' }} />
       <Stack.Screen name="DraftRecipeDetail" component={DraftRecipeDetailScreen} options={{ title: 'New Recipe' }} />
 
       {/* Orders */}

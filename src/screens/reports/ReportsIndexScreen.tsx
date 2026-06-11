@@ -1051,7 +1051,7 @@ function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: 
       <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
       <NavTile title="📈 Product Performance" onPress={() => nav.navigate('ProductPerformance')} />
       <NavTile title="🚚 Supplier Spend" onPress={() => nav.navigate('SupplierSpend')} />
-      <NavTile title="🍹 Recipe Costs (CraftUp)" onPress={() => nav.navigate('CraftUp')} />
+      <NavTile title="🍹 Recipe Costs (CraftIt)" onPress={() => nav.navigate('CraftUp')} />
       <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
       <NavTile title="Stocktake History" onPress={() => nav.navigate('StocktakeHistory')} />
       <NavTile title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
