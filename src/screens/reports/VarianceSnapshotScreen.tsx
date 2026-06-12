@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TextInput, TouchableOpacity, ScrollView } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { computeVarianceSnapshot, VarianceRow } from '../../services/reports/variance';
 import { explainVariance } from '../../services/aiVariance';
@@ -8,9 +8,17 @@ import { attributeVarianceToRecipes } from '../../services/sales/matchSalesToRec
 import { exportPdf } from '../../utils/exporters';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 export default function VarianceSnapshotScreen() {
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
   const [loading, setLoading] = useState(true);
   const [rowsShort, setRowsShort] = useState<VarianceRow[]>([]);
   const [rowsExcess, setRowsExcess] = useState<VarianceRow[]>([]);
@@ -30,7 +38,7 @@ export default function VarianceSnapshotScreen() {
       setShortageValue(res.totalShortageValue || 0);
       setExcessValue(res.totalExcessValue || 0);
     } catch (e: any) {
-      Alert.alert('Failed to load variance', e?.message ?? String(e));
+      showError(e?.message ?? String(e));
     } finally {
       setLoading(false);
     }
@@ -50,11 +58,11 @@ export default function VarianceSnapshotScreen() {
 
   const onExportPdf = async () => {
     if (!venueId) {
-      Alert.alert('Not ready', 'Select a venue first.');
+      showInfo('Select a venue first.');
       return;
     }
     if (!rowsShort.length && !rowsExcess.length) {
-      Alert.alert('Nothing to export', 'There are no shortages or excesses in this snapshot yet.');
+      showInfo('There are no shortages or excesses in this snapshot yet.');
       return;
     }
     try {
@@ -68,34 +76,32 @@ export default function VarianceSnapshotScreen() {
       );
       const out = await exportPdf('Variance Snapshot', html);
       if (!out.ok) {
-        Alert.alert(
-          'PDF generated',
-          'Sharing may be unavailable or failed on this device, but the PDF was written to storage if supported.',
-        );
+        showInfo('Sharing may be unavailable or failed on this device, but the PDF was written to storage if supported.');
       }
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message || 'Could not export variance snapshot.');
+      showError(e?.message || 'Could not export variance snapshot.');
     }
   };
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollPad}>
+    <View style={S.container}>
+      {modal}
+      <ScrollView contentContainerStyle={S.scrollPad}>
 
-        <Text style={styles.h1}>Variance Snapshot</Text>
-        <Text style={styles.sub}>Compares current on-hand (from last counts) against guidance (“expected”).</Text>
+        <Text style={S.h1}>Variance Snapshot</Text>
+        <Text style={S.sub}>Compares current on-hand (from last counts) against guidance (“expected”).</Text>
 
         {/* AI Summary */}
         {aiLoading && (
-          <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <ActivityIndicator size="small" color="#1D4ED8" />
-            <Text style={{ color: '#1D4ED8', fontWeight: '700' }}>AI is analysing your variance...</Text>
+          <View style={{ backgroundColor: c.primaryLight, borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <ActivityIndicator size="small" color={c.deepBlue} />
+            <Text style={{ color: c.deepBlue, fontWeight: '700' }}>AI is analysing your variance...</Text>
           </View>
         )}
         {aiSummary && !aiLoading && (
-          <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#BFDBFE' }}>
-            <Text style={{ fontWeight: '900', color: '#1D4ED8', marginBottom: 6 }}>🤖 AI Summary</Text>
-            <Text style={{ color: '#1E3A5F', fontSize: 14, lineHeight: 20 }}>{aiSummary}</Text>
+          <View style={{ backgroundColor: c.primaryLight, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.deepBlue }}>
+            <Text style={{ fontWeight: '900', color: c.deepBlue, marginBottom: 6 }}>🤖 AI Summary</Text>
+            <Text style={{ color: c.navy, fontSize: 14, lineHeight: 20 }}>{aiSummary}</Text>
           </View>
         )}
         {!aiSummary && !aiLoading && (
@@ -119,58 +125,58 @@ export default function VarianceSnapshotScreen() {
                 totalExcessValue: excessValue,
               })
                 .then(explained => setAiSummary(explained.summary || null))
-                .catch(() => {})
+                .catch(() => showError('Could not generate AI summary.'))
                 .finally(() => setAiLoading(false));
             }}
             disabled={aiLoading || (!rowsShort.length && !rowsExcess.length)}
-            style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 14, marginBottom: 10, alignItems: 'center', borderWidth: 1, borderColor: '#BFDBFE' }}
+            style={{ backgroundColor: c.primaryLight, borderRadius: 12, padding: 14, marginBottom: 10, alignItems: 'center', borderWidth: 1, borderColor: c.deepBlue }}
           >
-            <Text style={{ color: '#1D4ED8', fontWeight: '700' }}>Explain variance</Text>
+            <Text style={{ color: c.deepBlue, fontWeight: '700' }}>Explain variance</Text>
           </TouchableOpacity>
         )}
         <TextInput
           value={q}
           onChangeText={setQ}
           placeholder="Search by name or SKU"
-          style={styles.input}
+          style={S.input}
         />
 
-        <View style={styles.totals}>
-          <View style={styles.pill}>
-            <Text style={styles.pillLabel}>Shortage value</Text>
-            <Text style={[styles.pillValue, { color: '#C62828' }]}>{formatMoney(shortageValue)}</Text>
+        <View style={S.totals}>
+          <View style={S.pill}>
+            <Text style={S.pillLabel}>Shortage value</Text>
+            <Text style={[S.pillValue, { color: c.error }]}>{formatMoney(shortageValue)}</Text>
           </View>
-          <View style={styles.pill}>
-            <Text style={styles.pillLabel}>Excess value</Text>
-            <Text style={[styles.pillValue, { color: '#2E7D32' }]}>{formatMoney(excessValue)}</Text>
+          <View style={S.pill}>
+            <Text style={S.pillLabel}>Excess value</Text>
+            <Text style={[S.pillValue, { color: c.success }]}>{formatMoney(excessValue)}</Text>
           </View>
         </View>
 
         {/* Top Shortages */}
-        <Text style={styles.sectionTitle}>Top Shortages (value impact)</Text>
-        <SectionCard>
-          {loading && <RowLoading />}
-          {!loading && filteredShort.length === 0 && <RowEmpty text="No shortages in this cycle" />}
+        <Text style={S.sectionTitle}>Top Shortages (value impact)</Text>
+        <SectionCard S={S}>
+          {loading && <RowLoading S={S} />}
+          {!loading && filteredShort.length === 0 && <RowEmpty S={S} text="No shortages in this cycle" />}
           {!loading && filteredShort.map((r, i) => (
-            <Row key={r.id || i} row={r} divider={i < filteredShort.length - 1} venueId={venueId} />
+            <Row key={r.id || i} row={r} divider={i < filteredShort.length - 1} venueId={venueId} S={S} c={c} />
           ))}
         </SectionCard>
 
         {/* Top Excess */}
-        <Text style={styles.sectionTitle}>Top Excess (value impact)</Text>
-        <SectionCard>
-          {loading && filteredExcess.length === 0 && <RowEmpty text="No excess in this cycle" />}
+        <Text style={S.sectionTitle}>Top Excess (value impact)</Text>
+        <SectionCard S={S}>
+          {loading && filteredExcess.length === 0 && <RowEmpty S={S} text="No excess in this cycle" />}
           {!loading && filteredExcess.map((r, i) => (
-            <Row key={r.id || i} row={r} divider={i < filteredExcess.length - 1} venueId={venueId} />
+            <Row key={r.id || i} row={r} divider={i < filteredExcess.length - 1} venueId={venueId} S={S} c={c} />
           ))}
         </SectionCard>
 
-        <TouchableOpacity onPress={onExportPdf} style={styles.exportBtn}>
-          <Text style={styles.exportText}>Export Variance (PDF)</Text>
+        <TouchableOpacity onPress={onExportPdf} style={S.exportBtn}>
+          <Text style={S.exportText}>Export Variance (PDF)</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={load} style={styles.reloadBtn}>
-          <Text style={styles.reloadText}>Reload</Text>
+        <TouchableOpacity onPress={load} style={S.reloadBtn}>
+          <Text style={S.reloadText}>Reload</Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -183,11 +189,12 @@ function formatMoney(v: number) {
   return Number(v).toFixed(2);
 }
 
-function SectionCard({ children }: { children: React.ReactNode }) {
-  return <View style={styles.card}>{children}</View>;
+function SectionCard({ S, children }: { S: any; children: React.ReactNode }) {
+  return <View style={S.card}>{children}</View>;
 }
 
-function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; venueId: string }) {
+function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: boolean; venueId: string; S: any; c: any }) {
+  const { showInfo, showError } = useToast();
   const {
     id,
     productId,
@@ -256,9 +263,9 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
         res.cachedAt ? `\n\nCached: ${new Date(res.cachedAt).toLocaleString()}` : '',
       ].filter(Boolean);
 
-      Alert.alert('AI Insight', lines.join('\n'));
+      showInfo(lines.join('\n'));
     } catch (e: any) {
-      Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
+      showError(e?.message || 'Failed to get explanation.');
     }
   }
 
@@ -275,87 +282,89 @@ function Row({ row, divider, venueId }: { row: VarianceRow; divider?: boolean; v
     ).then(r => { if (r && r.length > 0) setAttribution(r[0]); }).catch(() => {});
   }, [venueId, productId, variance]);
   return (
-    <View style={[styles.row, divider && styles.rowDivider]}>
+    <View style={[S.row, divider && S.rowDivider]}>
       <View style={{ flex: 1 }}>
-        <Text style={styles.name} numberOfLines={1}>{name || '—'}</Text>
-        <Text style={styles.subtle} numberOfLines={1}>
+        <Text style={S.name} numberOfLines={1}>{name || '—'}</Text>
+        <Text style={S.subtle} numberOfLines={1}>
           {(unit ? unit : '') + (supplierName ? (unit ? ' • ' : '') + supplierName : '')}
         </Text>
         {costLine ? (
-          <Text style={styles.subtle} numberOfLines={1}>
+          <Text style={S.subtle} numberOfLines={1}>
             {costLine}
           </Text>
         ) : null}
         {attribution ? (
-          <Text style={[styles.subtle, { color: '#D97706', marginTop: 2 }]} numberOfLines={2}>
+          <Text style={[S.subtle, { color: c.stellarAmber, marginTop: 2 }]} numberOfLines={2}>
             {'⚠️ '}{attribution.recipeName} ({attribution.qtySold} sold · {attribution.attributedPct}% of variance)
           </Text>
         ) : null}
       </View>
-      <Cell label="Par" value={par} />
-      <Cell label="On-hand" value={onHand} />
-      <Cell label="Variance" value={variance} emph />
-      <Cell label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
-      <TouchableOpacity onPress={onExplain} style={styles.aiBtn} accessibilityLabel="Explain this variance">
-        <Text style={styles.aiText}>🤖 Explain</Text>
+      <Cell S={S} label="Par" value={par} />
+      <Cell S={S} label="On-hand" value={onHand} />
+      <Cell S={S} c={c} label="Variance" value={variance} emph />
+      <Cell S={S} label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
+      <TouchableOpacity onPress={onExplain} style={S.aiBtn} accessibilityLabel="Explain this variance">
+        <Text style={S.aiText}>🤖 Explain</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-function RowLoading() {
+function RowLoading({ S }: { S: any }) {
   return (
-    <View style={[styles.row, styles.rowDivider, { justifyContent: 'center' }]}>
+    <View style={[S.row, S.rowDivider, { justifyContent: 'center' }]}>
       <ActivityIndicator />
     </View>
   );
 }
 
-function RowEmpty({ text }: { text: string }) {
+function RowEmpty({ S, text }: { S: any; text: string }) {
   return (
-    <View style={[styles.row, { justifyContent: 'center' }]}>
-      <Text style={styles.subtle}>{text}</Text>
+    <View style={[S.row, { justifyContent: 'center' }]}>
+      <Text style={S.subtle}>{text}</Text>
     </View>
   );
 }
 
-function Cell({ label, value, emph }: { label: string; value: any; emph?: boolean }) {
+function Cell({ S, c, label, value, emph }: { S: any; c?: any; label: string; value: any; emph?: boolean }) {
   return (
-    <View style={styles.cell}>
-      <Text style={styles.cellLabel}>{label}</Text>
-      <Text style={[styles.cellVal, emph && { color: '#0B5FFF' }]} numberOfLines={1}>
+    <View style={S.cell}>
+      <Text style={S.cellLabel}>{label}</Text>
+      <Text style={[S.cellVal, emph && { color: c?.deepBlue }]} numberOfLines={1}>
         {value == null || value === '' ? '—' : String(value)}
       </Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'white' },
-  scrollPad: { padding: 12 },
-  h1: { fontSize: 18, fontWeight: '800' },
-  sub: { opacity: 0.7, marginBottom: 8 },
-  input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
-  totals: { flexDirection: 'row', gap: 10, marginBottom: 8 },
-  pill: { flex: 1, backgroundColor: '#F2F2F7', padding: 10, borderRadius: 12 },
-  pillLabel: { fontWeight: '700', opacity: 0.8 },
-  pillValue: { fontWeight: '900', fontSize: 16 },
-  sectionTitle: { fontWeight: '800', marginBottom: 6, marginTop: 10 },
-  card: { backgroundColor: '#F5F6F8', borderRadius: 12, overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10, backgroundColor: 'white' },
-  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E5E7EB' },
-  name: { fontWeight: '700', marginBottom: 2, maxWidth: 160 },
-  subtle: { fontSize: 12, color: '#6B7280' },
-  cell: { alignItems: 'flex-end', minWidth: 70, paddingLeft: 8 },
-  cellLabel: { opacity: 0.6, fontSize: 12 },
-  cellVal: { fontWeight: '800' },
-  reloadBtn: { alignSelf: 'center', marginTop: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
-  reloadText: { color: '#1D4ED8', fontWeight: '800' },
-  exportBtn: { alignSelf: 'center', marginTop: 12, backgroundColor: '#1D4ED8', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
-  exportText: { color: 'white', fontWeight: '800' },
-  aiBtn: { marginLeft: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10 },
-  aiText: { color: '#1D4ED8', fontWeight: '800' },
-});
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: c.surface },
+    scrollPad: { padding: 12 },
+    h1: { fontSize: 18, fontWeight: '800' },
+    sub: { opacity: 0.7, marginBottom: 8 },
+    input: { borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
+    totals: { flexDirection: 'row', gap: 10, marginBottom: 8 },
+    pill: { flex: 1, backgroundColor: c.oat, padding: 10, borderRadius: 12 },
+    pillLabel: { fontWeight: '700', opacity: 0.8 },
+    pillValue: { fontWeight: '900', fontSize: 16 },
+    sectionTitle: { fontWeight: '800', marginBottom: 6, marginTop: 10 },
+    card: { backgroundColor: c.oat, borderRadius: 12, overflow: 'hidden' },
+    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 10, backgroundColor: c.surface },
+    rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
+    name: { fontWeight: '700', marginBottom: 2, maxWidth: 160 },
+    subtle: { fontSize: 12, color: c.slateMid },
+    cell: { alignItems: 'flex-end', minWidth: 70, paddingLeft: 8 },
+    cellLabel: { opacity: 0.6, fontSize: 12 },
+    cellVal: { fontWeight: '800' },
+    reloadBtn: { alignSelf: 'center', marginTop: 8, backgroundColor: c.primaryLight, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+    reloadText: { color: c.deepBlue, fontWeight: '800' },
+    exportBtn: { alignSelf: 'center', marginTop: 12, backgroundColor: c.deepBlue, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+    exportText: { color: c.surface, fontWeight: '800' },
+    aiBtn: { marginLeft: 8, backgroundColor: c.primaryLight, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10 },
+    aiText: { color: c.deepBlue, fontWeight: '800' },
+  });
+}
 
 async function fetchVenueName(venueId: string | null | undefined) {
   if (!venueId) return 'Venue';

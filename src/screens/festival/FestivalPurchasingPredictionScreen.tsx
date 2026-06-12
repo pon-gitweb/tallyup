@@ -12,6 +12,9 @@ import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { generatePurchasingPrediction, guessCategory } from '../../services/festival/purchasingPrediction';
 import type { AiRefinement, AiAdjustment } from '../../services/festival/predictionRefinement';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Category mapping: setup screen IDs → prediction service categories ────────
 
@@ -36,10 +39,10 @@ function formatCurrency(v) {
   return `$${Math.round(v)}`;
 }
 
-function confidenceColor(c) {
-  if (c === 'HIGH')   return '#16a34a';
-  if (c === 'MEDIUM') return '#d97706';
-  return '#dc2626';
+function confidenceColor(confidence, colours) {
+  if (confidence === 'HIGH')   return colours.success;
+  if (confidence === 'MEDIUM') return colours.stellarAmber;
+  return colours.error;
 }
 
 function calcEventDays(startStr, endStr) {
@@ -61,7 +64,7 @@ function formatShortDate(ddmmyyyy) {
 
 // ─── Per-product row ──────────────────────────────────────────────────────────
 
-function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAdjustment, mathQtyDisplay, aiQtyDisplay, useAi, onToggleAi }) {
+function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAdjustment, mathQtyDisplay, aiQtyDisplay, useAi, onToggleAi, colours, R }) {
   const displayQty = result.totalQty ?? result.predictedQty;
   const [qtyText, setQtyText] = useState(String(displayQty));
   const [notesOpen, setNotesOpen] = useState(false);
@@ -85,16 +88,16 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
     ? Math.round(((sellNum - cost) / sellNum) * 100)
     : null;
   const maxReturn  = Math.floor(currentQty * result.returnAllowancePercent / 100);
-  const gpColor    = gpPct == null ? '#9ca3af'
-    : gpPct >= 60 ? '#16a34a' : gpPct >= 40 ? '#d97706' : '#dc2626';
+  const gpColor    = gpPct == null ? colours.slateMid
+    : gpPct >= 60 ? colours.success : gpPct >= 40 ? colours.stellarAmber : colours.error;
 
   return (
     <View style={R.prodRow}>
       {/* Header */}
       <View style={R.prodTop}>
         <Text style={R.prodName} numberOfLines={2}>{result.productName}</Text>
-        <View style={[R.confBadge, { borderColor: confidenceColor(result.confidence) }]}>
-          <Text style={[R.confText, { color: confidenceColor(result.confidence) }]}>
+        <View style={[R.confBadge, { borderColor: confidenceColor(result.confidence, colours) }]}>
+          <Text style={[R.confText, { color: confidenceColor(result.confidence, colours) }]}>
             {result.confidence}
           </Text>
         </View>
@@ -124,7 +127,7 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
         )}
         <View style={R.bkDivider} />
         <View style={R.bkRow}>
-          <Text style={[R.bkLabel, { fontWeight: '700', color: '#0B132B' }]}>Total to order:</Text>
+          <Text style={[R.bkLabel, { fontWeight: '700', color: colours.navy }]}>Total to order:</Text>
           <View style={R.stepperRow}>
             <TouchableOpacity
               style={R.stepperBtn}
@@ -179,7 +182,7 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
             value={sellingPrice}
             onChangeText={v => onSellPriceChange(result.productId, v)}
             placeholder="0.00"
-            placeholderTextColor="#93c5fd"
+            placeholderTextColor={colours.slateMid}
             keyboardType="decimal-pad"
             style={R.sellInput}
           />
@@ -234,6 +237,11 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
 export default function FestivalPurchasingPredictionScreen() {
   const nav     = useNavigation();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const R = makeStyles(c);
 
   const [results,        setResults]        = useState([]);
   const [loading,        setLoading]        = useState(FESTIVAL_BETA);
@@ -267,6 +275,7 @@ export default function FestivalPurchasingPredictionScreen() {
           const label = ageHours < 1
             ? `${Math.round(ageMs / 60000)} min ago`
             : `${Math.round(ageHours)} hr ago`;
+          // TODO: two meaningful action buttons (Load saved / Start fresh), not a confirm/cancel pair — kept as Alert.alert
           Alert.alert(
             'Load saved prediction?',
             `You have a saved prediction from ${label}. Load it or start fresh?`,
@@ -559,10 +568,14 @@ export default function FestivalPurchasingPredictionScreen() {
           }
         });
       } else {
-        setRefinementError(data.message || data.error || 'AI refinement failed. Use the math baseline instead.');
+        const msg = data.message || data.error || 'AI refinement failed. Use the math baseline instead.';
+        setRefinementError(msg);
+        showError(msg);
       }
     } catch (e) {
-      setRefinementError('Could not reach AI service. Use manual adjustments instead.');
+      const msg = 'Could not reach AI service. Use manual adjustments instead.';
+      setRefinementError(msg);
+      showError(msg);
     } finally {
       setRefining(false);
     }
@@ -600,17 +613,15 @@ export default function FestivalPurchasingPredictionScreen() {
   function confirmGenerateOrders() {
     const supplierCount = new Set(results.map(r => r.supplierId || 'unknown')).size;
     const totalUnits = results.reduce((s, r) => s + (r.totalQty ?? r.predictedQty ?? 0), 0);
-    Alert.alert(
-      'Generate draft orders?',
-      `This will create ${supplierCount} draft order${supplierCount !== 1 ? 's' : ''} across ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}.\n\n` +
-      `Total: ~${totalUnits.toLocaleString()} units\n` +
-      `Est. cost: ${formatCurrency(totalCost)}\n\n` +
-      `Orders are saved as drafts — you can review and edit before submitting to suppliers.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Generate orders', onPress: () => generateOrders() },
-      ],
-    );
+    confirm({
+      title: 'Generate draft orders?',
+      message: `This will create draft orders for ${supplierCount} supplier${supplierCount !== 1 ? 's' : ''}.\n\n` +
+        `Total: ~${totalUnits.toLocaleString()} units\n` +
+        `Est. cost: ${formatCurrency(totalCost)}\n\n` +
+        `Orders are saved as drafts — you can review and edit before submitting to suppliers.`,
+      confirmLabel: 'Generate orders',
+      onConfirm: () => generateOrders(),
+    });
   }
 
   async function generateOrders() {
@@ -646,12 +657,9 @@ export default function FestivalPurchasingPredictionScreen() {
           })),
         });
       }
-      Alert.alert(
-        'Orders created',
-        `${Object.keys(bySupplier).length} draft order${Object.keys(bySupplier).length !== 1 ? 's' : ''} created. Review them in Orders before sending.`,
-      );
+      showSuccess(`✓ ${Object.keys(bySupplier).length} draft order${Object.keys(bySupplier).length !== 1 ? 's' : ''} created. Review them in Orders before sending.`);
     } catch (e) {
-      Alert.alert('Error', e?.message || 'Could not generate orders.');
+      showError(e?.message || 'Could not generate orders.');
     } finally {
       setGenerating(false);
     }
@@ -662,6 +670,7 @@ export default function FestivalPurchasingPredictionScreen() {
   if (!FESTIVAL_BETA) {
     return (
       <View style={R.comingSoon}>
+        {modal}
         <Text style={R.csEmoji}>🎪</Text>
         <Text style={R.csTitle}>Festival mode</Text>
         <Text style={R.csBody}>We're building something great for festival and event operators.{'\n'}Coming soon — we'll let you know when it's live.</Text>
@@ -673,7 +682,8 @@ export default function FestivalPurchasingPredictionScreen() {
   if (loading) {
     return (
       <View style={R.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        {modal}
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -708,7 +718,8 @@ export default function FestivalPurchasingPredictionScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={R.scroll} keyboardShouldPersistTaps="handled">
 
         {/* ── Event header (FIX 7) ── */}
@@ -778,7 +789,7 @@ export default function FestivalPurchasingPredictionScreen() {
               <Text style={R.gpSummaryText}>Est. revenue: {formatCurrency(totalRevenue)}</Text>
               {estGP != null && (
                 <Text style={[R.gpSummaryText, {
-                  color: estGP >= 60 ? '#4ade80' : estGP >= 40 ? '#fbbf24' : '#f87171',
+                  color: estGP >= 60 ? c.positiveStrong : estGP >= 40 ? c.stellarAmber : c.negativeStrong,
                 }]}>
                   Est. GP: {estGP}%
                 </Text>
@@ -813,7 +824,7 @@ export default function FestivalPurchasingPredictionScreen() {
           )}
           {refining && (
             <View style={R.refineBtn}>
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={c.surface} size="small" />
               <Text style={[R.refineBtnText, { marginLeft: 8 }]}>Refining…</Text>
             </View>
           )}
@@ -875,6 +886,8 @@ export default function FestivalPurchasingPredictionScreen() {
                     aiQtyDisplay={aiQtyDisplay}
                     useAi={useAiSuggestion[r.productName] ?? true}
                     onToggleAi={() => toggleAiForProduct(r.productName)}
+                    colours={c}
+                    R={R}
                   />
                 );
               })}
@@ -883,13 +896,13 @@ export default function FestivalPurchasingPredictionScreen() {
         })}
 
         {loadError && (
-          <View style={{ backgroundColor: '#fee2e2', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#fca5a5' }}>
-            <Text style={{ color: '#dc2626', fontWeight: '700', marginBottom: 8 }}>⚠️ {loadError}</Text>
+          <View style={{ backgroundColor: c.negativeSoft, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: c.negativeStrong }}>
+            <Text style={{ color: c.error, fontWeight: '700', marginBottom: 8 }}>⚠️ {loadError}</Text>
             <TouchableOpacity
               onPress={() => runFullLoad(null)}
-              style={{ backgroundColor: '#dc2626', borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
+              style={{ backgroundColor: c.error, borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Try again</Text>
+              <Text style={{ color: c.surface, fontWeight: '700' }}>Try again</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -897,14 +910,14 @@ export default function FestivalPurchasingPredictionScreen() {
         {results.length === 0 && !loadError && (
           <View style={R.emptyCard}>
             <Text style={R.emptyText}>No products found.</Text>
-            <Text style={{ color: '#9ca3af', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
+            <Text style={{ color: c.slateMid, fontSize: 13, textAlign: 'center', marginTop: 6 }}>
               Add products with a supplier assigned in the Products screen to see predictions.
             </Text>
             <TouchableOpacity
-              style={{ marginTop: 14, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 20 }}
+              style={{ marginTop: 14, borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 20 }}
               onPress={() => nav.navigate('Products')}
             >
-              <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Go to Products →</Text>
+              <Text style={{ color: c.deepBlue, fontWeight: '700', fontSize: 13 }}>Go to Products →</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -916,7 +929,7 @@ export default function FestivalPurchasingPredictionScreen() {
             onPress={confirmGenerateOrders}
           >
             {generating
-              ? <ActivityIndicator color="#fff" size="small" />
+              ? <ActivityIndicator color={c.surface} size="small" />
               : <Text style={R.generateBtnText}>Generate draft orders</Text>}
           </TouchableOpacity>
         )}
@@ -928,109 +941,111 @@ export default function FestivalPurchasingPredictionScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const R = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+  comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
   csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+  csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+  csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+  csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
   scroll: { padding: 16, paddingBottom: 60 },
 
-  eventHeader: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: '#e5e1d8' },
-  eventName:   { fontSize: 18, fontWeight: '800', color: '#0B132B', marginBottom: 3 },
-  eventDates:  { fontSize: 13, color: '#374151', marginBottom: 2 },
-  eventAttend: { fontSize: 13, color: '#374151', marginBottom: 4 },
-  eventBasis:  { fontSize: 12, color: '#9ca3af' },
+  eventHeader: { backgroundColor: c.surface, borderRadius: 14, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: c.border },
+  eventName:   { fontSize: 18, fontWeight: '800', color: c.navy, marginBottom: 3 },
+  eventDates:  { fontSize: 13, color: c.text, marginBottom: 2 },
+  eventAttend: { fontSize: 13, color: c.text, marginBottom: 4 },
+  eventBasis:  { fontSize: 12, color: c.slateMid },
 
-  summaryCard:  { backgroundColor: '#1b4f72', borderRadius: 14, padding: 16, marginBottom: 16 },
+  summaryCard:  { backgroundColor: c.deepBlue, borderRadius: 14, padding: 16, marginBottom: 16 },
   bufferRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  bufferLabel:  { color: '#93c5fd', fontSize: 13, marginRight: 8 },
-  bufferVal:    { color: '#fff', fontWeight: '800', fontSize: 16, minWidth: 36, textAlign: 'center' },
-  bufferHint:   { color: '#93c5fd', fontSize: 11, marginLeft: 4 },
+  bufferLabel:  { color: c.surface + 'B3', fontSize: 13, marginRight: 8 },
+  bufferVal:    { color: c.surface, fontWeight: '800', fontSize: 16, minWidth: 36, textAlign: 'center' },
+  bufferHint:   { color: c.surface + 'B3', fontSize: 11, marginLeft: 4 },
   stepperSmall: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6, width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-  stepperSmallText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  stepperSmallText: { color: c.surface, fontSize: 16, fontWeight: '700' },
 
   summaryRow:   { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 10 },
   summaryItem:  { alignItems: 'center' },
-  summaryValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  summaryLabel: { fontSize: 11, color: '#93c5fd', marginTop: 2 },
-  confBasis:    { fontSize: 11, color: '#93c5fd', textAlign: 'center', marginTop: 4 },
+  summaryValue: { fontSize: 20, fontWeight: '800', color: c.surface },
+  summaryLabel: { fontSize: 11, color: c.surface + 'B3', marginTop: 2 },
+  confBasis:    { fontSize: 11, color: c.surface + 'B3', textAlign: 'center', marginTop: 4 },
 
   budgetRow:    { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: 10, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  budgetText:   { color: '#e0f2fe', fontSize: 13 },
-  budgetOver:   { color: '#fca5a5', fontWeight: '700', fontSize: 13 },
-  budgetUnder:  { color: '#86efac', fontWeight: '700', fontSize: 13 },
+  budgetText:   { color: c.surface + 'CC', fontSize: 13 },
+  budgetOver:   { color: c.negativeStrong, fontWeight: '700', fontSize: 13 },
+  budgetUnder:  { color: c.positiveStrong, fontWeight: '700', fontSize: 13 },
 
   gpSummaryRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
-  gpSummaryText:{ color: '#e0f2fe', fontSize: 12, fontWeight: '600' },
+  gpSummaryText:{ color: c.surface + 'CC', fontSize: 12, fontWeight: '600' },
 
   noCostCard:     { backgroundColor: 'rgba(251,191,36,0.15)', borderRadius: 8, padding: 10, marginTop: 6 },
-  noCostCardText: { color: '#fbbf24', fontSize: 12, fontWeight: '600' },
-  noCostLink:     { color: '#93c5fd', fontSize: 12, marginTop: 2 },
+  noCostCardText: { color: c.stellarAmber, fontSize: 12, fontWeight: '600' },
+  noCostLink:     { color: c.surface + 'B3', fontSize: 12, marginTop: 2 },
 
   supplierHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: 8, marginTop: 12 },
-  supplierName:   { fontSize: 14, fontWeight: '800', color: '#374151' },
-  oblNote:        { fontSize: 11, color: '#d97706', marginTop: 2 },
-  supplierTotal:  { fontSize: 13, fontWeight: '700', color: '#1b4f72' },
+  supplierName:   { fontSize: 14, fontWeight: '800', color: c.text },
+  oblNote:        { fontSize: 11, color: c.stellarAmber, marginTop: 2 },
+  supplierTotal:  { fontSize: 13, fontWeight: '700', color: c.deepBlue },
 
-  prodRow:   { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: '#e5e1d8' },
+  prodRow:   { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: c.border },
   prodTop:   { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 2 },
-  prodName:  { fontSize: 14, fontWeight: '700', color: '#0B132B', flex: 1, marginRight: 8 },
+  prodName:  { fontSize: 14, fontWeight: '700', color: c.navy, flex: 1, marginRight: 8 },
   confBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, flexShrink: 0 },
   confText:  { fontSize: 10, fontWeight: '800' },
-  basisText: { fontSize: 11, color: '#9ca3af', marginBottom: 8 },
+  basisText: { fontSize: 11, color: c.slateMid, marginBottom: 8 },
 
-  breakdownBox: { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 10 },
+  breakdownBox: { backgroundColor: c.oat, borderRadius: 8, padding: 10, marginBottom: 10 },
   bkRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  bkLabel:      { fontSize: 13, color: '#6b7280' },
-  bkQty:        { fontSize: 13, color: '#374151', fontWeight: '600' },
-  bkDivider:    { height: 1, backgroundColor: '#e5e7eb', marginVertical: 6 },
+  bkLabel:      { fontSize: 13, color: c.slateMid },
+  bkQty:        { fontSize: 13, color: c.text, fontWeight: '600' },
+  bkDivider:    { height: 1, backgroundColor: c.border, marginVertical: 6 },
   stepperRow:   { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  stepperBtn:   { width: 30, height: 30, borderRadius: 15, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
-  stepperBtnText: { fontSize: 18, fontWeight: '700', color: '#374151' },
-  qtyInput:     { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 15, fontWeight: '700', color: '#0B132B', width: 70, textAlign: 'center', backgroundColor: '#fff' },
-  returnNote:   { fontSize: 11, color: '#9ca3af', marginTop: 4 },
+  stepperBtn:   { width: 30, height: 30, borderRadius: 15, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
+  stepperBtnText: { fontSize: 18, fontWeight: '700', color: c.text },
+  qtyInput:     { borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 15, fontWeight: '700', color: c.navy, width: 70, textAlign: 'center', backgroundColor: c.surface },
+  returnNote:   { fontSize: 11, color: c.slateMid, marginTop: 4 },
 
-  pricingBox:  { backgroundColor: '#eff6ff', borderRadius: 8, padding: 10, marginBottom: 8 },
+  pricingBox:  { backgroundColor: c.primaryLight, borderRadius: 8, padding: 10, marginBottom: 8 },
   pricingRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' },
-  pricingLbl:  { fontSize: 12, color: '#6b7280', width: 44 },
-  pricingVal:  { fontSize: 12, color: '#374151', fontWeight: '600', flex: 1 },
-  sellInput:   { borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 13, fontWeight: '600', color: '#1e40af', width: 64, textAlign: 'center', backgroundColor: '#fff' },
+  pricingLbl:  { fontSize: 12, color: c.slateMid, width: 44 },
+  pricingVal:  { fontSize: 12, color: c.text, fontWeight: '600', flex: 1 },
+  sellInput:   { borderWidth: 1, borderColor: c.deepBlue, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 13, fontWeight: '600', color: c.deepBlue, width: 64, textAlign: 'center', backgroundColor: c.surface },
   gpText:      { fontSize: 13, fontWeight: '800' },
-  noCostWarn:  { fontSize: 11, color: '#d97706', marginBottom: 4 },
+  noCostWarn:  { fontSize: 11, color: c.stellarAmber, marginBottom: 4 },
 
-  commitWarn: { fontSize: 11, color: '#dc2626', marginTop: 4, fontWeight: '600' },
+  commitWarn: { fontSize: 11, color: c.error, marginTop: 4, fontWeight: '600' },
 
   notesToggle:    { marginTop: 6 },
-  notesToggleText:{ fontSize: 11, color: '#1b4f72', fontWeight: '600' },
-  noteText:       { fontSize: 12, color: '#6b7280', lineHeight: 18, marginTop: 3 },
+  notesToggleText:{ fontSize: 11, color: c.deepBlue, fontWeight: '600' },
+  noteText:       { fontSize: 12, color: c.slateMid, lineHeight: 18, marginTop: 3 },
 
-  generateBtn:         { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  generateBtn:         { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
   generateBtnDisabled: { opacity: 0.5 },
-  generateBtnText:     { color: '#fff', fontWeight: '700', fontSize: 16 },
+  generateBtnText:     { color: c.surface, fontWeight: '700', fontSize: 16 },
 
-  emptyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' },
-  emptyText: { fontSize: 15, color: '#9ca3af', textAlign: 'center', fontWeight: '600' },
+  emptyCard: { backgroundColor: c.surface, borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border },
+  emptyText: { fontSize: 15, color: c.slateMid, textAlign: 'center', fontWeight: '600' },
 
   // AI refinement — summary card
   refineBtn:         { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
-  refineBtnText:     { color: '#fff', fontWeight: '700', fontSize: 14 },
+  refineBtnText:     { color: c.surface, fontWeight: '700', fontSize: 14 },
   refinedBadge:      { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: 10, marginTop: 10 },
-  refinedBadgeTitle: { color: '#a5f3fc', fontWeight: '800', fontSize: 13, marginBottom: 3 },
-  refinedNote:       { color: '#e0f2fe', fontSize: 12, marginBottom: 6 },
-  clearRefinement:   { color: '#93c5fd', fontSize: 12, fontWeight: '600' },
-  refinementError:   { color: '#fca5a5', fontSize: 12, marginTop: 6, textAlign: 'center' },
+  refinedBadgeTitle: { color: c.surface, fontWeight: '800', fontSize: 13, marginBottom: 3 },
+  refinedNote:       { color: c.surface + 'CC', fontSize: 12, marginBottom: 6 },
+  clearRefinement:   { color: c.surface + 'B3', fontSize: 12, fontWeight: '600' },
+  refinementError:   { color: c.negativeStrong, fontSize: 12, marginTop: 6, textAlign: 'center' },
 
   // AI refinement — product row
-  aiCompareBox:     { backgroundColor: '#f0f9ff', borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#bae6fd' },
+  aiCompareBox:     { backgroundColor: c.primaryLight, borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: c.deepBlue },
   aiCompareRow:     { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  aiCompareLabel:   { fontSize: 13, color: '#9ca3af' },
-  aiActiveLabel:    { color: '#1b4f72', fontWeight: '800' },
-  aiArrow:          { fontSize: 12, color: '#9ca3af' },
-  aiReasoning:      { fontSize: 12, color: '#374151', fontStyle: 'italic', marginBottom: 6 },
+  aiCompareLabel:   { fontSize: 13, color: c.slateMid },
+  aiActiveLabel:    { color: c.deepBlue, fontWeight: '800' },
+  aiArrow:          { fontSize: 12, color: c.slateMid },
+  aiReasoning:      { fontSize: 12, color: c.text, fontStyle: 'italic', marginBottom: 6 },
   aiConfidenceRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  aiConfidence:     { fontSize: 11, color: '#9ca3af' },
-  aiToggleBtn:      { backgroundColor: '#1b4f72', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 },
-  aiToggleBtnText:  { color: '#fff', fontSize: 12, fontWeight: '700' },
-});
+  aiConfidence:     { fontSize: 11, color: c.slateMid },
+  aiToggleBtn:      { backgroundColor: c.deepBlue, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 },
+  aiToggleBtnText:  { color: c.surface, fontSize: 12, fontWeight: '700' },
+  });
+}

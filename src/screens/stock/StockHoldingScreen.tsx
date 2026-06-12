@@ -2,12 +2,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, ActivityIndicator, SafeAreaView, Alert,
+  StyleSheet, ActivityIndicator, SafeAreaView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVenueId } from '../../context/VenueProvider';
-import { useColours } from '../../context/ThemeContext';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import OfflineBanner from '../../components/OfflineBanner';
 import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
@@ -66,6 +68,9 @@ export default function StockHoldingScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const s = styles(c);
 
   const { isOnline } = useNetworkState();
@@ -248,7 +253,7 @@ export default function StockHoldingScreen() {
       await FileSystem.moveAsync({ from: uri, to: pdfDest }).catch(() => {});
       await Sharing.shareAsync(pdfDest.startsWith('file') ? pdfDest : uri, { mimeType: 'application/pdf', dialogTitle: 'Stock Holding Report' });
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message ?? 'Could not generate PDF');
+      showError(e?.message ?? 'Could not generate PDF');
     } finally {
       setExporting(false);
     }
@@ -279,7 +284,7 @@ export default function StockHoldingScreen() {
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Stock Holding CSV' });
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message ?? 'Could not generate CSV');
+      showError(e?.message ?? 'Could not generate CSV');
     } finally {
       setExporting(false);
     }
@@ -290,10 +295,11 @@ export default function StockHoldingScreen() {
   if (loading) {
     return (
       <SafeAreaView style={s.safe}>
+        {modal}
         <OfflineBanner />
         <View style={s.centred}>
           {loadingTimeout && !isOnline ? (
-            <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+            <Text style={{ color: c.stellarAmber, textAlign: 'center', fontWeight: '700' }}>
               📵 No connection — showing cached data
             </Text>
           ) : (
@@ -310,6 +316,7 @@ export default function StockHoldingScreen() {
   if (error) {
     return (
       <SafeAreaView style={s.safe}>
+        {modal}
         <View style={s.header}>
           <Text style={s.title}>Stock Holding</Text>
         </View>
@@ -327,6 +334,7 @@ export default function StockHoldingScreen() {
   if (!allRows.length) {
     return (
       <SafeAreaView style={s.safe}>
+        {modal}
         <View style={s.header}>
           <Text style={s.title}>Stock Holding</Text>
         </View>
@@ -343,6 +351,7 @@ export default function StockHoldingScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
+      {modal}
       <OfflineBanner />
       {/* Header */}
       <View style={s.header}>
@@ -360,8 +369,8 @@ export default function StockHoldingScreen() {
 
       {/* Prior-cycle note */}
       {showingPriorCycle && (
-        <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fffbeb', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#fde68a' }}>
-          <Text style={{ fontSize: 12, color: '#92400e' }}>
+        <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: c.stellarAmber + '18', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: c.stellarAmber }}>
+          <Text style={{ fontSize: 12, color: c.stellarAmber }}>
             Showing counts from last completed stocktake. Counts will update as you complete this cycle.
           </Text>
         </View>
@@ -480,12 +489,12 @@ const styles = (c: any) => StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: c.navy, paddingHorizontal: 12, paddingVertical: 8,
   },
-  catName: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  catName: { color: c.surface, fontWeight: '700', fontSize: 13 },
   catMeta: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
 
   colHeader: {
     flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 6,
-    backgroundColor: c.primaryLight ?? '#EEF2FF', borderBottomWidth: 1, borderBottomColor: c.border,
+    backgroundColor: c.primaryLight, borderBottomWidth: 1, borderBottomColor: c.border,
   },
   colText: { fontSize: 11, fontWeight: '600', color: c.textSecondary, textTransform: 'uppercase' },
   colRight: { textAlign: 'right' },
@@ -503,7 +512,7 @@ const styles = (c: any) => StyleSheet.create({
 
   subtotal: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: c.primaryLight ?? '#EEF2FF',
+    backgroundColor: c.primaryLight,
     paddingHorizontal: 12, paddingVertical: 8,
     borderTopWidth: 1, borderTopColor: c.border,
   },
@@ -516,7 +525,7 @@ const styles = (c: any) => StyleSheet.create({
     backgroundColor: c.navy, borderRadius: 12,
     paddingHorizontal: 16, paddingVertical: 14, marginBottom: 8,
   },
-  grandLabel: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '800' },
+  grandLabel: { flex: 1, color: c.surface, fontSize: 14, fontWeight: '800' },
   grandCount: { color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '700' },
-  grandValue: { color: '#fff', fontSize: 14, fontWeight: '800', marginLeft: 12 },
+  grandValue: { color: c.surface, fontSize: 14, fontWeight: '800', marginLeft: 12 },
 });

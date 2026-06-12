@@ -18,7 +18,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
-import { useColours } from '../../context/ThemeContext';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import IdentityBadge from '../../components/IdentityBadge';
 import OfflineBanner from '../../components/OfflineBanner';
@@ -50,15 +52,17 @@ function fmtMins(mins: number | null): string {
 // ─── Lane section wrapper ────────────────────────────────────────────────────
 
 function Lane({
+  S,
   label,
   children,
 }: {
+  S: any;
   label: string;
   children: React.ReactNode;
 }) {
   return (
-    <View style={styles.lane}>
-      <Text style={styles.laneLabel}>{label}</Text>
+    <View style={S.lane}>
+      <Text style={S.laneLabel}>{label}</Text>
       {children}
     </View>
   );
@@ -67,16 +71,18 @@ function Lane({
 // ─── Secondary nav tile ──────────────────────────────────────────────────────
 
 function NavTile({
+  S,
   title,
   onPress,
 }: {
+  S: any;
   title: string;
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity style={styles.navTile} onPress={onPress} activeOpacity={0.75}>
-      <Text style={styles.navTileText}>{title}</Text>
-      <Text style={styles.navTileChev}>›</Text>
+    <TouchableOpacity style={S.navTile} onPress={onPress} activeOpacity={0.75}>
+      <Text style={S.navTileText}>{title}</Text>
+      <Text style={S.navTileChev}>›</Text>
     </TouchableOpacity>
   );
 }
@@ -87,7 +93,12 @@ export default function ReportsIndexScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const insets = useSafeAreaInsets();
-  const colours = useColours();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
+  const SS = makeSStyles(c);
 
   const { isOnline } = useNetworkState();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
@@ -382,11 +393,12 @@ export default function ReportsIndexScreen() {
   if (!venueId) {
     return (
       <LocalThemeGate>
-        <View style={[styles.root, { backgroundColor: colours.background }]}>
-          <ScreenHeader />
-          <View style={styles.centred}>
-            <Text style={styles.emptyTitle}>No venue selected</Text>
-            <Text style={styles.emptyBody}>Select a venue to see your briefing.</Text>
+        <View style={[S.root, { backgroundColor: c.background }]}>
+          {modal}
+          <ScreenHeader S={S} />
+          <View style={S.centred}>
+            <Text style={S.emptyTitle}>No venue selected</Text>
+            <Text style={S.emptyBody}>Select a venue to see your briefing.</Text>
           </View>
         </View>
       </LocalThemeGate>
@@ -396,18 +408,19 @@ export default function ReportsIndexScreen() {
   if (loading) {
     return (
       <LocalThemeGate>
-        <View style={[styles.root, { backgroundColor: colours.background }]}>
+        <View style={[S.root, { backgroundColor: c.background }]}>
+          {modal}
           <OfflineBanner />
-          <ScreenHeader />
-          <View style={styles.centred}>
+          <ScreenHeader S={S} />
+          <View style={S.centred}>
             {loadingTimeout && !isOnline ? (
-              <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+              <Text style={{ color: c.stellarAmber, textAlign: 'center', fontWeight: '700' }}>
                 📵 No connection — showing cached data
               </Text>
             ) : (
               <>
-                <ActivityIndicator color="#60A5FA" size="large" />
-                <Text style={[styles.emptyBody, { marginTop: 12 }]}>Building your briefing…</Text>
+                <ActivityIndicator color={c.deepBlue} size="large" />
+                <Text style={[S.emptyBody, { marginTop: 12 }]}>Building your briefing…</Text>
               </>
             )}
           </View>
@@ -419,16 +432,17 @@ export default function ReportsIndexScreen() {
   if (error) {
     return (
       <LocalThemeGate>
-        <View style={[styles.root, { backgroundColor: colours.background }]}>
-          <ScreenHeader />
-          <View style={styles.centred}>
-            <Text style={styles.emptyTitle}>Couldn't load briefing</Text>
-            <Text style={[styles.emptyBody, { marginTop: 8 }]}>Check your connection and try again.</Text>
+        <View style={[S.root, { backgroundColor: c.background }]}>
+          {modal}
+          <ScreenHeader S={S} />
+          <View style={S.centred}>
+            <Text style={S.emptyTitle}>Couldn't load briefing</Text>
+            <Text style={[S.emptyBody, { marginTop: 8 }]}>Check your connection and try again.</Text>
             <TouchableOpacity
-              style={[styles.ctaBtn, { marginTop: 16 }]}
+              style={[S.ctaBtn, { marginTop: 16 }]}
               onPress={() => { setError(false); setLoading(true); setData(null); fetchBriefing(venueId).then(d => { setData(d); setLoading(false); }).catch(() => { setLoading(false); setError(true); }); }}
             >
-              <Text style={styles.ctaBtnText}>Try again</Text>
+              <Text style={S.ctaBtnText}>Try again</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -439,37 +453,40 @@ export default function ReportsIndexScreen() {
   if (!data?.hasCountData) {
     return (
       <LocalThemeGate>
-        <View style={[styles.root, { backgroundColor: colours.background }]}>
-          <ScreenHeader />
+        <View style={[S.root, { backgroundColor: c.background }]}>
+          {modal}
+          <ScreenHeader S={S} />
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Nothing to brief yet</Text>
-              <Text style={styles.emptyBody}>
+            <View style={S.emptyCard}>
+              <Text style={S.emptyTitle}>Nothing to brief yet</Text>
+              <Text style={S.emptyBody}>
                 Complete a stocktake to see your first briefing — variance, trends, and what to act
                 on.
               </Text>
               <TouchableOpacity
-                style={styles.ctaBtn}
+                style={S.ctaBtn}
                 onPress={() => nav.navigate('DepartmentSelection')}
               >
-                <Text style={styles.ctaBtnText}>Start a stocktake</Text>
+                <Text style={S.ctaBtnText}>Start a stocktake</Text>
               </TouchableOpacity>
             </View>
             {isManager && (
               <TouchableOpacity
-                style={styles.suiteeBtn}
+                style={S.suiteeBtn}
                 onPress={() => setSuiteeOpen(true)}
                 activeOpacity={0.8}
               >
-                <View style={styles.suiteeBtnTop}>
-                  <Text style={styles.suiteeBtnTitle}>📊 Ask Suitee</Text>
+                <View style={S.suiteeBtnTop}>
+                  <Text style={S.suiteeBtnTitle}>📊 Ask Suitee</Text>
                 </View>
-                <Text style={styles.suiteeBtnSub}>Ask anything about your venue data</Text>
+                <Text style={S.suiteeBtnSub}>Ask anything about your venue data</Text>
               </TouchableOpacity>
             )}
-            {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
+            {isManager && <SecondaryNav S={S} nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
           </ScrollView>
           <SuiteeModal
+            SS={SS}
+            c={c}
             visible={suiteeOpen}
             messages={suiteeMessages}
             input={suiteeInput}
@@ -491,41 +508,42 @@ export default function ReportsIndexScreen() {
 
   return (
     <LocalThemeGate>
-      <View style={[styles.root, { backgroundColor: colours.background }]}>
+      <View style={[S.root, { backgroundColor: c.background }]}>
+        {modal}
         <OfflineBanner />
-        <ScreenHeader />
+        <ScreenHeader S={S} />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 
           {/* ── REPORTS INTRO CARD (shown once, first visit after stocktake) ── */}
           {!reportsIntroSeen && data.hasCountData && (
-            <View style={{ backgroundColor: '#f5f3ee', borderRadius: 12, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: '#14B8A6' }}>
-              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>📊 Your first report</Text>
-              <Text style={{ fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 8 }}>
+            <View style={{ backgroundColor: c.oat, borderRadius: 12, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: c.deepBlue }}>
+              <Text style={{ fontSize: 16, fontWeight: '800', color: c.navy, marginBottom: 8 }}>📊 Your first report</Text>
+              <Text style={{ fontSize: 14, color: c.text, lineHeight: 20, marginBottom: 8 }}>
                 This is your stock briefing — a summary of what changed since your last count.
               </Text>
-              <Text style={{ fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 12 }}>
+              <Text style={{ fontSize: 13, color: c.slateMid, lineHeight: 19, marginBottom: 12 }}>
                 {'After your second stocktake you\'ll see:\n✓ What went missing (variance)\n✓ What you need to reorder\n✓ Where your money is going'}
               </Text>
               <TouchableOpacity
-                style={{ backgroundColor: '#14B8A6', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
+                style={{ backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
                 onPress={() => {
                   setReportsIntroSeen(true);
                   AsyncStorage.setItem('tallyup_intro_reports_v1', '1').catch(() => {});
                 }}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Got it</Text>
+                <Text style={{ color: c.surface, fontWeight: '700', fontSize: 14 }}>Got it</Text>
               </TouchableOpacity>
             </View>
           )}
 
           {/* ── RECALCULATION NOTE (counts edited after submission) ── */}
           {!recalcDismissed && latestSnapshots.some(s => s.requiresRecalculation) && (
-            <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <View style={{ backgroundColor: c.stellarAmber + '18', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: c.stellarAmber, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '700' }}>
+                <Text style={{ fontSize: 13, color: c.stellarAmber, fontWeight: '700' }}>
                   ⚠️ Some counts were corrected after submission
                 </Text>
-                <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2, lineHeight: 17 }}>
+                <Text style={{ fontSize: 12, color: c.stellarAmber, marginTop: 2, lineHeight: 17 }}>
                   Figures may have changed since this snapshot was generated.
                 </Text>
               </View>
@@ -533,14 +551,14 @@ export default function ReportsIndexScreen() {
                 <TouchableOpacity
                   onPress={handleRecalculate}
                   disabled={recalculating}
-                  style={{ backgroundColor: '#92400e', borderRadius: 6, paddingVertical: 5, paddingHorizontal: 10 }}
+                  style={{ backgroundColor: c.stellarAmber, borderRadius: 6, paddingVertical: 5, paddingHorizontal: 10 }}
                 >
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: c.surface, fontSize: 12, fontWeight: '700' }}>
                     {recalculating ? 'Updating…' : 'Recalculate'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setRecalcDismissed(true)} style={{ alignItems: 'center' }}>
-                  <Text style={{ color: '#92400e', fontSize: 11 }}>Dismiss</Text>
+                  <Text style={{ color: c.stellarAmber, fontSize: 11 }}>Dismiss</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -548,37 +566,37 @@ export default function ReportsIndexScreen() {
 
           {/* ── ANCHOR METRIC (owner/manager only) ── */}
           {isManager && (
-            <View style={styles.anchorCard}>
-              <Text style={styles.anchorLabel}>VARIANCE THIS STOCKTAKE</Text>
+            <View style={S.anchorCard}>
+              <Text style={S.anchorLabel}>VARIANCE THIS STOCKTAKE</Text>
               {hasDollarData ? (
                 <>
-                  <Text style={[styles.anchorValue, { color: data.shortfallDollars > 0 ? '#F87171' : '#4ADE80' }]}>
+                  <Text style={[S.anchorValue, { color: data.shortfallDollars > 0 ? c.error : c.success }]}>
                     {data.shortfallDollars > 0 ? `–${fmtDollars(data.shortfallDollars)}` : 'On track'}
                   </Text>
                   {data.excessDollars > 0 && (
-                    <Text style={styles.anchorSub}>
+                    <Text style={S.anchorSub}>
                       +{fmtDollars(data.excessDollars)} excess
                     </Text>
                   )}
-                  <Text style={styles.anchorMeta}>
+                  <Text style={S.anchorMeta}>
                     {data.dollarItemCount} of {data.totalItemsCounted} items have cost prices ·{' '}
                     {data.totalAreasCompleted}/{data.totalAreas} areas done
                   </Text>
                 </>
               ) : (
                 <>
-                  <Text style={[styles.anchorValue, { fontSize: 30, color: '#F9FAFB' }]}>
+                  <Text style={[S.anchorValue, { fontSize: 30, color: c.surface }]}>
                     {data.totalItemsCounted} items counted
                   </Text>
-                  <Text style={styles.anchorMeta}>
+                  <Text style={S.anchorMeta}>
                     Add cost prices to see stock value · {data.totalAreasCompleted}/{data.totalAreas} areas done
                   </Text>
                   <TouchableOpacity
-                    style={{ marginTop: 10, backgroundColor: '#14B8A6', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: 'flex-start' }}
+                    style={{ marginTop: 10, backgroundColor: c.deepBlue, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: 'flex-start' }}
                     onPress={() => nav.navigate('BatchPriceEntry')}
                     activeOpacity={0.85}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Add cost prices →</Text>
+                    <Text style={{ color: c.surface, fontWeight: '700', fontSize: 13 }}>Add cost prices →</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -587,12 +605,12 @@ export default function ReportsIndexScreen() {
 
           {/* ── STAFF ANCHOR ── */}
           {!isManager && (
-            <View style={styles.anchorCard}>
-              <Text style={styles.anchorLabel}>STOCKTAKE PROGRESS</Text>
-              <Text style={[styles.anchorValue, { fontSize: 30, color: '#F9FAFB' }]}>
+            <View style={S.anchorCard}>
+              <Text style={S.anchorLabel}>STOCKTAKE PROGRESS</Text>
+              <Text style={[S.anchorValue, { fontSize: 30, color: c.surface }]}>
                 {data.totalAreasCompleted}/{data.totalAreas} areas done
               </Text>
-              <Text style={styles.anchorMeta}>
+              <Text style={S.anchorMeta}>
                 {data.totalItemsCounted} items counted this cycle
               </Text>
             </View>
@@ -601,41 +619,41 @@ export default function ReportsIndexScreen() {
           {/* ── Stock Holding CTA — first cycle only ── */}
           {isManager && !data.hasPrevCycleData && (
             <TouchableOpacity
-              style={[styles.anchorCard, { borderWidth: 1.5, borderColor: '#14B8A6', marginBottom: 12 }]}
+              style={[S.anchorCard, { borderWidth: 1.5, borderColor: c.deepBlue, marginBottom: 12 }]}
               onPress={() => nav.navigate('StockHolding')}
               activeOpacity={0.8}
             >
-              <Text style={styles.anchorLabel}>STOCK HOLDING REPORT</Text>
-              <Text style={[styles.anchorValue, { color: '#14B8A6', fontSize: 22 }]}>View your stock on hand</Text>
-              <Text style={styles.anchorMeta}>Products by category with quantities and value →</Text>
+              <Text style={S.anchorLabel}>STOCK HOLDING REPORT</Text>
+              <Text style={[S.anchorValue, { color: c.deepBlue, fontSize: 22 }]}>View your stock on hand</Text>
+              <Text style={S.anchorMeta}>Products by category with quantities and value →</Text>
             </TouchableOpacity>
           )}
 
           {/* ── COST PRICE NUDGE ── */}
           {isManager && !hasDollarData && data.totalItemsCounted > 0 && (
             <TouchableOpacity
-              style={{ borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1.5, borderColor: '#14B8A6', backgroundColor: '#0B132B' }}
+              style={{ borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1.5, borderColor: c.deepBlue, backgroundColor: c.navy }}
               onPress={() => nav.navigate('BatchPriceEntry')}
               activeOpacity={0.85}
             >
-              <Text style={{ color: '#14B8A6', fontSize: 15, fontWeight: '800', marginBottom: 6 }}>💰 Add prices for dollar variance</Text>
-              <Text style={{ color: '#94A3B8', fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
+              <Text style={{ color: c.deepBlue, fontSize: 15, fontWeight: '800', marginBottom: 6 }}>💰 Add prices for dollar variance</Text>
+              <Text style={{ color: c.slateMid, fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
                 {data.totalItemsCounted} products counted — add cost prices to unlock:
               </Text>
               <View style={{ gap: 3, marginBottom: 10 }}>
                 {['✓ Dollar variance in reports','✓ Stock holding value','✓ Supplier spend analysis','✓ Suggested order costs'].map(b => (
-                  <Text key={b} style={{ color: '#64748B', fontSize: 13 }}>{b}</Text>
+                  <Text key={b} style={{ color: c.slateMid, fontSize: 13 }}>{b}</Text>
                 ))}
               </View>
-              <Text style={{ color: '#14B8A6', fontWeight: '700', fontSize: 14 }}>Add prices to products →</Text>
+              <Text style={{ color: c.deepBlue, fontWeight: '700', fontSize: 14 }}>Add prices to products →</Text>
             </TouchableOpacity>
           )}
 
           {/* ── LANE 1: WHERE IT LEAKED ── */}
           {isManager && (
-            <Lane label="WHERE IT LEAKED">
+            <Lane S={S} label="WHERE IT LEAKED">
               {data.topShortages.length === 0 ? (
-                <Text style={styles.laneEmpty}>
+                <Text style={S.laneEmpty}>
                   {data.hasPrevCycleData
                     ? 'No shortages detected this cycle.'
                     : 'Nothing to compare yet — par levels used as baseline.'}
@@ -643,23 +661,23 @@ export default function ReportsIndexScreen() {
               ) : (
                 <>
                   {data.topShortages.map((item) => (
-                    <View key={item.itemId} style={styles.lineRow}>
+                    <View key={item.itemId} style={S.lineRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.lineRowName}>{item.name}</Text>
-                        <Text style={styles.lineRowSub}>
+                        <Text style={S.lineRowName}>{item.name}</Text>
+                        <Text style={S.lineRowSub}>
                           {item.areaName} · {item.deptName}
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.lineRowNeg}>
+                        <Text style={S.lineRowNeg}>
                           {item.varianceUnits}
                         </Text>
                         {item.dollarVariance != null && item.dollarVariance > 0 ? (
-                          <Text style={styles.lineRowDollar}>
+                          <Text style={S.lineRowDollar}>
                             –{fmtDollars(item.dollarVariance)}
                           </Text>
                         ) : item.dollarVariance == null ? (
-                          <Text style={[styles.lineRowDollar, { color: '#64748B' }]}>
+                          <Text style={[S.lineRowDollar, { color: c.slateMid }]}>
                             no price set
                           </Text>
                         ) : null}
@@ -667,10 +685,10 @@ export default function ReportsIndexScreen() {
                     </View>
                   ))}
                   <TouchableOpacity
-                    style={styles.laneLink}
+                    style={S.laneLink}
                     onPress={() => nav.navigate('DepartmentVariance')}
                   >
-                    <Text style={styles.laneLinkText}>See full breakdown →</Text>
+                    <Text style={S.laneLinkText}>See full breakdown →</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -679,28 +697,28 @@ export default function ReportsIndexScreen() {
 
           {/* ── LANE 2: WHAT THE TREND SAYS ── */}
           {isManager && (
-            <Lane label="WHAT THE TREND SAYS">
+            <Lane S={S} label="WHAT THE TREND SAYS">
               {!data.hasPrevCycleData ? (
-                <View style={styles.unlockBox}>
-                  <Text style={styles.unlockTitle}>Needs 2 completed stocktakes</Text>
-                  <Text style={styles.unlockBody}>
+                <View style={S.unlockBox}>
+                  <Text style={S.unlockTitle}>Needs 2 completed stocktakes</Text>
+                  <Text style={S.unlockBody}>
                     Complete another full stocktake and trend detection will activate — showing you
                     items that are consistently short cycle after cycle.
                   </Text>
                 </View>
               ) : data.trendItems.length === 0 ? (
-                <Text style={styles.laneEmpty}>No items short in two consecutive cycles.</Text>
+                <Text style={S.laneEmpty}>No items short in two consecutive cycles.</Text>
               ) : (
                 <>
-                  <Text style={styles.trendIntro}>
+                  <Text style={S.trendIntro}>
                     Short in the last two stocktakes — these aren't one-offs:
                   </Text>
                   {data.trendItems.map((item) => (
-                    <View key={item.itemId} style={styles.trendRow}>
-                      <View style={styles.trendDot} />
+                    <View key={item.itemId} style={S.trendRow}>
+                      <View style={S.trendDot} />
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.trendName}>{item.name}</Text>
-                        <Text style={styles.trendSub}>{item.deptName}</Text>
+                        <Text style={S.trendName}>{item.name}</Text>
+                        <Text style={S.trendSub}>{item.deptName}</Text>
                       </View>
                     </View>
                   ))}
@@ -711,17 +729,17 @@ export default function ReportsIndexScreen() {
 
           {/* ── LANE 3: WHAT TO DO ABOUT IT ── */}
           {isManager && (
-            <Lane label="WHAT TO DO ABOUT IT">
+            <Lane S={S} label="WHAT TO DO ABOUT IT">
               {aiLoading ? (
-                <View style={styles.aiLoading}>
-                  <ActivityIndicator color="#60A5FA" size="small" />
-                  <Text style={styles.aiLoadingText}>Analysing…</Text>
+                <View style={S.aiLoading}>
+                  <ActivityIndicator color={c.deepBlue} size="small" />
+                  <Text style={S.aiLoadingText}>Analysing…</Text>
                 </View>
               ) : aiInsight ? (
-                <Text style={styles.aiText}>{aiInsight}</Text>
+                <Text style={S.aiText}>{aiInsight}</Text>
               ) : (
                 <TouchableOpacity
-                  style={styles.explainBtn}
+                  style={S.explainBtn}
                   disabled={aiLoading}
                   onPress={() => {
                     if (!data) return;
@@ -744,11 +762,11 @@ export default function ReportsIndexScreen() {
                         : undefined,
                     })
                       .then((res) => setAiInsight(res.summary || null))
-                      .catch(() => {})
+                      .catch(() => showError('Could not generate explanation.'))
                       .finally(() => setAiLoading(false));
                   }}
                 >
-                  <Text style={styles.explainBtnText}>
+                  <Text style={S.explainBtnText}>
                     {data.hasPrevCycleData ? 'Explain variance' : 'Explain below-PAR items'}
                   </Text>
                 </TouchableOpacity>
@@ -757,20 +775,20 @@ export default function ReportsIndexScreen() {
           )}
 
           {/* ── AREA STATS (all roles) ── */}
-          <Lane label={isManager ? 'AREA BREAKDOWN' : 'YOUR AREAS THIS CYCLE'}>
+          <Lane S={S} label={isManager ? 'AREA BREAKDOWN' : 'YOUR AREAS THIS CYCLE'}>
             {data.areaStats.length === 0 ? (
-              <Text style={styles.laneEmpty}>No areas counted yet.</Text>
+              <Text style={S.laneEmpty}>No areas counted yet.</Text>
             ) : (
               data.areaStats.map((area) => (
-                <View key={area.areaId} style={styles.areaRow}>
+                <View key={area.areaId} style={S.areaRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.areaName}>{area.areaName}</Text>
-                    <Text style={styles.areaSub}>{area.deptName}</Text>
+                    <Text style={S.areaName}>{area.areaName}</Text>
+                    <Text style={S.areaSub}>{area.deptName}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.areaDuration}>{fmtMins(area.durationMins)}</Text>
+                    <Text style={S.areaDuration}>{fmtMins(area.durationMins)}</Text>
                     {area.itemsCounted > 0 && (
-                      <Text style={styles.areaMeta}>
+                      <Text style={S.areaMeta}>
                         {area.itemsCounted}/{area.totalItems} items
                         {area.shortItems > 0 ? ` · ${area.shortItems} short` : ''}
                       </Text>
@@ -783,7 +801,7 @@ export default function ReportsIndexScreen() {
 
           {/* ── PRICE CHANGES LANE (owner/manager only) ── */}
           {isManager && priceChanges.length > 0 && (
-            <Lane label="⚠️ PRICE CHANGES DETECTED">
+            <Lane S={S} label="⚠️ PRICE CHANGES DETECTED">
               {priceChanges.map((product: any) => {
                 const h = product.latestChange;
                 if (!h) return null;
@@ -791,21 +809,21 @@ export default function ReportsIndexScreen() {
                   ? h.date.toDate().toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' })
                   : '–';
                 const sign = (h.changePercent ?? 0) >= 0 ? '+' : '';
-                const color = h.direction === 'increase' ? '#F87171' : '#4ADE80';
+                const color = h.direction === 'increase' ? c.error : c.success;
                 return (
                   <TouchableOpacity
                     key={product.id}
-                    style={styles.lineRow}
+                    style={S.lineRow}
                     onPress={() => handleOpenPriceHistory(product)}
                     activeOpacity={0.75}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.lineRowName}>{product.name}</Text>
-                      <Text style={styles.lineRowSub}>
+                      <Text style={S.lineRowName}>{product.name}</Text>
+                      <Text style={S.lineRowSub}>
                         ${(h.oldPrice ?? 0).toFixed(2)} → ${(h.newPrice ?? 0).toFixed(2)} · {h.supplierName || 'unknown supplier'} · {dateStr}
                       </Text>
                     </View>
-                    <Text style={[styles.lineRowNeg, { color }]}>
+                    <Text style={[S.lineRowNeg, { color }]}>
                       {sign}{(h.changePercent ?? 0).toFixed(1)}%
                     </Text>
                   </TouchableOpacity>
@@ -816,38 +834,38 @@ export default function ReportsIndexScreen() {
 
           {/* ── SLOW MOVING STOCK LANE (owner/manager only) ── */}
           {isManager && slowMovers.length > 0 && (
-            <Lane label="🐌 SLOW MOVING STOCK">
+            <Lane S={S} label="🐌 SLOW MOVING STOCK">
               {slowMovers.map((item: any) => (
-                <View key={item.productId} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1E293B' }}>
-                  <Text style={styles.lineRowName}>{item.productName}</Text>
-                  <Text style={styles.lineRowSub}>
+                <View key={item.productId} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.border }}>
+                  <Text style={S.lineRowName}>{item.productName}</Text>
+                  <Text style={S.lineRowSub}>
                     {item.areaName} · {item.daysSinceMovement} days no movement · {item.currentCount} on hand
                     {item.expiryRisk ? '  ⚠ expiry risk' : ''}
                   </Text>
                   {item.status === 'promotion' && (
-                    <Text style={{ fontSize: 11, color: '#60A5FA', marginTop: 2 }}>📢 Flagged for promotion</Text>
+                    <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 2 }}>📢 Flagged for promotion</Text>
                   )}
                   {item.status === 'delist' && (
-                    <Text style={{ fontSize: 11, color: '#F59E0B', marginTop: 2 }}>🗑 Consider delisting</Text>
+                    <Text style={{ fontSize: 11, color: c.stellarAmber, marginTop: 2 }}>🗑 Consider delisting</Text>
                   )}
                   <View style={{ flexDirection: 'row', marginTop: 8, gap: 6 }}>
                     <TouchableOpacity
                       onPress={() => handleSlowMoverAction(item, 'promotion')}
-                      style={{ backgroundColor: '#0B132B', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#1E3A5F' }}
+                      style={{ backgroundColor: c.deepBlue + '18', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: c.deepBlue }}
                     >
-                      <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '600' }}>Flag for promotion</Text>
+                      <Text style={{ color: c.deepBlue, fontSize: 11, fontWeight: '600' }}>Flag for promotion</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => handleSlowMoverAction(item, 'delist')}
-                      style={{ backgroundColor: '#1A1200', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#3D2600' }}
+                      style={{ backgroundColor: c.stellarAmber + '18', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: c.stellarAmber }}
                     >
-                      <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '600' }}>Consider delisting</Text>
+                      <Text style={{ color: c.stellarAmber, fontSize: 11, fontWeight: '600' }}>Consider delisting</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => handleSlowMoverAction(item, 'dismiss')}
-                      style={{ backgroundColor: '#161B2A', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: '#1E293B' }}
+                      style={{ backgroundColor: c.surface, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: c.border }}
                     >
-                      <Text style={{ color: '#64748B', fontSize: 11, fontWeight: '600' }}>Dismiss</Text>
+                      <Text style={{ color: c.slateMid, fontSize: 11, fontWeight: '600' }}>Dismiss</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -870,39 +888,39 @@ export default function ReportsIndexScreen() {
             return (
               <>
                 {(allFindings.length > 0 || allPODisc.length > 0) && (
-                  <Lane label="⚠️ NEEDS ATTENTION">
+                  <Lane S={S} label="⚠️ NEEDS ATTENTION">
                     {allFindings.slice(0, 4).map((f: any, i: number) => (
-                      <View key={i} style={styles.lineRow}>
+                      <View key={i} style={S.lineRow}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.lineRowName}>{f.productName}</Text>
-                          <Text style={styles.lineRowSub}>
+                          <Text style={S.lineRowName}>{f.productName}</Text>
+                          <Text style={S.lineRowSub}>
                             +{f.unexplainedGainQty} units — no invoice recorded · {f.deptName}
                           </Text>
                         </View>
-                        <Text style={{ fontSize: 12, color: '#F59E0B', fontWeight: '700' }}>Missing invoice</Text>
+                        <Text style={{ fontSize: 12, color: c.stellarAmber, fontWeight: '700' }}>Missing invoice</Text>
                       </View>
                     ))}
                     {allPODisc.slice(0, 2).map((f: any, i: number) => (
-                      <View key={`po-${i}`} style={styles.lineRow}>
+                      <View key={`po-${i}`} style={S.lineRow}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.lineRowName}>{f.productName}</Text>
-                          <Text style={styles.lineRowSub}>
+                          <Text style={S.lineRowName}>{f.productName}</Text>
+                          <Text style={S.lineRowSub}>
                             Ordered {f.orderedQty}, received {f.receivedQty} · {f.deptName}
                           </Text>
                         </View>
-                        <Text style={{ fontSize: 12, color: '#F87171', fontWeight: '700' }}>Shortfall</Text>
+                        <Text style={{ fontSize: 12, color: c.error, fontWeight: '700' }}>Shortfall</Text>
                       </View>
                     ))}
                   </Lane>
                 )}
 
-                <Lane label="📊 DATA COMPLETENESS">
-                  <Text style={[styles.laneEmpty, { color: '#94A3B8', marginBottom: 8 }]}>
+                <Lane S={S} label="📊 DATA COMPLETENESS">
+                  <Text style={[S.laneEmpty, { color: c.slateMid, marginBottom: 8 }]}>
                     Cycle intelligence: Tier {tierMin} of 4
                     {tierMin === 1 ? ' · Counts only' : tierMin === 2 ? ' · Counts + invoices' : tierMin >= 3 ? ' · Counts + invoices + sales' : ''}
                   </Text>
                   {unpricedTotal > 0 && (
-                    <Text style={[styles.laneEmpty, { color: '#64748B' }]}>
+                    <Text style={[S.laneEmpty, { color: c.slateMid }]}>
                       {unpricedTotal} product{unpricedTotal !== 1 ? 's' : ''} have no cost price — add prices to unlock dollar variance
                     </Text>
                   )}
@@ -914,29 +932,29 @@ export default function ReportsIndexScreen() {
           {/* ── SUGGESTED ORDERS CTA ── */}
           {isManager && data.hasCountData && (
             <TouchableOpacity
-              style={[styles.insightsBtn, { backgroundColor: '#065f46', marginBottom: 8 }]}
+              style={[S.insightsBtn, { backgroundColor: c.success, marginBottom: 8 }]}
               onPress={() => nav.navigate('SuggestedOrders')}
               activeOpacity={0.8}
             >
-              <Text style={styles.insightsBtnTitle}>📦 Suggested Orders</Text>
-              <Text style={styles.insightsBtnSub}>Generate an order based on current stock levels</Text>
+              <Text style={S.insightsBtnTitle}>📦 Suggested Orders</Text>
+              <Text style={S.insightsBtnSub}>Generate an order based on current stock levels</Text>
             </TouchableOpacity>
           )}
 
           {/* ── GET AI INSIGHTS button (owner/manager only, after stocktake) ── */}
           {isManager && data.hasCountData && (
             <TouchableOpacity
-              style={styles.insightsBtn}
+              style={S.insightsBtn}
               onPress={handleGetInsights}
               activeOpacity={0.8}
               disabled={insightsLoading}
             >
               {insightsLoading ? (
-                <ActivityIndicator color="#fff" size="small" />
+                <ActivityIndicator color={c.surface} size="small" />
               ) : (
                 <>
-                  <Text style={styles.insightsBtnTitle}>✨ Get AI Insights</Text>
-                  <Text style={styles.insightsBtnSub}>Analyse this stocktake with AI</Text>
+                  <Text style={S.insightsBtnTitle}>✨ Get AI Insights</Text>
+                  <Text style={S.insightsBtnSub}>Analyse this stocktake with AI</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -945,23 +963,25 @@ export default function ReportsIndexScreen() {
           {/* ── SUITEE button (owner/manager only) ── */}
           {isManager && (
             <TouchableOpacity
-              style={styles.suiteeBtn}
+              style={S.suiteeBtn}
               onPress={() => setSuiteeOpen(true)}
               activeOpacity={0.8}
             >
-              <View style={styles.suiteeBtnTop}>
-                <Text style={styles.suiteeBtnTitle}>📊 Ask Suitee</Text>
+              <View style={S.suiteeBtnTop}>
+                <Text style={S.suiteeBtnTitle}>📊 Ask Suitee</Text>
               </View>
-              <Text style={styles.suiteeBtnSub}>Ask anything about your venue data</Text>
+              <Text style={S.suiteeBtnSub}>Ask anything about your venue data</Text>
             </TouchableOpacity>
           )}
 
           {/* ── Secondary nav (owner/manager only) ── */}
-          {isManager && <SecondaryNav nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
+          {isManager && <SecondaryNav S={S} nav={nav} hasPrevCycleData={data?.hasPrevCycleData} />}
         </ScrollView>
 
         {/* ── AI Insights modal ── */}
         <InsightsModal
+          S={S}
+          c={c}
           visible={insightsModalVisible}
           loading={insightsLoading}
           insights={insightsList}
@@ -972,6 +992,8 @@ export default function ReportsIndexScreen() {
 
         {/* ── Suitee chat modal ── */}
         <SuiteeModal
+          SS={SS}
+          c={c}
           visible={suiteeOpen}
           messages={suiteeMessages}
           input={suiteeInput}
@@ -989,35 +1011,35 @@ export default function ReportsIndexScreen() {
           animationType="slide"
           onRequestClose={() => setPriceHistoryItem(null)}
         >
-          <View style={styles.modalContainer}>
-            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPriceHistoryItem(null)} />
-            <View style={styles.modalSheet}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Price History — {priceHistoryItem?.name}</Text>
+          <View style={S.modalContainer}>
+            <TouchableOpacity style={S.modalBackdrop} activeOpacity={1} onPress={() => setPriceHistoryItem(null)} />
+            <View style={S.modalSheet}>
+              <View style={S.modalHeader}>
+                <Text style={S.modalTitle}>Price History — {priceHistoryItem?.name}</Text>
                 <TouchableOpacity onPress={() => setPriceHistoryItem(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                  <Text style={styles.modalCloseIcon}>✕</Text>
+                  <Text style={S.modalCloseIcon}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <ScrollView contentContainerStyle={styles.modalBody}>
+              <ScrollView contentContainerStyle={S.modalBody}>
                 {priceHistory.length === 0 ? (
-                  <View style={styles.modalCenter}>
-                    <ActivityIndicator color="#60A5FA" />
+                  <View style={S.modalCenter}>
+                    <ActivityIndicator color={c.deepBlue} />
                   </View>
                 ) : priceHistory.map((h: any, idx: number) => {
                   const dateStr = h.date?.toDate
                     ? h.date.toDate().toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' })
                     : '–';
                   const sign = (h.changePercent ?? 0) >= 0 ? '+' : '';
-                  const color = h.direction === 'increase' ? '#F87171' : '#4ADE80';
+                  const color = h.direction === 'increase' ? c.error : c.success;
                   return (
-                    <View key={h.id || idx} style={[styles.lineRow, { paddingVertical: 12 }]}>
+                    <View key={h.id || idx} style={[S.lineRow, { paddingVertical: 12 }]}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.lineRowName}>
+                        <Text style={S.lineRowName}>
                           ${(h.oldPrice ?? 0).toFixed(2)} → ${(h.newPrice ?? 0).toFixed(2)}
                         </Text>
-                        <Text style={styles.lineRowSub}>{h.supplierName || 'Unknown supplier'} · {dateStr}</Text>
+                        <Text style={S.lineRowSub}>{h.supplierName || 'Unknown supplier'} · {dateStr}</Text>
                       </View>
-                      <Text style={[styles.lineRowNeg, { color }]}>
+                      <Text style={[S.lineRowNeg, { color }]}>
                         {sign}{(h.changePercent ?? 0).toFixed(1)}%
                       </Text>
                     </View>
@@ -1034,55 +1056,59 @@ export default function ReportsIndexScreen() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ScreenHeader() {
+function ScreenHeader({ S }: { S: any }) {
   return (
-    <View style={styles.header}>
+    <View style={S.header}>
       <View>
-        <Text style={styles.headerTitle}>Briefing</Text>
-        <Text style={styles.headerSub}>What happened. What it means. What to do.</Text>
+        <Text style={S.headerTitle}>Briefing</Text>
+        <Text style={S.headerSub}>What happened. What it means. What to do.</Text>
       </View>
     </View>
   );
 }
 
-function SecondaryNav({ nav, hasPrevCycleData }: { nav: any; hasPrevCycleData?: boolean }) {
+function SecondaryNav({ S, nav, hasPrevCycleData }: { S: any; nav: any; hasPrevCycleData?: boolean }) {
   return (
-    <View style={styles.secondaryNav}>
-      <Text style={styles.secondaryNavLabel}>DETAILED REPORTS</Text>
-      <NavTile title="📈 Product Performance" onPress={() => nav.navigate('ProductPerformance')} />
-      <NavTile title="🚚 Supplier Spend" onPress={() => nav.navigate('SupplierSpend')} />
-      <NavTile title="🍹 Recipe Costs (CraftIt)" onPress={() => nav.navigate('CraftUp')} />
-      <NavTile title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
-      <NavTile title="Stocktake History" onPress={() => nav.navigate('StocktakeHistory')} />
-      <NavTile title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
-      <NavTile title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
-      <NavTile title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
-      <NavTile title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
-      <NavTile title="Budgets" onPress={() => nav.navigate('Budgets')} />
-      <NavTile title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
+    <View style={S.secondaryNav}>
+      <Text style={S.secondaryNavLabel}>DETAILED REPORTS</Text>
+      <NavTile S={S} title="📈 Product Performance" onPress={() => nav.navigate('ProductPerformance')} />
+      <NavTile S={S} title="🚚 Supplier Spend" onPress={() => nav.navigate('SupplierSpend')} />
+      <NavTile S={S} title="🍹 Recipe Costs (CraftIt)" onPress={() => nav.navigate('CraftUp')} />
+      <NavTile S={S} title="Stock Holding Report" onPress={() => nav.navigate('StockHolding')} />
+      <NavTile S={S} title="Stocktake History" onPress={() => nav.navigate('StocktakeHistory')} />
+      <NavTile S={S} title="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
+      <NavTile S={S} title="Variance Snapshot" onPress={() => nav.navigate('VarianceSnapshot')} />
+      <NavTile S={S} title="Department Variance" onPress={() => nav.navigate('DepartmentVariance')} />
+      <NavTile S={S} title="Weekly Performance" onPress={() => nav.navigate('LastCycleSummary')} />
+      <NavTile S={S} title="Budgets" onPress={() => nav.navigate('Budgets')} />
+      <NavTile S={S} title="Invoice Reconciliations" onPress={() => nav.navigate('Reconciliations')} />
     </View>
   );
 }
 
 function InsightCard({
+  S,
   insight,
   isLast,
 }: {
+  S: any;
   insight: { headline: string; observation: string; action: string | null };
   isLast: boolean;
 }) {
   return (
-    <View style={[styles.insightCard, !isLast && styles.insightCardBorder]}>
-      <Text style={styles.insightHeadline}>{insight.headline}</Text>
-      <Text style={styles.insightObservation}>{insight.observation}</Text>
+    <View style={[S.insightCard, !isLast && S.insightCardBorder]}>
+      <Text style={S.insightHeadline}>{insight.headline}</Text>
+      <Text style={S.insightObservation}>{insight.observation}</Text>
       {insight.action ? (
-        <Text style={styles.insightAction}>{insight.action}</Text>
+        <Text style={S.insightAction}>{insight.action}</Text>
       ) : null}
     </View>
   );
 }
 
 function InsightsModal({
+  S,
+  c,
   visible,
   loading,
   insights,
@@ -1090,6 +1116,8 @@ function InsightsModal({
   onClose,
   onRetry,
 }: {
+  S: any;
+  c: any;
   visible: boolean;
   loading: boolean;
   insights: AiInsight[];
@@ -1114,44 +1142,45 @@ function InsightsModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.modalContainer}>
+      <View style={S.modalContainer}>
         <TouchableOpacity
-          style={styles.modalBackdrop}
+          style={S.modalBackdrop}
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={styles.modalSheet}>
-          <View {...dragPan.panHandlers} style={styles.modalDragArea}>
-            <View style={styles.modalDragHandle} />
+        <View style={S.modalSheet}>
+          <View {...dragPan.panHandlers} style={S.modalDragArea}>
+            <View style={S.modalDragHandle} />
           </View>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>✨ AI Insights</Text>
+          <View style={S.modalHeader}>
+            <Text style={S.modalTitle}>✨ AI Insights</Text>
             <TouchableOpacity
               onPress={onClose}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Text style={styles.modalCloseIcon}>✕</Text>
+              <Text style={S.modalCloseIcon}>✕</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
+          <ScrollView contentContainerStyle={S.modalBody}>
             {loading ? (
-              <View style={styles.modalCenter}>
-                <ActivityIndicator color="#60A5FA" size="large" />
-                <Text style={styles.modalLoadingText}>Analysing your stocktake…</Text>
+              <View style={S.modalCenter}>
+                <ActivityIndicator color={c.deepBlue} size="large" />
+                <Text style={S.modalLoadingText}>Analysing your stocktake…</Text>
               </View>
             ) : error ? (
-              <View style={styles.modalCenter}>
-                <Text style={styles.modalErrorText}>
+              <View style={S.modalCenter}>
+                <Text style={S.modalErrorText}>
                   Unable to generate insights right now. Please try again.
                 </Text>
-                <TouchableOpacity style={styles.modalRetryBtn} onPress={onRetry}>
-                  <Text style={styles.modalRetryText}>Try again</Text>
+                <TouchableOpacity style={S.modalRetryBtn} onPress={onRetry}>
+                  <Text style={S.modalRetryText}>Try again</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               insights.map((insight, idx) => (
                 <InsightCard
                   key={idx}
+                  S={S}
                   insight={insight}
                   isLast={idx === insights.length - 1}
                 />
@@ -1165,6 +1194,8 @@ function InsightsModal({
 }
 
 function SuiteeModal({
+  SS,
+  c,
   visible,
   messages,
   input,
@@ -1174,6 +1205,8 @@ function SuiteeModal({
   onSend,
   onClose,
 }: {
+  SS: any;
+  c: any;
   visible: boolean;
   messages: { role: string; text: string }[];
   input: string;
@@ -1191,18 +1224,18 @@ function SuiteeModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={sStyles.wrap} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <TouchableOpacity style={sStyles.backdrop} onPress={onClose} activeOpacity={1} />
-        <View style={sStyles.sheet}>
-          <View style={sStyles.header}>
+      <KeyboardAvoidingView style={SS.wrap} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <TouchableOpacity style={SS.backdrop} onPress={onClose} activeOpacity={1} />
+        <View style={SS.sheet}>
+          <View style={SS.header}>
             <View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={sStyles.title}>📊 Suitee</Text>
+                <Text style={SS.title}>📊 Suitee</Text>
               </View>
-              <Text style={sStyles.subtitle}>Your venue intelligence</Text>
+              <Text style={SS.subtitle}>Your venue intelligence</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={{ padding: 8 }}>
-              <Text style={{ color: '#64748B', fontSize: 18 }}>✕</Text>
+              <Text style={{ color: c.slateMid, fontSize: 18 }}>✕</Text>
             </TouchableOpacity>
           </View>
 
@@ -1210,11 +1243,11 @@ function SuiteeModal({
             ref={flatRef}
             data={displayMessages}
             keyExtractor={(_, i) => String(i)}
-            contentContainerStyle={sStyles.messageList}
+            contentContainerStyle={SS.messageList}
             onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: true })}
             renderItem={({ item }) => (
-              <View style={[sStyles.bubble, item.role === 'user' ? sStyles.bubbleUser : sStyles.bubbleAssistant]}>
-                <Text style={item.role === 'user' ? sStyles.bubbleTextUser : sStyles.bubbleTextAssistant}>
+              <View style={[SS.bubble, item.role === 'user' ? SS.bubbleUser : SS.bubbleAssistant]}>
+                <Text style={item.role === 'user' ? SS.bubbleTextUser : SS.bubbleTextAssistant}>
                   {item.text}
                 </Text>
               </View>
@@ -1222,17 +1255,17 @@ function SuiteeModal({
           />
 
           {loading && (
-            <View style={sStyles.loadingRow}>
-              <ActivityIndicator size="small" color="#60A5FA" />
-              <Text style={sStyles.loadingText}>Suitee is thinking…</Text>
+            <View style={SS.loadingRow}>
+              <ActivityIndicator size="small" color={c.deepBlue} />
+              <Text style={SS.loadingText}>Suitee is thinking…</Text>
             </View>
           )}
 
-          <View style={sStyles.inputRow}>
+          <View style={SS.inputRow}>
             <TextInput
-              style={sStyles.input}
+              style={SS.input}
               placeholder="Ask about your venue data…"
-              placeholderTextColor="#475569"
+              placeholderTextColor={c.text}
               value={input}
               onChangeText={onInputChange}
               onSubmitEditing={onSend}
@@ -1241,10 +1274,10 @@ function SuiteeModal({
             />
             <TouchableOpacity
               onPress={onSend}
-              style={[sStyles.sendBtn, (!input.trim() || loading) && sStyles.sendBtnDisabled]}
+              style={[SS.sendBtn, (!input.trim() || loading) && SS.sendBtnDisabled]}
               disabled={!input.trim() || loading}
             >
-              <Text style={sStyles.sendText}>→</Text>
+              <Text style={SS.sendText}>→</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1255,25 +1288,26 @@ function SuiteeModal({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+function makeStyles(c: any) {
+  return StyleSheet.create({
   root: {
     flex: 1,
   },
   header: {
     padding: 16,
-    borderBottomColor: '#263142',
+    borderBottomColor: c.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   headerTitle: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 20,
     fontWeight: '700',
   },
   headerSub: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 13,
     marginTop: 2,
   },
@@ -1284,47 +1318,47 @@ const styles = StyleSheet.create({
     padding: 32,
   },
   emptyCard: {
-    backgroundColor: '#1E293B',
+    backgroundColor: c.border,
     borderRadius: 12,
     padding: 24,
     marginBottom: 24,
   },
   emptyTitle: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 8,
   },
   emptyBody: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 14,
     lineHeight: 20,
   },
   ctaBtn: {
     marginTop: 20,
-    backgroundColor: '#1D4ED8',
+    backgroundColor: c.deepBlue,
     borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 20,
     alignSelf: 'flex-start',
   },
   ctaBtnText: {
-    color: '#fff',
+    color: c.surface,
     fontWeight: '600',
     fontSize: 14,
   },
 
   // Anchor card
   anchorCard: {
-    backgroundColor: '#0B132B',
+    backgroundColor: c.navy,
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
+    borderColor: c.border,
   },
   anchorLabel: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
@@ -1336,12 +1370,12 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
   },
   anchorSub: {
-    color: '#4ADE80',
+    color: c.success,
     fontSize: 15,
     marginTop: 4,
   },
   anchorMeta: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 12,
     marginTop: 8,
   },
@@ -1349,21 +1383,21 @@ const styles = StyleSheet.create({
   // Lane
   lane: {
     marginBottom: 16,
-    backgroundColor: '#161B2A',
+    backgroundColor: c.surface,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: c.border,
   },
   laneLabel: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
     marginBottom: 12,
   },
   laneEmpty: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -1371,7 +1405,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   laneLinkText: {
-    color: '#60A5FA',
+    color: c.deepBlue,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1382,32 +1416,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: c.border,
   },
   lineRowName: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 14,
     fontWeight: '600',
   },
   lineRowSub: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 12,
     marginTop: 2,
   },
   lineRowNeg: {
-    color: '#F87171',
+    color: c.error,
     fontSize: 16,
     fontWeight: '700',
   },
   lineRowDollar: {
-    color: '#F87171',
+    color: c.error,
     fontSize: 12,
     marginTop: 2,
   },
 
   // Trend rows
   trendIntro: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 13,
     marginBottom: 10,
     lineHeight: 18,
@@ -1421,50 +1455,50 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#F59E0B',
+    backgroundColor: c.stellarAmber,
     marginRight: 12,
   },
   trendName: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 14,
     fontWeight: '600',
   },
   trendSub: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 12,
     marginTop: 2,
   },
 
   // Unlock box
   unlockBox: {
-    backgroundColor: '#0F172A',
+    backgroundColor: c.navy,
     borderRadius: 8,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: c.border,
   },
   unlockTitle: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 14,
     fontWeight: '700',
     marginBottom: 6,
   },
   unlockBody: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 13,
     lineHeight: 19,
   },
 
   // Explain variance button (LANE 3)
   explainBtn: {
-    backgroundColor: '#1b4f72',
+    backgroundColor: c.deepBlue,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
     alignSelf: 'flex-start',
   },
   explainBtnText: {
-    color: '#fff',
+    color: c.surface,
     fontWeight: '600',
     fontSize: 14,
   },
@@ -1476,11 +1510,11 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   aiLoadingText: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 13,
   },
   aiText: {
-    color: '#CBD5E1',
+    color: c.text,
     fontSize: 14,
     lineHeight: 21,
   },
@@ -1491,32 +1525,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: c.border,
   },
   areaName: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 14,
     fontWeight: '600',
   },
   areaSub: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 12,
     marginTop: 2,
   },
   areaDuration: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 14,
     fontWeight: '600',
   },
   areaMeta: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 12,
     marginTop: 2,
   },
 
   // AI Insights button
   insightsBtn: {
-    backgroundColor: '#1b4f72',
+    backgroundColor: c.deepBlue,
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
@@ -1526,7 +1560,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   insightsBtnTitle: {
-    color: '#fff',
+    color: c.surface,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1542,21 +1576,21 @@ const styles = StyleSheet.create({
   },
   insightCardBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: c.border,
   },
   insightHeadline: {
-    color: '#F1F5F9',
+    color: c.surface,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 6,
   },
   insightObservation: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 14,
     lineHeight: 20,
   },
   insightAction: {
-    color: '#5EAAD0',
+    color: c.deepBlue,
     fontSize: 13,
     lineHeight: 18,
     marginTop: 8,
@@ -1577,7 +1611,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
   modalSheet: {
-    backgroundColor: '#0F1823',
+    backgroundColor: c.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '85%',
@@ -1591,7 +1625,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#334155',
+    backgroundColor: c.border,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1601,12 +1635,12 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   modalTitle: {
-    color: '#F1F5F9',
+    color: c.surface,
     fontSize: 18,
     fontWeight: '700',
   },
   modalCloseIcon: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 18,
   },
   modalBody: {
@@ -1618,38 +1652,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalLoadingText: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 14,
     marginTop: 14,
   },
   modalErrorText: {
-    color: '#94A3B8',
+    color: c.slateMid,
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',
     marginBottom: 20,
   },
   modalRetryBtn: {
-    backgroundColor: '#1b4f72',
+    backgroundColor: c.deepBlue,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 24,
   },
   modalRetryText: {
-    color: '#fff',
+    color: c.surface,
     fontWeight: '600',
     fontSize: 14,
   },
 
   // Suitee button
   suiteeBtn: {
-    backgroundColor: '#0B132B',
+    backgroundColor: c.navy,
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
+    borderColor: c.border,
   },
   suiteeBtnTop: {
     flexDirection: 'row',
@@ -1658,7 +1692,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   suiteeBtnTitle: {
-    color: '#F9FAFB',
+    color: c.surface,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -1667,13 +1701,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   suiteeBadge: {
-    backgroundColor: '#1E3A5F',
+    backgroundColor: c.border,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   suiteeBadgeText: {
-    color: '#60A5FA',
+    color: c.deepBlue,
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -1684,7 +1718,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   secondaryNavLabel: {
-    color: '#64748B',
+    color: c.slateMid,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
@@ -1692,7 +1726,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   navTile: {
-    backgroundColor: '#161B2A',
+    backgroundColor: c.surface,
     borderRadius: 10,
     padding: 14,
     marginBottom: 8,
@@ -1700,31 +1734,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: c.border,
   },
   navTileText: {
-    color: '#E2E8F0',
+    color: c.border,
     fontSize: 15,
     fontWeight: '500',
   },
   navTileChev: {
-    color: '#475569',
+    color: c.text,
     fontSize: 20,
     fontWeight: '300',
   },
-});
+  });
+}
 
 // ─── Suitee modal styles ──────────────────────────────────────────────────────
 
-const sStyles = StyleSheet.create({
+function makeSStyles(c: any) {
+  return StyleSheet.create({
   wrap: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
-    backgroundColor: '#0F1823',
+    backgroundColor: c.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
-    shadowColor: '#000',
+    shadowColor: c.navy,
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -1736,17 +1772,17 @@ const sStyles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: c.border,
   },
-  title: { fontSize: 18, fontWeight: '800', color: '#F1F5F9' },
-  subtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  title: { fontSize: 18, fontWeight: '800', color: c.surface },
+  subtitle: { fontSize: 12, color: c.slateMid, marginTop: 2 },
   badge: {
-    backgroundColor: '#1E3A5F',
+    backgroundColor: c.border,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  badgeText: { color: '#60A5FA', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  badgeText: { color: c.deepBlue, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   messageList: { padding: 12, gap: 8 },
   bubble: {
     borderRadius: 14,
@@ -1754,10 +1790,10 @@ const sStyles = StyleSheet.create({
     paddingHorizontal: 12,
     maxWidth: '85%',
   },
-  bubbleUser: { alignSelf: 'flex-end', backgroundColor: '#0B132B', borderWidth: 1, borderColor: '#1E3A5F' },
-  bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: '#161B2A' },
-  bubbleTextUser: { color: '#F9FAFB', fontSize: 14, lineHeight: 20 },
-  bubbleTextAssistant: { color: '#CBD5E1', fontSize: 14, lineHeight: 20 },
+  bubbleUser: { alignSelf: 'flex-end', backgroundColor: c.navy, borderWidth: 1, borderColor: c.border },
+  bubbleAssistant: { alignSelf: 'flex-start', backgroundColor: c.surface },
+  bubbleTextUser: { color: c.surface, fontSize: 14, lineHeight: 20 },
+  bubbleTextAssistant: { color: c.text, fontSize: 14, lineHeight: 20 },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1765,36 +1801,37 @@ const sStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
   },
-  loadingText: { color: '#64748B', fontSize: 13, fontStyle: 'italic' },
+  loadingText: { color: c.slateMid, fontSize: 13, fontStyle: 'italic' },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
     gap: 8,
     borderTopWidth: 1,
-    borderTopColor: '#1E293B',
+    borderTopColor: c.border,
   },
   input: {
     flex: 1,
-    backgroundColor: '#161B2A',
+    backgroundColor: c.surface,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 14,
-    color: '#F1F5F9',
+    color: c.surface,
     borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: c.border,
   },
   sendBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#0B132B',
+    backgroundColor: c.navy,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
+    borderColor: c.border,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendBtnDisabled: { opacity: 0.4 },
-  sendText: { color: '#60A5FA', fontSize: 18, fontWeight: '700' },
-});
+  sendText: { color: c.deepBlue, fontSize: 18, fontWeight: '700' },
+  });
+}

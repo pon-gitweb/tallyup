@@ -6,13 +6,15 @@ import {
   FlatList,
   RefreshControl,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import IdentityBadge from '../../components/IdentityBadge';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import {
   listCompletedStockTakes,
   CompletedStockTakeRow,
@@ -57,6 +59,10 @@ function fmtDuration(mins: number | null): string | null {
 
 export default function CompletedStockTakesScreen() {
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<CompletedStockTakeRow[]>([]);
 
@@ -72,6 +78,7 @@ export default function CompletedStockTakesScreen() {
       setRows(res || []);
     } catch {
       setRows([]);
+      showError('Could not load completed stocktakes.');
     } finally {
       setLoading(false);
     }
@@ -95,11 +102,7 @@ export default function CompletedStockTakesScreen() {
     const dur = fmtDuration(item.durationMinutes);
     if (dur) lines.push(`Duration: ${dur}`);
 
-    Alert.alert(
-      `${item.departmentName} — Cycle ${item.cycleNumber}`,
-      lines.join('\n'),
-      [{ text: 'OK' }],
-    );
+    showInfo(`${item.departmentName} — Cycle ${item.cycleNumber}\n${lines.join('\n')}`);
   };
 
   const renderItem = ({ item }: { item: CompletedStockTakeRow }) => {
@@ -113,24 +116,24 @@ export default function CompletedStockTakesScreen() {
         style={{
           padding: 14,
           borderRadius: 12,
-          backgroundColor: '#020617',
+          backgroundColor: c.oat,
           borderWidth: 1,
-          borderColor: '#1E293B',
+          borderColor: c.border,
           marginBottom: 10,
         }}
       >
         {/* Header row */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: '#E5E7EB', fontWeight: '800', fontSize: 15 }}>
+            <Text style={{ color: c.navy, fontWeight: '800', fontSize: 15 }}>
               {item.departmentName}
             </Text>
-            <Text style={{ color: '#64748B', fontSize: 12, marginTop: 1 }}>
+            <Text style={{ color: c.slateMid, fontSize: 12, marginTop: 1 }}>
               Cycle {item.cycleNumber} · {dateStr}
             </Text>
           </View>
           {item.totalStockValue != null && item.totalStockValue > 0 && (
-            <Text style={{ color: '#4ADE80', fontWeight: '800', fontSize: 15 }}>
+            <Text style={{ color: c.success, fontWeight: '800', fontSize: 15 }}>
               {formatCurrency(item.totalStockValue)}
             </Text>
           )}
@@ -139,35 +142,35 @@ export default function CompletedStockTakesScreen() {
         {/* Stats row */}
         <View style={{ flexDirection: 'row', gap: 16, flexWrap: 'wrap' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>
+            <Text style={{ color: c.deepBlue, fontSize: 13, fontWeight: '700' }}>
               {item.totalItemsCounted}
             </Text>
-            <Text style={{ color: '#64748B', fontSize: 12 }}>items</Text>
+            <Text style={{ color: c.slateMid, fontSize: 12 }}>items</Text>
           </View>
 
           {item.itemsBelowPAR > 0 && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ color: '#F87171', fontSize: 13, fontWeight: '700' }}>
+              <Text style={{ color: c.error, fontSize: 13, fontWeight: '700' }}>
                 {item.itemsBelowPAR}
               </Text>
-              <Text style={{ color: '#64748B', fontSize: 12 }}>below PAR</Text>
+              <Text style={{ color: c.slateMid, fontSize: 12 }}>below PAR</Text>
             </View>
           )}
 
           {dur && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ color: '#94A3B8', fontSize: 12 }}>⏱ {dur}</Text>
+              <Text style={{ color: c.slateMid, fontSize: 12 }}>⏱ {dur}</Text>
             </View>
           )}
         </View>
 
         {item.completedByName && (
-          <Text style={{ color: '#64748B', fontSize: 11, marginTop: 6 }}>
+          <Text style={{ color: c.slateMid, fontSize: 11, marginTop: 6 }}>
             {item.completedByName}
           </Text>
         )}
 
-        <Text style={{ color: '#334155', fontSize: 11, marginTop: 4 }}>
+        <Text style={{ color: c.slateMid, fontSize: 11, marginTop: 4 }}>
           Tap for details
         </Text>
       </TouchableOpacity>
@@ -177,7 +180,7 @@ export default function CompletedStockTakesScreen() {
   const emptyState = () => {
     if (!venueId) {
       return (
-        <Text style={{ color: '#F97316' }}>
+        <Text style={{ color: c.stellarAmber }}>
           No venue selected — pick a venue to see completed stock takes.
         </Text>
       );
@@ -185,10 +188,10 @@ export default function CompletedStockTakesScreen() {
     if (loading) return null;
     return (
       <View>
-        <Text style={{ color: '#E5E7EB', fontWeight: '600', marginBottom: 4 }}>
+        <Text style={{ color: c.navy, fontWeight: '600', marginBottom: 4 }}>
           No completed stocktakes yet
         </Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+        <Text style={{ color: c.slateMid, fontSize: 13 }}>
           Complete a stocktake and it will appear here with counts, stock value, and duration.
         </Text>
       </View>
@@ -197,11 +200,12 @@ export default function CompletedStockTakesScreen() {
 
   return (
     <LocalThemeGate>
-      <View style={{ flex: 1, backgroundColor: '#020617' }}>
+      <View style={{ flex: 1, backgroundColor: c.oat }}>
+        {modal}
         <View
           style={{
             padding: 16,
-            borderBottomColor: '#1E293B',
+            borderBottomColor: c.border,
             borderBottomWidth: 1,
             flexDirection: 'row',
             justifyContent: 'space-between',
@@ -209,10 +213,10 @@ export default function CompletedStockTakesScreen() {
           }}
         >
           <View style={{ flex: 1, paddingRight: 12 }}>
-            <MaybeTText style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>
+            <MaybeTText style={{ color: c.navy, fontSize: 20, fontWeight: '700' }}>
               Stocktake History
             </MaybeTText>
-            <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 13 }}>
+            <Text style={{ color: c.slateMid, marginTop: 4, fontSize: 13 }}>
               All completed stocktake cycles — tap any row for details.
             </Text>
           </View>

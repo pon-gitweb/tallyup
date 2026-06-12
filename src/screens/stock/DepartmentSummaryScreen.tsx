@@ -1,12 +1,15 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, getDocs, doc, getDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { resetDepartment } from '../../services/reset';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type RouteParams = {
   departmentId: string;
@@ -49,6 +52,10 @@ function DepartmentSummaryScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const {
     departmentId, departmentName, cycleNumber,
@@ -138,27 +145,22 @@ function DepartmentSummaryScreen() {
 
   const handleStartNext = async () => {
     if (!venueId || resetting) return;
-    Alert.alert(
-      `Start next ${departmentName} stocktake?`,
-      'This resets all areas in this department so you can begin a fresh count. Your completed data is saved.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset & start',
-          onPress: async () => {
-            setResetting(true);
-            try {
-              await resetDepartment(venueId, departmentId);
-              nav.navigate('DepartmentSelection' as never);
-            } catch (e: any) {
-              Alert.alert('Reset failed', e?.message || 'Unknown error');
-            } finally {
-              setResetting(false);
-            }
-          },
-        },
-      ]
-    );
+    confirm({
+      title: `Start next ${departmentName} stocktake?`,
+      message: 'This resets all areas in this department so you can begin a fresh count. Your completed data is saved.',
+      confirmLabel: 'Reset & start',
+      onConfirm: async () => {
+        setResetting(true);
+        try {
+          await resetDepartment(venueId, departmentId);
+          nav.navigate('DepartmentSelection' as never);
+        } catch (e: any) {
+          showError(e?.message || 'Reset failed.');
+        } finally {
+          setResetting(false);
+        }
+      },
+    });
   };
 
   const submittedDate = new Date(submittedAt).toLocaleString('en-NZ', {
@@ -174,13 +176,14 @@ function DepartmentSummaryScreen() {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: '#f5f3ee' }}
+      style={{ flex: 1, backgroundColor: c.oat }}
       contentContainerStyle={{ padding: 16, gap: 14 }}
     >
+      {modal}
       {/* Hero */}
-      <View style={{ backgroundColor: '#065f46', borderRadius: 16, padding: 24, gap: 6 }}>
+      <View style={{ backgroundColor: c.success, borderRadius: 16, padding: 24, gap: 6 }}>
         <Text style={{ fontSize: 40 }}>✓</Text>
-        <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff' }}>
+        <Text style={{ fontSize: 22, fontWeight: '900', color: c.surface }}>
           {departmentName} complete
         </Text>
         <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
@@ -189,38 +192,38 @@ function DepartmentSummaryScreen() {
       </View>
 
       {/* Stats */}
-      <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8' }}>
+      <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border }}>
         {statsRows.map((row, i) => (
           <View key={i} style={{
             flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8,
-            borderTopWidth: i > 0 ? 1 : 0, borderTopColor: '#f0ede8',
+            borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border,
           }}>
-            <Text style={{ color: '#374151', fontSize: 14 }}>{row.label}</Text>
-            <Text style={{ color: '#065f46', fontSize: 14, fontWeight: '800' }}>{row.value}</Text>
+            <Text style={{ color: c.text, fontSize: 14 }}>{row.label}</Text>
+            <Text style={{ color: c.success, fontSize: 14, fontWeight: '800' }}>{row.value}</Text>
           </View>
         ))}
       </View>
 
       {/* Snapshot intelligence card */}
       {snapshotLoading ? (
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8', alignItems: 'center' }}>
-          <ActivityIndicator size="small" color="#065f46" />
-          <Text style={{ color: '#6b7280', fontSize: 12, marginTop: 6 }}>Building cycle analysis…</Text>
+        <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={c.success} />
+          <Text style={{ color: c.slateMid, fontSize: 12, marginTop: 6 }}>Building cycle analysis…</Text>
         </View>
       ) : snapshot ? (
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8', gap: 10 }}>
-          <Text style={{ fontWeight: '800', color: '#374151', fontSize: 14 }}>Cycle {cycleNumber} Analysis</Text>
+        <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border, gap: 10 }}>
+          <Text style={{ fontWeight: '800', color: c.text, fontSize: 14 }}>Cycle {cycleNumber} Analysis</Text>
 
           {/* Data completeness tier */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ backgroundColor: '#ecfdf5', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#065f46' }}>
+            <View style={{ backgroundColor: c.success + '18', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: c.success }}>
                 Tier {snapshot.dataCompleteness?.tier ?? 1} of 4
                 {snapshot.dataCompleteness?.hasInvoices ? '  ✓ Invoices' : '  ✗ No invoices'}
               </Text>
             </View>
             {snapshot.summary?.itemsWithNoPrice > 0 && (
-              <Text style={{ fontSize: 11, color: '#9ca3af' }}>
+              <Text style={{ fontSize: 11, color: c.slateMid }}>
                 {snapshot.summary.itemsWithNoPrice} unpriced
               </Text>
             )}
@@ -238,12 +241,12 @@ function DepartmentSummaryScreen() {
             const lossSubtitle = isFirstCycle ? 'Stock below minimum levels' : 'Largest drops since last stocktake';
             return (
               <View>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>{lossLabel}</Text>
-                <Text style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>{lossSubtitle}</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.slateMid, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>{lossLabel}</Text>
+                <Text style={{ fontSize: 11, color: c.slateMid, marginBottom: 4 }}>{lossSubtitle}</Text>
                 {losses.map((item: any, i: number) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
-                    <Text style={{ fontSize: 13, color: '#374151', flex: 1 }}>{item.name}</Text>
-                    <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '700' }}>
+                    <Text style={{ fontSize: 13, color: c.text, flex: 1 }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: c.error, fontWeight: '700' }}>
                       {item.totalVarianceQty}
                       {item.totalVarianceDollars != null ? `  –$${Math.abs(item.totalVarianceDollars).toFixed(0)}` : ''}
                     </Text>
@@ -262,11 +265,11 @@ function DepartmentSummaryScreen() {
             if (!gains.length) return null;
             return (
               <View>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Gains</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: c.slateMid, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Gains</Text>
                 {gains.map((item: any, i: number) => (
                   <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
-                    <Text style={{ fontSize: 13, color: '#374151', flex: 1 }}>{item.name}</Text>
-                    <Text style={{ fontSize: 13, color: '#059669', fontWeight: '700' }}>+{item.totalVarianceQty}</Text>
+                    <Text style={{ fontSize: 13, color: c.text, flex: 1 }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: c.success, fontWeight: '700' }}>+{item.totalVarianceQty}</Text>
                   </View>
                 ))}
               </View>
@@ -275,8 +278,8 @@ function DepartmentSummaryScreen() {
 
           {/* Below PAR */}
           {snapshot.summary?.itemsBelowPAR > 0 && (
-            <View style={{ backgroundColor: '#fef3c7', borderRadius: 8, padding: 10 }}>
-              <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '600' }}>
+            <View style={{ backgroundColor: c.stellarAmber + '18', borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: c.stellarAmber, fontWeight: '600' }}>
                 {snapshot.summary.itemsBelowPAR} item{snapshot.summary.itemsBelowPAR !== 1 ? 's' : ''} below PAR — check suggested orders
               </Text>
             </View>
@@ -284,10 +287,10 @@ function DepartmentSummaryScreen() {
 
           {/* Missing invoice alert */}
           {snapshot.findings?.likelyMissingInvoices?.length > 0 && (
-            <View style={{ backgroundColor: '#fff7ed', borderRadius: 8, padding: 10 }}>
-              <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '700' }}>⚠ Possible missing invoices</Text>
+            <View style={{ backgroundColor: c.stellarAmber + '18', borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 13, color: c.stellarAmber, fontWeight: '700' }}>⚠ Possible missing invoices</Text>
               {snapshot.findings.likelyMissingInvoices.slice(0, 2).map((f: any, i: number) => (
-                <Text key={i} style={{ fontSize: 12, color: '#78350f', marginTop: 2 }}>
+                <Text key={i} style={{ fontSize: 12, color: c.stellarAmber, marginTop: 2 }}>
                   {f.productName}: +{f.unexplainedGainQty} units with no delivery recorded
                 </Text>
               ))}
@@ -296,9 +299,9 @@ function DepartmentSummaryScreen() {
 
           {/* Top recommendation */}
           {snapshot.recommendations?.length > 0 && (
-            <View style={{ backgroundColor: '#eff6ff', borderRadius: 8, padding: 10 }}>
-              <Text style={{ fontSize: 12, color: '#1e40af', fontWeight: '700' }}>Recommended action</Text>
-              <Text style={{ fontSize: 12, color: '#1e3a8a', marginTop: 2 }}>
+            <View style={{ backgroundColor: c.primaryLight, borderRadius: 8, padding: 10 }}>
+              <Text style={{ fontSize: 12, color: c.deepBlue, fontWeight: '700' }}>Recommended action</Text>
+              <Text style={{ fontSize: 12, color: c.deepBlue, marginTop: 2 }}>
                 {snapshot.recommendations[0].message}
               </Text>
             </View>
@@ -308,31 +311,31 @@ function DepartmentSummaryScreen() {
 
       {/* Supplier nudge */}
       {noSupplierCount > 0 && !supplierNudgeDismissed && (
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: '#14B8A6' }}>
-          <Text style={{ fontWeight: '800', color: '#374151', fontSize: 14, marginBottom: 4 }}>
+        <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: c.deepBlue }}>
+          <Text style={{ fontWeight: '800', color: c.text, fontSize: 14, marginBottom: 4 }}>
             🚚 {noSupplierCount} product{noSupplierCount !== 1 ? 's' : ''} {noSupplierCount !== 1 ? 'have' : 'has'} no supplier
           </Text>
-          <Text style={{ color: '#6b7280', fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
+          <Text style={{ color: c.slateMid, fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
             Scan an invoice and we'll automatically link products to their supplier. Or assign suppliers manually in Products.
           </Text>
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             <TouchableOpacity
               onPress={() => nav.navigate('Orders' as never)}
-              style={{ backgroundColor: '#065f46', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+              style={{ backgroundColor: c.success, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Scan invoice</Text>
+              <Text style={{ color: c.surface, fontWeight: '700', fontSize: 13 }}>Scan invoice</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => nav.navigate('Products', { filterNoSupplier: true } as never)}
-              style={{ backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: '#e5e1d8' }}
+              style={{ backgroundColor: c.surface, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: c.border }}
             >
-              <Text style={{ color: '#374151', fontWeight: '600', fontSize: 13 }}>Assign manually</Text>
+              <Text style={{ color: c.text, fontWeight: '600', fontSize: 13 }}>Assign manually</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setSupplierNudgeDismissed(true)}
               style={{ paddingVertical: 7, paddingHorizontal: 4 }}
             >
-              <Text style={{ color: '#9ca3af', fontSize: 13 }}>Later</Text>
+              <Text style={{ color: c.slateMid, fontSize: 13 }}>Later</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -340,26 +343,26 @@ function DepartmentSummaryScreen() {
 
       {/* CTAs */}
       <TouchableOpacity
-        style={{ backgroundColor: '#1b4f72', borderRadius: 12, padding: 16, alignItems: 'center' }}
+        style={{ backgroundColor: c.deepBlue, borderRadius: 12, padding: 16, alignItems: 'center' }}
         onPress={() => nav.navigate('Reports' as never)}
       >
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>View department report →</Text>
+        <Text style={{ color: c.surface, fontWeight: '800', fontSize: 15 }}>View department report →</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', opacity: resetting ? 0.5 : 1 }}
+        style={{ backgroundColor: c.surface, borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: c.border, opacity: resetting ? 0.5 : 1 }}
         onPress={handleStartNext}
         disabled={resetting}
       >
-        <Text style={{ color: '#374151', fontWeight: '700', fontSize: 15 }}>
+        <Text style={{ color: c.text, fontWeight: '700', fontSize: 15 }}>
           {resetting ? 'Resetting…' : `Start next ${departmentName} stocktake`}
         </Text>
       </TouchableOpacity>
 
       {/* Other departments status */}
       {otherDepts.length > 0 && (
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#e5e1d8' }}>
-          <Text style={{ fontWeight: '800', color: '#374151', marginBottom: 8 }}>Other departments</Text>
+        <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border }}>
+          <Text style={{ fontWeight: '800', color: c.text, marginBottom: 8 }}>Other departments</Text>
           {otherDepts.map((dept, i) => {
             const lastMs = dept.lastCycleAt?.toMillis?.() ?? dept.lastCycleAt?.toDate?.()?.getTime?.() ?? null;
             const statusText =
@@ -371,11 +374,11 @@ function DepartmentSummaryScreen() {
                 ? `Last counted ${fmtRelative(lastMs)}`
                 : 'Not started';
             const statusColor =
-              dept.status === 'done' ? '#065f46' :
-              dept.status === 'inprog' ? '#b45309' : '#6b7280';
+              dept.status === 'done' ? c.success :
+              dept.status === 'inprog' ? c.stellarAmber : c.slateMid;
             return (
-              <View key={dept.id} style={{ paddingVertical: 8, borderTopWidth: i > 0 ? 1 : 0, borderTopColor: '#f0ede8' }}>
-                <Text style={{ fontWeight: '700', color: '#0f172a' }}>{dept.name}</Text>
+              <View key={dept.id} style={{ paddingVertical: 8, borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}>
+                <Text style={{ fontWeight: '700', color: c.navy }}>{dept.name}</Text>
                 <Text style={{ color: statusColor, fontSize: 12, marginTop: 2 }}>{statusText}</Text>
               </View>
             );
@@ -387,7 +390,7 @@ function DepartmentSummaryScreen() {
         style={{ paddingVertical: 10, alignItems: 'center' }}
         onPress={() => nav.navigate('DepartmentSelection' as never)}
       >
-        <Text style={{ color: '#6B7280', fontSize: 13 }}>Back to departments</Text>
+        <Text style={{ color: c.slateMid, fontSize: 13 }}>Back to departments</Text>
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />

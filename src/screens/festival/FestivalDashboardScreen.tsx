@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  Alert, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
@@ -16,6 +16,9 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { VenueSwitcher } from '../../components/common/VenueSwitcher';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 const SECTIONS = [
   { key: 'basics',         label: 'Event basics' },
@@ -29,6 +32,11 @@ const SECTIONS = [
 export default function FestivalDashboardScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
   const uid = auth.currentUser?.uid;
   const [event, setEvent] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
@@ -82,6 +90,7 @@ export default function FestivalDashboardScreen() {
   if (!FESTIVAL_BETA) {
     return (
       <View style={S.container}>
+        {modal}
         <Text style={S.emoji}>🎪</Text>
         <Text style={S.title}>Festival mode</Text>
         <Text style={S.body}>
@@ -98,7 +107,8 @@ export default function FestivalDashboardScreen() {
   if (loading) {
     return (
       <View style={S.container}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        {modal}
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -107,6 +117,7 @@ export default function FestivalDashboardScreen() {
   if (!event) {
     return (
       <View style={S.container}>
+        {modal}
         <Text style={S.emoji}>🎪</Text>
         <Text style={S.title}>Welcome to Hosti Festival</Text>
         <Text style={S.body}>
@@ -129,7 +140,8 @@ export default function FestivalDashboardScreen() {
   const allDone = doneCount === SECTIONS.length;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -205,26 +217,21 @@ export default function FestivalDashboardScreen() {
                   <Text style={S.weekNudgeBtnText}>Review Week {weekNum} →</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[S.weekNudgeBtn, { backgroundColor: '#16a34a' }]}
+                  style={[S.weekNudgeBtn, { backgroundColor: c.success }]}
                   onPress={() => {
-                    Alert.alert(
-                      `Close Week ${weekNum}?`,
-                      `This locks Week ${weekNum}'s data and updates the velocity model for ordering accuracy.`,
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Close week',
-                          onPress: async () => {
-                            try {
-                              await writeWeeklySnapshot(venueId!, weekNum);
-                              Alert.alert('Done', `Week ${weekNum} closed and snapshot saved.`);
-                            } catch (e: any) {
-                              Alert.alert('Error', e?.message || 'Could not close week.');
-                            }
-                          },
-                        },
-                      ],
-                    );
+                    confirm({
+                      title: `Close Week ${weekNum}?`,
+                      message: `This locks Week ${weekNum}'s data and updates the velocity model for ordering accuracy.`,
+                      confirmLabel: 'Close week',
+                      onConfirm: async () => {
+                        try {
+                          await writeWeeklySnapshot(venueId!, weekNum);
+                          showSuccess(`✓ Week ${weekNum} closed and snapshot saved.`);
+                        } catch (e: any) {
+                          showError(e?.message || 'Could not close week.');
+                        }
+                      },
+                    });
                   }}
                 >
                   <Text style={S.weekNudgeBtnText}>Close Week {weekNum} ✓</Text>
@@ -502,79 +509,81 @@ export default function FestivalDashboardScreen() {
   );
 }
 
-const S = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f3ee',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 36,
-  },
-  emoji: { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  title: {
-    fontSize: 26, fontWeight: '800', color: '#0B132B',
-    textAlign: 'center', marginBottom: 16, letterSpacing: -0.3,
-  },
-  body: {
-    fontSize: 16, color: '#6b7280', textAlign: 'center',
-    lineHeight: 24, marginBottom: 12,
-  },
-  contact: {
-    marginTop: 20, fontSize: 14, color: '#9ca3af',
-    textAlign: 'center', lineHeight: 22,
-  },
-  dates: { fontSize: 14, color: '#6b7280', marginBottom: 20 },
-  cta: {
-    backgroundColor: '#1b4f72', borderRadius: 999,
-    paddingVertical: 15, paddingHorizontal: 28,
-    alignItems: 'center', marginTop: 8,
-  },
-  ctaText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: c.oat,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 36,
+    },
+    emoji: { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    title: {
+      fontSize: 26, fontWeight: '800', color: c.navy,
+      textAlign: 'center', marginBottom: 16, letterSpacing: -0.3,
+    },
+    body: {
+      fontSize: 16, color: c.slateMid, textAlign: 'center',
+      lineHeight: 24, marginBottom: 12,
+    },
+    contact: {
+      marginTop: 20, fontSize: 14, color: c.slateMid,
+      textAlign: 'center', lineHeight: 22,
+    },
+    dates: { fontSize: 14, color: c.slateMid, marginBottom: 20 },
+    cta: {
+      backgroundColor: c.deepBlue, borderRadius: 999,
+      paddingVertical: 15, paddingHorizontal: 28,
+      alignItems: 'center', marginTop: 8,
+    },
+    ctaText: { color: c.surface, fontWeight: '700', fontSize: 16 },
 
-  progressCard: {
-    backgroundColor: '#fff', borderRadius: 14, padding: 16,
-    marginBottom: 16, borderWidth: 1, borderColor: '#e5e1d8',
-  },
-  progressHeading: {
-    fontSize: 13, fontWeight: '700', color: '#0B132B',
-    marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  progressRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
-  dotDone: { fontSize: 14, color: '#1b4f72', marginRight: 10 },
-  dotPending: { fontSize: 14, color: '#d1d5db', marginRight: 10 },
-  progressLabel: { flex: 1, fontSize: 14, color: '#6b7280' },
-  progressLabelDone: { color: '#0B132B', fontWeight: '600' },
-  check: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
+    progressCard: {
+      backgroundColor: c.surface, borderRadius: 14, padding: 16,
+      marginBottom: 16, borderWidth: 1, borderColor: c.border,
+    },
+    progressHeading: {
+      fontSize: 13, fontWeight: '700', color: c.navy,
+      marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
+    },
+    progressRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+    dotDone: { fontSize: 14, color: c.deepBlue, marginRight: 10 },
+    dotPending: { fontSize: 14, color: c.border, marginRight: 10 },
+    progressLabel: { flex: 1, fontSize: 14, color: c.slateMid },
+    progressLabelDone: { color: c.navy, fontWeight: '600' },
+    check: { fontSize: 13, color: c.deepBlue, fontWeight: '700' },
 
-  closedBanner:     { backgroundColor: '#dcfce7', borderRadius: 10, padding: 12, marginTop: 12, marginBottom: 4 },
-  closedBannerText: { fontSize: 13, fontWeight: '700', color: '#16a34a', marginBottom: 2 },
-  closedBannerLink: { fontSize: 13, color: '#1b4f72', fontWeight: '700' },
+    closedBanner:     { backgroundColor: c.positiveSoft, borderRadius: 10, padding: 12, marginTop: 12, marginBottom: 4 },
+    closedBannerText: { fontSize: 13, fontWeight: '700', color: c.success, marginBottom: 2 },
+    closedBannerLink: { fontSize: 13, color: c.deepBlue, fontWeight: '700' },
 
-  weekNudge:     { backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginTop: 12, marginBottom: 4, borderWidth: 1, borderColor: '#bfdbfe' },
-  weekNudgeTitle:{ fontSize: 14, fontWeight: '800', color: '#1b4f72', marginBottom: 4 },
-  weekNudgeBody: { fontSize: 13, color: '#374151', marginBottom: 10 },
-  weekNudgeBtns: { flexDirection: 'row', gap: 8 },
-  weekNudgeBtn:  { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14 },
-  weekNudgeBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+    weekNudge:     { backgroundColor: c.primaryLight, borderRadius: 12, padding: 14, marginTop: 12, marginBottom: 4, borderWidth: 1, borderColor: c.deepBlue },
+    weekNudgeTitle:{ fontSize: 14, fontWeight: '800', color: c.deepBlue, marginBottom: 4 },
+    weekNudgeBody: { fontSize: 13, color: c.text, marginBottom: 10 },
+    weekNudgeBtns: { flexDirection: 'row', gap: 8 },
+    weekNudgeBtn:  { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14 },
+    weekNudgeBtnText: { color: c.surface, fontWeight: '700', fontSize: 13 },
 
-  tilesHeading: {
-    fontSize: 11, fontWeight: '800', color: '#9ca3af',
-    letterSpacing: 1, marginTop: 24, marginBottom: 10,
-  },
-  tilesRow: { flexDirection: 'row', gap: 12 },
-  tile: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 14,
-    padding: 16, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#e5e1d8', minHeight: 90,
-  },
-  tileEmoji: { fontSize: 28, marginBottom: 8 },
-  tileLabel: { fontSize: 13, fontWeight: '700', color: '#0B132B', textAlign: 'center' },
+    tilesHeading: {
+      fontSize: 11, fontWeight: '800', color: c.slateMid,
+      letterSpacing: 1, marginTop: 24, marginBottom: 10,
+    },
+    tilesRow: { flexDirection: 'row', gap: 12 },
+    tile: {
+      flex: 1, backgroundColor: c.surface, borderRadius: 14,
+      padding: 16, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.border, minHeight: 90,
+    },
+    tileEmoji: { fontSize: 28, marginBottom: 8 },
+    tileLabel: { fontSize: 13, fontWeight: '700', color: c.navy, textAlign: 'center' },
 
-  settingsLink: { marginTop: 20, paddingVertical: 8, paddingHorizontal: 20 },
-  settingsLinkText: { fontSize: 14, color: '#6b7280', textDecorationLine: 'underline' },
+    settingsLink: { marginTop: 20, paddingVertical: 8, paddingHorizontal: 20 },
+    settingsLinkText: { fontSize: 14, color: c.slateMid, textDecorationLine: 'underline' },
 
-  generateOrderCTA: { backgroundColor: '#dbeafe', borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1.5, borderColor: '#1b4f72' },
-  generateOrderCTAText: { color: '#1b4f72', fontWeight: '700', fontSize: 14, textAlign: 'center' },
-  tilePredictionHighlight: { borderColor: '#f59e0b', borderWidth: 2 },
-  tileSub: { fontSize: 11, color: '#9ca3af', marginTop: 2, textAlign: 'center' },
-});
+    generateOrderCTA: { backgroundColor: c.primaryLight, borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1.5, borderColor: c.deepBlue },
+    generateOrderCTAText: { color: c.deepBlue, fontWeight: '700', fontSize: 14, textAlign: 'center' },
+    tilePredictionHighlight: { borderColor: c.stellarAmber, borderWidth: 2 },
+    tileSub: { fontSize: 11, color: c.slateMid, marginTop: 2, textAlign: 'center' },
+  });
+}
