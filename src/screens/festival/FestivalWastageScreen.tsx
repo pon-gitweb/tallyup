@@ -1,8 +1,8 @@
 // @ts-nocheck
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert,
+  ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
@@ -11,6 +11,9 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,11 @@ export default function FestivalWastageScreen() {
   const route  = useRoute<any>();
   const { barId, barName } = route.params || {};
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const W = makeStyles(c);
 
   const [products,       setProducts]       = useState<any[]>([]);
   const [selectedProd,   setSelectedProd]   = useState<any>(null);
@@ -39,8 +47,6 @@ export default function FestivalWastageScreen() {
   const [loading,        setLoading]        = useState(FESTIVAL_BETA);
   const [saving,         setSaving]         = useState(false);
   const [todayWastage,   setTodayWastage]   = useState<any[]>([]);
-  const [toast,          setToast]          = useState<string | null>(null);
-  const toastTimer = useRef<any>(null);
 
   // Load products for this bar
   useEffect(() => {
@@ -76,12 +82,6 @@ export default function FestivalWastageScreen() {
     return () => unsub();
   }, [venueId, barId]);
 
-  function showToast(msg: string) {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2500);
-  }
-
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
     return (
@@ -100,15 +100,15 @@ export default function FestivalWastageScreen() {
   if (loading) {
     return (
       <View style={W.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
 
   async function saveWastage() {
-    if (!selectedProd) { Alert.alert('Required', 'Select a product.'); return; }
+    if (!selectedProd) { showInfo('Select a product.'); return; }
     const q = parseFloat(qty);
-    if (!q || q <= 0) { Alert.alert('Required', 'Enter a valid quantity.'); return; }
+    if (!q || q <= 0) { showInfo('Enter a valid quantity.'); return; }
     if (!venueId) return;
 
     setSaving(true);
@@ -155,9 +155,9 @@ export default function FestivalWastageScreen() {
       setQty('');
       setNote('');
       setReason('breakage');
-      showToast('✓ Wastage recorded');
+      showSuccess('✓ Wastage recorded');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not record wastage.');
+      showError(e?.message || 'Could not record wastage.');
     } finally {
       setSaving(false);
     }
@@ -171,7 +171,8 @@ export default function FestivalWastageScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={W.scroll} keyboardShouldPersistTaps="handled">
 
         <Text style={W.screenTitle}>{barName} — Wastage</Text>
@@ -198,7 +199,7 @@ export default function FestivalWastageScreen() {
           value={qty}
           onChangeText={setQty}
           placeholder="e.g. 2"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={c.slateMid}
           keyboardType="decimal-pad"
           style={W.input}
         />
@@ -223,7 +224,7 @@ export default function FestivalWastageScreen() {
           value={note}
           onChangeText={setNote}
           placeholder="Any additional details"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={c.slateMid}
           style={[W.input, { minHeight: 64 }]}
           multiline
         />
@@ -234,7 +235,7 @@ export default function FestivalWastageScreen() {
           onPress={saveWastage}
         >
           {saving
-            ? <ActivityIndicator color="#fff" size="small" />
+            ? <ActivityIndicator color={c.surface} size="small" />
             : <Text style={W.primaryBtnText}>Record wastage</Text>}
         </TouchableOpacity>
 
@@ -256,54 +257,46 @@ export default function FestivalWastageScreen() {
         )}
 
       </ScrollView>
-
-      {/* Toast */}
-      {toast ? (
-        <View style={W.toast} pointerEvents="none">
-          <Text style={W.toastText}>{toast}</Text>
-        </View>
-      ) : null}
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const W = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll:      { padding: 16, paddingBottom: 40 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 16 },
-  label:       { fontSize: 13, fontWeight: '700', color: '#374151', marginTop: 12, marginBottom: 6 },
+    scroll:      { padding: 16, paddingBottom: 40 },
+    screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 16 },
+    label:       { fontSize: 13, fontWeight: '700', color: c.text, marginTop: 12, marginBottom: 6 },
 
-  chipRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip:     { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: '#e5e7eb', backgroundColor: '#f9fafb' },
-  chipOn:   { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  chipText: { fontSize: 13, color: '#374151', fontWeight: '500' },
-  chipTextOn: { color: '#1b4f72', fontWeight: '700' },
+    chipRow:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip:     { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: c.border, backgroundColor: c.oat },
+    chipOn:   { borderColor: c.deepBlue, backgroundColor: c.primaryLight },
+    chipText: { fontSize: 13, color: c.text, fontWeight: '500' },
+    chipTextOn: { color: c.deepBlue, fontWeight: '700' },
 
-  input: {
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#e5e7eb',
-    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12,
-    fontSize: 14, color: '#0f172a',
-  },
+    input: {
+      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
+      borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12,
+      fontSize: 14, color: c.navy,
+    },
 
-  radioCard:    { borderWidth: 1.5, borderColor: '#e5e7eb', borderRadius: 10, padding: 12, marginBottom: 6, backgroundColor: '#fff' },
-  radioCardOn:  { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  radioLabel:   { fontSize: 14, fontWeight: '600', color: '#374151' },
-  radioLabelOn: { color: '#1b4f72' },
+    radioCard:    { borderWidth: 1.5, borderColor: c.border, borderRadius: 10, padding: 12, marginBottom: 6, backgroundColor: c.surface },
+    radioCardOn:  { borderColor: c.deepBlue, backgroundColor: c.primaryLight },
+    radioLabel:   { fontSize: 14, fontWeight: '600', color: c.text },
+    radioLabelOn: { color: c.deepBlue },
 
-  primaryBtn:         { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 20 },
-  primaryBtnDisabled: { opacity: 0.5 },
-  primaryBtnText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
+    primaryBtn:         { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 20 },
+    primaryBtnDisabled: { opacity: 0.5 },
+    primaryBtnText:     { color: c.surface, fontWeight: '700', fontSize: 15 },
 
-  todayCard:  { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 20, borderWidth: 1, borderColor: '#e5e1d8' },
-  todayTitle: { fontSize: 13, fontWeight: '800', color: '#0B132B', marginBottom: 8 },
-  todayRow:   { fontSize: 13, color: '#374151', lineHeight: 20 },
-
-  toast:     { position: 'absolute', bottom: 32, left: 24, right: 24, backgroundColor: 'rgba(27,79,114,0.95)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
-  toastText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-});
+    todayCard:  { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginTop: 20, borderWidth: 1, borderColor: c.border },
+    todayTitle: { fontSize: 13, fontWeight: '800', color: c.navy, marginBottom: 8 },
+    todayRow:   { fontSize: 13, color: c.text, lineHeight: 20 },
+  });
+}

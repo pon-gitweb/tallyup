@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert,
+  ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -11,6 +11,9 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,6 +26,11 @@ export default function FestivalEndOfEventCountScreen() {
   const nav     = useNavigation<any>();
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [bars,        setBars]        = useState<BarEntry[]>([]);
   const [barCounts,   setBarCounts]   = useState<Record<string, any>>({});
@@ -88,11 +96,11 @@ export default function FestivalEndOfEventCountScreen() {
     );
   }
 
-  if (loading) return <View style={S.center}><ActivityIndicator color="#1b4f72" size="large" /></View>;
+  if (loading) return <View style={S.center}><ActivityIndicator color={c.deepBlue} size="large" /></View>;
 
   // ── Per-bar count form ────────────────────────────────────────────────────
   if (selectedBar) {
-    if (loadingStock) return <View style={S.center}><ActivityIndicator color="#1b4f72" size="large" /></View>;
+    if (loadingStock) return <View style={S.center}><ActivityIndicator color={c.deepBlue} size="large" /></View>;
 
     function updateCount(productId: string, raw: string) {
       const val = parseFloat(raw);
@@ -109,7 +117,7 @@ export default function FestivalEndOfEventCountScreen() {
       ));
     }
 
-    async function submitBarCount() {
+    async function doSubmitBarCount() {
       if (!venueId || saving) return;
       setSaving(true);
       try {
@@ -127,16 +135,27 @@ export default function FestivalEndOfEventCountScreen() {
           })),
           completedAt: serverTimestamp(),
         });
+        showSuccess('✓ Final count saved');
         setSelectedBar(null);
       } catch (e: any) {
-        Alert.alert('Error', e?.message || 'Could not save count.');
+        showError(e?.message || 'Could not save count.');
       } finally {
         setSaving(false);
       }
     }
 
+    function submitBarCount() {
+      confirm({
+        title: 'Save final count?',
+        message: `This records the end-of-event stock count for ${selectedBar!.barName}.`,
+        confirmLabel: 'Save count',
+        onConfirm: doSubmitBarCount,
+      });
+    }
+
     return (
-      <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+      <View style={{ flex: 1, backgroundColor: c.oat }}>
+        {modal}
         <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
           <Text style={S.screenTitle}>{selectedBar.barName}</Text>
           <Text style={S.sub}>Final count — end of event</Text>
@@ -179,7 +198,7 @@ export default function FestivalEndOfEventCountScreen() {
               onPress={submitBarCount}
             >
               {saving
-                ? <ActivityIndicator color="#fff" size="small" />
+                ? <ActivityIndicator color={c.surface} size="small" />
                 : <Text style={S.primaryBtnText}>Save final count</Text>}
             </TouchableOpacity>
           )}
@@ -206,7 +225,8 @@ export default function FestivalEndOfEventCountScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
         <Text style={S.screenTitle}>End of event count</Text>
         <Text style={S.sub}>Count all bars before proceeding to reconciliation.</Text>
@@ -263,39 +283,41 @@ export default function FestivalEndOfEventCountScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  center:     { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center' },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    center:     { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center' },
 
-  scroll:     { padding: 16, paddingBottom: 40 },
-  screenTitle:{ fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  sub:        { fontSize: 14, color: '#6b7280', marginBottom: 20 },
+    scroll:     { padding: 16, paddingBottom: 40 },
+    screenTitle:{ fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    sub:        { fontSize: 14, color: c.slateMid, marginBottom: 20 },
 
-  barCard:    { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  barRow:     { flexDirection: 'row', alignItems: 'center' },
-  barName:    { fontSize: 15, fontWeight: '700', color: '#0B132B', marginBottom: 3 },
-  countedAt:  { fontSize: 12, color: '#16a34a', fontWeight: '600' },
-  notCounted: { fontSize: 12, color: '#9ca3af' },
-  countNowBtn:{ backgroundColor: '#1b4f72', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
-  countNowBtnText:{ color: '#fff', fontWeight: '700', fontSize: 13 },
+    barCard:    { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    barRow:     { flexDirection: 'row', alignItems: 'center' },
+    barName:    { fontSize: 15, fontWeight: '700', color: c.navy, marginBottom: 3 },
+    countedAt:  { fontSize: 12, color: c.success, fontWeight: '600' },
+    notCounted: { fontSize: 12, color: c.slateMid },
+    countNowBtn:{ backgroundColor: c.deepBlue, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+    countNowBtnText:{ color: c.surface, fontWeight: '700', fontSize: 13 },
 
-  rowCard:    { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  rowProduct: { fontSize: 15, fontWeight: '700', color: '#0B132B', marginBottom: 10 },
-  stepper:    { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
-  stepBtnText:{ fontSize: 20, fontWeight: '700', color: '#374151', lineHeight: 24 },
-  countInput: { flex: 1, textAlign: 'center', fontSize: 20, fontWeight: '800', color: '#0B132B', backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingVertical: 8 },
-  unitLabel:  { fontSize: 13, color: '#6b7280', width: 40 },
+    rowCard:    { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    rowProduct: { fontSize: 15, fontWeight: '700', color: c.navy, marginBottom: 10 },
+    stepper:    { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    stepBtn:    { width: 36, height: 36, borderRadius: 18, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
+    stepBtnText:{ fontSize: 20, fontWeight: '700', color: c.text, lineHeight: 24 },
+    countInput: { flex: 1, textAlign: 'center', fontSize: 20, fontWeight: '800', color: c.navy, backgroundColor: c.oat, borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingVertical: 8 },
+    unitLabel:  { fontSize: 13, color: c.slateMid, width: 40 },
 
-  emptyCard:  { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', marginBottom: 12 },
-  emptyText:  { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 12 },
+    emptyCard:  { backgroundColor: c.surface, borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border, marginBottom: 12 },
+    emptyText:  { fontSize: 14, color: c.slateMid, textAlign: 'center', marginBottom: 12 },
 
-  primaryBtn:     { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  secondaryBtn:   { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 13, alignItems: 'center' },
-  secondaryBtnText:{ color: '#1b4f72', fontWeight: '700', fontSize: 14 },
-  btnDisabled:    { opacity: 0.5 },
-});
+    primaryBtn:     { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+    primaryBtnText: { color: c.surface, fontWeight: '700', fontSize: 15 },
+    secondaryBtn:   { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 13, alignItems: 'center' },
+    secondaryBtnText:{ color: c.deepBlue, fontWeight: '700', fontSize: 14 },
+    btnDisabled:    { opacity: 0.5 },
+  });
+}

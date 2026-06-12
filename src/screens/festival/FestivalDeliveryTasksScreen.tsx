@@ -2,20 +2,23 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function urgencyLabel(u: string) {
-  if (u === 'asap')       return { icon: '⚡', text: 'ASAP',       color: '#dc2626' };
-  if (u === 'next-round') return { icon: '📦', text: '30–60 min',  color: '#d97706' };
-  return                         { icon: '📋', text: 'Planning',    color: '#6b7280' };
+function urgencyLabel(u: string, c: any) {
+  if (u === 'asap')       return { icon: '⚡', text: 'ASAP',       color: c.error };
+  if (u === 'next-round') return { icon: '📦', text: '30–60 min',  color: c.stellarAmber };
+  return                         { icon: '📋', text: 'Planning',    color: c.slateMid };
 }
 
 function relativeTime(ts: any): string {
@@ -40,6 +43,11 @@ function isTodayTs(ts: any): boolean {
 
 export default function FestivalDeliveryTasksScreen() {
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [requests, setRequests] = useState<any[]>([]);
   const [loading,  setLoading]  = useState(FESTIVAL_BETA);
@@ -90,7 +98,7 @@ export default function FestivalDeliveryTasksScreen() {
   if (loading) {
     return (
       <View style={S.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -116,7 +124,7 @@ export default function FestivalDeliveryTasksScreen() {
         updatedAt: serverTimestamp(),
       });
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not accept task.');
+      showError(e?.message || 'Could not accept task.');
     } finally {
       setActing(null);
     }
@@ -132,13 +140,13 @@ export default function FestivalDeliveryTasksScreen() {
         updatedAt: serverTimestamp(),
       });
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not update task.');
+      showError(e?.message || 'Could not update task.');
     } finally {
       setActing(null);
     }
   }
 
-  async function markDelivered(reqId: string) {
+  async function doMarkDelivered(reqId: string) {
     if (!venueId || acting) return;
     const req = requests.find(r => r.id === reqId);
     setActing(reqId);
@@ -166,16 +174,27 @@ export default function FestivalDeliveryTasksScreen() {
         }
       }
       await batch.commit();
+      showSuccess('✓ Delivery marked as completed');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not update task.');
+      showError(e?.message || 'Could not update task.');
     } finally {
       setActing(null);
     }
   }
 
+  function markDelivered(reqId: string) {
+    if (!venueId || acting) return;
+    confirm({
+      title: 'Mark as delivered?',
+      message: 'This will update stock levels at the bar and HQ.',
+      confirmLabel: 'Mark delivered',
+      onConfirm: () => doMarkDelivered(reqId),
+    });
+  }
+
   // ── Render helpers ────────────────────────────────────────────────────────
   function renderPendingCard(req: any) {
-    const u = urgencyLabel(req.urgency);
+    const u = urgencyLabel(req.urgency, c);
     const isActing = acting === req.id;
     return (
       <View key={req.id} style={S.card}>
@@ -198,7 +217,7 @@ export default function FestivalDeliveryTasksScreen() {
           onPress={() => acceptTask(req.id)}
         >
           {isActing
-            ? <ActivityIndicator color="#fff" size="small" />
+            ? <ActivityIndicator color={c.surface} size="small" />
             : <Text style={S.acceptBtnText}>Accept task</Text>}
         </TouchableOpacity>
       </View>
@@ -208,7 +227,7 @@ export default function FestivalDeliveryTasksScreen() {
   function renderActiveCard(req: any) {
     const isCollected = req.status === 'collected';
     const isActing = acting === req.id;
-    const u = urgencyLabel(req.urgency);
+    const u = urgencyLabel(req.urgency, c);
     return (
       <View key={req.id} style={[S.card, S.cardActive]}>
         <View style={S.cardTop}>
@@ -246,7 +265,7 @@ export default function FestivalDeliveryTasksScreen() {
           onPress={() => isCollected ? markDelivered(req.id) : markCollected(req.id)}
         >
           {isActing
-            ? <ActivityIndicator color="#fff" size="small" />
+            ? <ActivityIndicator color={c.surface} size="small" />
             : <Text style={S.acceptBtnText}>
                 {isCollected ? 'Mark delivered ✓' : 'Mark collected →'}
               </Text>}
@@ -256,7 +275,8 @@ export default function FestivalDeliveryTasksScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
 
         {/* Header */}
@@ -315,44 +335,46 @@ export default function FestivalDeliveryTasksScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll: { padding: 16, paddingBottom: 40 },
+    scroll: { padding: 16, paddingBottom: 40 },
 
-  headerRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B' },
-  countBadge:  { backgroundColor: '#dc2626', borderRadius: 999, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  countBadgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+    headerRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 },
+    screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy },
+    countBadge:  { backgroundColor: c.error, borderRadius: 999, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+    countBadgeText: { color: c.surface, fontWeight: '800', fontSize: 12 },
 
-  sectionLabel: { fontSize: 11, fontWeight: '800', color: '#9ca3af', letterSpacing: 1, marginBottom: 8 },
-  emptyText:   { fontSize: 14, color: '#9ca3af', marginBottom: 16, fontStyle: 'italic' },
+    sectionLabel: { fontSize: 11, fontWeight: '800', color: c.slateMid, letterSpacing: 1, marginBottom: 8 },
+    emptyText:   { fontSize: 14, color: c.slateMid, marginBottom: 16, fontStyle: 'italic' },
 
-  card:          { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  cardActive:    { borderColor: '#1b4f72', borderWidth: 2 },
-  cardCompleted: { opacity: 0.7 },
-  cardTop:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    card:          { backgroundColor: c.surface, borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    cardActive:    { borderColor: c.deepBlue, borderWidth: 2 },
+    cardCompleted: { opacity: 0.7 },
+    cardTop:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
 
-  urgencyBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  urgencyText:  { fontSize: 11, fontWeight: '700' },
-  timeAgo:      { fontSize: 11, color: '#9ca3af' },
+    urgencyBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+    urgencyText:  { fontSize: 11, fontWeight: '700' },
+    timeAgo:      { fontSize: 11, color: c.slateMid },
 
-  cardBarName:  { fontSize: 16, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  productLine:  { fontSize: 13, color: '#374151', lineHeight: 20 },
-  noteText:     { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 4 },
+    cardBarName:  { fontSize: 16, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    productLine:  { fontSize: 13, color: c.text, lineHeight: 20 },
+    noteText:     { fontSize: 12, color: c.slateMid, fontStyle: 'italic', marginTop: 4 },
 
-  activeTitle:       { fontSize: 11, fontWeight: '800', color: '#1b4f72', letterSpacing: 0.5 },
-  activeSection:     { fontSize: 11, fontWeight: '800', color: '#9ca3af', letterSpacing: 0.5, marginBottom: 4 },
-  activeLocationText:{ fontSize: 14, fontWeight: '600', color: '#0B132B' },
-  activeLocationNote:{ fontSize: 13, color: '#9ca3af', fontStyle: 'italic' },
+    activeTitle:       { fontSize: 11, fontWeight: '800', color: c.deepBlue, letterSpacing: 0.5 },
+    activeSection:     { fontSize: 11, fontWeight: '800', color: c.slateMid, letterSpacing: 0.5, marginBottom: 4 },
+    activeLocationText:{ fontSize: 14, fontWeight: '600', color: c.navy },
+    activeLocationNote:{ fontSize: 13, color: c.slateMid, fontStyle: 'italic' },
 
-  acceptBtn:    { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 12 },
-  collectBtn:   { backgroundColor: '#1b4f72' },
-  deliverBtn:   { backgroundColor: '#16a34a' },
-  btnDisabled:  { opacity: 0.5 },
-  acceptBtnText:{ color: '#fff', fontWeight: '700', fontSize: 14 },
-});
+    acceptBtn:    { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 12, alignItems: 'center', marginTop: 12 },
+    collectBtn:   { backgroundColor: c.deepBlue },
+    deliverBtn:   { backgroundColor: c.success },
+    btnDisabled:  { opacity: 0.5 },
+    acceptBtnText:{ color: c.surface, fontWeight: '700', fontSize: 14 },
+  });
+}

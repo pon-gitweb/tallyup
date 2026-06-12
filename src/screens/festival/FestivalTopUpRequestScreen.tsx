@@ -2,13 +2,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert,
+  ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, query, where, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,7 +25,7 @@ const URGENCY_OPTIONS = [
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+function StepDot({ n, active, done, SS }: { n: number; active: boolean; done: boolean; SS: any }) {
   return (
     <View style={[SS.dot, done && SS.dotDone, active && SS.dotActive]}>
       <Text style={SS.dotText}>{done ? '✓' : n}</Text>
@@ -37,6 +40,11 @@ export default function FestivalTopUpRequestScreen() {
   const route   = useRoute<any>();
   const { barId, barName } = route.params || {};
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const SS = makeStyles(c);
 
   const [step,              setStep]              = useState(1);
   const [products,          setProducts]          = useState<any[]>([]);
@@ -103,7 +111,7 @@ export default function FestivalTopUpRequestScreen() {
   if (loading) {
     return (
       <View style={SS.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -143,7 +151,7 @@ export default function FestivalTopUpRequestScreen() {
       : l));
   }
 
-  async function sendRequest() {
+  async function doSendRequest() {
     if (!venueId || lines.length === 0) return;
     setSaving(true);
     try {
@@ -164,12 +172,22 @@ export default function FestivalTopUpRequestScreen() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      showSuccess('✓ Request sent');
       setSent(true);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not send request. Please try again.');
+      showError(e?.message || 'Could not send request. Please try again.');
     } finally {
       setSaving(false);
     }
+  }
+
+  function sendRequest() {
+    confirm({
+      title: 'Send top-up request?',
+      message: 'The ops team will be notified to fulfil this request.',
+      confirmLabel: 'Send request',
+      onConfirm: doSendRequest,
+    });
   }
 
   // ── Step indicator ────────────────────────────────────────────────────────
@@ -177,7 +195,7 @@ export default function FestivalTopUpRequestScreen() {
     <View style={SS.stepBar}>
       {[1, 2, 3].map(n => (
         <React.Fragment key={n}>
-          <StepDot n={n} active={step === n} done={step > n} />
+          <StepDot n={n} active={step === n} done={step > n} SS={SS} />
           {n < 3 && <View style={[SS.stepLine, step > n && SS.stepLineDone]} />}
         </React.Fragment>
       ))}
@@ -186,7 +204,8 @@ export default function FestivalTopUpRequestScreen() {
 
   // ── STEP 1: What do you need? ─────────────────────────────────────────────
   if (step === 1) return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={SS.scroll} keyboardShouldPersistTaps="handled">
         {stepBar}
         <Text style={SS.stepTitle}>What do you need?</Text>
@@ -245,7 +264,8 @@ export default function FestivalTopUpRequestScreen() {
 
   // ── STEP 2: Urgency ───────────────────────────────────────────────────────
   if (step === 2) return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={SS.scroll} keyboardShouldPersistTaps="handled">
         {stepBar}
         <Text style={SS.stepTitle}>How urgent?</Text>
@@ -269,7 +289,7 @@ export default function FestivalTopUpRequestScreen() {
           value={note}
           onChangeText={setNote}
           placeholder="Add a note for the ops team"
-          placeholderTextColor="#9ca3af"
+          placeholderTextColor={c.slateMid}
           style={[SS.input, { minHeight: 72 }]}
           multiline
         />
@@ -324,7 +344,8 @@ export default function FestivalTopUpRequestScreen() {
   // ── STEP 3: Confirm ───────────────────────────────────────────────────────
   const urgencyLabel = URGENCY_OPTIONS.find(o => o.id === urgency)?.label ?? urgency;
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={SS.scroll}>
         {stepBar}
         <Text style={SS.stepTitle}>Confirm request</Text>
@@ -344,25 +365,25 @@ export default function FestivalTopUpRequestScreen() {
 
         {/* Excess bar suggestion — pure velocity math */}
         {excessSuggestion && (
-          <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1.5, borderColor: '#1b4f72' }}>
-            <Text style={{ fontSize: 14, fontWeight: '800', color: '#1b4f72', marginBottom: 4 }}>
+          <View style={{ backgroundColor: c.primaryLight, borderRadius: 12, padding: 14, marginBottom: 14, borderWidth: 1.5, borderColor: c.deepBlue }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: c.deepBlue, marginBottom: 4 }}>
               💡 {excessSuggestion.barName} has excess ({excessSuggestion.hoursRemaining.toFixed(1)}hrs supply)
             </Text>
-            <Text style={{ fontSize: 13, color: '#374151', marginBottom: 10 }}>
+            <Text style={{ fontSize: 13, color: c.text, marginBottom: 10 }}>
               Consider a bar transfer first — saves a trip to {sourceLocationName}.
             </Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity
-                style={{ flex: 1, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+                style={{ flex: 1, borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
                 onPress={() => setExcessSuggestion(null)}
               >
-                <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Request from HQ</Text>
+                <Text style={{ color: c.deepBlue, fontWeight: '700', fontSize: 13 }}>Request from HQ</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+                style={{ flex: 1, backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
                 onPress={() => nav.navigate('FestivalTransfer', { fromBarId: excessSuggestion.barId, fromBarName: excessSuggestion.barName })}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Transfer from {excessSuggestion.barName}</Text>
+                <Text style={{ color: c.surface, fontWeight: '700', fontSize: 13 }}>Transfer from {excessSuggestion.barName}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -378,7 +399,7 @@ export default function FestivalTopUpRequestScreen() {
             onPress={sendRequest}
           >
             {saving
-              ? <ActivityIndicator color="#fff" size="small" />
+              ? <ActivityIndicator color={c.surface} size="small" />
               : <Text style={SS.primaryBtnText}>Send request</Text>}
           </TouchableOpacity>
         </View>
@@ -388,59 +409,61 @@ export default function FestivalTopUpRequestScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const SS = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll: { padding: 16, paddingBottom: 40 },
+    scroll: { padding: 16, paddingBottom: 40 },
 
-  stepBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
-  dot:          { width: 28, height: 28, borderRadius: 14, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
-  dotActive:    { backgroundColor: '#1b4f72' },
-  dotDone:      { backgroundColor: '#16a34a' },
-  dotText:      { fontSize: 12, fontWeight: '800', color: '#fff' },
-  stepLine:     { flex: 1, height: 2, backgroundColor: '#e5e7eb', maxWidth: 48 },
-  stepLineDone: { backgroundColor: '#16a34a' },
+    stepBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
+    dot:          { width: 28, height: 28, borderRadius: 14, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
+    dotActive:    { backgroundColor: c.deepBlue },
+    dotDone:      { backgroundColor: c.success },
+    dotText:      { fontSize: 12, fontWeight: '800', color: c.surface },
+    stepLine:     { flex: 1, height: 2, backgroundColor: c.border, maxWidth: 48 },
+    stepLineDone: { backgroundColor: c.success },
 
-  stepTitle:  { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  stepSub:    { fontSize: 14, color: '#6b7280', marginBottom: 16 },
-  label:      { fontSize: 13, fontWeight: '700', color: '#374151', marginTop: 12, marginBottom: 6 },
-  helper:     { fontSize: 12, color: '#9ca3af', marginBottom: 6, lineHeight: 17 },
-  input: {
-    backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb',
-    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
-    fontSize: 14, color: '#0f172a',
-  },
+    stepTitle:  { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    stepSub:    { fontSize: 14, color: c.slateMid, marginBottom: 16 },
+    label:      { fontSize: 13, fontWeight: '700', color: c.text, marginTop: 12, marginBottom: 6 },
+    helper:     { fontSize: 12, color: c.slateMid, marginBottom: 6, lineHeight: 17 },
+    input: {
+      backgroundColor: c.oat, borderWidth: 1, borderColor: c.border,
+      borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+      fontSize: 14, color: c.navy,
+    },
 
-  chipRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip:        { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: '#e5e7eb', backgroundColor: '#f9fafb' },
-  chipOn:      { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  chipText:    { fontSize: 13, color: '#374151', fontWeight: '500' },
-  chipTextOn:  { color: '#1b4f72', fontWeight: '700' },
+    chipRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip:        { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: c.border, backgroundColor: c.oat },
+    chipOn:      { borderColor: c.deepBlue, backgroundColor: c.primaryLight },
+    chipText:    { fontSize: 13, color: c.text, fontWeight: '500' },
+    chipTextOn:  { color: c.deepBlue, fontWeight: '700' },
 
-  lineRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: '#e5e7eb' },
-  lineName:    { flex: 1, fontSize: 14, fontWeight: '600', color: '#0B132B' },
-  stepper:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepperBtn:  { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
-  stepperBtnText: { fontSize: 18, fontWeight: '700', color: '#374151', lineHeight: 22 },
-  stepperVal:  { fontSize: 14, fontWeight: '700', color: '#0B132B', minWidth: 64, textAlign: 'center' },
+    lineRow:     { flexDirection: 'row', alignItems: 'center', backgroundColor: c.surface, borderRadius: 10, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: c.border },
+    lineName:    { flex: 1, fontSize: 14, fontWeight: '600', color: c.navy },
+    stepper:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    stepperBtn:  { width: 32, height: 32, borderRadius: 16, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center' },
+    stepperBtnText: { fontSize: 18, fontWeight: '700', color: c.text, lineHeight: 22 },
+    stepperVal:  { fontSize: 14, fontWeight: '700', color: c.navy, minWidth: 64, textAlign: 'center' },
 
-  radioCard:    { borderWidth: 1.5, borderColor: '#e5e7eb', borderRadius: 12, padding: 14, marginBottom: 8, backgroundColor: '#fff' },
-  radioCardOn:  { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  radioLabel:   { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 2 },
-  radioLabelOn: { color: '#1b4f72' },
-  radioSub:     { fontSize: 12, color: '#9ca3af' },
+    radioCard:    { borderWidth: 1.5, borderColor: c.border, borderRadius: 12, padding: 14, marginBottom: 8, backgroundColor: c.surface },
+    radioCardOn:  { borderColor: c.deepBlue, backgroundColor: c.primaryLight },
+    radioLabel:   { fontSize: 15, fontWeight: '700', color: c.text, marginBottom: 2 },
+    radioLabelOn: { color: c.deepBlue },
+    radioSub:     { fontSize: 12, color: c.slateMid },
 
-  summaryCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: '#e5e1d8', gap: 6 },
-  summaryRow:  { fontSize: 14, color: '#374151', lineHeight: 20 },
-  summaryKey:  { fontWeight: '700', color: '#0B132B' },
+    summaryCard: { backgroundColor: c.surface, borderRadius: 12, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: c.border, gap: 6 },
+    summaryRow:  { fontSize: 14, color: c.text, lineHeight: 20 },
+    summaryKey:  { fontWeight: '700', color: c.navy },
 
-  primaryBtn:         { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
-  primaryBtnDisabled: { opacity: 0.5 },
-  primaryBtnText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
-  secondaryBtn:       { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', marginTop: 8 },
-  secondaryBtnText:   { color: '#1b4f72', fontWeight: '700', fontSize: 15 },
-});
+    primaryBtn:         { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+    primaryBtnDisabled: { opacity: 0.5 },
+    primaryBtnText:     { color: c.surface, fontWeight: '700', fontSize: 15 },
+    secondaryBtn:       { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', marginTop: 8 },
+    secondaryBtnText:   { color: c.deepBlue, fontWeight: '700', fontSize: 15 },
+  });
+}

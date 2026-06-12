@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
@@ -12,6 +12,9 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { getSalesSummary } from '../../services/festival/salesData';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +45,11 @@ export default function FestivalReconciliationScreen() {
   const { isHistorical, eventId } = route.params ?? {};
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [event,           setEvent]           = useState<any>(null);
   const [role,            setRole]            = useState<string | null>(null);
@@ -205,7 +213,7 @@ export default function FestivalReconciliationScreen() {
     }
   }
 
-  async function saveReconciliation() {
+  async function doSaveReconciliation() {
     if (!venueId || !summary || saving) return;
     setSaving(true);
     try {
@@ -216,15 +224,26 @@ export default function FestivalReconciliationScreen() {
         eventName: event?.eventName || null,
       };
       await setDoc(doc(db, 'venues', venueId, 'returns', 'eventReconciliation'), data);
-      Alert.alert('Saved', 'Reconciliation report saved.');
+      showSuccess('✓ Reconciliation report saved');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save report.');
+      showError(e?.message || 'Could not save report.');
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <View style={S.center}><ActivityIndicator color="#1b4f72" size="large" /></View>;
+  function saveReconciliation() {
+    if (!venueId || !summary || saving) return;
+    confirm({
+      title: 'Save reconciliation report?',
+      message: 'This will lock the event and cannot be undone.',
+      confirmLabel: 'Finalise event',
+      destructive: true,
+      onConfirm: doSaveReconciliation,
+    });
+  }
+
+  if (loading) return <View style={S.center}><ActivityIndicator color={c.deepBlue} size="large" /></View>;
 
   if (role !== 'owner' && role !== 'manager') {
     return (
@@ -238,7 +257,8 @@ export default function FestivalReconciliationScreen() {
   const display = summary;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
         <Text style={S.screenTitle}>Reconciliation</Text>
         {event?.eventName && <Text style={S.sub}>{event.eventName}</Text>}
@@ -250,8 +270,8 @@ export default function FestivalReconciliationScreen() {
         )}
 
         {isHistorical && (
-          <View style={[S.savedBanner, { backgroundColor: '#f0f9ff' }]}>
-            <Text style={[S.savedBannerText, { color: '#1b4f72' }]}>Historical record — read only</Text>
+          <View style={[S.savedBanner, { backgroundColor: c.primaryLight }]}>
+            <Text style={[S.savedBannerText, { color: c.deepBlue }]}>Historical record — read only</Text>
           </View>
         )}
 
@@ -274,7 +294,7 @@ export default function FestivalReconciliationScreen() {
                 <Text style={S.totalLabel}>Total return value (cost)</Text>
                 <Text style={S.totalValue}>${display.totalReturnValue.toFixed(2)}</Text>
               </View>
-              <View style={[S.totalRow, { borderTopWidth: 1, borderTopColor: '#f3f4f6', paddingTop: 10 }]}>
+              <View style={[S.totalRow, { borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 }]}>
                 <Text style={S.totalLabel}>Total sold (cost)</Text>
                 <Text style={S.totalValue}>${display.totalSoldValue.toFixed(2)}</Text>
               </View>
@@ -298,10 +318,10 @@ export default function FestivalReconciliationScreen() {
                 <View key={supplier} style={S.supplierCard}>
                   <Text style={S.supplierName}>{supplier}</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
-                    <AllowanceStat label={`Return allowance`} value={`${allowancePct}%`} />
-                    <AllowanceStat label="Max returnable" value={`${maxReturnable} units`} />
-                    <AllowanceStat label="Projected return" value={`${totalRemaining} units`} color={withinAllowance ? '#16a34a' : '#dc2626'} />
-                    <AllowanceStat label="Status" value={withinAllowance ? '✓ Within' : '⚠ Exceeds'} color={withinAllowance ? '#16a34a' : '#dc2626'} />
+                    <AllowanceStat label={`Return allowance`} value={`${allowancePct}%`} c={c} />
+                    <AllowanceStat label="Max returnable" value={`${maxReturnable} units`} c={c} />
+                    <AllowanceStat label="Projected return" value={`${totalRemaining} units`} color={withinAllowance ? c.success : c.error} c={c} />
+                    <AllowanceStat label="Status" value={withinAllowance ? '✓ Within' : '⚠ Exceeds'} color={withinAllowance ? c.success : c.error} c={c} />
                   </View>
                   {items.map(li => (
                     <View key={li.productId} style={S.lineRow}>
@@ -310,7 +330,7 @@ export default function FestivalReconciliationScreen() {
                         <Text style={S.lineMeta}>
                           Sold: {li.sold} · Remaining: {li.remaining}
                         </Text>
-                        <Text style={[S.lineMeta, { fontSize: 10, color: li.soldSource === 'POS sales data' ? '#16a34a' : '#9ca3af' }]}>
+                        <Text style={[S.lineMeta, { fontSize: 10, color: li.soldSource === 'POS sales data' ? c.success : c.slateMid }]}>
                           {li.soldSource}
                         </Text>
                       </View>
@@ -336,14 +356,14 @@ export default function FestivalReconciliationScreen() {
                 onPress={saveReconciliation}
               >
                 {saving
-                  ? <ActivityIndicator color="#fff" size="small" />
+                  ? <ActivityIndicator color={c.surface} size="small" />
                   : <Text style={S.primaryBtnText}>Save reconciliation report</Text>}
               </TouchableOpacity>
             )}
 
             {!isHistorical && role === 'owner' && (
               <TouchableOpacity
-                style={[S.primaryBtn, { marginTop: 10, backgroundColor: '#0B132B' }]}
+                style={[S.primaryBtn, { marginTop: 10, backgroundColor: c.navy }]}
                 onPress={() => nav.navigate('FestivalEventClose')}
               >
                 <Text style={S.primaryBtnText}>Proceed to close event →</Text>
@@ -356,50 +376,52 @@ export default function FestivalReconciliationScreen() {
   );
 }
 
-function AllowanceStat({ label, value, color }: { label: string; value: string; color?: string }) {
+function AllowanceStat({ label, value, color, c }: { label: string; value: string; color?: string; c: any }) {
   return (
     <View>
-      <Text style={{ fontSize: 10, color: '#9ca3af', fontWeight: '600' }}>{label}</Text>
-      <Text style={{ fontSize: 13, fontWeight: '700', color: color || '#0B132B' }}>{value}</Text>
+      <Text style={{ fontSize: 10, color: c.slateMid, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: color || c.navy }}>{value}</Text>
     </View>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  center:     { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 22, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 12 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center' },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    center:     { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 22, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 12 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center' },
 
-  scroll:      { padding: 16, paddingBottom: 40 },
-  screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  sub:         { fontSize: 14, color: '#6b7280', marginBottom: 16 },
+    scroll:      { padding: 16, paddingBottom: 40 },
+    screenTitle: { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    sub:         { fontSize: 14, color: c.slateMid, marginBottom: 16 },
 
-  savedBanner:     { backgroundColor: '#dcfce7', borderRadius: 10, padding: 10, marginBottom: 12 },
-  savedBannerText: { fontSize: 13, fontWeight: '700', color: '#16a34a', textAlign: 'center' },
+    savedBanner:     { backgroundColor: c.positiveSoft, borderRadius: 10, padding: 10, marginBottom: 12 },
+    savedBannerText: { fontSize: 13, fontWeight: '700', color: c.success, textAlign: 'center' },
 
-  totalsCard:  { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#e5e1d8' },
-  totalRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  totalLabel:  { fontSize: 14, color: '#374151', fontWeight: '600' },
-  totalValue:  { fontSize: 16, fontWeight: '800', color: '#0B132B' },
+    totalsCard:  { backgroundColor: c.surface, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: c.border },
+    totalRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+    totalLabel:  { fontSize: 14, color: c.text, fontWeight: '600' },
+    totalValue:  { fontSize: 16, fontWeight: '800', color: c.navy },
 
-  supplierCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e5e1d8' },
-  supplierName: { fontSize: 15, fontWeight: '800', color: '#0B132B', marginBottom: 10 },
+    supplierCard: { backgroundColor: c.surface, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: c.border },
+    supplierName: { fontSize: 15, fontWeight: '800', color: c.navy, marginBottom: 10 },
 
-  lineRow:     { flexDirection: 'row', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
-  lineName:    { fontSize: 13, fontWeight: '600', color: '#0B132B', marginBottom: 2 },
-  lineMeta:    { fontSize: 12, color: '#6b7280' },
-  lineReturn:  { fontSize: 12, fontWeight: '700', color: '#1b4f72' },
-  lineSold:    { fontSize: 12, color: '#6b7280' },
+    lineRow:     { flexDirection: 'row', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: c.border },
+    lineName:    { fontSize: 13, fontWeight: '600', color: c.navy, marginBottom: 2 },
+    lineMeta:    { fontSize: 12, color: c.slateMid },
+    lineReturn:  { fontSize: 12, fontWeight: '700', color: c.deepBlue },
+    lineSold:    { fontSize: 12, color: c.slateMid },
 
-  emptyCard:   { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', marginBottom: 12 },
-  emptyText:   { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 12 },
+    emptyCard:   { backgroundColor: c.surface, borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border, marginBottom: 12 },
+    emptyText:   { fontSize: 14, color: c.slateMid, textAlign: 'center', marginBottom: 12 },
 
-  primaryBtn:     { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  secondaryBtn:   { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 13, alignItems: 'center', marginTop: 8 },
-  secondaryBtnText:{ color: '#1b4f72', fontWeight: '700', fontSize: 14 },
-  btnDisabled:    { opacity: 0.5 },
-});
+    primaryBtn:     { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+    primaryBtnText: { color: c.surface, fontWeight: '700', fontSize: 15 },
+    secondaryBtn:   { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 13, alignItems: 'center', marginTop: 8 },
+    secondaryBtnText:{ color: c.deepBlue, fontWeight: '700', fontSize: 14 },
+    btnDisabled:    { opacity: 0.5 },
+  });
+}

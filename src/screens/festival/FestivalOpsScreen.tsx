@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert, Animated,
+  ScrollView, Animated,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -11,13 +11,16 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function urgencyLabel(u: string): { icon: string; text: string; color: string } {
-  if (u === 'asap')       return { icon: '⚡', text: 'ASAP',      color: '#dc2626' };
-  if (u === 'next-round') return { icon: '📦', text: '30–60 min', color: '#d97706' };
-  return                         { icon: '📋', text: 'Planning',   color: '#6b7280' };
+function urgencyLabel(u: string, c: any): { icon: string; text: string; color: string } {
+  if (u === 'asap')       return { icon: '⚡', text: 'ASAP',      color: c.error };
+  if (u === 'next-round') return { icon: '📦', text: '30–60 min', color: c.stellarAmber };
+  return                         { icon: '📋', text: 'Planning',   color: c.slateMid };
 }
 
 function relTime(ts: any): string {
@@ -39,11 +42,11 @@ function dayOfEvent(startDateStr: string | undefined): string {
   return diff > 0 ? `Day ${diff}` : '';
 }
 
-function hoursColor(h: number | null): string {
-  if (h === null) return '#6b7280';
-  if (h > 4) return '#16a34a';
-  if (h > 2) return '#d97706';
-  return '#dc2626';
+function hoursColor(h: number | null, c: any): string {
+  if (h === null) return c.slateMid;
+  if (h > 4) return c.success;
+  if (h > 2) return c.stellarAmber;
+  return c.error;
 }
 
 function fillPct(current: number, par: number): number {
@@ -58,6 +61,11 @@ export default function FestivalOpsScreen() {
   const venueId = useVenueId();
   const uid     = auth.currentUser?.uid;
   const userName = auth.currentUser?.displayName ?? 'Me';
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const O = makeStyles(c);
 
   const [event,     setEvent]     = useState<any>(null);
   const [bars,      setBars]      = useState<any[]>([]);
@@ -186,7 +194,7 @@ export default function FestivalOpsScreen() {
   if (loading) {
     return (
       <View style={O.comingSoon}>
-        <ActivityIndicator color="#1b4f72" size="large" />
+        <ActivityIndicator color={c.deepBlue} size="large" />
       </View>
     );
   }
@@ -201,34 +209,38 @@ export default function FestivalOpsScreen() {
         assignedToName: userName,
         updatedAt:      serverTimestamp(),
       });
+      showSuccess('✓ Request assigned to you');
     } catch (e: any) {
-      Alert.alert('Error', e?.message);
+      showError(e?.message || 'Could not assign request.');
     } finally {
       setActing(null);
     }
   }
 
-  async function cancelRequest(reqId: string) {
+  function cancelRequest(reqId: string) {
     if (!venueId || acting) return;
-    Alert.alert('Cancel request', 'Are you sure?', [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Yes, cancel', style: 'destructive', onPress: async () => {
-          setActing(reqId);
-          try {
-            await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
-              status:      'cancelled',
-              cancelledBy: uid ?? 'unknown',
-              updatedAt:   serverTimestamp(),
-            });
-          } catch (e: any) {
-            Alert.alert('Error', e?.message);
-          } finally {
-            setActing(null);
-          }
-        },
+    confirm({
+      title: 'Cancel request',
+      message: 'Are you sure?',
+      confirmLabel: 'Yes, cancel',
+      cancelLabel: 'No',
+      destructive: true,
+      onConfirm: async () => {
+        setActing(reqId);
+        try {
+          await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
+            status:      'cancelled',
+            cancelledBy: uid ?? 'unknown',
+            updatedAt:   serverTimestamp(),
+          });
+          showSuccess('✓ Request cancelled');
+        } catch (e: any) {
+          showError(e?.message || 'Could not cancel request.');
+        } finally {
+          setActing(null);
+        }
       },
-    ]);
+    });
   }
 
   const pending  = requests.filter(r => r.status === 'pending');
@@ -304,7 +316,8 @@ export default function FestivalOpsScreen() {
   const dayLabel = dayOfEvent(event?.startDate);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={O.scroll}>
 
         {/* ── Event header ──────────────────────────────────────────────── */}
@@ -333,13 +346,13 @@ export default function FestivalOpsScreen() {
                 </Text>
                 <TouchableOpacity
                   onPress={() => nav.navigate('FestivalDeliveryTasks', { prefilledBarId: a.barId, prefilledProductId: a.productId, urgency: a.level === 'critical' ? 'asap' : 'next-round' })}
-                  style={{ backgroundColor: a.level === 'critical' ? '#dc2626' : '#d97706', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 8, marginLeft: 8 }}
+                  style={{ backgroundColor: a.level === 'critical' ? c.error : c.stellarAmber, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 8, marginLeft: 8 }}
                 >
-                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>Send top-up →</Text>
+                  <Text style={{ color: c.surface, fontSize: 11, fontWeight: '800' }}>Send top-up →</Text>
                 </TouchableOpacity>
                 </View>
                 {a.lostRevenue && (
-                  <Text style={{ fontSize: 11, color: '#dc2626', marginTop: 2, marginLeft: 16 }}>
+                  <Text style={{ fontSize: 11, color: c.error, marginTop: 2, marginLeft: 16 }}>
                     If not restocked: {a.lostRevenue}
                   </Text>
                 )}
@@ -350,8 +363,8 @@ export default function FestivalOpsScreen() {
 
         {/* ── ASAP request alerts ───────────────────────────────────────── */}
         {criticalAlerts.length > 0 && (
-          <View style={[O.alertBanner, { borderColor: '#d97706', backgroundColor: '#fffbeb' }]}>
-            <Text style={[O.alertBannerText, { color: '#d97706' }]}>
+          <View style={[O.alertBanner, { borderColor: c.stellarAmber, backgroundColor: c.stellarAmber + '15' }]}>
+            <Text style={[O.alertBannerText, { color: c.stellarAmber }]}>
               ⚡ {criticalAlerts.length} ASAP request{criticalAlerts.length !== 1 ? 's' : ''} pending
             </Text>
           </View>
@@ -425,9 +438,9 @@ export default function FestivalOpsScreen() {
                         <View key={item.id} style={O.stockRow}>
                           <Text style={O.stockName} numberOfLines={1}>{item.name || item.productName || item.id}</Text>
                           <View style={O.fillBg}>
-                            <View style={[O.fillBar, { width: `${pct}%`, backgroundColor: hoursColor(hrs) }]} />
+                            <View style={[O.fillBar, { width: `${pct}%`, backgroundColor: hoursColor(hrs, c) }]} />
                           </View>
-                          <Text style={[O.hoursText, { color: hoursColor(hrs) }]}>
+                          <Text style={[O.hoursText, { color: hoursColor(hrs, c) }]}>
                             {hrs != null ? `${hrs < 1 ? Math.round(hrs * 60) + 'min' : hrs.toFixed(1) + 'hr'}` : '—'}
                           </Text>
                         </View>
@@ -449,7 +462,7 @@ export default function FestivalOpsScreen() {
           <Text style={O.emptyText}>No pending requests.</Text>
         ) : (
           pending.map(req => {
-            const u = urgencyLabel(req.urgency);
+            const u = urgencyLabel(req.urgency, c);
             const isActing = acting === req.id;
             return (
               <View key={req.id} style={O.card}>
@@ -557,77 +570,79 @@ export default function FestivalOpsScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const O = StyleSheet.create({
-  comingSoon: { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 26, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 16 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24, marginBottom: 12 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 22 },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    comingSoon: { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 26, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 16 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24, marginBottom: 12 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center', lineHeight: 22 },
 
-  scroll:      { padding: 16, paddingBottom: 40 },
+    scroll:      { padding: 16, paddingBottom: 40 },
 
-  eventHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
-  eventName:   { fontSize: 22, fontWeight: '800', color: '#0B132B', flex: 1, marginRight: 8 },
-  dayLabel:    { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  liveRow:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  liveDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: '#16a34a' },
-  liveText:    { fontSize: 11, fontWeight: '800', color: '#16a34a', letterSpacing: 1 },
+    eventHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 },
+    eventName:   { fontSize: 22, fontWeight: '800', color: c.navy, flex: 1, marginRight: 8 },
+    dayLabel:    { fontSize: 13, color: c.slateMid, marginTop: 2 },
+    liveRow:     { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    liveDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: c.success },
+    liveText:    { fontSize: 11, fontWeight: '800', color: c.success, letterSpacing: 1 },
 
-  alertBanner:    { backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1.5, borderColor: '#dc2626' },
-  alertBannerText: { fontSize: 14, fontWeight: '800', color: '#dc2626', marginBottom: 4 },
-  alertBannerSub:  { fontSize: 12, color: '#dc2626', marginTop: 2 },
+    alertBanner:    { backgroundColor: c.negativeSoft, borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1.5, borderColor: c.error },
+    alertBannerText: { fontSize: 14, fontWeight: '800', color: c.error, marginBottom: 4 },
+    alertBannerSub:  { fontSize: 12, color: c.error, marginTop: 2 },
 
-  sectionLabel: { fontSize: 11, fontWeight: '800', color: '#9ca3af', letterSpacing: 1, marginBottom: 8 },
-  emptyText:    { fontSize: 14, color: '#9ca3af', fontStyle: 'italic', marginBottom: 12 },
+    sectionLabel: { fontSize: 11, fontWeight: '800', color: c.slateMid, letterSpacing: 1, marginBottom: 8 },
+    emptyText:    { fontSize: 14, color: c.slateMid, fontStyle: 'italic', marginBottom: 12 },
 
-  barScroll: { marginBottom: 4 },
-  barChip:   { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', marginRight: 8 },
-  barChipOn: { borderColor: '#1b4f72', backgroundColor: '#eff6ff' },
-  barChipText:   { fontSize: 13, color: '#374151', fontWeight: '500' },
-  barChipTextOn: { color: '#1b4f72', fontWeight: '700' },
+    barScroll: { marginBottom: 4 },
+    barChip:   { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: 1.5, borderColor: c.border, backgroundColor: c.oat, marginRight: 8 },
+    barChipOn: { borderColor: c.deepBlue, backgroundColor: c.primaryLight },
+    barChipText:   { fontSize: 13, color: c.text, fontWeight: '500' },
+    barChipTextOn: { color: c.deepBlue, fontWeight: '700' },
 
-  barCard:      { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  barCardName:  { fontSize: 15, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  staleText:    { fontSize: 11, color: '#9ca3af', marginBottom: 6, fontStyle: 'italic' },
-  staleWarning: { fontSize: 11, color: '#d97706', fontWeight: '700', marginBottom: 6 },
-  moreText:     { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+    barCard:      { backgroundColor: c.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    barCardName:  { fontSize: 15, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    staleText:    { fontSize: 11, color: c.slateMid, marginBottom: 6, fontStyle: 'italic' },
+    staleWarning: { fontSize: 11, color: c.stellarAmber, fontWeight: '700', marginBottom: 6 },
+    moreText:     { fontSize: 12, color: c.slateMid, marginTop: 4 },
 
-  stockRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
-  stockName: { fontSize: 12, color: '#374151', width: 100, fontWeight: '500' },
-  fillBg:    { flex: 1, height: 6, backgroundColor: '#e5e7eb', borderRadius: 3, overflow: 'hidden' },
-  fillBar:   { height: 6, borderRadius: 3 },
-  hoursText: { fontSize: 11, fontWeight: '700', width: 36, textAlign: 'right' },
+    stockRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
+    stockName: { fontSize: 12, color: c.text, width: 100, fontWeight: '500' },
+    fillBg:    { flex: 1, height: 6, backgroundColor: c.border, borderRadius: 3, overflow: 'hidden' },
+    fillBar:   { height: 6, borderRadius: 3 },
+    hoursText: { fontSize: 11, fontWeight: '700', width: 36, textAlign: 'right' },
 
-  card:       { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: '#e5e1d8' },
-  cardActive: { borderColor: '#1b4f72', borderWidth: 1.5 },
-  cardTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    card:       { backgroundColor: c.surface, borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+    cardActive: { borderColor: c.deepBlue, borderWidth: 1.5 },
+    cardTop:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
 
-  urgencyBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
-  urgencyText:  { fontSize: 11, fontWeight: '700' },
-  timeText:     { fontSize: 11, color: '#9ca3af' },
+    urgencyBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+    urgencyText:  { fontSize: 11, fontWeight: '700' },
+    timeText:     { fontSize: 11, color: c.slateMid },
 
-  cardBarName:  { fontSize: 16, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  productLine:  { fontSize: 13, color: '#374151', lineHeight: 20 },
-  assignedText: { fontSize: 12, color: '#6b7280', marginTop: 4 },
-  noteText:     { fontSize: 12, color: '#6b7280', fontStyle: 'italic', marginTop: 4 },
+    cardBarName:  { fontSize: 16, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    productLine:  { fontSize: 13, color: c.text, lineHeight: 20 },
+    assignedText: { fontSize: 12, color: c.slateMid, marginTop: 4 },
+    noteText:     { fontSize: 12, color: c.slateMid, fontStyle: 'italic', marginTop: 4 },
 
-  cardActions: { flexDirection: 'row', gap: 6, marginTop: 12 },
-  approveBtn:  { flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
-  approveBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  viewBtn:     { paddingHorizontal: 14, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
-  viewBtnText: { color: '#1b4f72', fontWeight: '700', fontSize: 12 },
-  cancelBtn:   { paddingHorizontal: 14, borderWidth: 1.5, borderColor: '#e5e7eb', borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
-  cancelBtnText:  { color: '#6b7280', fontWeight: '700', fontSize: 12 },
-  btnDisabled: { opacity: 0.5 },
+    cardActions: { flexDirection: 'row', gap: 6, marginTop: 12 },
+    approveBtn:  { flex: 1, backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
+    approveBtnText: { color: c.surface, fontWeight: '700', fontSize: 12 },
+    viewBtn:     { paddingHorizontal: 14, borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
+    viewBtnText: { color: c.deepBlue, fontWeight: '700', fontSize: 12 },
+    cancelBtn:   { paddingHorizontal: 14, borderWidth: 1.5, borderColor: c.border, borderRadius: 999, paddingVertical: 10, alignItems: 'center' },
+    cancelBtnText:  { color: c.slateMid, fontWeight: '700', fontSize: 12 },
+    btnDisabled: { opacity: 0.5 },
 
-  transferCard: { backgroundColor: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#e5e7eb' },
-  transferText: { fontSize: 14, fontWeight: '700', color: '#0B132B' },
-  transferSub:  { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  overrideText: { fontSize: 11, color: '#d97706', marginTop: 2, fontStyle: 'italic' },
+    transferCard: { backgroundColor: c.oat, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: c.border },
+    transferText: { fontSize: 14, fontWeight: '700', color: c.navy },
+    transferSub:  { fontSize: 12, color: c.slateMid, marginTop: 2 },
+    overrideText: { fontSize: 11, color: c.stellarAmber, marginTop: 2, fontStyle: 'italic' },
 
-  quickActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  quickBtn:     { flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 13, alignItems: 'center' },
-  quickBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#1b4f72' },
-  quickBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  quickBtnTextSecondary: { color: '#1b4f72' },
-});
+    quickActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+    quickBtn:     { flex: 1, backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 13, alignItems: 'center' },
+    quickBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: c.deepBlue },
+    quickBtnText: { color: c.surface, fontWeight: '700', fontSize: 14 },
+    quickBtnTextSecondary: { color: c.deepBlue },
+  });
+}

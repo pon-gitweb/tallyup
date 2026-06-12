@@ -9,6 +9,9 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Velocity helper ──────────────────────────────────────────────────────────
 
@@ -44,6 +47,10 @@ export default function FestivalSessionCountScreen() {
   const route   = useRoute<any>();
   const venueId = useVenueId();
   const { barId, barName } = route.params || {};
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   // Tracks whether we've navigated to AreaInventory (so we know to write session on return)
   const sessionStarted = useRef(false);
@@ -149,8 +156,9 @@ export default function FestivalSessionCountScreen() {
   }, [venueId, barId]));
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color="#1b4f72" size="large" />
+    <View style={{ flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center' }}>
+      {modal}
+      <ActivityIndicator color={c.deepBlue} size="large" />
     </View>
   );
 }

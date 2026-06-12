@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Alert,
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
@@ -10,6 +10,9 @@ import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { sendReturnEmail } from '../../services/festival/returnEmail';
 import { generatePackingSlipPDF } from '../../services/festival/packingSlip';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +41,11 @@ type SupplierGroup = {
 export default function FestivalReturnsScreen() {
   const nav     = useNavigation<any>();
   const venueId = useVenueId();
+  const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
+  const S = makeStyles(c);
 
   const [event,      setEvent]      = useState<any>(null);
   const [groups,     setGroups]     = useState<SupplierGroup[]>([]);
@@ -149,7 +157,7 @@ export default function FestivalReturnsScreen() {
     );
   }
 
-  if (loading) return <View style={S.center}><ActivityIndicator color="#1b4f72" size="large" /></View>;
+  if (loading) return <View style={S.center}><ActivityIndicator color={c.deepBlue} size="large" /></View>;
 
   async function handleGenerateSlip(group: SupplierGroup) {
     if (!event || generating) return;
@@ -189,13 +197,13 @@ export default function FestivalReturnsScreen() {
       ));
       nav.navigate('FestivalPackingSlip', { supplierName: group.supplierName });
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not generate packing slip.');
+      showError(e?.message || 'Could not generate packing slip.');
     } finally {
       setGenerating(null);
     }
   }
 
-  async function handleSendEmail(group: SupplierGroup) {
+  async function doSendEmail(group: SupplierGroup) {
     if (sending) return;
     setSending(group.supplierName);
     try {
@@ -222,16 +230,27 @@ export default function FestivalReturnsScreen() {
       setGroups(prev => prev.map(g =>
         g.supplierName === group.supplierName ? { ...g, emailSent: true } : g
       ));
-      Alert.alert('Email prepared', `Return email prepared for ${group.supplierName}. Review and send from your mail app.`);
+      showSuccess(`✓ Return email prepared for ${group.supplierName}`);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not prepare email.');
+      showError(e?.message || 'Could not prepare email.');
     } finally {
       setSending(null);
     }
   }
 
+  function handleSendEmail(group: SupplierGroup) {
+    if (sending) return;
+    confirm({
+      title: 'Send return email?',
+      message: `This will prepare a return email for ${group.supplierName}.`,
+      confirmLabel: 'Send email',
+      onConfirm: () => doSendEmail(group),
+    });
+  }
+
   return (
-    <View style={{ flex: 1, backgroundColor: '#f5f3ee' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {modal}
       <ScrollView contentContainerStyle={S.scroll}>
         <Text style={S.screenTitle}>Returns</Text>
         {event?.eventName && <Text style={S.sub}>{event.eventName}</Text>}
@@ -289,7 +308,7 @@ export default function FestivalReturnsScreen() {
                   onPress={() => handleGenerateSlip(group)}
                 >
                   {generating === group.supplierName
-                    ? <ActivityIndicator color="#fff" size="small" />
+                    ? <ActivityIndicator color={c.surface} size="small" />
                     : <Text style={S.actionBtnText}>📄 Packing slip</Text>}
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -298,7 +317,7 @@ export default function FestivalReturnsScreen() {
                   onPress={() => handleSendEmail(group)}
                 >
                   {sending === group.supplierName
-                    ? <ActivityIndicator color="#1b4f72" size="small" />
+                    ? <ActivityIndicator color={c.deepBlue} size="small" />
                     : <Text style={S.actionBtnSecondaryText}>✉️ Return email</Text>}
                 </TouchableOpacity>
               </View>
@@ -326,47 +345,49 @@ export default function FestivalReturnsScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const S = StyleSheet.create({
-  center:     { flex: 1, backgroundColor: '#f5f3ee', alignItems: 'center', justifyContent: 'center', padding: 36 },
-  csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
-  csTitle:    { fontSize: 22, fontWeight: '800', color: '#0B132B', textAlign: 'center', marginBottom: 12 },
-  csBody:     { fontSize: 16, color: '#6b7280', textAlign: 'center', lineHeight: 24 },
-  csContact:  { marginTop: 20, fontSize: 14, color: '#9ca3af', textAlign: 'center' },
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    center:     { flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', padding: 36 },
+    csEmoji:    { fontSize: 52, marginBottom: 20, textAlign: 'center' },
+    csTitle:    { fontSize: 22, fontWeight: '800', color: c.navy, textAlign: 'center', marginBottom: 12 },
+    csBody:     { fontSize: 16, color: c.slateMid, textAlign: 'center', lineHeight: 24 },
+    csContact:  { marginTop: 20, fontSize: 14, color: c.slateMid, textAlign: 'center' },
 
-  scroll:         { padding: 16, paddingBottom: 40 },
-  screenTitle:    { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  sub:            { fontSize: 14, color: '#6b7280', marginBottom: 20 },
+    scroll:         { padding: 16, paddingBottom: 40 },
+    screenTitle:    { fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    sub:            { fontSize: 14, color: c.slateMid, marginBottom: 20 },
 
-  supplierCard:   { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#e5e1d8' },
-  supplierName:   { fontSize: 17, fontWeight: '800', color: '#0B132B', marginBottom: 4 },
-  divider:        { fontSize: 10, color: '#e5e1d8', marginBottom: 10, letterSpacing: 2 },
+    supplierCard:   { backgroundColor: c.surface, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: c.border },
+    supplierName:   { fontSize: 17, fontWeight: '800', color: c.navy, marginBottom: 4 },
+    divider:        { fontSize: 10, color: c.border, marginBottom: 10, letterSpacing: 2 },
 
-  productRow:     { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
-  productName:    { fontSize: 14, fontWeight: '600', color: '#0B132B', marginBottom: 2 },
-  productMeta:    { fontSize: 12, color: '#6b7280', marginBottom: 3 },
-  photoBadge:     { fontSize: 11, fontWeight: '700' },
-  photoBadgeOk:   { color: '#16a34a' },
-  photoBadgeMissing:{ color: '#d97706' },
-  addPhotoBtn:    { backgroundColor: '#f3f4f6', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  addPhotoBtnText:{ fontSize: 12, color: '#1b4f72', fontWeight: '700' },
+    productRow:     { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
+    productName:    { fontSize: 14, fontWeight: '600', color: c.navy, marginBottom: 2 },
+    productMeta:    { fontSize: 12, color: c.slateMid, marginBottom: 3 },
+    photoBadge:     { fontSize: 11, fontWeight: '700' },
+    photoBadgeOk:   { color: c.success },
+    photoBadgeMissing:{ color: c.stellarAmber },
+    addPhotoBtn:    { backgroundColor: c.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+    addPhotoBtnText:{ fontSize: 12, color: c.deepBlue, fontWeight: '700' },
 
-  totalValue:     { fontSize: 14, fontWeight: '700', color: '#0B132B', marginTop: 10, marginBottom: 10 },
+    totalValue:     { fontSize: 14, fontWeight: '700', color: c.navy, marginTop: 10, marginBottom: 10 },
 
-  actionRow:          { flexDirection: 'row', gap: 10, marginTop: 12 },
-  actionBtn:          { flex: 1, backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 11, alignItems: 'center' },
-  actionBtnText:      { color: '#fff', fontWeight: '700', fontSize: 13 },
-  actionBtnSecondary: { flex: 1, borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 11, alignItems: 'center' },
-  actionBtnSecondaryText:{ color: '#1b4f72', fontWeight: '700', fontSize: 13 },
+    actionRow:          { flexDirection: 'row', gap: 10, marginTop: 12 },
+    actionBtn:          { flex: 1, backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 11, alignItems: 'center' },
+    actionBtnText:      { color: c.surface, fontWeight: '700', fontSize: 13 },
+    actionBtnSecondary: { flex: 1, borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 11, alignItems: 'center' },
+    actionBtnSecondaryText:{ color: c.deepBlue, fontWeight: '700', fontSize: 13 },
 
-  statusRow:  { flexDirection: 'row', gap: 8, marginTop: 8 },
-  statusBadge:{ fontSize: 11, fontWeight: '700', color: '#16a34a' },
+    statusRow:  { flexDirection: 'row', gap: 8, marginTop: 8 },
+    statusBadge:{ fontSize: 11, fontWeight: '700', color: c.success },
 
-  emptyCard:  { backgroundColor: '#fff', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8', marginBottom: 12 },
-  emptyText:  { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 12 },
+    emptyCard:  { backgroundColor: c.surface, borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: c.border, marginBottom: 12 },
+    emptyText:  { fontSize: 14, color: c.slateMid, textAlign: 'center', marginBottom: 12 },
 
-  primaryBtn:      { backgroundColor: '#1b4f72', borderRadius: 999, paddingVertical: 15, alignItems: 'center' },
-  primaryBtnText:  { color: '#fff', fontWeight: '700', fontSize: 15 },
-  secondaryBtn:    { borderWidth: 1.5, borderColor: '#1b4f72', borderRadius: 999, paddingVertical: 13, alignItems: 'center', marginTop: 8 },
-  secondaryBtnText:{ color: '#1b4f72', fontWeight: '700', fontSize: 14 },
-  btnDisabled:     { opacity: 0.5 },
-});
+    primaryBtn:      { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 15, alignItems: 'center' },
+    primaryBtnText:  { color: c.surface, fontWeight: '700', fontSize: 15 },
+    secondaryBtn:    { borderWidth: 1.5, borderColor: c.deepBlue, borderRadius: 999, paddingVertical: 13, alignItems: 'center', marginTop: 8 },
+    secondaryBtnText:{ color: c.deepBlue, fontWeight: '700', fontSize: 14 },
+    btnDisabled:     { opacity: 0.5 },
+  });
+}
