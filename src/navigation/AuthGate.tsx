@@ -3,10 +3,12 @@ import React from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../services/firebase';
+import { useColours } from '../context/ThemeContext';
 
 type Props = { renderAuthed: () => JSX.Element; renderUnauthed: () => JSX.Element; };
 
 export default function AuthGate({ renderAuthed, renderUnauthed }: Props) {
+  const c = useColours();
   const [initializing, setInitializing] = React.useState(true);
   const [user, setUser] = React.useState<User | null>(null);
 
@@ -31,8 +33,8 @@ export default function AuthGate({ renderAuthed, renderUnauthed }: Props) {
 
   if (initializing) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0B132B', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#f5f3ee" />
+      <View style={{ flex: 1, backgroundColor: c.navy, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={c.oat} />
       </View>
     );
   }

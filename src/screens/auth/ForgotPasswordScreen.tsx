@@ -18,36 +18,39 @@ import {
 import { getAuth, sendPasswordResetEmail } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 export default function ForgotPasswordScreen() {
   const nav = useNavigation<any>();
   const auth = getAuth();
   const colours = useColours();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { modal } = useConfirmModal();
 
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
-  const [error, setError] = useState('');
 
   async function handleSend() {
     const trimmed = email.trim();
     if (!trimmed) {
-      setError('Please enter your email address.');
+      showInfo('Please enter your email address.');
       return;
     }
-    setError('');
     setBusy(true);
     try {
       await sendPasswordResetEmail(auth, trimmed);
       setSent(true);
+      showSuccess('✓ Reset email sent.');
     } catch (e: any) {
       const code = (e?.code || '').toString();
       if (code.includes('user-not-found') || code.includes('invalid-email')) {
-        setError('No account found for that email address.');
+        showError('No account found for that email address.');
       } else if (code.includes('too-many-requests')) {
-        setError('Too many attempts. Please try again later.');
+        showError('Too many attempts. Please try again later.');
       } else {
-        setError(e?.message ?? 'Something went wrong. Please try again.');
+        showError(e?.message ?? 'Something went wrong. Please try again.');
       }
     } finally {
       setBusy(false);
@@ -60,15 +63,14 @@ export default function ForgotPasswordScreen() {
     heading:     { fontSize: 26, fontWeight: '700', color: colours.navy, marginBottom: 8 },
     sub:         { fontSize: 15, color: colours.textSecondary, lineHeight: 22, marginBottom: 32 },
     input:       { borderWidth: 1, borderColor: colours.border, borderRadius: 10, padding: 12, marginBottom: 8, backgroundColor: colours.surface, color: colours.text, fontSize: 15 },
-    error:       { color: '#dc2626', fontSize: 13, marginBottom: 8 },
     primary:     { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 8 },
     primaryText: { color: colours.primaryText, fontWeight: '700', fontSize: 15 },
     disabled:    { opacity: 0.6 },
     backLink:    { marginTop: 20, alignItems: 'center' },
     backText:    { color: colours.textSecondary, fontSize: 14 },
-    successBox:  { backgroundColor: '#f0fdf4', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#bbf7d0' },
-    successTitle:{ fontSize: 18, fontWeight: '700', color: '#15803d', marginBottom: 8 },
-    successBody: { fontSize: 15, color: '#166534', lineHeight: 22 },
+    successBox:  { backgroundColor: colours.positiveSoft, borderRadius: 12, padding: 20, borderWidth: 1, borderColor: colours.success + '40' },
+    successTitle:{ fontSize: 18, fontWeight: '700', color: colours.success, marginBottom: 8 },
+    successBody: { fontSize: 15, color: colours.success, lineHeight: 22 },
     doneBtn:     { backgroundColor: colours.primary, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 20 },
     doneBtnText: { color: colours.primaryText, fontWeight: '700', fontSize: 15 },
   });
@@ -78,6 +80,7 @@ export default function ForgotPasswordScreen() {
       style={S.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      {modal}
       <ScrollView contentContainerStyle={S.scroll} keyboardShouldPersistTaps="handled">
 
         {sent ? (
@@ -106,12 +109,10 @@ export default function ForgotPasswordScreen() {
               autoCorrect={false}
               keyboardType="email-address"
               value={email}
-              onChangeText={t => { setEmail(t); setError(''); }}
+              onChangeText={setEmail}
               onSubmitEditing={handleSend}
               returnKeyType="send"
             />
-
-            {!!error && <Text style={S.error}>{error}</Text>}
 
             <TouchableOpacity
               style={[S.primary, (busy || !email.trim()) && S.disabled]}

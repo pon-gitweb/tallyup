@@ -250,11 +250,11 @@ function InventoryImportScreen() {
   if (false && photoStage === 'capturing') {
     return (
       <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
-        <View style={{ backgroundColor: '#EFF6FF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BFDBFE' }}>
-          <Text style={{ fontWeight: '900', color: '#1E40AF', fontSize: 16, marginBottom: 4 }}>
+        <View style={{ backgroundColor: themeColours.primaryLight, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
+          <Text style={{ fontWeight: '900', color: themeColours.deepBlue, fontSize: 16, marginBottom: 4 }}>
             📄 Photographing stocktake sheet
           </Text>
-          <Text style={{ color: '#1E40AF', fontSize: 13 }}>
+          <Text style={{ color: themeColours.deepBlue, fontSize: 13 }}>
             Place each page flat. Ensure all text is visible. Good lighting, no shadows across the text.
           </Text>
         </View>
@@ -270,9 +270,9 @@ function InventoryImportScreen() {
               <Image source={{ uri: p.uri }} style={{ width: 80, height: 100, borderRadius: 8, borderWidth: 1, borderColor: themeColours.border }} resizeMode="cover" />
               <TouchableOpacity
                 onPress={() => setPages(prev => prev.filter((_, idx) => idx !== i))}
-                style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center' }}
+                style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, backgroundColor: themeColours.error, alignItems: 'center', justifyContent: 'center' }}
               >
-                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 11 }}>✕</Text>
+                <Text style={{ color: themeColours.surface, fontWeight: '900', fontSize: 11 }}>✕</Text>
               </TouchableOpacity>
               <Text style={{ textAlign: 'center', fontSize: 10, color: themeColours.textSecondary, marginTop: 2 }}>Pg {i + 1}</Text>
             </View>
@@ -294,9 +294,9 @@ function InventoryImportScreen() {
         <TouchableOpacity
           onPress={() => processMultiplePages(pages)}
           disabled={pages.length === 0}
-          style={{ backgroundColor: pages.length > 0 ? '#10B981' : themeColours.border, padding: 16, borderRadius: 12, alignItems: 'center' }}
+          style={{ backgroundColor: pages.length > 0 ? themeColours.success : themeColours.border, padding: 16, borderRadius: 12, alignItems: 'center' }}
         >
-          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>
+          <Text style={{ color: themeColours.surface, fontWeight: '900', fontSize: 16 }}>
             Done — process all {pages.length} page{pages.length !== 1 ? 's' : ''}
           </Text>
         </TouchableOpacity>
@@ -335,8 +335,8 @@ function InventoryImportScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={{ fontWeight: '700', color: themeColours.text }}>{item.label}</Text>
                 {item.rec && (
-                  <View style={{ backgroundColor: '#dcfce7', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#166534' }}>✓ Recommended</Text>
+                  <View style={{ backgroundColor: themeColours.positiveSoft, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.success }}>✓ Recommended</Text>
                   </View>
                 )}
               </View>
@@ -359,25 +359,25 @@ function InventoryImportScreen() {
             <FileTypeButton icon="🖼️" label="Photo library" sublabel="From camera roll" onPress={() => addPhotoPage('library')} themeColours={themeColours} />
           </View>
         )}
-        <View style={{ backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#bfdbfe' }}>
-          <Text style={{ fontWeight: '800', color: '#1e40af', marginBottom: 6, fontSize: 14 }}>
+        <View style={{ backgroundColor: themeColours.primaryLight, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
+          <Text style={{ fontWeight: '800', color: themeColours.deepBlue, marginBottom: 6, fontSize: 14 }}>
             📄 For best results upload your stocktake as a PDF or CSV file
           </Text>
-          <Text style={{ color: '#1e40af', fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
+          <Text style={{ color: themeColours.deepBlue, fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
             Digital files are processed faster and more accurately than photos.{'\n\n'}
             Tip: Export directly from your POS or spreadsheet for instant import.
           </Text>
         </View>
       </View>
 
-      <View style={{ backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
-        <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 8 }}>What happens next</Text>
+      <View style={{ backgroundColor: themeColours.positiveSoft, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.success + '40' }}>
+        <Text style={{ fontWeight: '800', color: themeColours.success, marginBottom: 8 }}>What happens next</Text>
         {['Hosti Intelligence reads your file and finds all your products','We group them by area or category','You review and confirm — edit anything before importing','Start your first stocktake straight away'].map((step, i) => (
           <View key={i} style={{ flexDirection: 'row', gap: 10, marginBottom: i < 3 ? 6 : 0 }}>
             <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: themeColours.success, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: themeColours.primaryText, fontSize: 11, fontWeight: '900' }}>{i + 1}</Text>
             </View>
-            <Text style={{ color: '#166534', fontSize: 13, flex: 1 }}>{step}</Text>
+            <Text style={{ color: themeColours.success, fontSize: 13, flex: 1 }}>{step}</Text>
           </View>
         ))}
       </View>

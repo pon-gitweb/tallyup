@@ -11,6 +11,9 @@ import {
   View,
 } from 'react-native';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../common/Toast';
+import { useConfirmModal } from '../common/useConfirmModal';
 
 type VenueProduct = {
   id: string;
@@ -38,6 +41,10 @@ export default function VenueProductSearchModal({
   onSelect,
   onBatchSelect,
 }: Props) {
+  const c = useColours();
+  const { showError } = useToast();
+  const { modal } = useConfirmModal();
+  const S = makeStyles(c);
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<VenueProduct[]>([]);
   const [q, setQ] = useState('');
@@ -58,8 +65,9 @@ export default function VenueProductSearchModal({
           (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' })
         );
         setProducts(loaded);
-      } catch {
+      } catch (e: any) {
         setProducts([]);
+        showError(e?.message || 'Could not load products.');
       } finally {
         setLoading(false);
       }
@@ -136,6 +144,7 @@ export default function VenueProductSearchModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+      {modal}
       <View style={S.wrap}>
         <TouchableOpacity style={S.backdrop} onPress={handleClose} activeOpacity={1} />
         <View style={S.sheet}>
@@ -153,9 +162,9 @@ export default function VenueProductSearchModal({
               {!!onBatchSelect && (
                 <TouchableOpacity
                   onPress={() => { setMultiMode(v => !v); setSelected(new Map()); }}
-                  style={[S.doneBtn, { backgroundColor: multiMode ? '#0f172a' : '#e2e8f0' }]}
+                  style={[S.doneBtn, { backgroundColor: multiMode ? c.navy : c.border }]}
                 >
-                  <Text style={[S.doneBtnText, { color: multiMode ? '#fff' : '#374151' }]}>
+                  <Text style={[S.doneBtnText, { color: multiMode ? c.surface : c.text }]}>
                     {multiMode ? 'Cancel' : 'Multi'}
                   </Text>
                 </TouchableOpacity>
@@ -185,7 +194,7 @@ export default function VenueProductSearchModal({
               value={q}
               onChangeText={setQ}
               placeholder="Search by name…"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={c.slateMid}
               style={S.searchInput}
               autoFocus
               clearButtonMode="while-editing"
@@ -195,8 +204,8 @@ export default function VenueProductSearchModal({
           {/* List */}
           {loading ? (
             <View style={{ alignItems: 'center', padding: 32 }}>
-              <ActivityIndicator color="#1b4f72" />
-              <Text style={{ color: '#64748b', marginTop: 10, fontSize: 13 }}>Loading products…</Text>
+              <ActivityIndicator color={c.deepBlue} />
+              <Text style={{ color: c.slateMid, marginTop: 10, fontSize: 13 }}>Loading products…</Text>
             </View>
           ) : (
             <FlatList
@@ -209,7 +218,7 @@ export default function VenueProductSearchModal({
                 const isSelected = selected.has(item.id);
                 return (
                   <TouchableOpacity
-                    style={[S.row, wasAdded && !multiMode && S.rowAdded, multiMode && isSelected && { backgroundColor: '#f0fdf4' }]}
+                    style={[S.row, wasAdded && !multiMode && S.rowAdded, multiMode && isSelected && { backgroundColor: c.positiveSoft }]}
                     onPress={() => handleSelect(item)}
                     activeOpacity={0.75}
                     disabled={wasAdded && !multiMode}
@@ -217,11 +226,11 @@ export default function VenueProductSearchModal({
                     {multiMode && (
                       <View style={{
                         width: 22, height: 22, borderRadius: 5, borderWidth: 2, marginRight: 10,
-                        borderColor: isSelected ? '#10b981' : '#cbd5e1',
-                        backgroundColor: isSelected ? '#10b981' : '#fff',
+                        borderColor: isSelected ? c.success : c.border,
+                        backgroundColor: isSelected ? c.success : c.surface,
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {isSelected && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+                        {isSelected && <Text style={{ color: c.surface, fontSize: 12, fontWeight: '900' }}>✓</Text>}
                       </View>
                     )}
                     <View style={{ flex: 1 }}>
@@ -235,13 +244,13 @@ export default function VenueProductSearchModal({
                     {!multiMode && wasAdded ? (
                       <Text style={S.checkmark}>✓</Text>
                     ) : !multiMode ? (
-                      <Text style={{ fontSize: 20, color: '#94a3b8' }}>›</Text>
+                      <Text style={{ fontSize: 20, color: c.slateMid }}>›</Text>
                     ) : null}
                   </TouchableOpacity>
                 );
               }}
               ListEmptyComponent={
-                <Text style={{ textAlign: 'center', color: '#94a3b8', padding: 28, fontSize: 14 }}>
+                <Text style={{ textAlign: 'center', color: c.slateMid, padding: 28, fontSize: 14 }}>
                   {q.trim()
                     ? 'No products match your search.'
                     : 'No products in this venue yet.\nAdd products via Settings → Products first.'}
@@ -262,70 +271,72 @@ export default function VenueProductSearchModal({
   );
 }
 
-const S = StyleSheet.create({
-  wrap: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '78%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  title: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
-  sub: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  doneBtn: {
-    backgroundColor: '#1b4f72',
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-  },
-  doneBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  searchInput: {
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#0f172a',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  rowAdded: { backgroundColor: '#f0fdf4' },
-  rowName: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-  rowSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  checkmark: { fontSize: 18, color: '#10b981', fontWeight: '800' },
-  selectAllBtn: { paddingHorizontal: 10, paddingVertical: 7 },
-  selectAllText: { color: '#1b4f72', fontSize: 13, fontWeight: '600' },
-  toast: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#10b981',
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  toastText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-});
+function makeStyles(c: any) {
+  return StyleSheet.create({
+    wrap: { flex: 1, justifyContent: 'flex-end' },
+    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+    sheet: {
+      backgroundColor: c.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      maxHeight: '78%',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: c.oat,
+    },
+    title: { fontSize: 17, fontWeight: '800', color: c.navy },
+    sub: { fontSize: 12, color: c.slateMid, marginTop: 2 },
+    doneBtn: {
+      backgroundColor: c.deepBlue,
+      borderRadius: 8,
+      paddingVertical: 7,
+      paddingHorizontal: 14,
+    },
+    doneBtnText: { color: c.surface, fontWeight: '700', fontSize: 14 },
+    searchInput: {
+      backgroundColor: c.oat,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      fontSize: 14,
+      color: c.navy,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: c.oat,
+    },
+    rowAdded: { backgroundColor: c.positiveSoft },
+    rowName: { fontSize: 14, fontWeight: '700', color: c.navy },
+    rowSub: { fontSize: 12, color: c.slateMid, marginTop: 2 },
+    checkmark: { fontSize: 18, color: c.success, fontWeight: '800' },
+    selectAllBtn: { paddingHorizontal: 10, paddingVertical: 7 },
+    selectAllText: { color: c.deepBlue, fontSize: 13, fontWeight: '600' },
+    toast: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: c.success,
+      paddingVertical: 12,
+      alignItems: 'center',
+      borderBottomLeftRadius: 20,
+      borderBottomRightRadius: 20,
+    },
+    toastText: { color: c.surface, fontWeight: '700', fontSize: 14 },
+  });
+}

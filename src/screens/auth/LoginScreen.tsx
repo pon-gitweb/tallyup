@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   ScrollView,
   KeyboardAvoidingView,
@@ -15,6 +14,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
 import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 function mapAuthError(e: any): string {
   const code = (e?.code || '').toString();
@@ -32,6 +33,8 @@ function LoginScreenInner() {
   const venueId = useVenueId();
   const colours = useColours();
   const { fontsLoaded } = useTheme();
+  const { showError, showInfo } = useToast();
+  const { modal } = useConfirmModal();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
@@ -52,14 +55,14 @@ function LoginScreenInner() {
 
   const trySignIn = async () => {
     if (!email.trim() || !pass) {
-      Alert.alert('Missing info', 'Enter email and password.');
+      showInfo('Enter email and password.');
       return;
     }
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), pass);
     } catch (e: any) {
-      Alert.alert('Sign-in failed', mapAuthError(e));
+      showError(mapAuthError(e));
     } finally {
       setBusy(false);
     }
@@ -71,6 +74,7 @@ function LoginScreenInner() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colours.background }}>
+      {modal}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
           contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28, paddingBottom: 80 }}

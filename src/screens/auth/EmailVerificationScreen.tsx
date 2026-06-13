@@ -8,16 +8,18 @@ import {
 } from 'react-native';
 import { getAuth, sendEmailVerification, reload } from 'firebase/auth';
 import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 export default function EmailVerificationScreen({ navigation }: any) {
   const c = useColours();
   const { theme } = useTheme();
+  const { showSuccess, showError } = useToast();
+  const { modal } = useConfirmModal();
   const auth = getAuth();
   const user = auth.currentUser;
   const [checking, setChecking] = useState(false);
   const [resending, setResending] = useState(false);
-  const [resent, setResent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Mask email: marcus@harbourside.co.nz → ma***@harbourside.co.nz
   const maskedEmail = user?.email
@@ -26,17 +28,16 @@ export default function EmailVerificationScreen({ navigation }: any) {
 
   const handleCheckVerification = async () => {
     setChecking(true);
-    setError(null);
     try {
       await reload(user!);
       const refreshed = auth.currentUser;
       if (refreshed?.emailVerified) {
         navigation.replace('CreateVenue');
       } else {
-        setError('Not verified yet. Check your inbox and tap the link first.');
+        showError('Not verified yet. Check your inbox and tap the link first.');
       }
     } catch (e: any) {
-      setError('Could not check status. Please try again.');
+      showError('Could not check status. Please try again.');
     } finally {
       setChecking(false);
     }
@@ -44,70 +45,57 @@ export default function EmailVerificationScreen({ navigation }: any) {
 
   const handleResend = async () => {
     setResending(true);
-    setError(null);
     try {
       await sendEmailVerification(user!);
-      setResent(true);
-      setTimeout(() => setResent(false), 5000);
+      showSuccess('✓ Email resent');
     } catch (e: any) {
-      setError('Could not resend. Please wait a moment and try again.');
+      showError('Could not resend. Please wait a moment and try again.');
     } finally {
       setResending(false);
     }
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]}>
+    <View style={[styles.container, { backgroundColor: c.oat }]}>
+      {modal}
 
       {/* Wordmark */}
       <View style={styles.wordmark}>
-        <Text style={[styles.wordmarkH, { color: c.stellarAmber || '#c47b2b', fontFamily: theme.fontTitle }]}>
+        <Text style={[styles.wordmarkH, { color: c.stellarAmber, fontFamily: theme.fontTitle }]}>
           H
         </Text>
-        <Text style={[styles.wordmarkOsti, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitle }]}>
+        <Text style={[styles.wordmarkOsti, { color: c.missionSlate, fontFamily: theme.fontTitle }]}>
           osti
         </Text>
       </View>
 
-      <View style={[styles.card, { backgroundColor: '#ffffff' }]}>
+      <View style={[styles.card, { backgroundColor: c.surface }]}>
 
         <Text style={styles.icon}>📬</Text>
 
-        <Text style={[styles.title, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitle }]}>
+        <Text style={[styles.title, { color: c.missionSlate, fontFamily: theme.fontTitle }]}>
           Check your inbox
         </Text>
 
-        <Text style={[styles.subtitle, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
+        <Text style={[styles.subtitle, { color: c.slateMid, fontFamily: theme.fontBody }]}>
           We sent a verification link to{'\n'}
-          <Text style={{ fontFamily: theme.fontBodySemiBold, color: c.missionSlate || '#3b3f4a' }}>
+          <Text style={{ fontFamily: theme.fontBodySemiBold, color: c.missionSlate }}>
             {maskedEmail}
           </Text>
         </Text>
 
-        <Text style={[styles.instruction, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
+        <Text style={[styles.instruction, { color: c.slateMid, fontFamily: theme.fontBody }]}>
           Tap the link in the email then come back here.
         </Text>
 
-        {error && (
-          <Text style={[styles.error, { fontFamily: theme.fontBody }]}>
-            {error}
-          </Text>
-        )}
-
-        {resent && (
-          <Text style={[styles.resent, { fontFamily: theme.fontBody }]}>
-            ✓ Email resent
-          </Text>
-        )}
-
         <TouchableOpacity
-          style={[styles.primaryBtn, { backgroundColor: c.deepBlue || '#1b4f72' }]}
+          style={[styles.primaryBtn, { backgroundColor: c.deepBlue }]}
           onPress={handleCheckVerification}
           disabled={checking}
         >
           {checking
-            ? <ActivityIndicator color="#ffffff" />
-            : <Text style={[styles.primaryBtnText, { fontFamily: theme.fontBodySemiBold }]}>
+            ? <ActivityIndicator color={c.surface} />
+            : <Text style={[styles.primaryBtnText, { color: c.surface, fontFamily: theme.fontBodySemiBold }]}>
                 ✓ I've verified my email
               </Text>
           }
@@ -118,7 +106,7 @@ export default function EmailVerificationScreen({ navigation }: any) {
           onPress={handleResend}
           disabled={resending}
         >
-          <Text style={[styles.secondaryBtnText, { color: c.deepBlue || '#1b4f72', fontFamily: theme.fontBody }]}>
+          <Text style={[styles.secondaryBtnText, { color: c.deepBlue, fontFamily: theme.fontBody }]}>
             {resending ? 'Sending...' : 'Resend email'}
           </Text>
         </TouchableOpacity>
@@ -130,13 +118,13 @@ export default function EmailVerificationScreen({ navigation }: any) {
             navigation.replace('Register');
           }}
         >
-          <Text style={[styles.secondaryBtnText, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
+          <Text style={[styles.secondaryBtnText, { color: c.slateMid, fontFamily: theme.fontBody }]}>
             Wrong email? Start over
           </Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={[styles.footer, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
+      <Text style={[styles.footer, { color: c.slateMid, fontFamily: theme.fontBody }]}>
         © {new Date().getFullYear()} Hosti
       </Text>
     </View>
@@ -188,18 +176,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 24,
   },
-  error: {
-    color: '#c0392b',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  resent: {
-    color: '#2d6a4f',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 12,
-  },
   primaryBtn: {
     width: '100%',
     height: 52,
@@ -209,7 +185,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   primaryBtnText: {
-    color: '#ffffff',
     fontSize: 15,
   },
   secondaryBtn: {
