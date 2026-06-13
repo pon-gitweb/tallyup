@@ -157,18 +157,32 @@ export default function VenueListScreen() {
     );
   }
 
+  const sortedVenues = [...venues].sort((a, b) => {
+    const aActive = a.id === activeVenueId;
+    const bActive = b.id === activeVenueId;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    if (a.type !== b.type) return a.type === 'festival' ? 1 : -1;
+    return a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
+  });
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
       {modal}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, marginBottom: 4 }}>
-          My venues
+          My Projects
         </Text>
         <Text style={{ fontSize: 14, color: c.slateMid, marginBottom: 20 }}>
           {venues.length} workspace{venues.length !== 1 ? 's' : ''}
         </Text>
 
-        {venues.map(venue => {
+        {venues.length === 0 && (
+          <Text style={{ fontSize: 14, color: c.slateMid, textAlign: 'center', marginBottom: 20, lineHeight: 20 }}>
+            No projects yet.{'\n'}Create your first venue or festival.
+          </Text>
+        )}
+
+        {sortedVenues.map(venue => {
           const isActive = venue.id === activeVenueId;
           return (
             <View
@@ -263,7 +277,7 @@ export default function VenueListScreen() {
           onPress={() => nav.navigate('CreateVenue')}
         >
           <Text style={{ fontSize: 15, fontWeight: '700', color: c.deepBlue }}>
-            + Add new venue or event
+            + Add new project
           </Text>
         </TouchableOpacity>
       </ScrollView>

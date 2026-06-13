@@ -5,10 +5,13 @@ import { db } from '../services/firebase';
 import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
+import { useColours, useTheme } from '../context/ThemeContext';
 
 export default function CreateVenueScreen() {
+  const c = useColours();
+  const { theme } = useTheme();
   const [name, setName] = useState('');
-  const [venueType, setVenueType] = useState<'venue' | 'festival'>('venue');
+  const [projectType, setProjectType] = useState<'venue' | 'festival'>('venue');
   const [busy, setBusy] = useState(false);
   const navigation = useNavigation<any>();
 
@@ -20,7 +23,7 @@ export default function CreateVenueScreen() {
       return;
     }
     if (!name.trim()) {
-      Alert.alert('Venue name required', 'Please enter a venue name.');
+      Alert.alert('Name required', 'Please enter a name.');
       return;
     }
 
@@ -31,7 +34,7 @@ export default function CreateVenueScreen() {
       setBusy(false);
       Alert.alert(
         'Taking longer than usual',
-        'Your venue is being set up. Please wait a moment then reopen the app.'
+        'Your project is being set up. Please wait a moment then reopen the app.'
       );
     }, 10000);
 
@@ -56,7 +59,7 @@ export default function CreateVenueScreen() {
       await setDoc(vref, {
         name: name.trim(),
         ownerUid: uid,
-        venueType: venueType,
+        venueType: projectType,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -93,7 +96,7 @@ export default function CreateVenueScreen() {
 
       // Only seed permanent-venue departments — festival accounts start clean
       // (HQ and bar departments are created by the festival event setup wizard)
-      if (venueType === 'venue') {
+      if (projectType === 'venue') {
         try {
           await seedDept('Bar', ['Front Bar', 'Back Bar', 'Fridge', 'Cellar']);
           await seedDept('Kitchen', ['Prep', 'Line', 'Dry Store', 'Cool Room']);
@@ -115,7 +118,7 @@ export default function CreateVenueScreen() {
         'onboardingRoad',
       ]).catch(() => {});
       // Prime the correct type immediately so the 5s timeout also routes correctly.
-      await AsyncStorage.setItem('lastKnownVenueType', venueType).catch(() => {});
+      await AsyncStorage.setItem('lastKnownVenueType', projectType).catch(() => {});
 
       navigation.reset({
         index: 0,
@@ -124,7 +127,7 @@ export default function CreateVenueScreen() {
     } catch (e: any) {
       clearTimeout(timeoutId);
       console.log('[CreateVenue] error', JSON.stringify({ code: e?.code || e?.name, msg: e?.message || String(e) }));
-      Alert.alert('Could not create venue', e?.message || 'Missing or insufficient permissions.');
+      Alert.alert('Could not create project', e?.message || 'Missing or insufficient permissions.');
     } finally {
       setBusy(false);
     }
@@ -138,88 +141,111 @@ export default function CreateVenueScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: '#0F1115' }}>
-      <Text style={{ color: 'white', fontSize: 22, fontWeight: '700', marginBottom: 12 }}>Create Venue</Text>
-      <Text style={{ color: '#B7C0CD' }}>
-        Enter a name to create your venue. We'll add default departments and areas; you can edit them later in Settings.
+    <View style={{ flex: 1, padding: 16, backgroundColor: c.oat }}>
+      <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitle, marginBottom: 12 }}>
+        Create a new project
+      </Text>
+      <Text style={{ color: c.slateMid, fontFamily: theme.fontBody, lineHeight: 20 }}>
+        Enter a name and choose what kind of project this is. We'll add default departments and areas; you can edit them later in Settings.
+      </Text>
+
+      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+        What kind of project?
+      </Text>
+
+      <View style={styles.typeRow}>
+        <TouchableOpacity
+          onPress={() => setProjectType('venue')}
+          disabled={busy}
+          style={[
+            styles.typeCard,
+            {
+              backgroundColor: projectType === 'venue' ? c.deepBlue : c.surface,
+              borderColor: projectType === 'venue' ? c.deepBlue : c.border,
+            },
+          ]}
+        >
+          <Text style={{ fontSize: 28, marginBottom: 6 }}>🍺</Text>
+          <Text style={[
+            styles.typeLabel,
+            { fontFamily: theme.fontBodySemiBold, color: projectType === 'venue' ? '#ffffff' : c.missionSlate },
+          ]}>
+            Venue
+          </Text>
+          <Text style={[
+            { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
+            { color: projectType === 'venue' ? 'rgba(255,255,255,0.8)' : c.slateMid },
+          ]}>
+            Bar, restaurant, café, hotel
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setProjectType('festival')}
+          disabled={busy}
+          style={[
+            styles.typeCard,
+            {
+              backgroundColor: projectType === 'festival' ? c.deepBlue : c.surface,
+              borderColor: projectType === 'festival' ? c.deepBlue : c.border,
+            },
+          ]}
+        >
+          <Text style={{ fontSize: 28, marginBottom: 6 }}>🎪</Text>
+          <Text style={[
+            styles.typeLabel,
+            { fontFamily: theme.fontBodySemiBold, color: projectType === 'festival' ? '#ffffff' : c.missionSlate },
+          ]}>
+            Festival
+          </Text>
+          <Text style={[
+            { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
+            { color: projectType === 'festival' ? 'rgba(255,255,255,0.8)' : c.slateMid },
+          ]}>
+            Single day, multi-day, or seasonal event
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+        {projectType === 'festival' ? 'Festival name' : 'Venue name'}
       </Text>
 
       <TextInput
-        placeholder="e.g. Riverside Hotel"
-        placeholderTextColor="#6B7787"
+        placeholder={projectType === 'festival' ? 'e.g. Shipwrecked 2027' : 'e.g. Riverside Hotel'}
+        placeholderTextColor={c.slateMid}
         value={name}
         onChangeText={setName}
         style={{
-          backgroundColor: '#171B22',
-          color: 'white',
+          backgroundColor: c.surface,
+          color: c.navy,
           paddingHorizontal: 12,
           paddingVertical: 12,
           borderRadius: 10,
           borderWidth: 1,
-          borderColor: '#263142',
-          marginTop: 16,
+          borderColor: c.border,
+          marginBottom: 20,
+          fontFamily: theme.fontBody,
+          fontSize: 15,
         }}
         autoCapitalize="words"
         autoFocus
         editable={!busy}
       />
 
-      <Text style={{ color: '#B7C0CD', marginTop: 20, marginBottom: 10, fontSize: 15, fontWeight: '600' }}>
-        What type of account is this?
-      </Text>
-
-      <TouchableOpacity
-        onPress={() => setVenueType('venue')}
-        disabled={busy}
-        style={{
-          backgroundColor: '#171B22',
-          borderRadius: 10,
-          borderWidth: 2,
-          borderColor: venueType === 'venue' ? '#0D9488' : '#263142',
-          padding: 14,
-          marginBottom: 10,
-        }}
-      >
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
-          {venueType === 'venue' ? '●' : '○'} Permanent venue
-        </Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
-          Bar, restaurant, café, hotel
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => setVenueType('festival')}
-        disabled={busy}
-        style={{
-          backgroundColor: '#171B22',
-          borderRadius: 10,
-          borderWidth: 2,
-          borderColor: venueType === 'festival' ? '#0D9488' : '#263142',
-          padding: 14,
-          marginBottom: 16,
-        }}
-      >
-        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
-          {venueType === 'festival' ? '●' : '○'} Festival or event
-        </Text>
-        <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
-          Single day, multi-day, or seasonal event
-        </Text>
-      </TouchableOpacity>
-
       <TouchableOpacity
         onPress={handleCreate}
         disabled={busy}
         style={{
-          marginTop: 0,
-          backgroundColor: busy ? '#2B3442' : '#3B82F6',
-          paddingVertical: 12,
+          backgroundColor: busy ? c.border : c.deepBlue,
+          paddingVertical: 14,
           borderRadius: 10,
           alignItems: 'center',
         }}
       >
-        {busy ? <ActivityIndicator /> : <Text style={{ color: 'white', fontWeight: '700' }}>Create Venue</Text>}
+        {busy
+          ? <ActivityIndicator color={c.surface} />
+          : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>Create project</Text>}
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -230,12 +256,29 @@ export default function CreateVenueScreen() {
           paddingVertical: 10,
           borderRadius: 10,
           alignItems: 'center',
-          borderColor: '#2B3442',
+          borderColor: c.border,
           borderWidth: 1,
         }}
       >
-        <Text style={{ color: '#B6C0CC' }}>Back to Login</Text>
+        <Text style={{ color: c.slateMid, fontFamily: theme.fontBody }}>Back to Login</Text>
       </TouchableOpacity>
     </View>
   );
 }
+
+const styles = {
+  typeRow: {
+    flexDirection: 'row' as const,
+    gap: 12,
+  },
+  typeCard: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 2,
+    padding: 16,
+    alignItems: 'center' as const,
+  },
+  typeLabel: {
+    fontSize: 15,
+  },
+};

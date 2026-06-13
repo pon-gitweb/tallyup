@@ -103,7 +103,24 @@ export default function MoreScreen() {
         <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>
           <SectionHeader title="Team" />
           <Row icon="👥" label="Team Members" onPress={() => nav.navigate('TeamMembers')} />
-          <Row icon="🏢" label="My venues"    onPress={() => nav.navigate('VenueList')} />
+          <TouchableOpacity
+            onPress={() => nav.navigate('VenueList')}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingVertical: 14, paddingHorizontal: 16,
+              borderBottomWidth: 1, borderBottomColor: c.border,
+            }}
+          >
+            <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>🏢</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, color: c.navy, fontWeight: '500' }}>My Projects</Text>
+              <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2 }}>
+                Switch between venues and festivals
+              </Text>
+            </View>
+            <Text style={{ fontSize: 20, color: c.deepBlue, fontWeight: '300' }}>›</Text>
+          </TouchableOpacity>
           <Row icon="⚙️" label="Settings"     onPress={() => nav.navigate('Settings')} />
         </View>
 
