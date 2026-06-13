@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, RefreshControl, ActivityIndicator, Alert,
+  TextInput, RefreshControl, ActivityIndicator,
   Modal, Pressable,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -26,7 +26,9 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import OfflineBanner from '../../components/OfflineBanner';
 import { useNetworkState } from '../../hooks/useNetworkState';
-import { useColours } from '../../context/ThemeContext';
+import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 import { resetDepartment } from '../../services/reset';
@@ -139,6 +141,9 @@ function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const colours = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const styles = makeStyles(colours);
 
   const { isOnline } = useNetworkState();
@@ -192,7 +197,7 @@ function DepartmentSelectionScreen() {
 
   async function onSave() {
     const name = editName.trim();
-    if (!name) { Alert.alert('Name required', 'Enter a department name.'); return; }
+    if (!name) { showInfo('Enter a department name.'); return; }
     setSaving(true);
     try {
       if (editId) {
@@ -202,31 +207,29 @@ function DepartmentSelectionScreen() {
         await addDoc(collection(db, 'venues', venueId, 'departments'), { name, createdAt: now, updatedAt: now });
       }
       setShowEdit(false);
+      showSuccess(editId ? '✓ Department renamed.' : '✓ Department added.');
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message ?? 'Unknown error');
+      showError(e?.message ?? 'Unknown error');
     } finally {
       setSaving(false);
     }
   }
 
-  async function onDelete(d: DeptRow) {
-    await new Promise<void>(resolve =>
-      Alert.alert(
-        `Delete ${d.name}?`,
-        'This will remove all areas inside it.',
-        [
-          { text: 'Cancel', style: 'cancel', onPress: resolve },
-          { text: 'Delete', style: 'destructive', onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'venues', venueId, 'departments', d.id));
-            } catch (e: any) {
-              Alert.alert('Delete failed', e?.message ?? 'Unknown error');
-            }
-            resolve();
-          }},
-        ]
-      )
-    );
+  function onDelete(d: DeptRow) {
+    confirm({
+      title: `Delete ${d.name}?`,
+      message: 'This will remove all areas inside it.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'venues', venueId, 'departments', d.id));
+          showSuccess('✓ Department deleted.');
+        } catch (e: any) {
+          showError(e?.message ?? 'Unknown error');
+        }
+      },
+    });
   }
 
   // Ensure we only try to seed once per mount to avoid loops
@@ -333,10 +336,7 @@ function DepartmentSelectionScreen() {
         }
         setDepartments([]);
         setLoading(false);
-        Alert.alert(
-          'Could not load departments',
-          e?.message || 'Permission or connectivity issue',
-        );
+        showError(e?.message || 'Could not load departments — permission or connectivity issue.');
       },
     );
 
@@ -373,35 +373,28 @@ function DepartmentSelectionScreen() {
   const resetDept = useCallback(
     (dept: DeptRow) => {
       if (!venueId) return;
-      Alert.alert(
-        'Reset department?',
-        `This will clear progress for all areas in “${dept.name || dept.id}”. Counts stay attached to the last completed stock take.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Reset',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await resetDepartment(venueId, dept.id);
-                // Force immediate UI refresh — onSnapshot won't fire when only area subdocs change
-                const snap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-                const rows: DeptRow[] = [];
-                snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
-                const enriched = await enrichDepartmentsWithAreaStatus(venueId, rows);
-                setDepartments(enriched);
-              } catch (e: any) {
-                Alert.alert(
-                  'Reset failed',
-                  e?.message || 'Unknown error',
-                );
-              }
-            },
-          },
-        ],
-      );
+      confirm({
+        title: 'Reset department?',
+        message: `This will clear progress for all areas in "${dept.name || dept.id}". Counts stay attached to the last completed stock take.`,
+        confirmLabel: 'Reset',
+        destructive: true,
+        onConfirm: async () => {
+          try {
+            await resetDepartment(venueId, dept.id);
+            // Force immediate UI refresh — onSnapshot won't fire when only area subdocs change
+            const snap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+            const rows: DeptRow[] = [];
+            snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
+            const enriched = await enrichDepartmentsWithAreaStatus(venueId, rows);
+            setDepartments(enriched);
+            showSuccess('✓ Department reset.');
+          } catch (e: any) {
+            showError(e?.message || 'Unknown error');
+          }
+        },
+      });
     },
-    [venueId],
+    [venueId, confirm, showSuccess, showError],
   );
 
   const renderDept = ({ item }: { item: DeptRow }) => {
@@ -413,8 +406,8 @@ function DepartmentSelectionScreen() {
       ?? null;
 
     const leftBorderColor =
-      status === 'done' ? '#065f46' :
-      status === 'inprog' ? '#b45309' : '#cbd5e1';
+      status === 'done' ? colours.success :
+      status === 'inprog' ? colours.stellarAmber : colours.border;
 
     const statusSubtext =
       status === 'done'
@@ -426,8 +419,8 @@ function DepartmentSelectionScreen() {
         : 'Not started';
 
     const statusTextColor =
-      status === 'done' ? '#065f46' :
-      status === 'inprog' ? '#b45309' : colours.textSecondary;
+      status === 'done' ? colours.success :
+      status === 'inprog' ? colours.stellarAmber : colours.textSecondary;
 
     return (
       <View style={[styles.row, { borderLeftWidth: 4, borderLeftColor: leftBorderColor, flexDirection: 'column', alignItems: 'stretch', paddingRight: 8 }]}>
@@ -463,7 +456,7 @@ function DepartmentSelectionScreen() {
                 style={{ padding: 8 }}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
               >
-                <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+                <MaterialIcons name="delete-outline" size={18} color={colours.error} />
               </TouchableOpacity>
             </View>
           )}
@@ -474,11 +467,11 @@ function DepartmentSelectionScreen() {
             onPress={() => resetDept(item)}
             style={{
               marginTop: 10, alignSelf: 'flex-start',
-              backgroundColor: '#f0fdf4', paddingHorizontal: 12, paddingVertical: 6,
-              borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0',
+              backgroundColor: colours.positiveSoft, paddingHorizontal: 12, paddingVertical: 6,
+              borderRadius: 8, borderWidth: 1, borderColor: colours.success + '40',
             }}
           >
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colours.success }}>
               Start next {item.name || 'department'} stocktake →
             </Text>
           </TouchableOpacity>
@@ -490,6 +483,7 @@ function DepartmentSelectionScreen() {
   if (venueMissing) {
     return (
       <View style={styles.wrap}>
+        {modal}
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.title}>Departments</Text>
@@ -505,6 +499,7 @@ function DepartmentSelectionScreen() {
 
   return (
     <View style={styles.wrap}>
+      {modal}
       <OfflineBanner />
       {/* Header */}
       <View style={styles.headerRow}>
@@ -531,7 +526,7 @@ function DepartmentSelectionScreen() {
           value={q}
           onChangeText={setQ}
           placeholder="Search departments"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={colours.slateMid}
           style={styles.searchInput}
           autoCorrect={false}
           autoCapitalize="none"
@@ -544,7 +539,7 @@ function DepartmentSelectionScreen() {
       {loading ? (
         loadingTimeout && !isOnline ? (
           <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-            <Text style={{ color: '#b45309', textAlign: 'center', fontWeight: '700' }}>
+            <Text style={{ color: colours.stellarAmber, textAlign: 'center', fontWeight: '700' }}>
               📵 No connection — showing cached data
             </Text>
           </View>
@@ -566,22 +561,22 @@ function DepartmentSelectionScreen() {
           }
           ListHeaderComponent={
             !stocktakeIntroSeen && departments.length > 0 && departments.every(d => d.status !== 'done') ? (
-              <View style={{ backgroundColor: '#f5f3ee', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1.5, borderColor: '#14B8A6' }}>
-                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>👋 Welcome to stocktaking</Text>
-                <Text style={{ fontSize: 14, color: '#374151', lineHeight: 20, marginBottom: 8 }}>
+              <View style={{ backgroundColor: colours.oat, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1.5, borderColor: colours.deepBlue }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: colours.navy, marginBottom: 8 }}>👋 Welcome to stocktaking</Text>
+                <Text style={{ fontSize: 14, color: colours.text, lineHeight: 20, marginBottom: 8 }}>
                   A stocktake is a count of everything you have in your venue right now.
                 </Text>
-                <Text style={{ fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, color: colours.slateMid, lineHeight: 19, marginBottom: 12 }}>
                   {'Count your stock regularly to:\n✓ Know exactly what you have\n✓ Spot missing or wasted stock\n✓ Make smarter ordering decisions\n\nYour departments are ready. Tap one to start.'}
                 </Text>
                 <TouchableOpacity
-                  style={{ backgroundColor: '#14B8A6', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
+                  style={{ backgroundColor: colours.deepBlue, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20, alignSelf: 'flex-start' }}
                   onPress={() => {
                     setStocktakeIntroSeen(true);
                     AsyncStorage.setItem('tallyup_intro_stocktake_v1', '1').catch(() => {});
                   }}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Got it — let's go</Text>
+                  <Text style={{ color: colours.surface, fontWeight: '700', fontSize: 14 }}>Got it — let's go</Text>
                 </TouchableOpacity>
               </View>
             ) : null
@@ -602,26 +597,26 @@ function DepartmentSelectionScreen() {
       {/* Add / Rename modal */}
       <Modal visible={showEdit} transparent animationType="fade" onRequestClose={() => setShowEdit(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setShowEdit(false)}>
-          <Pressable style={{ backgroundColor: '#fff', borderRadius: 14, padding: 20, width: '100%', gap: 12 }} onPress={() => {}}>
-            <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+          <Pressable style={{ backgroundColor: colours.surface, borderRadius: 14, padding: 20, width: '100%', gap: 12 }} onPress={() => {}}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: colours.navy }}>
               {editId ? 'Rename department' : 'New department'}
             </Text>
             <TextInput
               value={editName}
               onChangeText={setEditName}
               placeholder="Department name"
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={colours.slateMid}
               autoFocus
-              style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: '#0f172a' }}
+              style={{ borderWidth: 1, borderColor: colours.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colours.navy }}
               returnKeyType="done"
               onSubmitEditing={onSave}
             />
             <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity style={{ flex: 1, backgroundColor: '#f1f5f9', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }} onPress={() => setShowEdit(false)}>
-                <Text style={{ fontWeight: '700', color: '#374151' }}>Cancel</Text>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.oat, borderRadius: 10, paddingVertical: 12, alignItems: 'center' }} onPress={() => setShowEdit(false)}>
+                <Text style={{ fontWeight: '700', color: colours.text }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 1, backgroundColor: '#1b4f72', borderRadius: 10, paddingVertical: 12, alignItems: 'center', opacity: saving ? 0.6 : 1 }} onPress={onSave} disabled={saving}>
-                <Text style={{ fontWeight: '700', color: '#fff' }}>{saving ? 'Saving…' : 'Save'}</Text>
+              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.deepBlue, borderRadius: 10, paddingVertical: 12, alignItems: 'center', opacity: saving ? 0.6 : 1 }} onPress={onSave} disabled={saving}>
+                <Text style={{ fontWeight: '700', color: colours.surface }}>{saving ? 'Saving…' : 'Save'}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -679,9 +674,9 @@ function makeStyles(c: ReturnType<typeof useColours>) {
       paddingHorizontal: 8,
       borderRadius: 999,
     },
-    pillDone: { backgroundColor: '#def7ec', color: '#03543f' },
+    pillDone: { backgroundColor: c.positiveSoft, color: c.success },
     pillInProg: { backgroundColor: c.primaryLight, color: c.primary },
-    pillIdle: { backgroundColor: '#fdf2f8', color: '#9b1c1c' },
+    pillIdle: { backgroundColor: c.negativeSoft, color: c.error },
   });
 }
 

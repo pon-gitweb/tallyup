@@ -6,7 +6,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { useColours } from '../context/ThemeContext';
+import { useColours, useTheme } from '../context/ThemeContext';
+import { useToast } from '../components/common/Toast';
+import { useConfirmModal } from '../components/common/useConfirmModal';
 import IdentityBadge from '../components/IdentityBadge';
 import { openIzzy } from '../components/IzzyAssistant';
 
@@ -26,7 +28,7 @@ function Row({ label, onPress, icon }: RowProps) {
     >
       {icon ? <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>{icon}</Text> : null}
       <Text style={{ flex: 1, fontSize: 15, color: c.navy, fontWeight: '500' }}>{label}</Text>
-      <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>
+      <Text style={{ fontSize: 20, color: c.deepBlue, fontWeight: '300' }}>›</Text>
     </TouchableOpacity>
   );
 }
@@ -47,9 +49,13 @@ function SectionHeader({ title }: { title: string }) {
 export default function MoreScreen() {
   const nav = useNavigation<any>();
   const c = useColours();
+  const { theme } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
+      {modal}
       {/* Header */}
       <View style={{
         flexDirection: 'row', alignItems: 'center',
@@ -59,7 +65,7 @@ export default function MoreScreen() {
         <Text style={{ fontSize: 24, fontWeight: '800', color: c.navy }}>More</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           <TouchableOpacity onPress={openIzzy} style={{ padding: 4 }}>
-            <Text style={{ color: '#1b4f72', fontSize: 18, fontWeight: '600' }}>✦</Text>
+            <Text style={{ color: c.deepBlue, fontSize: 18, fontWeight: '600' }}>✦</Text>
           </TouchableOpacity>
           <IdentityBadge />
         </View>
@@ -90,7 +96,7 @@ export default function MoreScreen() {
                 Build recipes, calculate COGS, set selling prices
               </Text>
             </View>
-            <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>
+            <Text style={{ fontSize: 20, color: c.deepBlue, fontWeight: '300' }}>›</Text>
           </TouchableOpacity>
         </View>
 

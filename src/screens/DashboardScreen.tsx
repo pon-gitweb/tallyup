@@ -4,6 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SetupGuideBanner from '../components/guide/SetupGuideBanner';
 import OfflineBanner from '../components/OfflineBanner';
 import { useTheme, useColours } from '../context/ThemeContext';
+import { useToast } from '../components/common/Toast';
+import { useConfirmModal } from '../components/common/useConfirmModal';
 import {
   View,
   Text,
@@ -74,6 +76,8 @@ export default function DashboardScreen() {
   const nav = useNavigation<any>();
   const colours = useColours();
   const { theme, fontsLoaded } = useTheme();
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const auth = getAuth();
   const currentUid = auth.currentUser?.uid ?? null;
@@ -308,9 +312,9 @@ export default function DashboardScreen() {
     venueName: { color: colours.textSecondary, marginTop: 2, fontSize: 14, fontWeight: '500' },
     primaryCard: { backgroundColor: colours.navy, borderRadius: 16, padding: 16, marginBottom: 16 },
     primaryIcon: { fontSize: 28, marginBottom: 8 },
-    primaryTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
+    primaryTitle: { fontSize: 18, fontWeight: '800', color: colours.surface, marginBottom: 4 },
     primarySub: { fontSize: 13, color: 'rgba(255,255,255,0.75)', marginBottom: 14, lineHeight: 18 },
-    primaryBtn: { backgroundColor: '#fff', borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
+    primaryBtn: { backgroundColor: colours.surface, borderRadius: 999, paddingVertical: 12, alignItems: 'center' },
     primaryBtnText: { color: colours.navy, fontWeight: '800', fontSize: 14 },
     primarySecBtn: { borderRadius: 999, paddingVertical: 10, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
     primarySecBtnText: { color: 'rgba(255,255,255,0.85)', fontWeight: '600', fontSize: 13 },
@@ -337,6 +341,7 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      {modal}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
 
         {/* ── Header ────────────────────────────────────────────────────── */}
@@ -418,7 +423,7 @@ export default function DashboardScreen() {
               <Text style={{
                 fontSize: 52,
                 color: colours.oat,
-                fontFamily: fontsLoaded ? 'PlayfairDisplay_400Regular' : undefined,
+                fontFamily: theme.fontTitle,
                 fontWeight: fontsLoaded ? '400' : '600',
                 letterSpacing: -0.78,
                 marginTop: 14,
@@ -486,7 +491,7 @@ export default function DashboardScreen() {
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
         {onboardingRoad === null && !onboardingDismissed && (
           <View style={{
-            backgroundColor: '#FFF8F0', borderRadius: 14, padding: 14, marginBottom: 12,
+            backgroundColor: colours.oat, borderRadius: 14, padding: 14, marginBottom: 12,
             borderWidth: 1.5, borderColor: colours.amber,
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -546,7 +551,7 @@ export default function DashboardScreen() {
             <Text style={styles.gridLabel}>CraftIt — Recipes</Text>
             <Text style={styles.gridSub}>Calculate COGS, set selling prices</Text>
           </View>
-          <Text style={{ fontSize: 20, color: '#1b4f72', fontWeight: '300' }}>›</Text>
+          <Text style={{ fontSize: 20, color: colours.deepBlue, fontWeight: '300' }}>›</Text>
         </TouchableOpacity>
 
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
