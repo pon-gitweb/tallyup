@@ -2509,6 +2509,39 @@ app.post("/suitee", async (req, res) => {
       console.log("[api/suitee] price change query error", e?.message);
     }
 
+    // Pending price change flags (manager review queue)
+    const pendingFlagLines: string[] = [];
+    try {
+      const priceChangeFlagsSnap = await db
+        .collection(`venues/${venueId}/priceChangeFlags`)
+        .where("status", "==", "pending")
+        .orderBy("flaggedAt", "desc")
+        .limit(20)
+        .get()
+        .catch(() => ({ docs: [] } as any));
+
+      const priceChangeFlags = priceChangeFlagsSnap.docs.map((d: any) => ({
+        product: d.data().productName,
+        oldPrice: d.data().oldPrice,
+        newPrice: d.data().newPrice,
+        changePercent: d.data().changePercent,
+        direction: d.data().direction,
+        supplier: d.data().supplierName,
+        flaggedAt: d.data().flaggedAt?.toDate?.()?.toISOString() || "",
+      }));
+
+      pendingFlagLines.push("PRICE CHANGES (pending manager review):");
+      if (priceChangeFlags.length === 0) {
+        pendingFlagLines.push("No recent price changes flagged.");
+      } else {
+        priceChangeFlags.forEach((f: any) => {
+          pendingFlagLines.push(`${f.product}: ${f.oldPrice} → ${f.newPrice} (${f.direction} ${Math.abs(f.changePercent)}%) from ${f.supplier}`);
+        });
+      }
+    } catch (e: any) {
+      console.log("[api/suitee] price change flags query error", e?.message);
+    }
+
     // Invoice spend from loaded snapshot
     const invoiceSpendLines: string[] = [];
     if (invoicesSnap) {
@@ -2595,6 +2628,10 @@ app.post("/suitee", async (req, res) => {
 
     if (priceChangeLines.length > 0) {
       lines.push("", ...priceChangeLines);
+    }
+
+    if (pendingFlagLines.length > 0) {
+      lines.push("", ...pendingFlagLines);
     }
 
     if (invoiceSpendLines.length > 0) {
@@ -3715,6 +3752,38 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
   return out;
 }
 
+// ── Price change flags for manager review ─────────────────────────────────────
+// Writes a significant price change (>= 5%) to venues/{venueId}/priceChangeFlags
+// for manager review (acknowledge/dismiss via PriceChangeFlagsScreen).
+async function flagPriceChangeToManager(
+  db: FirebaseFirestore.Firestore,
+  venueId: string,
+  productId: string,
+  productName: string,
+  oldPrice: number,
+  newPrice: number,
+  changePercent: number,
+  supplierName: string,
+  invoiceId: string
+): Promise<void> {
+  await db.collection(`venues/${venueId}/priceChangeFlags`).add({
+    productId,
+    productName,
+    oldPrice,
+    newPrice,
+    changePercent: Math.round(changePercent * 10) / 10,
+    direction: newPrice > oldPrice ? "increase" : "decrease",
+    supplierName,
+    invoiceId,
+    flaggedAt: admin.firestore.FieldValue.serverTimestamp(),
+    status: "pending",
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    impactOnGP: null,
+    note: null,
+  });
+}
+
 // ── POST /process-invoices-csv ────────────────────────────────────────────────
 // Body: { venueId, orderId, storagePath }
 // Returns: { ok, invoice, lines, confidence, warnings }
@@ -3764,6 +3833,13 @@ app.post("/process-invoices-csv", async (req, res) => {
       supplierId: req.body?.supplierId || "",
       supplierName: req.body?.supplierName || "",
       invoiceId: `csv_${storagePath}`,
+    }).then(result => {
+      const db = admin.firestore();
+      const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
+      return Promise.all(significant.map(c => flagPriceChangeToManager(
+        db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
+        req.body?.supplierName || "", `csv_${storagePath}`
+      )));
     }).catch((e: any) => console.log("[api/process-invoices-csv] price tracking error", e?.message));
 
   } catch (e: any) {
@@ -3915,12 +3991,20 @@ app.post("/process-invoices-pdf", async (req, res) => {
     }
 
     // Track price changes non-blocking
+    const pdfInvoiceId = poNumber || `pdf_${storagePath}`;
     trackPriceChanges({
       venueId,
       lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
       supplierId: resolvedSupplierIdPdf,
       supplierName: supplierName || req.body?.supplierName || "",
-      invoiceId: poNumber || `pdf_${storagePath}`,
+      invoiceId: pdfInvoiceId,
+    }).then(result => {
+      const db = admin.firestore();
+      const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
+      return Promise.all(significant.map(c => flagPriceChangeToManager(
+        db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
+        supplierName || req.body?.supplierName || "", pdfInvoiceId
+      )));
     }).catch((e: any) => console.log("[api/process-invoices-pdf] price tracking error", e?.message));
 
   } catch (e: any) {

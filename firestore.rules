@@ -1115,6 +1115,14 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['owner']);
       }
 
+      match /priceChangeFlags/{flagId} {
+        allow read: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager', 'owner']);
+        // Flags are created by Cloud Functions only
+        allow create: if false;
+        allow delete: if false;
+      }
+
       match /priceDisputes/{disputeId} {
         allow read: if isVenueMember(venueId);
         allow create: if hasVenueRole(venueId, ['owner', 'manager'])

@@ -230,6 +230,36 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [venueId]);
 
+  // Role gate — manager/owner only, for price change alert card
+  const [isManager, setIsManager] = React.useState(false);
+  React.useEffect(() => {
+    if (!venueId || !currentUid) return;
+    const db = getFirestore();
+    (async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', venueId));
+        const ownerUid = (venueSnap.data() as any)?.ownerUid;
+        if (ownerUid === currentUid) { setIsManager(true); return; }
+        const memberSnap = await getDoc(doc(db, 'venues', venueId, 'members', currentUid));
+        const role = (memberSnap.data() as any)?.role;
+        setIsManager(role === 'manager' || role === 'owner');
+      } catch {}
+    })();
+  }, [venueId, currentUid]);
+
+  // Pending price change flags (from invoice scans) — manager review
+  const [priceFlags, setPriceFlags] = React.useState(0);
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    const unsub = onSnapshot(
+      query(collection(db, 'venues', venueId, 'priceChangeFlags'), where('status', '==', 'pending')),
+      snap => setPriceFlags(snap.size),
+      () => setPriceFlags(0)
+    );
+    return () => unsub();
+  }, [venueId]);
+
   const [priceChangeCount, setPriceChangeCount] = React.useState(0);
   const [openDisputeCount, setOpenDisputeCount] = React.useState(0);
   React.useEffect(() => {
@@ -531,6 +561,34 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
           </View>
+        )}
+
+        {/* ── Price change alert (managers/owners) ─────────────────────── */}
+        {isManager && priceFlags > 0 && (
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#fef3cd',
+              borderColor: colours.stellarAmber || '#c47b2b',
+              borderWidth: 1.5,
+              borderRadius: 12,
+              padding: 14,
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginBottom: 12,
+            }}
+            onPress={() => nav.navigate('PriceChangeFlags')}
+          >
+            <Text style={{ fontSize: 18, marginRight: 10 }}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colours.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold, fontSize: 14 }}>
+                {priceFlags} price change{priceFlags !== 1 ? 's' : ''} to review
+              </Text>
+              <Text style={{ color: colours.slateMid || '#6b7280', fontFamily: theme.fontBody, fontSize: 12 }}>
+                Tap to review and acknowledge
+              </Text>
+            </View>
+            <Text style={{ color: colours.stellarAmber || '#c47b2b', fontSize: 16 }}>→</Text>
+          </TouchableOpacity>
         )}
 
         {/* ── 2×2 quick access grid ─────────────────────────────────────── */}
