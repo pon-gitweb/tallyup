@@ -10,7 +10,12 @@ import {
   TextInput,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
@@ -506,7 +511,14 @@ export default function SuppliersScreen() {
   }
 
   return (
-    <View style={styles.wrap}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={styles.wrap}>
       <Text style={styles.title}>Suppliers</Text>
 
       <Text style={styles.hint}>
@@ -577,6 +589,11 @@ export default function SuppliersScreen() {
         animationType="slide"
         onRequestClose={() => setFormVisible(false)}
       >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+        >
         <View style={styles.formWrap}>
           <Text style={styles.formTitle}>
             {editingId ? 'Edit Supplier' : 'New Supplier'}
@@ -687,6 +704,9 @@ export default function SuppliersScreen() {
               keyboardType="email-address"
               placeholder="email@example.com"
               autoCapitalize="none"
+              textContentType="none"
+              autoComplete="off"
+              autoCorrect={false}
             />
 
             <Text style={styles.lbl}>Phone</Text>
@@ -725,6 +745,9 @@ export default function SuppliersScreen() {
               onChangeText={setPortalUrl}
               autoCapitalize="none"
               placeholder="https://portal.example.com"
+              textContentType="none"
+              autoComplete="off"
+              autoCorrect={false}
             />
 
             <Text style={styles.lbl}>Default Lead Days</Text>
@@ -797,6 +820,7 @@ export default function SuppliersScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* FIX 4: Supplier detail modal with linked products */}
@@ -946,6 +970,9 @@ export default function SuppliersScreen() {
       </Modal>
       {modal}
     </View>
+    </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

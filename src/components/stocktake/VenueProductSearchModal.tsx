@@ -3,11 +3,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
@@ -145,8 +149,13 @@ export default function VenueProductSearchModal({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
       {modal}
-      <View style={S.wrap}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={S.wrap}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
         <TouchableOpacity style={S.backdrop} onPress={handleClose} activeOpacity={1} />
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <View style={S.sheet}>
           {/* Header */}
           <View style={S.header}>
@@ -266,7 +275,8 @@ export default function VenueProductSearchModal({
             </View>
           )}
         </View>
-      </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

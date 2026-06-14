@@ -1,9 +1,11 @@
 // @ts-nocheck
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, TextInput, Modal,
+  Keyboard, KeyboardAvoidingView, Platform, TouchableWithoutFeedback,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation } from '@react-navigation/native';
@@ -575,7 +577,14 @@ export default function BringYourDataScreen() {
   const unassignedCount = invoiceSupplierName ? 0 : totalProductsCount;
 
   return (
-    <SafeAreaView style={S.safe}>
+    <SafeAreaView style={S.safe} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={S.content} keyboardShouldPersistTaps="handled">
 
         {/* ── INTRO ──────────────────────────────────────────────────────── */}
@@ -987,6 +996,8 @@ export default function BringYourDataScreen() {
           </>
         )}
       </ScrollView>
+      </View>
+      </TouchableWithoutFeedback>
 
       <Modal visible={showImportGuide} animationType="slide" transparent onRequestClose={() => {}}>
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
@@ -1039,6 +1050,7 @@ export default function BringYourDataScreen() {
         </View>
       </Modal>
       {modal}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

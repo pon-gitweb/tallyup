@@ -4,14 +4,19 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
@@ -881,7 +886,14 @@ export default function ProductsScreen() {
   );
 
   return (
-    <View style={S.wrap}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#f9fafb' }} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={S.wrap}>
       {/* Import toast */}
       {importToast ? (
         <Animated.View
@@ -1154,6 +1166,9 @@ export default function ProductsScreen() {
       />
       {modal}
     </View>
+      </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

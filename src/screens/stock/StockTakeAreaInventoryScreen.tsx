@@ -15,9 +15,10 @@ import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePh
 import { createStockTakePhotoDoc } from "../../services/stocktake/stockTakePhotos";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Keyboard, Modal, SafeAreaView,
-  Text, TextInput, TouchableOpacity, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
+  Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal,
+  Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import HintBubble from '../../components/hints/HintBubble';
@@ -2513,7 +2514,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
   if (!itemsPathOk) {
     return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: colours.oat || '#f5f3ee' }} edges={['top', 'left', 'right']}>
         <Text style={{ fontSize: 16, textAlign: 'center' }}>Missing navigation params. Need venueId, departmentId and areaId.</Text>
       </SafeAreaView>
     );
@@ -2680,7 +2681,14 @@ const openHistory = throttleAction(async (item: Item) => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colours.oat || '#f5f3ee' }} edges={['top', 'left', 'right']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={{ flex: 1 }}>
       <OfflineBanner />
       <HintBubble id="stocktake_save_indicator" style={{ marginHorizontal: 12, marginTop: 8 }} />
 
@@ -3920,7 +3928,10 @@ const openHistory = throttleAction(async (item: Item) => {
 }}
       />
 
-</SafeAreaView>
+      </View>
+      </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
