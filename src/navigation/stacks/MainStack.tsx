@@ -183,7 +183,7 @@ export default function MainStack() {
       {/* Venue creation — reachable for new users with no venue */}
       <Stack.Screen name="CreateVenue" component={CreateVenueScreen} options={{ title: 'Create your venue', headerShown: false }} />
       {/* Venue list — manage all venues for this account */}
-      <Stack.Screen name="VenueList" component={VenueListScreen} options={{ title: 'My Venues' }} />
+      <Stack.Screen name="VenueList" component={VenueListScreen} options={{ title: 'My Projects' }} />
       {/* Root — bottom tab navigator */}
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       {/* Legacy direct route kept for nav.navigate('Dashboard') calls */}

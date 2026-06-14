@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
-import { useVenueId, useVenueType } from '../context/VenueProvider';
+import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 
@@ -84,6 +84,8 @@ export default function DashboardScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const venueType = useVenueType();
+  const { venueIds } = useVenue();
+  const hasMultipleProjects = (venueIds?.length || 0) > 1;
 
   // Live display name — read from users/{uid} so updates in Settings reflect immediately
   const [liveDisplayName, setLiveDisplayName] = React.useState<string>(
@@ -366,6 +368,21 @@ export default function DashboardScreen() {
             {timeGreeting}{firstName ? `, ${firstName}` : ''}
           </Text>
           {venueName ? <Text style={{ fontSize: 14, color: colours.textSecondary, marginTop: 3 }}>{venueName}</Text> : null}
+          {hasMultipleProjects && (
+            <TouchableOpacity
+              onPress={() => nav.navigate('VenueList')}
+              style={{ marginTop: 4 }}
+            >
+              <Text style={{
+                color: colours.deepBlue || '#1b4f72',
+                fontSize: 12,
+                fontFamily: theme.fontBody,
+                opacity: 0.8
+              }}>
+                My Projects →
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <OfflineBanner />

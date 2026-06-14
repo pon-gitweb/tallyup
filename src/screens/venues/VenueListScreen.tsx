@@ -32,7 +32,7 @@ async function loadUserVenues(venueIds: string[], uid: string): Promise<VenueRow
         if (!venueSnap.exists()) return null;
         return {
           id,
-          name: (venueSnap.data() as any).name || 'Unnamed venue',
+          name: (venueSnap.data() as any).name || 'Unnamed project',
           type: (venueSnap.data() as any).venueType || 'venue',
           role: memberSnap.exists() ? (memberSnap.data() as any).role ?? null : null,
         };
@@ -76,7 +76,7 @@ export default function VenueListScreen() {
     if (venue.id === activeVenueId) return;
     confirm({
       title: `Switch to "${venue.name}"?`,
-      message: 'This will change your active venue.',
+      message: 'This will change your active project.',
       confirmLabel: 'Switch',
       onConfirm: () => doSwitch(venue.id),
     });
@@ -85,8 +85,8 @@ export default function VenueListScreen() {
   function handleLeave(venue: VenueRow) {
     confirm({
       title: `Leave "${venue.name}"?`,
-      message: 'You will lose access to this venue. You can be re-invited by an owner.',
-      confirmLabel: 'Leave venue',
+      message: 'You will lose access to this project. You can be re-invited by an owner.',
+      confirmLabel: 'Leave project',
       destructive: true,
       onConfirm: async () => {
         if (!user) return;
@@ -101,7 +101,7 @@ export default function VenueListScreen() {
             else await updateDoc(doc(db, 'users', user.uid), { activeVenueId: null });
           }
         } catch (e: any) {
-          showError(e?.message || 'Could not leave venue. Please try again.');
+          showError(e?.message || 'Could not leave project. Please try again.');
         } finally {
           setActing(null);
         }
@@ -112,8 +112,8 @@ export default function VenueListScreen() {
   function handleDelete(venue: VenueRow) {
     confirm({
       title: `Delete "${venue.name}"?`,
-      message: 'This permanently deletes the venue and all its data. This cannot be undone.',
-      confirmLabel: 'Delete venue',
+      message: 'This permanently deletes the project and all its data. This cannot be undone.',
+      confirmLabel: 'Delete project',
       destructive: true,
       onConfirm: async () => {
         if (!user) return;
@@ -141,7 +141,7 @@ export default function VenueListScreen() {
             else await updateDoc(doc(db, 'users', user.uid), { activeVenueId: null });
           }
         } catch (e: any) {
-          showError(e?.message || 'Could not delete venue. Please try again or contact support at office@hosti.co.nz.');
+          showError(e?.message || 'Could not delete project. Please try again or contact support at office@hosti.co.nz.');
         } finally {
           setActing(null);
         }
@@ -173,7 +173,7 @@ export default function VenueListScreen() {
           My Projects
         </Text>
         <Text style={{ fontSize: 14, color: c.slateMid, marginBottom: 20 }}>
-          {venues.length} workspace{venues.length !== 1 ? 's' : ''}
+          {venues.length} project{venues.length !== 1 ? 's' : ''}
         </Text>
 
         {venues.length === 0 && (
@@ -229,7 +229,7 @@ export default function VenueListScreen() {
                   {switching === venue.id
                     ? <ActivityIndicator color={c.surface} size="small" />
                     : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 13 }}>
-                        Switch to this venue
+                        Switch to this project
                       </Text>
                   }
                 </TouchableOpacity>
@@ -247,7 +247,7 @@ export default function VenueListScreen() {
                 >
                   {acting === venue.id
                     ? <ActivityIndicator color={c.error} size="small" />
-                    : <Text style={{ color: c.error, fontWeight: '700', fontSize: 13 }}>Delete venue</Text>
+                    : <Text style={{ color: c.error, fontWeight: '700', fontSize: 13 }}>Delete project</Text>
                   }
                 </TouchableOpacity>
               ) : venue.role !== null ? (
@@ -261,7 +261,7 @@ export default function VenueListScreen() {
                 >
                   {acting === venue.id
                     ? <ActivityIndicator color={c.slateMid} size="small" />
-                    : <Text style={{ color: c.slateMid, fontWeight: '700', fontSize: 13 }}>Leave venue</Text>
+                    : <Text style={{ color: c.slateMid, fontWeight: '700', fontSize: 13 }}>Leave project</Text>
                   }
                 </TouchableOpacity>
               ) : null}

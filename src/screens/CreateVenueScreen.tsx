@@ -11,7 +11,7 @@ export default function CreateVenueScreen() {
   const c = useColours();
   const { theme } = useTheme();
   const [name, setName] = useState('');
-  const [projectType, setProjectType] = useState<'venue' | 'festival'>('venue');
+  const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
   const [busy, setBusy] = useState(false);
   const navigation = useNavigation<any>();
 
@@ -24,6 +24,10 @@ export default function CreateVenueScreen() {
     }
     if (!name.trim()) {
       Alert.alert('Name required', 'Please enter a name.');
+      return;
+    }
+    if (!projectType) {
+      Alert.alert('Choose a type', 'Please choose whether this is a venue or a festival.');
       return;
     }
 
@@ -208,11 +212,15 @@ export default function CreateVenueScreen() {
       </View>
 
       <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
-        {projectType === 'festival' ? 'Festival name' : 'Venue name'}
+        {projectType === 'festival' ? 'Festival name' : projectType === 'venue' ? 'Venue name' : 'Project name'}
       </Text>
 
       <TextInput
-        placeholder={projectType === 'festival' ? 'e.g. Shipwrecked 2027' : 'e.g. Riverside Hotel'}
+        placeholder={
+          projectType === 'festival' ? 'e.g. Shipwrecked 2027'
+          : projectType === 'venue' ? 'e.g. Harbourside Bar'
+          : 'e.g. Harbourside Bar or Shipwrecked 2027'
+        }
         placeholderTextColor={c.slateMid}
         value={name}
         onChangeText={setName}

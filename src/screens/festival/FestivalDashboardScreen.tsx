@@ -13,7 +13,7 @@ import {
   setupForegroundHandler,
 } from '../../services/notifications';
 import { db, auth } from '../../services/firebase';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenue } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { VenueSwitcher } from '../../components/common/VenueSwitcher';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -32,6 +32,8 @@ const SECTIONS = [
 export default function FestivalDashboardScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const { venueIds } = useVenue();
+  const hasMultipleProjects = (venueIds?.length || 0) > 1;
   const c = useColours();
   const { theme } = useTheme();
   const { showSuccess, showError, showInfo } = useToast();
@@ -151,6 +153,21 @@ export default function FestivalDashboardScreen() {
         <Text style={[S.title, { textAlign: 'left', marginBottom: 4 }]}>
           {event.eventName || 'Your event'}
         </Text>
+        {hasMultipleProjects && (
+          <TouchableOpacity
+            onPress={() => nav.navigate('VenueList')}
+            style={{ marginTop: 4, marginBottom: 4 }}
+          >
+            <Text style={{
+              color: c.deepBlue || '#1b4f72',
+              fontSize: 12,
+              fontFamily: theme.fontBody,
+              opacity: 0.8
+            }}>
+              My Projects →
+            </Text>
+          </TouchableOpacity>
+        )}
         {(event.startDate || event.endDate) && (
           <Text style={S.dates}>
             {event.startDate}
