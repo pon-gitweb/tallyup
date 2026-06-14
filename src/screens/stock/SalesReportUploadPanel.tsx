@@ -71,7 +71,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
 
       // Sales report deduplication check
       const salesLines = parsed?.lines || [];
-      const salesPeriod = (parsed?.report || parsed)?.period;
+      const salesPeriod = parsed?.period;
       const salesHash = salesFingerprint(salesLines, salesPeriod);
       const { exists: salesExists, processedAt: salesProcessedAt } = await checkProcessed(venueId, 'processedSalesReports', salesHash);
       if (salesExists) {
@@ -85,7 +85,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
 
       const saved = await storeSalesReport({
         venueId,
-        report: parsed?.report || parsed,
+        report: parsed,
         source: 'csv',
       });
 

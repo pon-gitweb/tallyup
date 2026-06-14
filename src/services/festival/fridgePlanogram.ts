@@ -70,10 +70,10 @@ export function generatePlanogram(
 
   // Define shelves
   const shelves: PlanogramShelf[] = [
-    { id: 'top',    label: 'Top shelf',    positions: [], tempRangeC: { min: 2, max: 5 } },
-    { id: 'middle', label: 'Middle shelf', positions: [], tempRangeC: { min: 2, max: 4 } },
-    { id: 'bottom', label: 'Bottom shelf', positions: [], tempRangeC: { min: 1, max: 3 } },
-    { id: 'door',   label: 'Door shelf',   positions: [], tempRangeC: { min: 4, max: 8 } },
+    { id: 'top' as PlanogramShelf['id'],    label: 'Top shelf',    positions: [], tempRangeC: { min: 2, max: 5 } },
+    { id: 'middle' as PlanogramShelf['id'], label: 'Middle shelf', positions: [], tempRangeC: { min: 2, max: 4 } },
+    { id: 'bottom' as PlanogramShelf['id'], label: 'Bottom shelf', positions: [], tempRangeC: { min: 1, max: 3 } },
+    { id: 'door' as PlanogramShelf['id'],   label: 'Door shelf',   positions: [], tempRangeC: { min: 4, max: 8 } },
   ].slice(0, shelvesAvailable + 1); // always include door shelf
 
   // Sort products by placement priority
@@ -128,8 +128,7 @@ export function generatePlanogram(
     if (product.supplierRequirement) {
       const required = product.supplierRequirement;
       const met = (shelfId === 'middle') ||
-        (required.toLowerCase().includes('eye') && shelfId === 'middle') ||
-        (required.toLowerCase().includes('front') && (shelfId === 'middle' || shelfId === 'top'));
+        (required.toLowerCase().includes('front') && shelfId === 'top');
       requirementChecks.push({ productId: product.id, productName: product.productName, required, met });
     }
   }

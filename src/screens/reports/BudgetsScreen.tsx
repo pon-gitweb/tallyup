@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable, DimensionValue } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
@@ -193,7 +193,7 @@ export default function BudgetsScreen() {
               <Text style={styles.btitle}>{name}</Text>
               <Text style={styles.sub}>{start} → {end}</Text>
               <View style={styles.barWrap}>
-                <View style={[styles.barFill, { width: pct + '%', backgroundColor: pct >= 100 ? colours.error : pct >= 80 ? '#D97706' : colours.success }]} />
+                <View style={[styles.barFill, { width: (pct + '%') as DimensionValue, backgroundColor: pct >= 100 ? colours.error : pct >= 80 ? '#D97706' : colours.success }]} />
               </View>
               <Text style={styles.sub}>
                 Spent {prog ? prog.spent.toFixed(2) : '—'} / {Number(b.amount || 0).toFixed(2)} ({pct}%)
