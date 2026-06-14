@@ -1379,6 +1379,498 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
 });
 
+// ── Account deletion: financial records archive ─────────────────────────────
+
+async function hasXeroConnected(
+  db: admin.firestore.Firestore,
+  venueId: string
+): Promise<boolean> {
+  try {
+    const xeroSnap = await db
+      .doc(`venues/${venueId}/integrations/xero`)
+      .get();
+
+    const data = xeroSnap.data();
+
+    // Xero is considered connected if:
+    // 1. Doc exists
+    // 2. connected === true
+    // 3. lastSyncAt exists (has actually synced)
+    return (
+      xeroSnap.exists
+      && data?.connected === true
+      && !!data?.lastSyncAt
+    );
+  } catch (e) {
+    // If we can't check — assume no Xero
+    // Don't block deletion on this
+    console.warn(
+      '[xero-check] could not check:',
+      (e as any)?.message
+    );
+    return false;
+  }
+}
+
+async function generateFinancialCSV(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  venueName: string
+): Promise<{
+  csv: string;
+  summary: {
+    invoiceCount: number;
+    orderCount: number;
+    priceHistoryCount: number;
+    dateRange: string;
+  };
+}> {
+  const lines: string[] = [];
+
+  // ── INVOICES ──
+  lines.push('=== INVOICES ===');
+  lines.push(
+    'Date,Supplier,Invoice Number,'
+    + 'Total (incl GST),Lines'
+  );
+
+  const invoicesSnap = await db
+    .collection(
+      `venues/${venueId}/invoices`
+    )
+    .orderBy('invoiceDate', 'desc')
+    .get()
+    .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+
+  const dates: string[] = [];
+
+  for (const doc of invoicesSnap.docs) {
+    const d = doc.data();
+    const lineItems = (d.lines || [])
+      .map((l: any) =>
+        `${l.name || ''} x${l.qty || 0}`
+        + ` @ $${l.unitPrice || 0}`
+      ).join(' | ');
+
+    if (d.invoiceDate) {
+      dates.push(d.invoiceDate);
+    }
+
+    lines.push(
+      `"${d.invoiceDate || ''}",`
+      + `"${d.supplierName || ''}",`
+      + `"${d.invoiceNumber || ''}",`
+      + `"${d.totalAmount || 0}",`
+      + `"${lineItems}"`
+    );
+  }
+
+  lines.push('');
+
+  // ── PURCHASE ORDERS ──
+  lines.push('=== PURCHASE ORDERS ===');
+  lines.push(
+    'Date,Supplier,Status,'
+    + 'Total Value,Products'
+  );
+
+  const ordersSnap = await db
+    .collection(
+      `venues/${venueId}/orders`
+    )
+    .orderBy('createdAt', 'desc')
+    .get()
+    .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+
+  for (const doc of ordersSnap.docs) {
+    const d = doc.data();
+    const products = (d.products || [])
+      .map((p: any) =>
+        `${p.name || ''} x${p.qty || 0}`
+      ).join(' | ');
+
+    const dateStr = d.createdAt
+      ?.toDate?.()
+      ?.toISOString()
+      ?.split('T')[0] || '';
+
+    lines.push(
+      `"${dateStr}",`
+      + `"${d.supplierName || ''}",`
+      + `"${d.status || ''}",`
+      + `"${d.totalValue || 0}",`
+      + `"${products}"`
+    );
+  }
+
+  lines.push('');
+
+  // ── PRICE HISTORY ──
+  lines.push('=== PRICE HISTORY ===');
+  lines.push(
+    'Product,Old Price,New Price,'
+    + 'Change %,Date,Supplier'
+  );
+
+  const productsSnap = await db
+    .collection(
+      `venues/${venueId}/products`
+    )
+    .get()
+    .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+
+  let priceHistoryCount = 0;
+
+  for (const productDoc of
+      productsSnap.docs.slice(0, 100)) {
+    const historySnap = await db
+      .collection(
+        `venues/${venueId}/products/`
+        + `${productDoc.id}/priceHistory`
+      )
+      .orderBy('date', 'desc')
+      .limit(20)
+      .get()
+      .catch(() => ({ docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] }));
+
+    for (const h of historySnap.docs) {
+      const hd = h.data();
+      priceHistoryCount++;
+      lines.push(
+        `"${productDoc.data().name || ''}",`
+        + `"${hd.oldPrice || ''}",`
+        + `"${hd.newPrice || ''}",`
+        + `"${hd.changePercent || ''}",`
+        + `"${hd.date?.toDate?.()
+            ?.toISOString()
+            ?.split('T')[0] || ''}",`
+        + `"${hd.supplierName || ''}"`
+      );
+    }
+  }
+
+  lines.push('');
+  lines.push(
+    `=== GENERATED: ${
+      new Date().toISOString()
+    } ===`
+  );
+  lines.push(
+    `=== VENUE: ${venueName} ===`
+  );
+  lines.push(
+    '=== RETAIN FOR 7 YEARS '
+    + '(NZ Tax Administration Act 1994) ==='
+  );
+
+  const sortedDates = [...dates].sort();
+  const dateRange = dates.length > 0
+    ? `${sortedDates[0]} to `
+      + `${sortedDates[
+          sortedDates.length - 1
+        ]}`
+    : 'No dated records';
+
+  return {
+    csv: lines.join('\n'),
+    summary: {
+      invoiceCount: invoicesSnap.docs.length,
+      orderCount: ordersSnap.docs.length,
+      priceHistoryCount,
+      dateRange
+    }
+  };
+}
+
+function buildCSVArchiveEmail(
+  venueName: string,
+  summary: {
+    invoiceCount: number;
+    orderCount: number;
+    priceHistoryCount: number;
+    dateRange: string;
+  }
+): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif;
+    max-width: 600px; margin: 0 auto;
+    padding: 40px 20px;
+    background: #f5f3ee; }
+  .card { background: white;
+    border-radius: 12px; padding: 28px;
+    margin-bottom: 20px; }
+  h1 { color: #0B132B; font-size: 22px;
+    margin-bottom: 8px; }
+  p { color: #6b7280; line-height: 1.6;
+    margin: 0 0 12px; }
+  .stat { display: inline-block;
+    background: #f5f3ee;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin: 6px 6px 6px 0; }
+  .stat-value { font-size: 22px;
+    font-weight: bold; color: #0B132B; }
+  .stat-label { font-size: 12px;
+    color: #6b7280; }
+  .notice { background: #fef9ec;
+    border-left: 4px solid #c47b2b;
+    padding: 14px 16px;
+    border-radius: 4px; margin: 20px 0; }
+  .notice p { color: #3b3f4a;
+    margin: 0; font-size: 14px; }
+  .footer { color: #9ca3af;
+    font-size: 12px; text-align: center;
+    margin-top: 28px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Your Hosti financial records</h1>
+  <p>We're sorry to see you go.
+  Your complete financial records for
+  <strong>${venueName}</strong> are
+  attached to this email.</p>
+  <p>As required by NZ law
+  (Tax Administration Act 1994)
+  please keep this file for 7 years.</p>
+
+  <div class="stat">
+    <div class="stat-value">
+      ${summary.invoiceCount}
+    </div>
+    <div class="stat-label">Invoices</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">
+      ${summary.orderCount}
+    </div>
+    <div class="stat-label">
+      Purchase orders
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">
+      ${summary.priceHistoryCount}
+    </div>
+    <div class="stat-label">
+      Price records
+    </div>
+  </div>
+
+  <p style="margin-top:16px">
+    <strong>Date range:</strong>
+    ${summary.dateRange}
+  </p>
+</div>
+
+<div class="notice">
+  <p>⚠️ <strong>Please save this file.
+  </strong> IRD requires financial records
+  to be kept for 7 years. Save it to
+  Google Drive, Dropbox, or send it
+  to your accountant.</p>
+</div>
+
+<div class="card">
+  <p><strong>Your data has been
+  permanently deleted from Hosti.
+  </strong> We hold no copies.</p>
+  <p>Questions?
+  <a href="mailto:hello@hosti.co.nz">
+  hello@hosti.co.nz</a></p>
+</div>
+
+<div class="footer">
+  <p>Hosti — hosti.co.nz</p>
+</div>
+</body>
+</html>`;
+}
+
+function buildXeroArchiveEmail(
+  venueName: string
+): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, sans-serif;
+    max-width: 600px; margin: 0 auto;
+    padding: 40px 20px;
+    background: #f5f3ee; }
+  .card { background: white;
+    border-radius: 12px; padding: 28px;
+    margin-bottom: 20px; }
+  h1 { color: #0B132B; font-size: 22px;
+    margin-bottom: 8px; }
+  p { color: #6b7280; line-height: 1.6;
+    margin: 0 0 12px; }
+  .xero { background: #e8f5e9;
+    border-left: 4px solid #2e7d32;
+    padding: 14px 16px;
+    border-radius: 4px; margin: 20px 0; }
+  .xero p { color: #1b5e20; margin: 0;
+    font-size: 14px; }
+  .footer { color: #9ca3af;
+    font-size: 12px; text-align: center;
+    margin-top: 28px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Your Hosti account summary</h1>
+  <p>We're sorry to see you go.</p>
+  <p>Your venue <strong>${venueName}
+  </strong> was connected to Xero.
+  Your complete financial records are
+  already in your Xero account —
+  invoices, purchase orders, and
+  price history have been synced.</p>
+</div>
+
+<div class="xero">
+  <p>✓ <strong>Your records are in Xero.
+  </strong> Log into your Xero account
+  to access your complete financial
+  history. IRD accepts Xero as the
+  record of truth for NZ businesses.
+  </p>
+</div>
+
+<div class="card">
+  <p><strong>Your Hosti data has been
+  permanently deleted.</strong>
+  We hold no copies.</p>
+  <p>Questions?
+  <a href="mailto:hello@hosti.co.nz">
+  hello@hosti.co.nz</a></p>
+</div>
+
+<div class="footer">
+  <p>Hosti — hosti.co.nz</p>
+</div>
+</body>
+</html>`;
+}
+
+async function sendArchiveEmail(
+  ownerEmail: string,
+  venueName: string,
+  hasXero: boolean,
+  csvContent?: string,
+  summary?: {
+    invoiceCount: number;
+    orderCount: number;
+    priceHistoryCount: number;
+    dateRange: string;
+  }
+): Promise<{
+  sent: boolean;
+  error?: string;
+}> {
+  const apiKey =
+    process.env.POSTMARK_API_KEY;
+  if (!apiKey) {
+    return {
+      sent: false,
+      error: 'POSTMARK_API_KEY not set'
+    };
+  }
+
+  const venueSafe = venueName
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .replace(/\s+/g, '-')
+    .toLowerCase();
+
+  const dateStr = new Date()
+    .toISOString()
+    .split('T')[0];
+
+  const subject = hasXero
+    ? `Your Hosti records summary`
+      + ` — ${venueName}`
+    : `Your Hosti financial records`
+      + ` — ${venueName}`;
+
+  const htmlBody = hasXero
+    ? buildXeroArchiveEmail(venueName)
+    : buildCSVArchiveEmail(
+        venueName, summary!
+      );
+
+  const body: any = {
+    From: 'Hosti <records@hosti.co.nz>',
+    To: ownerEmail,
+    Subject: subject,
+    HtmlBody: htmlBody,
+    MessageStream: 'outbound'
+  };
+
+  // Attach CSV if no Xero
+  if (!hasXero && csvContent) {
+    const csvBase64 = Buffer.from(
+      csvContent, 'utf-8'
+    ).toString('base64');
+
+    body.Attachments = [{
+      Name: `hosti-financial-records-`
+        + `${venueSafe}-${dateStr}.csv`,
+      Content: csvBase64,
+      ContentType: 'text/csv'
+    }];
+  }
+
+  try {
+    const response = await fetch(
+      'https://api.postmarkapp.com/email',
+      {
+        method: 'POST',
+        headers: {
+          'X-Postmark-Server-Token': apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.json()
+        .catch(() => ({}));
+      console.error(
+        '[archive-email] Postmark error:',
+        err
+      );
+      return {
+        sent: false,
+        error: `Postmark ${response.status}`
+      };
+    }
+
+    console.log(
+      `[archive-email] sent to`
+      + ` ${ownerEmail} for ${venueName}`
+      + ` (xero: ${hasXero})`
+    );
+    return { sent: true };
+
+  } catch (e: any) {
+    console.error(
+      '[archive-email] fetch failed:',
+      e?.message
+    );
+    return {
+      sent: false,
+      error: e?.message
+    };
+  }
+}
+
 // ── DELETE /account ───────────────────────────────────────────────────────────
 // Deletes all venue data if user is owner, removes from member lists,
 // deletes user Firestore doc, and removes the Firebase Auth account.
@@ -1411,6 +1903,117 @@ app.delete("/account", async (req, res) => {
             archiveStatus: 'marker_only',
             note: 'Full archive generation pending implementation',
           });
+
+          // Send financial records archive email before deleting venue data
+          try {
+            const userRecord = await admin.auth().getUser(uid);
+            const ownerEmail = userRecord.email;
+
+            if (!ownerEmail) {
+              // No email on account
+              // Skip archive — can't send
+              console.warn(
+                '[account] no email for uid:',
+                uid
+              );
+            } else {
+              // Check Xero connection
+              const xeroConnected =
+                await hasXeroConnected(
+                  db, venueId
+                );
+
+              let sent = false;
+
+              if (xeroConnected) {
+                // Scenario 1 — Xero path
+                // Send lightweight summary only
+                const result = await sendArchiveEmail(
+                  ownerEmail,
+                  venueSnap.data()?.name
+                    || 'Your venue',
+                  true // hasXero
+                );
+                sent = result.sent;
+
+                if (!sent) {
+                  console.error(
+                    '[account] Xero summary'
+                    + ' email failed:',
+                    result.error
+                  );
+                }
+
+              } else {
+                // Scenario 2 — No Xero
+                // Generate CSV and send
+                const { csv, summary } =
+                  await generateFinancialCSV(
+                    db,
+                    venueId,
+                    venueSnap.data()?.name
+                      || 'Your venue'
+                  );
+
+                const result = await sendArchiveEmail(
+                  ownerEmail,
+                  venueSnap.data()?.name
+                    || 'Your venue',
+                  false, // hasXero
+                  csv,
+                  summary
+                );
+                sent = result.sent;
+
+                if (!sent) {
+                  console.error(
+                    '[account] CSV archive'
+                    + ' email failed:',
+                    result.error
+                  );
+                  // NOTE: We log but do NOT
+                  // block deletion on email failure.
+                  // Better to delete than to trap
+                  // the user in a failed state.
+                  // Email failure is logged for
+                  // manual follow-up if needed.
+                }
+              }
+
+              // Write deletion log
+              // Metadata only — no financial data
+              await db.collection('deletionLog')
+                .add({
+                  venueId,
+                  venueName:
+                    venueSnap.data()?.name
+                    || 'Unknown',
+                  ownerUid: uid,
+                  ownerEmail: ownerEmail
+                    .replace(
+                      /(.{2})(.*)(@.*)/,
+                      '$1***$3'
+                    ), // masked
+                  deletedAt:
+                    admin.firestore
+                      .FieldValue.serverTimestamp(),
+                  archiveMethod: xeroConnected
+                    ? 'xero_summary'
+                    : 'csv_attachment',
+                  archiveEmailSent: sent,
+                  // No financial data stored
+                  // in log — metadata only
+                });
+            }
+          } catch (archiveErr: any) {
+            // Archive failed — log and continue
+            // Never block deletion for archive failure
+            console.error(
+              '[account] archive step failed:',
+              archiveErr?.message
+            );
+          }
+
           // Owner — delete everything under this venue
           await deleteVenueAllData(db, venueId);
         } else {

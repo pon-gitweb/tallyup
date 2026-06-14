@@ -111,6 +111,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /deletionLog/{logId} {
+      // Admin SDK only — no client access
+      allow read, write: if false;
+    }
+
     // ========= Venue-scoped =========
     match /venues/{venueId} {
 
