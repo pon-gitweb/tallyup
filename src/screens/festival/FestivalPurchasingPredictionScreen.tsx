@@ -15,6 +15,8 @@ import type { AiRefinement, AiAdjustment } from '../../services/festival/predict
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
+import { useIsActivated } from '../../hooks/useIsActivated';
+import PaywallBlurOverlay from '../../components/paywall/PaywallBlurOverlay';
 
 // ─── Category mapping: setup screen IDs → prediction service categories ────────
 
@@ -241,6 +243,7 @@ export default function FestivalPurchasingPredictionScreen() {
   const { theme } = useTheme();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
+  const { activated } = useIsActivated();
   const R = makeStyles(c);
 
   const [results,        setResults]        = useState([]);
@@ -845,13 +848,14 @@ export default function FestivalPurchasingPredictionScreen() {
         </View>
 
         {/* ── Products grouped by supplierId (FIX 11) ── */}
-        {Object.entries(bySupplier).map(([supplierId, items]) => {
+        {Object.entries(bySupplier).map(([supplierId, items], supplierIndex) => {
           const supplierTotal = items.reduce((s, r) => s + (r.estimatedCost ?? 0), 0);
           const supplierName  = items[0]?.supplierName || supplierId;
           const oblMin        = items[0]?.obligationMin;
           const supplierTotalQty = items.reduce((s, r) => s + (r.totalQty ?? r.predictedQty ?? 0), 0);
-          return (
-            <View key={supplierId}>
+
+          const supplierCard = (
+            <View>
               <View style={R.supplierHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={R.supplierName}>{supplierName}</Text>
@@ -893,6 +897,22 @@ export default function FestivalPurchasingPredictionScreen() {
               })}
             </View>
           );
+
+          const isBlurred = !activated && supplierIndex > 0;
+
+          if (isBlurred) {
+            return (
+              <PaywallBlurOverlay
+                key={supplierId}
+                onActivate={() => nav.navigate('FestivalPaywall', { venueName: eventData?.eventName })}
+                message="Activate to see full order"
+              >
+                {supplierCard}
+              </PaywallBlurOverlay>
+            );
+          }
+
+          return <View key={supplierId}>{supplierCard}</View>;
         })}
 
         {loadError && (
@@ -935,6 +955,26 @@ export default function FestivalPurchasingPredictionScreen() {
         )}
 
       </ScrollView>
+
+      {!activated && (
+        <View style={[R.paywallCTA, {
+          backgroundColor: c.surface || '#ffffff',
+          borderTopWidth: 1,
+          borderTopColor: c.border || '#e5e7eb'
+        }]}>
+          <Text style={[R.paywallCTAText, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold }]}>
+            🔒 Showing 1 of {Object.keys(bySupplier).length} suppliers
+          </Text>
+          <TouchableOpacity
+            style={[R.paywallCTABtn, { backgroundColor: c.deepBlue || '#1b4f72' }]}
+            onPress={() => nav.navigate('FestivalPaywall', { venueName: eventData?.eventName })}
+          >
+            <Text style={[R.paywallCTABtnText, { fontFamily: theme.fontBodySemiBold }]}>
+              Activate for $349 →
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -1047,5 +1087,11 @@ function makeStyles(c: any) {
   aiConfidence:     { fontSize: 11, color: c.slateMid },
   aiToggleBtn:      { backgroundColor: c.deepBlue, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 },
   aiToggleBtnText:  { color: c.surface, fontSize: 12, fontWeight: '700' },
+
+  // Paywall sticky CTA
+  paywallCTA: { padding: 16, paddingBottom: 32 },
+  paywallCTAText: { fontSize: 14, marginBottom: 10, textAlign: 'center' },
+  paywallCTABtn: { height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  paywallCTABtnText: { color: '#ffffff', fontSize: 15 },
   });
 }
