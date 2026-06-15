@@ -128,6 +128,7 @@ export default function SettingsScreen() {
       // Ensure timezone is always set when enabling for the first time
       if (value) update.timezone = venueTimezone || 'Pacific/Auckland';
       await updateDoc(doc(db, 'venues', venueId), update);
+      showSuccess(value ? '✓ Weekly summary emails on.' : '✓ Weekly summary emails off.');
     } catch (e: any) {
       showError('Could not update preference.');
     }
