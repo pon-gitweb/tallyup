@@ -437,7 +437,12 @@ export default function OrdersScreen(){
   return(
     <View style={S.wrap}>
       <View style={S.top}>
-        <Text style={S.title}>Orders</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={S.title}>Orders</Text>
+          <TouchableOpacity onPress={() => nav.navigate('CreditNoteForm')}>
+            <Text style={{ color: '#0A84FF', fontWeight: '700', fontSize: 13 }}>Record credit note</Text>
+          </TouchableOpacity>
+        </View>
         <View style={S.segWrap}>
           <SegBtn label={`Drafts (${counts.drafts})`} active={tab==='drafts'} onPress={()=>setTab('drafts')} />
           {(isManager || counts.pending > 0) && (

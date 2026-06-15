@@ -7,6 +7,7 @@ import { db } from '../../services/firebase';
 import {
   doc, getDoc, getDocs, collection, addDoc, writeBatch, serverTimestamp, setDoc, updateDoc, Timestamp,
 } from 'firebase/firestore';
+import type { ReceivedAs } from '../../types/invoices';
 
 type Order = {
   id: string;
@@ -29,6 +30,7 @@ type InvoiceLine = {
   name?: string;
   qty: number;
   unitCost: number;
+  receivedAs: ReceivedAs;
 };
 
 export default function InvoiceScreen() {
@@ -81,6 +83,7 @@ export default function InvoiceScreen() {
         name: l.name,
         qty: Number(l.qty) || 0,
         unitCost: Number(l.unitCost) || 0,
+        receivedAs: 'purchased',
       })));
     } else {
       setInvoiceItems([]);
@@ -88,11 +91,20 @@ export default function InvoiceScreen() {
   }, [lines]);
 
   const total = useMemo(() => {
-    return invoiceItems.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitCost) || 0), 0);
+    // Promotional/sample lines are received at zero cost and excluded from the total.
+    return invoiceItems
+      .filter(it => it.receivedAs === 'purchased')
+      .reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitCost) || 0), 0);
   }, [invoiceItems]);
 
   function updateLine(idx: number, patch: Partial<InvoiceLine>) {
-    setInvoiceItems(prev => prev.map((x, i) => i === idx ? { ...x, ...patch } : x));
+    setInvoiceItems(prev => prev.map((x, i) => {
+      if (i !== idx) return x;
+      const next = { ...x, ...patch };
+      // Promo/sample stock is received at zero cost — don't let it affect product cost price.
+      if (patch.receivedAs === 'promotional' || patch.receivedAs === 'sample') next.unitCost = 0;
+      return next;
+    }));
   }
 
   async function saveInvoice() {
@@ -134,6 +146,7 @@ export default function InvoiceScreen() {
           qty: Number(it.qty) || 0,
           unitCost: Number(it.unitCost) || 0,
           lineTotal: (Number(it.qty) || 0) * (Number(it.unitCost) || 0),
+          receivedAs: it.receivedAs,
         });
       });
 
@@ -200,28 +213,52 @@ export default function InvoiceScreen() {
 
       <View style={styles.card}>
         <Text style={styles.section}>Lines</Text>
-        {invoiceItems.map((it, idx) => (
-          <View key={idx} style={styles.line}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.lineName}>{it.name || it.productId}</Text>
-              <Text style={styles.muted}>{it.productId}</Text>
+        {invoiceItems.map((it, idx) => {
+          const isFree = it.receivedAs === 'promotional' || it.receivedAs === 'sample';
+          return (
+            <View key={idx} style={styles.lineBlock}>
+              <View style={styles.line}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.lineName}>{it.name || it.productId}</Text>
+                  <Text style={styles.muted}>{it.productId}</Text>
+                  {isFree && (
+                    <Text style={styles.promoBadge}>
+                      🎁 {it.receivedAs === 'promotional' ? 'PROMO' : 'SAMPLE'} — received at no charge
+                    </Text>
+                  )}
+                </View>
+                <View style={styles.lineInputs}>
+                  <TextInput
+                    keyboardType="numeric"
+                    value={String(it.qty ?? 0)}
+                    onChangeText={(v) => updateLine(idx, { qty: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+                    style={[styles.smallInput, { width: 64 }]}
+                  />
+                  <TextInput
+                    keyboardType="numeric"
+                    editable={!isFree}
+                    value={String(it.unitCost ?? 0)}
+                    onChangeText={(v) => updateLine(idx, { unitCost: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
+                    style={[styles.smallInput, { width: 84 }, isFree && styles.smallInputDisabled]}
+                  />
+                </View>
+              </View>
+              <View style={styles.receivedAsRow}>
+                {(['purchased', 'promotional', 'sample'] as ReceivedAs[]).map(opt => (
+                  <TouchableOpacity
+                    key={opt}
+                    onPress={() => updateLine(idx, { receivedAs: opt })}
+                    style={[styles.receivedAsChip, it.receivedAs === opt && styles.receivedAsChipActive]}
+                  >
+                    <Text style={[styles.receivedAsChipText, it.receivedAs === opt && styles.receivedAsChipTextActive]}>
+                      {opt === 'purchased' ? 'Purchased' : opt === 'promotional' ? 'Promo / free' : 'Sample'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-            <View style={styles.lineInputs}>
-              <TextInput
-                keyboardType="numeric"
-                value={String(it.qty ?? 0)}
-                onChangeText={(v) => updateLine(idx, { qty: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
-                style={[styles.smallInput, { width: 64 }]}
-              />
-              <TextInput
-                keyboardType="numeric"
-                value={String(it.unitCost ?? 0)}
-                onChangeText={(v) => updateLine(idx, { unitCost: Number(v.replace(/[^0-9.]/g, '')) || 0 })}
-                style={[styles.smallInput, { width: 84 }]}
-              />
-            </View>
-          </View>
-        ))}
+          );
+        })}
       </View>
 
       <View style={[styles.card, styles.total]}>
@@ -245,11 +282,19 @@ const styles = StyleSheet.create({
   label: { fontWeight: '700' },
   input: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
   section: { fontWeight: '800', marginBottom: 8 },
+  lineBlock: { borderBottomWidth: 1, borderBottomColor: '#E5E5EA', paddingBottom: 8, marginBottom: 4 },
   line: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
   lineName: { fontWeight: '700' },
   muted: { opacity: 0.6, fontSize: 12 },
+  promoBadge: { color: '#B45309', fontSize: 12, fontWeight: '700', marginTop: 4 },
   lineInputs: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   smallInput: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, textAlign: 'right' },
+  smallInputDisabled: { backgroundColor: '#E5E5EA', color: '#8E8E93' },
+  receivedAsRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
+  receivedAsChip: { borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  receivedAsChipActive: { backgroundColor: '#0A84FF', borderColor: '#0A84FF' },
+  receivedAsChipText: { fontSize: 12, fontWeight: '600', color: '#3C3C43' },
+  receivedAsChipTextActive: { color: '#fff' },
   total: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   totalText: { fontWeight: '900', fontSize: 18 },
   primary: { backgroundColor: '#0A84FF', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },

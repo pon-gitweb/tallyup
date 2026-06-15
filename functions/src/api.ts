@@ -2561,6 +2561,22 @@ app.post("/suitee", async (req, res) => {
       }
     }
 
+    // Recent credit notes
+    const creditNotesSnap = await db
+      .collection(`venues/${venueId}/invoices`)
+      .where('type', '==', 'credit_note')
+      .orderBy('invoiceDate', 'desc')
+      .limit(10)
+      .get()
+      .catch(() => ({ docs: [] }));
+
+    const recentCreditNotes = creditNotesSnap.docs.map(d => ({
+      date: d.data().invoiceDate,
+      supplier: d.data().supplierName,
+      amount: d.data().totalAmount,
+      linkedInvoice: d.data().originalInvoiceId || 'not specified'
+    }));
+
     // ── Build context payload ─────────────────────────────────────────────────
     const lines: string[] = [
       "=== VENUE DATA SNAPSHOT ===",
@@ -2637,6 +2653,14 @@ app.post("/suitee", async (req, res) => {
     if (invoiceSpendLines.length > 0) {
       lines.push("", ...invoiceSpendLines);
     }
+
+    lines.push(
+      "",
+      "CREDIT NOTES (recent):",
+      recentCreditNotes.length === 0
+        ? "No recent credit notes."
+        : recentCreditNotes.map(c => `${c.date} — ${c.supplier} ${Math.abs(c.amount)} credit`).join("\n")
+    );
 
     if (snapshotContextLines.length > 0) {
       lines.push("", "CYCLE SNAPSHOT INTELLIGENCE (per department, from last completed snapshot):");
