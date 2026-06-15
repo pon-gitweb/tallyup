@@ -2577,6 +2577,22 @@ app.post("/suitee", async (req, res) => {
       linkedInvoice: d.data().originalInvoiceId || 'not specified'
     }));
 
+    // Pending deliveries awaiting invoice confirmation
+    const pendingDeliveriesSnap = await db
+      .collection(`venues/${venueId}/pendingDeliveries`)
+      .where('status', '==', 'awaiting_invoice')
+      .orderBy('createdAt', 'desc')
+      .limit(10)
+      .get()
+      .catch(() => ({ docs: [] }));
+
+    const pendingDeliveries = pendingDeliveriesSnap.docs.map(d => ({
+      supplier: d.data().supplierName,
+      deliveryDate: d.data().deliveryDate,
+      provisionalCost: d.data().provisionalCost,
+      packingSlipRef: d.data().packingSlipRef,
+    }));
+
     // ── Build context payload ─────────────────────────────────────────────────
     const lines: string[] = [
       "=== VENUE DATA SNAPSHOT ===",
@@ -2661,6 +2677,16 @@ app.post("/suitee", async (req, res) => {
         ? "No recent credit notes."
         : recentCreditNotes.map(c => `${c.date} — ${c.supplier} ${Math.abs(c.amount)} credit`).join("\n")
     );
+
+    if (pendingDeliveries.length > 0) {
+      lines.push(
+        "",
+        "PENDING DELIVERIES (awaiting invoice):",
+        ...pendingDeliveries.map(p =>
+          `  - ${p.supplier || "Unknown supplier"}${p.deliveryDate ? ` on ${p.deliveryDate}` : ""}${p.provisionalCost ? ` (provisional cost $${Number(p.provisionalCost).toFixed(2)})` : ""}${p.packingSlipRef ? `, ref ${p.packingSlipRef}` : ""}`
+        )
+      );
+    }
 
     if (snapshotContextLines.length > 0) {
       lines.push("", "CYCLE SNAPSHOT INTELLIGENCE (per department, from last completed snapshot):");

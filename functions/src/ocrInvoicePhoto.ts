@@ -132,6 +132,212 @@ function buildHistoricalExplanation(
   return explanation;
 }
 
+// ── Document classification ────────────────────────────────────────────────
+
+const DOCUMENT_TYPES = ["TAX_INVOICE", "PACKING_SLIP", "DELIVERY_NOTE", "CREDIT_NOTE", "PURCHASE_ORDER", "UNKNOWN"] as const;
+
+type DocumentType = typeof DOCUMENT_TYPES[number];
+
+type ClassificationResult = {
+  documentType: DocumentType;
+  supplierName: string | null;
+  documentReference: string | null;
+  invoiceReference: string | null;
+  documentDate: string | null;
+  hasProductDetails: boolean;
+  hasPricing: boolean;
+  confidence: "high" | "medium" | "low";
+};
+
+type PackingSlipLine = {
+  name: string;
+  qty: number;
+  unit?: string | null;
+  sku?: string | null;
+};
+
+type PackingSlipExtraction = {
+  supplierName: string | null;
+  packingSlipRef: string | null;
+  invoiceRef: string | null;
+  deliveryDate: string | null;
+  lines: PackingSlipLine[];
+};
+
+type DeliveryNoteExtraction = {
+  courier: string | null;
+  trackingNumber: string | null;
+  senderName: string | null;
+  packageCount: number | null;
+  weight: string | null;
+  deliveryDate: string | null;
+};
+
+async function classifyDocument(rawText: string): Promise<ClassificationResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+  const system = [
+    "You are an expert at classifying NZ hospitality supplier documents (invoices, packing slips, delivery notes, credit notes, purchase orders).",
+    "Read the document text and return ONLY valid JSON, no markdown, with this shape:",
+    JSON.stringify({
+      documentType: "one of TAX_INVOICE, PACKING_SLIP, DELIVERY_NOTE, CREDIT_NOTE, PURCHASE_ORDER, UNKNOWN",
+      supplierName: "string or null — the vendor/supplier company name",
+      documentReference: "string or null — packing slip number, delivery note number, or similar document reference",
+      invoiceReference: "string or null — an invoice number referenced on this document, if shown",
+      documentDate: "string or null — YYYY-MM-DD format preferred",
+      hasProductDetails: "boolean — true if the document lists products/items with quantities",
+      hasPricing: "boolean — true if the document shows prices/costs for items",
+      confidence: "high, medium or low",
+    }),
+    "",
+    "Classification guide:",
+    "- TAX_INVOICE: a supplier invoice/tax invoice showing items, quantities AND prices, with a total amount and GST.",
+    "- PACKING_SLIP: a delivery/packing slip listing items and quantities received, usually WITHOUT prices. Often headed 'Packing Slip', 'Delivery Slip', 'Goods Received', 'Picking Slip'.",
+    "- DELIVERY_NOTE: a courier/freight delivery docket with NO product details — just sender, tracking number, package count. Headed 'Delivery Note', 'Consignment Note', or a courier company name (e.g. NZ Couriers, PBT, Mainfreight, Aramex).",
+    "- CREDIT_NOTE: a credit note / return document, usually headed 'Credit Note' or showing negative amounts.",
+    "- PURCHASE_ORDER: a purchase order issued BY the venue TO a supplier (not yet fulfilled).",
+    "- UNKNOWN: cannot confidently classify.",
+    "",
+    "If the document type is ambiguous, set confidence to 'low' or 'medium' rather than guessing 'high'.",
+  ].join("\n");
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 500,
+      system,
+      messages: [{ role: "user", content: "Classify this document:\n\n" + rawText.slice(0, 4000) }],
+    }),
+  });
+
+  if (!resp.ok) throw new Error("Claude classification error: " + resp.status);
+  const data = await resp.json() as any;
+  const text = data?.content?.[0]?.text || "{}";
+  const match = text.match(/\{[\s\S]*\}/);
+  const parsed = match ? JSON.parse(match[0]) : {};
+
+  const documentType: DocumentType = DOCUMENT_TYPES.includes(parsed.documentType) ? parsed.documentType : "UNKNOWN";
+
+  return {
+    documentType,
+    supplierName: parsed.supplierName ? String(parsed.supplierName).trim() : null,
+    documentReference: parsed.documentReference ? String(parsed.documentReference).trim() : null,
+    invoiceReference: parsed.invoiceReference ? String(parsed.invoiceReference).trim() : null,
+    documentDate: parsed.documentDate ? String(parsed.documentDate).trim() : null,
+    hasProductDetails: !!parsed.hasProductDetails,
+    hasPricing: !!parsed.hasPricing,
+    confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
+  };
+}
+
+async function extractPackingSlip(rawText: string): Promise<PackingSlipExtraction> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+  const system = [
+    "You are an expert at reading NZ hospitality supplier packing slips / delivery slips.",
+    "Extract the following from this packing slip text and return ONLY valid JSON, no markdown:",
+    JSON.stringify({
+      supplierName: "string or null — the supplier/vendor company name",
+      packingSlipRef: "string or null — the packing slip / delivery slip number",
+      invoiceRef: "string or null — an invoice number referenced on this slip, if shown",
+      deliveryDate: "string or null — YYYY-MM-DD format preferred",
+      lines: [{ productName: "product name", qty: 1, unit: "ea or null", sku: "item code or null" }],
+    }),
+    "",
+    "Line item rules:",
+    "- productName: clean product name without extra whitespace",
+    "- qty: numeric quantity delivered — a plain integer or decimal, NEVER a dollar amount",
+    "- unit: unit of measure (ea, kg, L, case) if shown, null otherwise",
+    "- sku: supplier item code if visible, null otherwise",
+    "- Only include lines with a positive quantity and a recognisable product name",
+    "- SKIP header rows, totals, signatures, and lines that are just numbers or dates",
+  ].join("\n");
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 3000,
+      system,
+      messages: [{ role: "user", content: "Extract packing slip data from this text:\n\n" + rawText.slice(0, 8000) }],
+    }),
+  });
+
+  if (!resp.ok) throw new Error("Claude packing slip error: " + resp.status);
+  const data = await resp.json() as any;
+  const text = data?.content?.[0]?.text || "{}";
+  const match = text.match(/\{[\s\S]*\}/);
+  const parsed = match ? JSON.parse(match[0]) : {};
+
+  const lines: PackingSlipLine[] = Array.isArray(parsed.lines)
+    ? parsed.lines
+        .filter((l: any) => l && l.productName && Number(l.qty) > 0)
+        .map((l: any) => ({
+          name: String(l.productName).trim(),
+          qty: Number(l.qty),
+          unit: l.unit ? String(l.unit).trim() : null,
+          sku: l.sku ? String(l.sku).trim() : null,
+        }))
+    : [];
+
+  return {
+    supplierName: parsed.supplierName ? String(parsed.supplierName).trim() : null,
+    packingSlipRef: parsed.packingSlipRef ? String(parsed.packingSlipRef).trim() : null,
+    invoiceRef: parsed.invoiceRef ? String(parsed.invoiceRef).trim() : null,
+    deliveryDate: parsed.deliveryDate ? String(parsed.deliveryDate).trim() : null,
+    lines,
+  };
+}
+
+async function extractDeliveryNote(rawText: string): Promise<DeliveryNoteExtraction> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+  const system = [
+    "You are an expert at reading NZ courier/freight delivery notes (NZ Couriers, PBT, Mainfreight, Aramex, NZ Post, etc).",
+    "Extract the following from this delivery note text and return ONLY valid JSON, no markdown:",
+    JSON.stringify({
+      courier: "string or null — the courier/freight company name",
+      trackingNumber: "string or null — tracking/consignment number",
+      senderName: "string or null — the sender/origin company name",
+      packageCount: "number or null — number of packages/items",
+      weight: "string or null — total weight if shown, e.g. '12.5kg'",
+      deliveryDate: "string or null — YYYY-MM-DD format preferred",
+    }),
+  ].join("\n");
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 500,
+      system,
+      messages: [{ role: "user", content: "Extract delivery note data from this text:\n\n" + rawText.slice(0, 4000) }],
+    }),
+  });
+
+  if (!resp.ok) throw new Error("Claude delivery note error: " + resp.status);
+  const data = await resp.json() as any;
+  const text = data?.content?.[0]?.text || "{}";
+  const match = text.match(/\{[\s\S]*\}/);
+  const parsed = match ? JSON.parse(match[0]) : {};
+
+  return {
+    courier: parsed.courier ? String(parsed.courier).trim() : null,
+    trackingNumber: parsed.trackingNumber ? String(parsed.trackingNumber).trim() : null,
+    senderName: parsed.senderName ? String(parsed.senderName).trim() : null,
+    packageCount: Number.isFinite(Number(parsed.packageCount)) ? Number(parsed.packageCount) : null,
+    weight: parsed.weight ? String(parsed.weight).trim() : null,
+    deliveryDate: parsed.deliveryDate ? String(parsed.deliveryDate).trim() : null,
+  };
+}
+
 // ── Claude-powered full invoice extraction ────────────────────────────────
 
 type InvoiceExtraction = {
@@ -390,6 +596,717 @@ async function createUnpricedProducts(
   }
 }
 
+// ── Supplier resolution (find-or-create by fuzzy name match) ──────────────────
+
+async function resolveSupplier(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  supplierName: string | null,
+  extra: {
+    hintSupplierId?: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+    accountNumber?: string | null;
+  } = {},
+): Promise<{ supplierId: string; supplierName: string }> {
+  if (!supplierName) return { supplierId: extra.hintSupplierId || "", supplierName: "" };
+
+  let resolvedSupplierId: string = extra.hintSupplierId || "";
+  let resolvedSupplierName: string = supplierName;
+  try {
+    const suppliersSnap = await db.collection(`venues/${venueId}/suppliers`).get();
+    const candNorm = normNameInline(supplierName);
+    let matchedId: string | null = null;
+    let bestScore = 0;
+    for (const sd of suppliersSnap.docs) {
+      const sn = normNameInline((sd.data() as any).name || "");
+      if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
+      const sc = tokenJaccardInline(supplierName, (sd.data() as any).name || "");
+      if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
+    }
+    if (matchedId && bestScore >= 0.85) {
+      resolvedSupplierId = matchedId;
+      const existingDoc = suppliersSnap.docs.find(d => d.id === matchedId);
+      if (existingDoc) {
+        resolvedSupplierName = (existingDoc.data() as any).name || supplierName;
+        const ex = existingDoc.data() as any;
+        const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+        if (!ex.phone && extra.phone) upd.phone = extra.phone;
+        if (!ex.email && extra.email) upd.email = extra.email;
+        if (!ex.address && extra.address) upd.address = extra.address;
+        if (!ex.accountNumber && extra.accountNumber) upd.accountNumber = extra.accountNumber;
+        if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
+      }
+    } else {
+      const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
+        name: supplierName,
+        phone: extra.phone || null,
+        email: extra.email || null,
+        address: extra.address || null,
+        accountNumber: extra.accountNumber || null,
+        isHoldingSupplier: false,
+        source: "invoice-scan",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      resolvedSupplierId = newSupRef.id;
+    }
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] supplier find/create error", e?.message);
+  }
+  return { supplierId: resolvedSupplierId, supplierName: resolvedSupplierName };
+}
+
+// ── Stock increment helper — goods always increment stock on arrival ──────────
+
+async function incrementStockFromLines(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  lines: Array<{ productId?: string | null; name?: string | null; qty: number }>,
+  uid: string,
+): Promise<number> {
+  if (!lines.length) return 0;
+
+  const byProductId = new Map<string, number>();
+  const byName = new Map<string, number>();
+  for (const l of lines) {
+    if (!l.qty) continue;
+    if (l.productId) byProductId.set(l.productId, (byProductId.get(l.productId) || 0) + l.qty);
+    else if (l.name) byName.set(normNameInline(l.name), (byName.get(normNameInline(l.name)) || 0) + l.qty);
+  }
+  if (byProductId.size === 0 && byName.size === 0) return 0;
+
+  const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+  const batch = db.batch();
+  let updates = 0;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  for (const deptDoc of deptsSnap.docs) {
+    const areasSnap = await deptDoc.ref.collection("areas").get();
+    for (const areaDoc of areasSnap.docs) {
+      const itemsSnap = await areaDoc.ref.collection("items").get();
+      for (const itemDoc of itemsSnap.docs) {
+        const item = itemDoc.data() as any;
+        const linkId = item.productId || item.productLinkId || null;
+        let qty: number | undefined;
+        if (linkId && byProductId.has(linkId)) {
+          qty = byProductId.get(linkId);
+        } else {
+          const itemName = normNameInline(item.name || "");
+          if (itemName && byName.has(itemName)) qty = byName.get(itemName);
+        }
+        if (qty) {
+          batch.update(itemDoc.ref, {
+            lastCount: admin.firestore.FieldValue.increment(qty),
+            lastCountAt: now,
+            lastCountBy: uid,
+            updatedAt: now,
+          });
+          updates++;
+        }
+      }
+    }
+  }
+
+  if (updates > 0) await batch.commit();
+  return updates;
+}
+
+// ── Packing slip line matching ─────────────────────────────────────────────
+
+async function matchPackingSlipLines(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  lines: PackingSlipLine[],
+  uid: string,
+): Promise<{ processedLines: any[]; unmatchedLines: any[]; totalProvisionalCost: number }> {
+  const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+  const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+  const processedLines: any[] = [];
+  const unmatchedLines: any[] = [];
+  let totalProvisionalCost = 0;
+
+  for (const line of lines) {
+    const lineNorm = normNameInline(line.name);
+    const matchedProduct = products.find(p => {
+      const pn = normNameInline(p.name || "");
+      return (pn === lineNorm && pn.length > 0) || tokenJaccardInline(line.name, p.name || "") >= 0.85;
+    });
+
+    const unitCost = matchedProduct?.costPrice != null ? Number(matchedProduct.costPrice) : 0;
+    const lineTotal = unitCost * line.qty;
+    totalProvisionalCost += lineTotal;
+
+    const processed = {
+      productId: matchedProduct?.id || null,
+      name: line.name,
+      productName: line.name,
+      qty: line.qty,
+      unit: line.unit || null,
+      sku: line.sku || null,
+      unitCost,
+      lineTotal,
+      provisionalCost: true,
+      matched: !!matchedProduct,
+    };
+    processedLines.push(processed);
+    if (!matchedProduct) unmatchedLines.push(processed);
+  }
+
+  await incrementStockFromLines(
+    db, venueId,
+    processedLines.map(l => ({ productId: l.productId, name: l.name, qty: l.qty })),
+    uid,
+  );
+
+  return { processedLines, unmatchedLines, totalProvisionalCost };
+}
+
+// ── Late invoice detection (invoice dated inside an already-closed cycle) ─────
+
+async function checkLateInvoice(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  invoiceDateStr: string | null,
+): Promise<{ isLate: boolean; cycleEndDate: string | null }> {
+  if (!invoiceDateStr) return { isLate: false, cycleEndDate: null };
+  const invDate = new Date(invoiceDateStr);
+  if (isNaN(invDate.getTime())) return { isLate: false, cycleEndDate: null };
+
+  let latestCompleted: Date | null = null;
+  const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
+  for (const deptDoc of deptsSnap.docs) {
+    const snapSnap = await deptDoc.ref.collection("snapshots").orderBy("completedAt", "desc").limit(1).get();
+    if (snapSnap.empty) continue;
+    const completedAt = (snapSnap.docs[0].data() as any).completedAt;
+    const d: Date | null = completedAt?.toDate ? completedAt.toDate() : null;
+    if (d && (!latestCompleted || d > latestCompleted)) latestCompleted = d;
+  }
+
+  if (!latestCompleted) return { isLate: false, cycleEndDate: null };
+  const isLate = invDate <= latestCompleted;
+  return { isLate, cycleEndDate: latestCompleted.toISOString().split("T")[0] };
+}
+
+// ── Pending delivery matching ──────────────────────────────────────────────
+
+async function findPendingDeliveryMatch(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  supplierName: string | null,
+  invoiceNumber: string | null,
+  invoiceDateStr: string | null,
+): Promise<{ delivery: { id: string; data: any } | null; confidence: "high" | "medium" | "none" }> {
+  const pendingSnap = await db.collection(`venues/${venueId}/pendingDeliveries`)
+    .where("status", "==", "awaiting_invoice")
+    .get();
+  if (pendingSnap.empty) return { delivery: null, confidence: "none" };
+
+  let mediumMatch: { id: string; data: any } | null = null;
+
+  for (const d of pendingSnap.docs) {
+    const data = d.data() as any;
+
+    if (invoiceNumber && data.invoiceRef && String(data.invoiceRef).trim() === String(invoiceNumber).trim()) {
+      return { delivery: { id: d.id, data }, confidence: "high" };
+    }
+
+    if (!mediumMatch && supplierName && data.supplierName && normNameInline(data.supplierName) === normNameInline(supplierName)) {
+      if (data.deliveryDate && invoiceDateStr) {
+        const dDate = new Date(data.deliveryDate);
+        const iDate = new Date(invoiceDateStr);
+        if (!isNaN(dDate.getTime()) && !isNaN(iDate.getTime())) {
+          const diffDays = Math.abs(iDate.getTime() - dDate.getTime()) / 86400000;
+          if (diffDays <= 7) mediumMatch = { id: d.id, data };
+        }
+      }
+    }
+  }
+
+  if (mediumMatch) return { delivery: mediumMatch, confidence: "medium" };
+  return { delivery: null, confidence: "none" };
+}
+
+async function confirmDeliveryMatch(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  deliveryId: string,
+  invoiceId: string,
+  invoiceLines: Array<{ productId?: string | null; unitPrice?: number | null }>,
+): Promise<void> {
+  await db.doc(`venues/${venueId}/pendingDeliveries/${deliveryId}`).update({
+    status: "invoice_confirmed",
+    invoiceId,
+    costConfirmed: true,
+    confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const updates = invoiceLines
+    .filter(l => l.productId && l.unitPrice)
+    .map(line => db.doc(`venues/${venueId}/products/${line.productId}`).update({
+      costPrice: line.unitPrice,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch(() => {}));
+  await Promise.all(updates);
+}
+
+// ── Document handlers ──────────────────────────────────────────────────────
+
+async function handleTaxInvoice(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  uid: string,
+  text: string,
+  data: any,
+): Promise<any> {
+  let invoice: InvoiceExtraction | null = null;
+  try {
+    invoice = await extractInvoiceWithClaude(text);
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] Claude extraction failed, falling back to regex", e?.message);
+  }
+
+  const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
+  const lines = filterInvoiceLines(rawLines);
+
+  const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
+  const ageCategory = categorizeAge(ageDays);
+
+  if (ageCategory === "current" || ageCategory === "late") {
+    const { isLate, cycleEndDate } = await checkLateInvoice(db, venueId, invoice?.invoiceDate ?? null);
+    if (isLate) {
+      return {
+        ok: true,
+        documentType: "TAX_INVOICE" as DocumentType,
+        isLateInvoice: true,
+        invoiceDate: invoice?.invoiceDate ?? null,
+        cycleEndDate,
+        invoiceData: {
+          invoice, lines, ageCategory, rawText: text,
+          purchaseOrderNumber: invoice?.purchaseOrderNumber ?? null,
+        },
+        options: [
+          { id: "apply_current", label: "Apply to current cycle", description: "Invoice received today, applied to current period. Recommended." },
+          { id: "hold_for_review", label: "Hold for manager review", description: "Flag this for your manager to decide." },
+        ],
+        message: "This invoice is dated within a stocktake period that has already been completed.",
+      };
+    }
+  }
+
+  return await processTaxInvoice(db, venueId, uid, invoice, lines, text, ageCategory, data, null);
+}
+
+async function processTaxInvoice(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  uid: string,
+  invoice: InvoiceExtraction | null,
+  lines: ParsedLine[],
+  text: string,
+  ageCategory: AgeCategory,
+  data: any,
+  lateInvoiceDecision: string | null,
+): Promise<any> {
+  const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
+
+  const payload: any = {
+    supplierName:        invoice?.supplierName ?? null,
+    supplierPhone:       invoice?.supplierPhone ?? null,
+    supplierEmail:       invoice?.supplierEmail ?? null,
+    supplierAddress:     invoice?.supplierAddress ?? null,
+    purchaseOrderNumber: invoice?.purchaseOrderNumber ?? null,
+    invoiceNumber:       invoice?.invoiceNumber ?? null,
+    invoiceDate:         invoice?.invoiceDate ?? null,
+    deliveryDate:        invoice?.deliveryDate ?? null,
+    totalAmount:         invoice?.totalAmount ?? null,
+    gstAmount:           invoice?.gstAmount ?? null,
+    lines,
+    rawText: text,
+    invoiceAgeCategory: ageCategory,
+    historicalExplanation: null as string | null,
+    matchedOrderId: null as string | null,
+    matchedOrderNumber: null as string | null,
+    priceChanges: [] as any[],
+    hasPriceChanges: false,
+    documentType: "TAX_INVOICE" as DocumentType,
+    ok: true,
+  };
+
+  // PO → Order matching (non-blocking on error)
+  if (payload.purchaseOrderNumber) {
+    try {
+      const match = await findAndLinkOrder(db, venueId, payload.purchaseOrderNumber);
+      if (match) {
+        payload.matchedOrderId = match.orderId;
+        payload.matchedOrderNumber = match.orderNumber;
+      }
+    } catch (e: any) {
+      console.log("[ocrInvoicePhoto] order matching error", e?.message);
+    }
+  }
+
+  // Resolve supplier FIRST so invoice document has the correct supplierId
+  const { supplierId: resolvedSupplierId, supplierName: resolvedSupplierName } = await resolveSupplier(
+    db, venueId, payload.supplierName,
+    {
+      hintSupplierId: data?.supplierId || "",
+      phone: payload.supplierPhone,
+      email: payload.supplierEmail,
+      address: payload.supplierAddress,
+      accountNumber: invoice?.supplierAccountNumber,
+    },
+  );
+
+  // Write invoice to venues/{venueId}/invoices with resolved supplierId
+  let invoiceDocId: string | undefined;
+  try {
+    let invoiceDateTimestamp: admin.firestore.Timestamp | null = null;
+    if (payload.invoiceDate) {
+      try {
+        const d = new Date(payload.invoiceDate);
+        if (!isNaN(d.getTime())) invoiceDateTimestamp = admin.firestore.Timestamp.fromDate(d);
+      } catch {}
+    }
+    const now = admin.firestore.Timestamp.now();
+    const invoiceLines = lines.map((l: ParsedLine) => ({
+      name: l.name,
+      productName: l.name,
+      qty: l.qty,
+      unitCost: l.unitPrice ?? null,
+      cost: l.unitPrice ?? null,
+      unitPrice: l.unitPrice ?? null,
+      ...(l.code ? { code: l.code } : {}),
+      ...(l.total != null ? { lineTotal: l.total } : {}),
+      ...(l.unit ? { unit: l.unit } : {}),
+      ...(l.caseSize ? { caseSize: l.caseSize } : {}),
+      ...(l.pricePerCase ? { pricePerCase: l.pricePerCase } : {}),
+      ...(l.source ? { source: l.source } : {}),
+    }));
+    const invoiceRef = await db.collection(`venues/${venueId}/invoices`).add({
+      supplierId: resolvedSupplierId || null,
+      supplierName: resolvedSupplierName || payload.supplierName || null,
+      invoiceNumber: payload.invoiceNumber,
+      poNumber: payload.purchaseOrderNumber,
+      invoiceDate: payload.invoiceDate,
+      invoiceDateTimestamp: invoiceDateTimestamp ?? now,
+      date: invoiceDateTimestamp ?? now,
+      totalAmount: payload.totalAmount,
+      gstAmount: payload.gstAmount,
+      lines: invoiceLines,
+      lineCount: invoiceLines.length,
+      venueId,
+      source: "ocr-photo",
+      ageCategory,
+      matchedOrderId: payload.matchedOrderId || null,
+      pricesExGST: true,
+      gstRate: 0.15,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(lateInvoiceDecision ? { lateInvoiceHandling: lateInvoiceDecision } : {}),
+    });
+    invoiceDocId = invoiceRef.id;
+  } catch (e: any) {
+    console.warn("[ocrInvoicePhoto] invoice write error", e?.message);
+  }
+
+  // Historical routing — invoices > 3 months old go to historicalInvoices, not stock
+  if (ageCategory === "historical" || ageCategory === "old" || ageCategory === "very_old") {
+    try {
+      await storeHistoricalInvoice(db, venueId, invoice ?? { ...payload, lines }, text, ageDays);
+    } catch (e: any) {
+      console.log("[ocrInvoicePhoto] historicalInvoice store error", e?.message);
+    }
+    payload.historicalExplanation = buildHistoricalExplanation(
+      ageCategory, payload.supplierName, payload.invoiceDate, lines.length, ageDays
+    );
+  }
+
+  // Contribute supplier to global directory (best-effort)
+  if (payload.supplierName) {
+    contributeToGlobalDirectory(db, payload.supplierName, {
+      phone: payload.supplierPhone,
+      email: payload.supplierEmail,
+      address: payload.supplierAddress,
+      addedByVenue: venueId,
+    }).catch(() => {});
+  }
+
+  // Track price changes — awaited to guarantee costPrice is written before function returns
+  let productMap: Record<string, string> = {};
+  try {
+    const priceResult = await trackPriceChanges({
+      venueId,
+      lines,
+      supplierId: resolvedSupplierId,
+      supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
+      invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
+      invoiceDocId,
+    });
+    productMap = priceResult.productMap || {};
+    const priceChangeSummary = (priceResult.changedLines || []).map((c) => ({
+      name: c.productName,
+      productId: c.productId,
+      oldPrice: c.oldPrice,
+      newPrice: c.newPrice,
+      changePercent: c.changePercent,
+      direction: c.direction,
+      qty: c.qty,
+      caseSize: c.caseSize,
+    }));
+    payload.priceChanges = priceChangeSummary;
+    payload.hasPriceChanges = priceChangeSummary.length > 0;
+
+    // Link matched productIds back into the saved invoice line items
+    if (invoiceDocId && Object.keys(productMap).length > 0) {
+      try {
+        const invRef = db.doc(`venues/${venueId}/invoices/${invoiceDocId}`);
+        const invSnap = await invRef.get();
+        if (invSnap.exists) {
+          const updatedLines = ((invSnap.data() as any).lines || []).map((il: any) => {
+            const pid = productMap[il.name] || productMap[il.productName];
+            return pid ? { ...il, productId: pid } : il;
+          });
+          await invRef.update({ lines: updatedLines });
+        }
+      } catch (e: any) {
+        console.log("[ocrInvoicePhoto] invoice product link error", e?.message);
+      }
+    }
+  } catch (e: any) {
+    console.error("[ocrInvoicePhoto] price tracking failed:", e?.message);
+    // Non-fatal — invoice was saved correctly but product costPrice may not have updated
+  }
+
+  // Create venue products for unpriced lines (awaited, non-fatal)
+  const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));
+  if (unpricedLines.length > 0) {
+    try {
+      await createUnpricedProducts(db, venueId, unpricedLines, resolvedSupplierId, resolvedSupplierName);
+    } catch (error: any) {
+      console.error("[ocrInvoice] product creation failed:", error?.message);
+    }
+  }
+
+  // Stock is always incremented when goods arrive — cost is confirmed separately
+  try {
+    const stockLines = lines.map((l: ParsedLine) => ({ productId: productMap[l.name] || null, name: l.name, qty: l.qty }));
+    const updates = await incrementStockFromLines(db, venueId, stockLines, uid);
+    payload.stockIncremented = updates > 0;
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] stock increment error", e?.message);
+    payload.stockIncremented = false;
+  }
+
+  // Try to match this invoice to a pending delivery (packing slip / delivery note awaiting invoice)
+  try {
+    const { delivery, confidence } = await findPendingDeliveryMatch(
+      db, venueId, resolvedSupplierName || payload.supplierName, payload.invoiceNumber, payload.invoiceDate,
+    );
+    if (confidence === "high" && delivery && invoiceDocId) {
+      const invoiceLinesForMatch = lines.map((l: ParsedLine) => ({ productId: productMap[l.name] || null, unitPrice: l.unitPrice ?? null }));
+      await confirmDeliveryMatch(db, venueId, delivery.id, invoiceDocId, invoiceLinesForMatch);
+      payload.matched = true;
+      payload.matchConfidence = "high";
+      payload.deliveryId = delivery.id;
+      payload.message = "Invoice processed and matched to a pending delivery. Costs confirmed.";
+    } else if (confidence === "medium" && delivery) {
+      payload.matched = true;
+      payload.matchConfidence = "medium";
+      payload.deliveryId = delivery.id;
+      payload.deliverySummary = {
+        supplierName: delivery.data.supplierName ?? null,
+        deliveryDate: delivery.data.deliveryDate ?? null,
+        lineCount: Array.isArray(delivery.data.lines) ? delivery.data.lines.length : 0,
+        packingSlipRef: delivery.data.packingSlipRef ?? null,
+      };
+      payload.message = "Invoice processed. We found a possible matching delivery — please confirm.";
+    } else {
+      payload.message = "Invoice processed. No matching delivery found.";
+    }
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] delivery matching error", e?.message);
+    payload.message = "Invoice processed.";
+  }
+
+  console.log("[ocrInvoicePhoto]", {
+    supplierName: payload.supplierName,
+    invoiceNumber: payload.invoiceNumber,
+    purchaseOrderNumber: payload.purchaseOrderNumber,
+    matchedOrderId: payload.matchedOrderId,
+    ageCategory,
+    linesCount: lines.length,
+  });
+
+  payload.supplierId = resolvedSupplierId || null;
+  payload.invoiceDocId = invoiceDocId || null;
+  return payload;
+}
+
+async function handlePackingSlip(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  uid: string,
+  text: string,
+): Promise<any> {
+  const slip = await extractPackingSlip(text);
+  const { supplierId, supplierName } = await resolveSupplier(db, venueId, slip.supplierName);
+  const { processedLines, unmatchedLines, totalProvisionalCost } = await matchPackingSlipLines(db, venueId, slip.lines, uid);
+
+  const deliveryRef = await db.collection(`venues/${venueId}/pendingDeliveries`).add({
+    type: "packing_slip",
+    status: "awaiting_invoice",
+    supplierName: supplierName || slip.supplierName || null,
+    supplierId: supplierId || null,
+    packingSlipRef: slip.packingSlipRef,
+    invoiceRef: slip.invoiceRef,
+    deliveryDate: slip.deliveryDate,
+    lines: processedLines,
+    invoiceId: null,
+    costConfirmed: false,
+    provisionalCost: totalProvisionalCost,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdBy: uid,
+    matchedOrderId: null,
+  });
+
+  return {
+    ok: true,
+    documentType: "PACKING_SLIP" as DocumentType,
+    deliveryId: deliveryRef.id,
+    stockIncremented: processedLines.length > 0,
+    linesProcessed: processedLines.length,
+    unmatchedLines,
+    provisionalCost: totalProvisionalCost,
+    supplierName: supplierName || slip.supplierName || null,
+    packingSlipRef: slip.packingSlipRef,
+    invoiceRef: slip.invoiceRef,
+    message: "Stock received and incremented. Awaiting invoice confirmation.",
+  };
+}
+
+async function handleDeliveryNote(text: string, classification: ClassificationResult): Promise<any> {
+  let note: DeliveryNoteExtraction | null = null;
+  try {
+    note = await extractDeliveryNote(text);
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] delivery note extraction failed", e?.message);
+  }
+
+  return {
+    ok: true,
+    documentType: "DELIVERY_NOTE" as DocumentType,
+    deliveryNoteData: {
+      courier: note?.courier ?? null,
+      trackingNumber: note?.trackingNumber ?? null,
+      senderName: note?.senderName ?? classification.supplierName ?? null,
+      packageCount: note?.packageCount ?? null,
+      deliveryDate: note?.deliveryDate ?? classification.documentDate ?? null,
+    },
+    stockIncremented: false,
+    requiresAction: true,
+    actions: ["match_to_order", "manual_entry", "upload_packing_slip"],
+    message: "Courier delivery note detected. No product details available. Please match to a pending order or enter received stock manually.",
+  };
+}
+
+async function handleCreditNoteOcr(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  uid: string,
+  text: string,
+): Promise<any> {
+  let invoice: InvoiceExtraction | null = null;
+  try {
+    invoice = await extractInvoiceWithClaude(text);
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] credit note extraction failed, falling back to regex", e?.message);
+  }
+
+  const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
+  const positiveLines = filterInvoiceLines(rawLines);
+
+  const { supplierId, supplierName } = await resolveSupplier(db, venueId, invoice?.supplierName ?? null, {
+    phone: invoice?.supplierPhone,
+    email: invoice?.supplierEmail,
+    address: invoice?.supplierAddress,
+    accountNumber: invoice?.supplierAccountNumber,
+  });
+
+  const creditLines = positiveLines.map((l: ParsedLine) => {
+    const unitCost = Math.abs(l.unitPrice ?? 0);
+    const qty = -Math.abs(l.qty);
+    return {
+      name: l.name,
+      productName: l.name,
+      qty,
+      unitCost,
+      cost: unitCost,
+      unitPrice: unitCost,
+      lineTotal: qty * unitCost,
+      ...(l.code ? { code: l.code } : {}),
+      ...(l.unit ? { unit: l.unit } : {}),
+    };
+  });
+  const totalAmount = creditLines.reduce((sum, l) => sum + l.lineTotal, 0);
+
+  let invoiceId: string | undefined;
+  try {
+    const now = admin.firestore.Timestamp.now();
+    let invoiceDateTimestamp: admin.firestore.Timestamp | null = null;
+    if (invoice?.invoiceDate) {
+      try {
+        const d = new Date(invoice.invoiceDate);
+        if (!isNaN(d.getTime())) invoiceDateTimestamp = admin.firestore.Timestamp.fromDate(d);
+      } catch {}
+    }
+    const ref = await db.collection(`venues/${venueId}/invoices`).add({
+      type: "credit_note",
+      supplierId: supplierId || null,
+      supplierName: supplierName || invoice?.supplierName || null,
+      invoiceNumber: invoice?.invoiceNumber ?? null,
+      invoiceDate: invoice?.invoiceDate ?? null,
+      invoiceDateTimestamp: invoiceDateTimestamp ?? now,
+      date: invoiceDateTimestamp ?? now,
+      totalAmount,
+      lines: creditLines,
+      lineCount: creditLines.length,
+      venueId,
+      source: "ocr-photo",
+      originalInvoiceId: null,
+      status: "posted",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    invoiceId = ref.id;
+  } catch (e: any) {
+    console.warn("[ocrInvoicePhoto] credit note write error", e?.message);
+  }
+
+  // Reverse stock for returned items
+  try {
+    await incrementStockFromLines(
+      db, venueId,
+      creditLines.map(l => ({ name: l.name, qty: l.qty })),
+      uid,
+    );
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] credit note stock adjustment error", e?.message);
+  }
+
+  return {
+    ok: true,
+    documentType: "CREDIT_NOTE" as DocumentType,
+    invoiceId: invoiceId || null,
+    totalAmount,
+    linesProcessed: creditLines.length,
+    supplierName: supplierName || invoice?.supplierName || null,
+    message: "Credit note recorded — stock adjusted.",
+  };
+}
+
 // ── Main callable ─────────────────────────────────────────────────────────
 
 export const ocrInvoicePhoto = functions
@@ -401,10 +1318,8 @@ export const ocrInvoicePhoto = functions
 
     const uid = String(context.auth.uid || "");
     const venueId = String(data?.venueId || "");
-    const imageBase64 = String(data?.imageBase64 || "");
 
     if (!venueId) throw new functions.https.HttpsError("invalid-argument", "venueId is required.");
-    if (!imageBase64) throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
 
     const db = admin.firestore();
 
@@ -412,6 +1327,37 @@ export const ocrInvoicePhoto = functions
     if (!memberSnap.exists) {
       throw new functions.https.HttpsError("permission-denied", "Not a member of this venue.");
     }
+
+    // Resume path 1: confirm a medium-confidence delivery match without re-running OCR
+    if (data?.confirmDeliveryMatch === true && data?.deliveryId && data?.invoiceDocId) {
+      const deliveryId = String(data.deliveryId);
+      const invoiceDocId = String(data.invoiceDocId);
+      const invSnap = await db.doc(`venues/${venueId}/invoices/${invoiceDocId}`).get();
+      const invoiceLines = invSnap.exists ? ((invSnap.data() as any).lines || []) : [];
+      await confirmDeliveryMatch(db, venueId, deliveryId, invoiceDocId, invoiceLines);
+      return {
+        ok: true,
+        documentType: "TAX_INVOICE" as DocumentType,
+        matched: true,
+        matchConfidence: "high",
+        deliveryId,
+        message: "Delivery match confirmed. Product costs updated.",
+      };
+    }
+
+    // Resume path 2: late invoice decision using cached extraction, no re-running OCR
+    const lateInvoiceDecision = data?.lateInvoiceDecision ? String(data.lateInvoiceDecision) : null;
+    const cachedInvoiceData = data?.cachedInvoiceData;
+    if (lateInvoiceDecision && cachedInvoiceData) {
+      return await processTaxInvoice(
+        db, venueId, uid,
+        cachedInvoiceData.invoice, cachedInvoiceData.lines, cachedInvoiceData.rawText || "",
+        cachedInvoiceData.ageCategory, data, lateInvoiceDecision,
+      );
+    }
+
+    const imageBase64 = String(data?.imageBase64 || "");
+    if (!imageBase64) throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
 
     let buf: Buffer;
     try {
@@ -427,244 +1373,57 @@ export const ocrInvoicePhoto = functions
       "";
 
     if (!text.trim()) {
-      return { supplierName: null, invoiceNumber: null, deliveryDate: null, lines: [], rawText: "" };
+      return {
+        ok: false,
+        documentType: "UNKNOWN" as DocumentType,
+        manualSelectionRequired: true,
+        supplierName: null, invoiceNumber: null, deliveryDate: null, lines: [], rawText: "",
+        message: "Could not read any text from this image. Please try again or enter details manually.",
+      };
     }
 
-    // Claude extracts everything in one call
-    let invoice: InvoiceExtraction | null = null;
-    try {
-      invoice = await extractInvoiceWithClaude(text);
-    } catch (e: any) {
-      console.log("[ocrInvoicePhoto] Claude extraction failed, falling back to regex", e?.message);
-    }
-
-    const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
-    const lines = filterInvoiceLines(rawLines);
-
-    // Determine invoice age
-    const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
-    const ageCategory = categorizeAge(ageDays);
-
-    // Build payload
-    const payload: any = {
-      supplierName:        invoice?.supplierName ?? null,
-      supplierPhone:       invoice?.supplierPhone ?? null,
-      supplierEmail:       invoice?.supplierEmail ?? null,
-      supplierAddress:     invoice?.supplierAddress ?? null,
-      purchaseOrderNumber: invoice?.purchaseOrderNumber ?? null,
-      invoiceNumber:       invoice?.invoiceNumber ?? null,
-      invoiceDate:         invoice?.invoiceDate ?? null,
-      deliveryDate:        invoice?.deliveryDate ?? null,
-      totalAmount:         invoice?.totalAmount ?? null,
-      gstAmount:           invoice?.gstAmount ?? null,
-      lines,
-      rawText: text,
-      invoiceAgeCategory: ageCategory,
-      historicalExplanation: null as string | null,
-      matchedOrderId: null as string | null,
-      matchedOrderNumber: null as string | null,
-      priceChanges: [] as any[],
-      hasPriceChanges: false,
-    };
-
-    // PO → Order matching (non-blocking on error)
-    if (payload.purchaseOrderNumber) {
+    // STEP 1: classify the document (unless the client already told us what it is)
+    const docTypeHint = data?.docTypeHint ? String(data.docTypeHint) : null;
+    let classification: ClassificationResult;
+    if (docTypeHint && DOCUMENT_TYPES.includes(docTypeHint as DocumentType) && docTypeHint !== "UNKNOWN") {
+      classification = {
+        documentType: docTypeHint as DocumentType,
+        supplierName: null, documentReference: null, invoiceReference: null, documentDate: null,
+        hasProductDetails: true, hasPricing: true, confidence: "high",
+      };
+    } else {
       try {
-        const match = await findAndLinkOrder(db, venueId, payload.purchaseOrderNumber);
-        if (match) {
-          payload.matchedOrderId = match.orderId;
-          payload.matchedOrderNumber = match.orderNumber;
-        }
+        classification = await classifyDocument(text);
       } catch (e: any) {
-        console.log("[ocrInvoicePhoto] order matching error", e?.message);
+        console.log("[ocrInvoicePhoto] classification failed, defaulting to TAX_INVOICE", e?.message);
+        classification = {
+          documentType: "TAX_INVOICE", supplierName: null, documentReference: null, invoiceReference: null,
+          documentDate: null, hasProductDetails: true, hasPricing: true, confidence: "low",
+        };
       }
     }
 
-    // Resolve supplier FIRST so invoice document has the correct supplierId
-    let resolvedSupplierId: string = data?.supplierId || "";
-    let resolvedSupplierName: string = payload.supplierName || "";
-    if (payload.supplierName) {
-      try {
-        const suppliersSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-        const candNorm = normNameInline(payload.supplierName);
-        let matchedId: string | null = null;
-        let bestScore = 0;
-        for (const sd of suppliersSnap.docs) {
-          const sn = normNameInline((sd.data() as any).name || "");
-          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
-          const sc = tokenJaccardInline(payload.supplierName, (sd.data() as any).name || "");
-          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
-        }
-        if (matchedId && bestScore >= 0.85) {
-          resolvedSupplierId = matchedId;
-          const existingDoc = suppliersSnap.docs.find(d => d.id === matchedId);
-          if (existingDoc) {
-            resolvedSupplierName = (existingDoc.data() as any).name || payload.supplierName;
-            const ex = existingDoc.data() as any;
-            const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-            if (!ex.phone && payload.supplierPhone) upd.phone = payload.supplierPhone;
-            if (!ex.email && payload.supplierEmail) upd.email = payload.supplierEmail;
-            if (!ex.address && payload.supplierAddress) upd.address = payload.supplierAddress;
-            if (!ex.accountNumber && invoice?.supplierAccountNumber) upd.accountNumber = invoice.supplierAccountNumber;
-            if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
-          }
-        } else {
-          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
-            name: payload.supplierName,
-            phone: payload.supplierPhone || null,
-            email: payload.supplierEmail || null,
-            address: payload.supplierAddress || null,
-            accountNumber: invoice?.supplierAccountNumber || null,
-            isHoldingSupplier: false,
-            source: "invoice-scan",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          resolvedSupplierId = newSupRef.id;
-        }
-      } catch (e: any) {
-        console.log("[ocrInvoicePhoto] supplier find/create error", e?.message);
-      }
+    console.log("[ocrInvoicePhoto] classification", classification);
+
+    // STEP 2: route based on document type
+    switch (classification.documentType) {
+      case "PACKING_SLIP":
+        return await handlePackingSlip(db, venueId, uid, text);
+      case "DELIVERY_NOTE":
+        return await handleDeliveryNote(text, classification);
+      case "CREDIT_NOTE":
+        return await handleCreditNoteOcr(db, venueId, uid, text);
+      case "TAX_INVOICE":
+        return await handleTaxInvoice(db, venueId, uid, text, data);
+      case "PURCHASE_ORDER":
+      case "UNKNOWN":
+      default:
+        return {
+          ok: false,
+          documentType: classification.documentType,
+          manualSelectionRequired: true,
+          supplierName: classification.supplierName,
+          message: "Could not confidently identify this document type. Please select the document type manually.",
+        };
     }
-
-    // Write invoice to venues/{venueId}/invoices with resolved supplierId
-    let invoiceDocId: string | undefined;
-    try {
-      let invoiceDateTimestamp: admin.firestore.Timestamp | null = null;
-      if (payload.invoiceDate) {
-        try {
-          const d = new Date(payload.invoiceDate);
-          if (!isNaN(d.getTime())) invoiceDateTimestamp = admin.firestore.Timestamp.fromDate(d);
-        } catch {}
-      }
-      const now = admin.firestore.Timestamp.now();
-      const invoiceLines = lines.map((l: ParsedLine) => ({
-        name: l.name,
-        productName: l.name,
-        qty: l.qty,
-        unitCost: l.unitPrice ?? null,
-        cost: l.unitPrice ?? null,
-        unitPrice: l.unitPrice ?? null,
-        ...(l.code ? { code: l.code } : {}),
-        ...(l.total != null ? { lineTotal: l.total } : {}),
-        ...(l.unit ? { unit: l.unit } : {}),
-        ...(l.caseSize ? { caseSize: l.caseSize } : {}),
-        ...(l.pricePerCase ? { pricePerCase: l.pricePerCase } : {}),
-        ...(l.source ? { source: l.source } : {}),
-      }));
-      const invoiceRef = await db.collection(`venues/${venueId}/invoices`).add({
-        supplierId: resolvedSupplierId || null,
-        supplierName: resolvedSupplierName || payload.supplierName || null,
-        invoiceNumber: payload.invoiceNumber,
-        poNumber: payload.purchaseOrderNumber,
-        invoiceDate: payload.invoiceDate,
-        invoiceDateTimestamp: invoiceDateTimestamp ?? now,
-        date: invoiceDateTimestamp ?? now,
-        totalAmount: payload.totalAmount,
-        gstAmount: payload.gstAmount,
-        lines: invoiceLines,
-        lineCount: invoiceLines.length,
-        venueId,
-        source: "ocr-photo",
-        ageCategory,
-        matchedOrderId: payload.matchedOrderId || null,
-        pricesExGST: true,
-        gstRate: 0.15,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        processedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      invoiceDocId = invoiceRef.id;
-    } catch (e: any) {
-      console.warn("[ocrInvoicePhoto] invoice write error", e?.message);
-    }
-
-    // Historical routing — invoices > 3 months old go to historicalInvoices, not stock
-    if (ageCategory === "historical" || ageCategory === "old" || ageCategory === "very_old") {
-      try {
-        await storeHistoricalInvoice(db, venueId, invoice ?? { ...payload, lines }, text, ageDays);
-      } catch (e: any) {
-        console.log("[ocrInvoicePhoto] historicalInvoice store error", e?.message);
-      }
-      payload.historicalExplanation = buildHistoricalExplanation(
-        ageCategory, payload.supplierName, payload.invoiceDate, lines.length, ageDays
-      );
-    }
-
-    // Contribute supplier to global directory (best-effort)
-    if (payload.supplierName) {
-      contributeToGlobalDirectory(db, payload.supplierName, {
-        phone: payload.supplierPhone,
-        email: payload.supplierEmail,
-        address: payload.supplierAddress,
-        addedByVenue: venueId,
-      }).catch(() => {});
-    }
-
-    // Track price changes — awaited to guarantee costPrice is written before function returns
-    try {
-      const priceResult = await trackPriceChanges({
-        venueId,
-        lines,
-        supplierId: resolvedSupplierId,
-        supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
-        invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
-        invoiceDocId,
-      });
-      // Build price change summary for client
-      const priceChangeSummary = (priceResult.changedLines || []).map((c) => ({
-        name: c.productName,
-        productId: c.productId,
-        oldPrice: c.oldPrice,
-        newPrice: c.newPrice,
-        changePercent: c.changePercent,
-        direction: c.direction,
-        qty: c.qty,
-        caseSize: c.caseSize,
-      }));
-      payload.priceChanges = priceChangeSummary;
-      payload.hasPriceChanges = priceChangeSummary.length > 0;
-
-      // Link matched productIds back into the saved invoice line items
-      if (invoiceDocId && Object.keys(priceResult.productMap).length > 0) {
-        try {
-          const invRef = db.doc(`venues/${venueId}/invoices/${invoiceDocId}`);
-          const invSnap = await invRef.get();
-          if (invSnap.exists) {
-            const updatedLines = ((invSnap.data() as any).lines || []).map((il: any) => {
-              const pid = priceResult.productMap[il.name] || priceResult.productMap[il.productName];
-              return pid ? { ...il, productId: pid } : il;
-            });
-            await invRef.update({ lines: updatedLines });
-          }
-        } catch (e: any) {
-          console.log("[ocrInvoicePhoto] invoice product link error", e?.message);
-        }
-      }
-    } catch (e: any) {
-      console.error("[ocrInvoicePhoto] price tracking failed:", e?.message);
-      // Non-fatal — invoice was saved correctly but product costPrice may not have updated
-    }
-
-    // Create venue products for unpriced lines (awaited, non-fatal)
-    const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));
-    if (unpricedLines.length > 0) {
-      try {
-        await createUnpricedProducts(db, venueId, unpricedLines, resolvedSupplierId, resolvedSupplierName);
-      } catch (error: any) {
-        console.error("[ocrInvoice] product creation failed:", error?.message);
-      }
-    }
-
-    console.log("[ocrInvoicePhoto]", {
-      supplierName: payload.supplierName,
-      invoiceNumber: payload.invoiceNumber,
-      purchaseOrderNumber: payload.purchaseOrderNumber,
-      matchedOrderId: payload.matchedOrderId,
-      ageCategory,
-      linesCount: lines.length,
-    });
-
-    payload.supplierId = resolvedSupplierId || null;
-    payload.invoiceDocId = invoiceDocId || null;
-    return payload;
   });

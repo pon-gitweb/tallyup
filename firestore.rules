@@ -888,6 +888,13 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /pendingDeliveries/{deliveryId} {
+        allow get, list: if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager','owner','staff']);
+        allow delete: if hasVenueRole(venueId, ['manager','owner']);
+      }
+
       match /orderCounters/{dateKey} {
         allow get, list: if isVenueMember(venueId);
         allow create: if hasVenueRole(venueId, ['manager','owner'])

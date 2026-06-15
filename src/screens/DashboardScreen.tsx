@@ -260,6 +260,19 @@ export default function DashboardScreen() {
     return () => unsub();
   }, [venueId]);
 
+  // Pending deliveries awaiting invoice confirmation (packing slips / delivery notes)
+  const [pendingDeliveriesCount, setPendingDeliveriesCount] = React.useState(0);
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    const unsub = onSnapshot(
+      query(collection(db, 'venues', venueId, 'pendingDeliveries'), where('status', '==', 'awaiting_invoice')),
+      snap => setPendingDeliveriesCount(snap.size),
+      () => setPendingDeliveriesCount(0)
+    );
+    return () => unsub();
+  }, [venueId]);
+
   const [priceChangeCount, setPriceChangeCount] = React.useState(0);
   const [openDisputeCount, setOpenDisputeCount] = React.useState(0);
   React.useEffect(() => {
@@ -588,6 +601,34 @@ export default function DashboardScreen() {
               </Text>
             </View>
             <Text style={{ color: colours.stellarAmber || '#c47b2b', fontSize: 16 }}>→</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* ── Pending deliveries (stock received, awaiting invoice) ────── */}
+        {pendingDeliveriesCount > 0 && (
+          <TouchableOpacity
+            style={{
+              backgroundColor: colours.primaryLight || '#eef2ff',
+              borderColor: colours.deepBlue || '#1b4f72',
+              borderWidth: 1.5,
+              borderRadius: 12,
+              padding: 14,
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginBottom: 12,
+            }}
+            onPress={() => nav.navigate('PendingDeliveries')}
+          >
+            <Text style={{ fontSize: 18, marginRight: 10 }}>📦</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colours.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold, fontSize: 14 }}>
+                {pendingDeliveriesCount} {pendingDeliveriesCount === 1 ? 'delivery' : 'deliveries'} awaiting invoice
+              </Text>
+              <Text style={{ color: colours.slateMid || '#6b7280', fontFamily: theme.fontBody, fontSize: 12 }}>
+                Stock received — costs are provisional until invoiced
+              </Text>
+            </View>
+            <Text style={{ color: colours.deepBlue || '#1b4f72', fontSize: 16 }}>→</Text>
           </TouchableOpacity>
         )}
 

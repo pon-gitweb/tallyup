@@ -17,15 +17,90 @@ type Props = {
   }) => void;
 };
 
+const DOC_TYPE_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: 'auto', label: 'Auto-detect' },
+  { key: 'TAX_INVOICE', label: 'Tax invoice' },
+  { key: 'PACKING_SLIP', label: 'Packing slip' },
+  { key: 'DELIVERY_NOTE', label: 'Delivery note' },
+  { key: 'CREDIT_NOTE', label: 'Credit note' },
+];
+
 export default function PhotoOCRPanel({ onParsed }: Props) {
   const venueId = useVenueId();
   const venueType = useVenueType();
   const navigation = useNavigation<any>();
   const [busy, setBusy] = useState(false);
+  const [docTypeHint, setDocTypeHint] = useState('auto');
+  const [lastLocalUri, setLastLocalUri] = useState<string | null>(null);
+
+  // Result screens shown after a scan completes
+  const [lateInvoice, setLateInvoice] = useState<any | null>(null);
+  const [matchConfirm, setMatchConfirm] = useState<any | null>(null);
+  const [packingSlipResult, setPackingSlipResult] = useState<any | null>(null);
+  const [deliveryNoteResult, setDeliveryNoteResult] = useState<any | null>(null);
+  const [creditNoteResult, setCreditNoteResult] = useState<any | null>(null);
+  const [manualSelect, setManualSelect] = useState<any | null>(null);
+
+  function resetResultScreens() {
+    setLateInvoice(null);
+    setMatchConfirm(null);
+    setPackingSlipResult(null);
+    setDeliveryNoteResult(null);
+    setCreditNoteResult(null);
+    setManualSelect(null);
+  }
+
+  function handleParsed(parsed: any) {
+    const documentType = parsed?.documentType || 'TAX_INVOICE';
+
+    if (documentType === 'TAX_INVOICE' && parsed?.isLateInvoice) {
+      setLateInvoice(parsed);
+      return;
+    }
+
+    if (documentType === 'TAX_INVOICE' && parsed?.matched && parsed?.matchConfidence === 'medium') {
+      setMatchConfirm(parsed);
+      return;
+    }
+
+    if (documentType === 'PACKING_SLIP') {
+      setPackingSlipResult(parsed);
+      return;
+    }
+
+    if (documentType === 'DELIVERY_NOTE') {
+      setDeliveryNoteResult(parsed);
+      return;
+    }
+
+    if (documentType === 'CREDIT_NOTE') {
+      setCreditNoteResult(parsed);
+      return;
+    }
+
+    if (parsed?.manualSelectionRequired) {
+      setManualSelect(parsed);
+      return;
+    }
+
+    // Standard TAX_INVOICE flow (unchanged)
+    onParsed(parsed);
+    if (parsed?.hasPriceChanges) {
+      navigation.navigate('InvoiceSummary', {
+        supplierName: parsed.supplierName || null,
+        invoiceNumber: parsed.invoiceNumber || null,
+        productCount: parsed.lines?.length || 0,
+        priceChanges: parsed.priceChanges || [],
+        supplierId: parsed.supplierId || null,
+        invoiceDocId: parsed.invoiceDocId || null,
+        venueType,
+      });
+    }
+  }
 
   async function takePhoto() {
     try {
-      console.log('[PhotoOCRPanel] takePhoto tapped', { venueId });
+      console.log('[PhotoOCRPanel] takePhoto tapped', { venueId, docTypeHint });
 
       if (!venueId) {
         Alert.alert('No Venue', 'Attach a venue first.');
@@ -53,20 +128,25 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
 
       if (res.canceled || !res.assets?.length) return;
 
+      resetResultScreens();
       setBusy(true);
       const asset = res.assets[0];
+      setLastLocalUri(asset.uri);
 
       console.log('[PhotoOCRPanel] calling runPhotoOcrJob', {
         venueId,
         uri: asset.uri,
+        docTypeHint,
       });
 
       const parsed = await runPhotoOcrJob({
         venueId,
         localUri: asset.uri,
+        docTypeHint: docTypeHint !== 'auto' ? docTypeHint : undefined,
       });
 
       console.log('[PhotoOCRPanel] runPhotoOcrJob result summary', {
+        documentType: parsed?.documentType,
         supplierName: parsed?.supplierName || null,
         invoiceNumber: parsed?.invoiceNumber || null,
         deliveryDate: parsed?.deliveryDate || null,
@@ -74,15 +154,64 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
       });
 
       setBusy(false);
+      handleParsed(parsed);
+    } catch (e: any) {
+      setBusy(false);
+      console.log('[PhotoOCRPanel] error during scan', e);
+      Alert.alert('OCR failed', e?.message || 'Unknown error');
+    }
+  }
 
-      if (!parsed?.lines?.length) {
-        Alert.alert('No lines found', 'The OCR ran but did not detect line items.');
-        return;
-      }
+  async function handleLateInvoiceDecision(decision: 'apply_current' | 'hold_for_review') {
+    if (!venueId || !lateInvoice) return;
+    try {
+      setBusy(true);
+      const parsed = await runPhotoOcrJob({
+        venueId,
+        lateInvoiceDecision: decision,
+        cachedInvoiceData: lateInvoice.invoiceData,
+      });
+      setBusy(false);
+      setLateInvoice(null);
+      handleParsed(parsed);
+    } catch (e: any) {
+      setBusy(false);
+      Alert.alert('Could not process invoice', e?.message || 'Unknown error');
+    }
+  }
 
+  async function handleConfirmDeliveryMatch(confirm: boolean) {
+    if (!venueId || !matchConfirm) return;
+    if (!confirm) {
+      // User says it's not a match — just complete the normal invoice flow
+      const parsed = matchConfirm;
+      setMatchConfirm(null);
       onParsed(parsed);
-
-      // Navigate to InvoiceSummaryScreen when price changes were detected
+      if (parsed?.hasPriceChanges) {
+        navigation.navigate('InvoiceSummary', {
+          supplierName: parsed.supplierName || null,
+          invoiceNumber: parsed.invoiceNumber || null,
+          productCount: parsed.lines?.length || 0,
+          priceChanges: parsed.priceChanges || [],
+          supplierId: parsed.supplierId || null,
+          invoiceDocId: parsed.invoiceDocId || null,
+          venueType,
+        });
+      }
+      return;
+    }
+    try {
+      setBusy(true);
+      await runPhotoOcrJob({
+        venueId,
+        confirmDeliveryMatch: true,
+        deliveryId: matchConfirm.deliveryId,
+        invoiceDocId: matchConfirm.invoiceDocId,
+      });
+      setBusy(false);
+      const parsed = matchConfirm;
+      setMatchConfirm(null);
+      onParsed(parsed);
       if (parsed?.hasPriceChanges) {
         navigation.navigate('InvoiceSummary', {
           supplierName: parsed.supplierName || null,
@@ -96,26 +225,228 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
       }
     } catch (e: any) {
       setBusy(false);
-      console.log('[PhotoOCRPanel] error during scan', e);
+      Alert.alert('Could not confirm match', e?.message || 'Unknown error');
+    }
+  }
+
+  async function rescanAs(type: string) {
+    if (!venueId || !lastLocalUri) {
+      Alert.alert('Please take a new photo', 'Select a document type below and tap "Take photo".');
+      setDocTypeHint(type);
+      resetResultScreens();
+      return;
+    }
+    try {
+      resetResultScreens();
+      setBusy(true);
+      const parsed = await runPhotoOcrJob({
+        venueId,
+        localUri: lastLocalUri,
+        docTypeHint: type,
+      });
+      setBusy(false);
+      handleParsed(parsed);
+    } catch (e: any) {
+      setBusy(false);
       Alert.alert('OCR failed', e?.message || 'Unknown error');
     }
   }
 
+  // ── Result screens ──────────────────────────────────────────────────────
+
+  if (lateInvoice) {
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>⏱️ Late invoice detected</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>
+          This invoice is dated {lateInvoice.invoiceDate || 'within'} a stocktake period that ended {lateInvoice.cycleEndDate}.
+          {' '}How should this be handled?
+        </Text>
+        <TouchableOpacity
+          onPress={() => handleLateInvoiceDecision('apply_current')}
+          style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+          disabled={busy}
+        >
+          {busy ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '700' }}>Apply to current cycle (recommended)</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleLateInvoiceDecision('hold_for_review')}
+          style={{ backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+          disabled={busy}
+        >
+          <Text style={{ color: '#111', fontWeight: '700' }}>Hold for manager review</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (matchConfirm) {
+    const summary = matchConfirm.deliverySummary || {};
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>🔗 Possible delivery match</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>
+          This invoice may match a delivery already received:
+        </Text>
+        <View style={{ backgroundColor: '#F2F2F7', borderRadius: 10, padding: 10, gap: 4 }}>
+          <Text style={{ fontWeight: '600' }}>{summary.supplierName || 'Unknown supplier'}</Text>
+          {summary.deliveryDate ? <Text style={{ opacity: 0.7 }}>Delivered {summary.deliveryDate}</Text> : null}
+          {summary.lineCount ? <Text style={{ opacity: 0.7 }}>{summary.lineCount} line item(s)</Text> : null}
+          {summary.packingSlipRef ? <Text style={{ opacity: 0.7 }}>Packing slip ref: {summary.packingSlipRef}</Text> : null}
+        </View>
+        <TouchableOpacity
+          onPress={() => handleConfirmDeliveryMatch(true)}
+          style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+          disabled={busy}
+        >
+          {busy ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '700' }}>Yes, confirm match</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleConfirmDeliveryMatch(false)}
+          style={{ backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+          disabled={busy}
+        >
+          <Text style={{ color: '#111', fontWeight: '700' }}>No, not a match</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (packingSlipResult) {
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>📦 Packing slip scanned</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>{packingSlipResult.message}</Text>
+        <View style={{ backgroundColor: '#F2F2F7', borderRadius: 10, padding: 10, gap: 4 }}>
+          <Text>Supplier: {packingSlipResult.supplierName || 'Unknown'}</Text>
+          <Text>Lines processed: {packingSlipResult.linesProcessed ?? 0}</Text>
+          {packingSlipResult.unmatchedLines?.length > 0 && (
+            <Text style={{ color: '#B45309' }}>
+              {packingSlipResult.unmatchedLines.length} line(s) couldn't be matched to a product
+            </Text>
+          )}
+          {packingSlipResult.provisionalCost != null && (
+            <Text>Provisional cost: ${Number(packingSlipResult.provisionalCost).toFixed(2)}</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={resetResultScreens}
+          style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+        >
+          <Text style={{ color: 'white', fontWeight: '700' }}>Done</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (deliveryNoteResult) {
+    const data = deliveryNoteResult.deliveryNoteData || {};
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>🚚 Delivery note scanned</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>{deliveryNoteResult.message}</Text>
+        <View style={{ backgroundColor: '#F2F2F7', borderRadius: 10, padding: 10, gap: 4 }}>
+          {data.courier ? <Text>Courier: {data.courier}</Text> : null}
+          {data.senderName ? <Text>From: {data.senderName}</Text> : null}
+          {data.trackingNumber ? <Text>Tracking: {data.trackingNumber}</Text> : null}
+          {data.packageCount ? <Text>Packages: {data.packageCount}</Text> : null}
+        </View>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Orders')}
+          style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+        >
+          <Text style={{ color: 'white', fontWeight: '700' }}>Match to an order</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => { resetResultScreens(); setDocTypeHint('PACKING_SLIP'); }}
+          style={{ backgroundColor: '#E5E7EB', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+        >
+          <Text style={{ color: '#111', fontWeight: '700' }}>Upload packing slip instead</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={resetResultScreens}
+          style={{ paddingVertical: 10, alignItems: 'center' }}
+        >
+          <Text style={{ color: '#6b7280' }}>Enter received stock manually</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (creditNoteResult) {
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>↩️ Credit note scanned</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>{creditNoteResult.message}</Text>
+        <View style={{ backgroundColor: '#F2F2F7', borderRadius: 10, padding: 10, gap: 4 }}>
+          <Text>Supplier: {creditNoteResult.supplierName || 'Unknown'}</Text>
+          <Text>Lines: {creditNoteResult.linesProcessed ?? 0}</Text>
+          {creditNoteResult.totalAmount != null && (
+            <Text>Total: ${Math.abs(Number(creditNoteResult.totalAmount)).toFixed(2)} credit</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={resetResultScreens}
+          style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
+        >
+          <Text style={{ color: 'white', fontWeight: '700' }}>Done</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (manualSelect) {
+    return (
+      <View style={panelStyle}>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>🤔 Couldn't identify this document</Text>
+        <Text style={{ opacity: 0.8, lineHeight: 19 }}>{manualSelect.message}</Text>
+        <Text style={{ fontWeight: '600', marginTop: 4 }}>What kind of document is this?</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {DOC_TYPE_OPTIONS.filter(o => o.key !== 'auto').map(o => (
+            <TouchableOpacity
+              key={o.key}
+              onPress={() => rescanAs(o.key)}
+              style={{ borderWidth: 1, borderColor: '#0A84FF', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 14 }}
+            >
+              <Text style={{ color: '#0A84FF', fontWeight: '600' }}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  // ── Default scan panel ──────────────────────────────────────────────────
+
   return (
-    <View
-      style={{
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-        borderRadius: 12,
-        backgroundColor: 'white',
-        gap: 8,
-      }}
-    >
-      <Text style={{ fontWeight: '700' }}>Scan invoice (Photo OCR)</Text>
+    <View style={panelStyle}>
+      <Text style={{ fontWeight: '700' }}>Scan document (Photo OCR)</Text>
       <Text style={{ opacity: 0.7 }}>
-        Take a photo of the invoice. We’ll extract items and send them to your mapping step.
+        Take a photo of an invoice, packing slip, delivery note, or credit note. We'll detect the type automatically.
       </Text>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        {DOC_TYPE_OPTIONS.map(o => {
+          const active = docTypeHint === o.key;
+          return (
+            <TouchableOpacity
+              key={o.key}
+              onPress={() => setDocTypeHint(o.key)}
+              style={{
+                borderWidth: 1,
+                borderColor: active ? '#0A84FF' : '#D0D3D7',
+                backgroundColor: active ? '#0A84FF' : 'transparent',
+                borderRadius: 999,
+                paddingVertical: 6,
+                paddingHorizontal: 12,
+              }}
+            >
+              <Text style={{ color: active ? 'white' : '#3C3C43', fontWeight: '600', fontSize: 12 }}>{o.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {busy ? (
         <View style={{ alignItems: 'center', gap: 6 }}>
           <ActivityIndicator />
@@ -137,3 +468,12 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
     </View>
   );
 }
+
+const panelStyle = {
+  padding: 12,
+  borderWidth: 1,
+  borderColor: '#E5E7EB',
+  borderRadius: 12,
+  backgroundColor: 'white',
+  gap: 8,
+} as const;
