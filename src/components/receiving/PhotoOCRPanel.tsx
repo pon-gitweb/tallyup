@@ -3,8 +3,10 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
 import { useVenueId, useVenueType } from '../../context/VenueProvider';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
+import { apiBase } from '../../services/apiBase';
 
 type Props = {
   // Caller will receive normalized lines to pipe into your existing mapping UI
@@ -32,6 +34,14 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
   const [busy, setBusy] = useState(false);
   const [docTypeHint, setDocTypeHint] = useState('auto');
   const [lastLocalUri, setLastLocalUri] = useState<string | null>(null);
+
+  // Support request state — shown after invoice scan detects repeated price failures
+  const [pendingSupportRequest, setPendingSupportRequest] = useState<{
+    supplierName: string;
+    invoiceDocId: string | null;
+    storageRef: string | null;
+  } | null>(null);
+  const [sendingToSupport, setSendingToSupport] = useState(false);
 
   // Result screens shown after a scan completes
   const [lateInvoice, setLateInvoice] = useState<any | null>(null);
@@ -95,6 +105,45 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
         invoiceDocId: parsed.invoiceDocId || null,
         venueType,
       });
+    }
+    if (parsed?.requestInvoiceCopy && parsed?.failureSupplier) {
+      setPendingSupportRequest({
+        supplierName: parsed.failureSupplier,
+        invoiceDocId: parsed.invoiceDocId || null,
+        storageRef: parsed.documentStorageRef || null,
+      });
+    }
+  }
+
+  async function sendInvoiceToSupport() {
+    if (!venueId || !pendingSupportRequest) return;
+    try {
+      setSendingToSupport(true);
+      const auth = getAuth();
+      const idToken = await auth.currentUser?.getIdToken();
+      const resp = await fetch(`${apiBase()}/send-failing-invoice`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          venueId,
+          supplierName: pendingSupportRequest.supplierName,
+          documentStorageRef: pendingSupportRequest.storageRef,
+          invoiceDocId: pendingSupportRequest.invoiceDocId,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${resp.status}`);
+      }
+      setPendingSupportRequest(null);
+      Alert.alert('Sent', 'Thanks for helping us improve extraction for this supplier.');
+    } catch (e: any) {
+      Alert.alert('Could not send', e?.message || 'Please try again.');
+    } finally {
+      setSendingToSupport(false);
     }
   }
 
@@ -420,6 +469,30 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
 
   return (
     <View style={panelStyle}>
+      {pendingSupportRequest && (
+        <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, gap: 8 }}>
+          <Text style={{ fontWeight: '700', color: '#92400E' }}>Repeated price extraction issues</Text>
+          <Text style={{ fontSize: 13, color: '#78350F', lineHeight: 18 }}>
+            We've had trouble reading prices from {pendingSupportRequest.supplierName} invoices multiple times.
+            Sending this invoice to Hosti support helps us improve extraction for this supplier.
+          </Text>
+          <TouchableOpacity
+            onPress={sendInvoiceToSupport}
+            disabled={sendingToSupport}
+            style={{ backgroundColor: '#D97706', paddingVertical: 10, borderRadius: 8, alignItems: 'center' }}
+          >
+            {sendingToSupport
+              ? <ActivityIndicator color="white" size="small" />
+              : <Text style={{ color: 'white', fontWeight: '700' }}>Send invoice to Hosti support</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setPendingSupportRequest(null)}
+            style={{ paddingVertical: 6, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#78350F' }}>Not now</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <Text style={{ fontWeight: '700' }}>Scan document (Photo OCR)</Text>
       <Text style={{ opacity: 0.7 }}>
         Take a photo of an invoice, packing slip, delivery note, or credit note. We'll detect the type automatically.

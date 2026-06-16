@@ -1090,6 +1090,52 @@ async function processTaxInvoice(
     }
   }
 
+  // Track price extraction failures per supplier
+  const hadPriceFailure = unpricedLines.length > 0 && lines.length > 0;
+  let documentStoragePath: string | null = null;
+  let shouldRequestInvoice = false;
+
+  if (hadPriceFailure) {
+    if (data?.imageBase64) {
+      try {
+        const imgBuf = Buffer.from(String(data.imageBase64), 'base64');
+        const storageKey = `venues/${venueId}/invoice-failures/${Date.now()}-${invoiceDocId || 'unknown'}.jpg`;
+        await admin.storage().bucket().file(storageKey).save(imgBuf, { contentType: 'image/jpeg' });
+        documentStoragePath = storageKey;
+      } catch (e: any) {
+        console.warn('[ocrInvoicePhoto] failure image storage error', e?.message);
+      }
+    }
+    try {
+      await db.collection(`venues/${venueId}/priceExtractionFailures`).add({
+        supplierName: resolvedSupplierName || 'Unknown',
+        invoiceId: invoiceDocId || null,
+        documentStoragePath,
+        linesMissingPrice: unpricedLines.length,
+        totalLines: lines.length,
+        reportedToSupport: false,
+        occurredAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e: any) {
+      console.warn('[ocrInvoicePhoto] failure tracking write error', e?.message);
+    }
+    if (resolvedSupplierName) {
+      try {
+        const thirtyDaysAgo = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        );
+        const recentSnap = await db
+          .collection(`venues/${venueId}/priceExtractionFailures`)
+          .where('supplierName', '==', resolvedSupplierName)
+          .where('occurredAt', '>=', thirtyDaysAgo)
+          .get();
+        shouldRequestInvoice = recentSnap.docs.length >= 3;
+      } catch (e: any) {
+        console.warn('[ocrInvoicePhoto] failure count query error', e?.message);
+      }
+    }
+  }
+
   // Stock is always incremented when goods arrive — cost is confirmed separately
   try {
     const stockLines = lines.map((l: ParsedLine) => ({ productId: productMap[l.name] || null, name: l.name, qty: l.qty }));
@@ -1140,6 +1186,10 @@ async function processTaxInvoice(
     linesCount: lines.length,
   });
 
+  payload.priceExtractionIssue = hadPriceFailure;
+  payload.requestInvoiceCopy = shouldRequestInvoice;
+  payload.failureSupplier = shouldRequestInvoice ? (resolvedSupplierName || null) : null;
+  payload.documentStorageRef = shouldRequestInvoice ? documentStoragePath : null;
   payload.supplierId = resolvedSupplierId || null;
   payload.invoiceDocId = invoiceDocId || null;
   return payload;

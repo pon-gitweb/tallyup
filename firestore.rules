@@ -751,6 +751,11 @@ service cloud.firestore {
         }
       }
 
+      match /priceExtractionFailures/{failureId} {
+        allow read: if isVenueMember(venueId);
+        allow write: if false;
+      }
+
       match /budgets/{budgetId} {
         allow read, write: if hasVenueRole(venueId, ['manager','owner']);
         match /{sub=**} {

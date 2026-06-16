@@ -3646,9 +3646,103 @@ Each array should have 2-4 items. Be specific and actionable. Never suggest pric
   }
 });
 
+app.post("/send-failing-invoice", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) return res.status(401).json({ ok: false, error: "Unauthorized" });
+
+    const { venueId, supplierName, documentStorageRef, invoiceDocId } = req.body;
+    if (!venueId || !supplierName) return res.status(400).json({ ok: false, error: "Missing required fields" });
+
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const apiKey = process.env.POSTMARK_API_KEY;
+    if (!apiKey) return res.status(500).json({ ok: false, error: "Email service not configured" });
+
+    // Download invoice image from Storage if a path was recorded
+    const attachments: any[] = [];
+    if (documentStorageRef) {
+      try {
+        const [imgBuffer] = await admin.storage().bucket().file(documentStorageRef).download();
+        const fileName = String(documentStorageRef).split("/").pop() || "invoice.jpg";
+        attachments.push({
+          Name: fileName,
+          Content: imgBuffer.toString("base64"),
+          ContentType: "image/jpeg",
+        });
+      } catch (e: any) {
+        console.warn("[send-failing-invoice] could not download invoice image", e?.message);
+      }
+    }
+
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const venueName = venueSnap.data()?.name || venueId;
+
+    const emailBody: any = {
+      From: "Hosti <reports@hosti.co.nz>",
+      To: "support@hosti.co.nz",
+      Subject: `Invoice extraction issue — ${supplierName} — ${venueName}`,
+      HtmlBody: `
+        <p>A venue manager has flagged recurring price extraction failures.</p>
+        <ul>
+          <li><strong>Venue:</strong> ${venueName}</li>
+          <li><strong>Supplier:</strong> ${supplierName}</li>
+          ${invoiceDocId ? `<li><strong>Invoice ID:</strong> ${invoiceDocId}</li>` : ""}
+        </ul>
+        <p>Please investigate the extraction failure for this supplier and update the parser as needed.</p>
+      `,
+      MessageStream: "outbound",
+    };
+    if (attachments.length > 0) emailBody.Attachments = attachments;
+
+    const pmRes = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        "X-Postmark-Server-Token": apiKey,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(emailBody),
+    });
+
+    if (!pmRes.ok) {
+      const pmErr = await pmRes.text().catch(() => "(no body)");
+      throw new Error(`Postmark error ${pmRes.status}: ${pmErr}`);
+    }
+
+    // Mark all unreported failures for this supplier as sent
+    try {
+      const failuresSnap = await db
+        .collection(`venues/${venueId}/priceExtractionFailures`)
+        .where("supplierName", "==", supplierName)
+        .where("reportedToSupport", "==", false)
+        .get();
+      if (!failuresSnap.empty) {
+        const batch = db.batch();
+        failuresSnap.docs.forEach((d) => {
+          batch.update(d.ref, {
+            reportedToSupport: true,
+            reportedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+    } catch (e: any) {
+      console.warn("[send-failing-invoice] could not mark failures as reported", e?.message);
+    }
+
+    console.log("[send-failing-invoice] sent for venue", venueId, "supplier", supplierName);
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[send-failing-invoice] error", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Internal error" });
+  }
+});
+
 export const api = functions
   .region("us-central1")
-  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY", "POSTMARK_API_KEY"] })
   .https.onRequest(app);
 
 // ── Shared invoice parsing helpers ───────────────────────────────────────────

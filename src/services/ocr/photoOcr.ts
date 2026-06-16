@@ -192,6 +192,12 @@ export async function runPhotoOcrJob({
 
     // Manual selection fallback
     manualSelectionRequired: out?.manualSelectionRequired === true,
+
+    // Price extraction failure tracking
+    priceExtractionIssue: out?.priceExtractionIssue === true,
+    requestInvoiceCopy: out?.requestInvoiceCopy === true,
+    failureSupplier: out?.failureSupplier || null,
+    documentStorageRef: out?.documentStorageRef || null,
   };
 
   console.log('[PhotoOCR] normalized payload ready', {
