@@ -6,7 +6,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Animated, Easing, Modal, Text, TouchableOpacity,
+  Animated, Easing, Modal, Text, TextInput, TouchableOpacity,
   View, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -64,9 +64,13 @@ export default function BarcodeScannerModal({
   const [globalProduct, setGlobalProduct] = useState<GlobalProduct | null>(null);
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [scanHintVisible, setScanHintVisible] = useState(false);
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualBarcode, setManualBarcode] = useState('');
   const cooldown = useRef(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const toastTimer = useRef<any>(null);
+  const scanHintTimer = useRef<any>(null);
 
   // Pulse animation on targeting frame
   useEffect(() => {
@@ -80,7 +84,7 @@ export default function BarcodeScannerModal({
     return () => loop.stop();
   }, []);
 
-  // Reset on open/close
+  // Reset on open/close; manage 8-second scan-difficulty hint timer
   useEffect(() => {
     if (visible) {
       setPhase('scanning');
@@ -91,8 +95,18 @@ export default function BarcodeScannerModal({
       setAdding(false);
       setToast(null);
       cooldown.current = false;
+      setScanHintVisible(false);
+      setShowManualEntry(false);
+      setManualBarcode('');
+      if (scanHintTimer.current) clearTimeout(scanHintTimer.current);
+      scanHintTimer.current = setTimeout(() => setScanHintVisible(true), 8000);
+    } else {
+      if (scanHintTimer.current) clearTimeout(scanHintTimer.current);
     }
   }, [visible]);
+
+  // Cleanup hint timer on unmount
+  useEffect(() => () => { if (scanHintTimer.current) clearTimeout(scanHintTimer.current); }, []);
 
   function showToast(msg: string, ms = 2500) {
     setToast(msg);
@@ -107,6 +121,8 @@ export default function BarcodeScannerModal({
     cooldown.current = true;
     setScannedBarcode(data);
     setPhase('loading');
+    if (scanHintTimer.current) clearTimeout(scanHintTimer.current);
+    setScanHintVisible(false);
     try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
 
     try {
@@ -188,6 +204,28 @@ export default function BarcodeScannerModal({
         updatedAt: serverTimestamp(),
       }, { merge: true });
       onProductAddedToArea();
+      // Best-effort: propagate to global catalogue if this venue product isn't there yet
+      const bc = (p.barcode || (p as any).barcodeNumber || '').trim();
+      if (bc) {
+        try {
+          const [g1, g2] = await Promise.all([
+            getDocs(query(collection(db, 'global_products'), where('barcode', '==', bc))),
+            getDocs(query(collection(db, 'global_products'), where('barcodeNumber', '==', bc))),
+          ]);
+          if (g1.empty && g2.empty) {
+            await writeToGlobalCatalogue({
+              name: p.name,
+              brand: p.brand || '',
+              size: p.size || '',
+              category: p.category || '',
+              barcode: bc,
+              unit: p.unit,
+            });
+          }
+        } catch (e: any) {
+          console.warn('[BarcodeScannerModal] global catalogue sync failed:', e?.message);
+        }
+      }
       showToast(`✓ ${p.name} added — update the count below`);
       setTimeout(onClose, 1800);
     };
@@ -443,20 +481,73 @@ export default function BarcodeScannerModal({
           </TouchableOpacity>
         </View>
 
-        {/* Targeting frame (only while scanning) */}
+        {/* Targeting frame + hint + manual entry (only while scanning) */}
         {!showingResult && (
-          <View style={S.frameWrap} pointerEvents="none">
-            <View style={S.frame}>
-              {/* Corner brackets */}
-              <View style={[S.corner, S.cornerTL]} />
-              <View style={[S.corner, S.cornerTR]} />
-              <View style={[S.corner, S.cornerBL]} />
-              <View style={[S.corner, S.cornerBR]} />
-              {/* Pulse overlay */}
-              <Animated.View style={[StyleSheet.absoluteFill, { opacity: pulseAnim, backgroundColor: 'rgba(27,79,114,0.08)', borderRadius: 12 }]} />
+          <>
+            <View style={S.frameWrap} pointerEvents="none">
+              <View style={S.frame}>
+                {/* Corner brackets */}
+                <View style={[S.corner, S.cornerTL]} />
+                <View style={[S.corner, S.cornerTR]} />
+                <View style={[S.corner, S.cornerBL]} />
+                <View style={[S.corner, S.cornerBR]} />
+                {/* Pulse overlay */}
+                <Animated.View style={[StyleSheet.absoluteFill, { opacity: pulseAnim, backgroundColor: 'rgba(27,79,114,0.08)', borderRadius: 12 }]} />
+              </View>
+              <Text style={S.frameLabel}>Point at the barcode on the bottle</Text>
             </View>
-            <Text style={S.frameLabel}>Point at the barcode on the bottle</Text>
-          </View>
+
+            {/* 8-second scan difficulty hint */}
+            {scanHintVisible && (
+              <View style={S.scanHint} pointerEvents="none">
+                <Text style={S.scanHintText}>
+                  Having trouble? Try better lighting, hold steady, or tap 💡 for the torch.
+                </Text>
+              </View>
+            )}
+
+            {/* Manual barcode entry fallback */}
+            <View style={S.manualEntryWrap}>
+              {!showManualEntry ? (
+                <TouchableOpacity onPress={() => setShowManualEntry(true)}>
+                  <Text style={S.manualEntryLink}>Can't scan it? Enter manually</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={S.manualEntryRow}>
+                  <TextInput
+                    style={S.manualEntryInput}
+                    value={manualBarcode}
+                    onChangeText={setManualBarcode}
+                    placeholder="Enter barcode number"
+                    placeholderTextColor="rgba(255,255,255,0.45)"
+                    keyboardType="number-pad"
+                    autoFocus
+                    returnKeyType="search"
+                    onSubmitEditing={() => {
+                      const bc = manualBarcode.trim();
+                      if (!bc) return;
+                      setShowManualEntry(false);
+                      setManualBarcode('');
+                      onBarcodeScanned({ data: bc });
+                    }}
+                  />
+                  <TouchableOpacity
+                    style={[S.manualEntryBtn, !manualBarcode.trim() && { opacity: 0.5 }]}
+                    disabled={!manualBarcode.trim()}
+                    onPress={() => {
+                      const bc = manualBarcode.trim();
+                      if (!bc) return;
+                      setShowManualEntry(false);
+                      setManualBarcode('');
+                      onBarcodeScanned({ data: bc });
+                    }}
+                  >
+                    <Text style={S.manualEntryBtnText}>Look up</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </>
         )}
 
         {/* Result panel slides up from bottom */}
@@ -559,4 +650,32 @@ const S = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center',
   },
   toastText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  scanHint: {
+    position: 'absolute', bottom: 190, left: 20, right: 20,
+    backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 10,
+    padding: 10, alignItems: 'center',
+  },
+  scanHintText: { color: 'rgba(255,255,255,0.9)', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+
+  manualEntryWrap: {
+    position: 'absolute', bottom: 100, left: 20, right: 20,
+    alignItems: 'center',
+  },
+  manualEntryLink: {
+    color: 'rgba(255,255,255,0.65)', fontSize: 13, textDecorationLine: 'underline',
+  },
+  manualEntryRow: { flexDirection: 'row', gap: 8, width: '100%' },
+  manualEntryInput: {
+    flex: 1, backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+    color: '#fff', fontSize: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+  },
+  manualEntryBtn: {
+    backgroundColor: TEAL, borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  manualEntryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 });
