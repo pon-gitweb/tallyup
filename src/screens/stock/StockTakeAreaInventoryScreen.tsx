@@ -1073,6 +1073,7 @@ function StockTakeAreaInventoryScreen() {
   const [addingUnit, setAddingUnit] = useState('');
   const [addingSupplier, setAddingSupplier] = useState('');
   const [addingQty, setAddingQty] = useState('');
+  const [addingBarcode, setAddingBarcode] = useState('');
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
@@ -1482,6 +1483,7 @@ const qty = parseFloat(typed);
   const unit = (addingUnit || '').trim();
   const supplier = (addingSupplier || '').trim();
   const qtyStr = (addingQty || '').trim();
+  const bc = (addingBarcode || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
     showInfo('Missing area context. Please go back and re-enter this area.');
@@ -1549,10 +1551,33 @@ const qty = parseFloat(typed);
           name: nm,
           unit: unit || null,
           supplierName: supplier || null,
+          ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
           createdAt: nowTs,
           updatedAt: nowTs,
         });
         productId = newProdRef.id;
+        // Best-effort: contribute to global catalogue when a barcode was provided
+        if (bc) {
+          try {
+            const [g1, g2] = await Promise.all([
+              getDocs(query(collection(db, 'global_products'), where('barcode', '==', bc))),
+              getDocs(query(collection(db, 'global_products'), where('barcodeNumber', '==', bc))),
+            ]);
+            if (g1.empty && g2.empty) {
+              await setDoc(doc(db, 'global_products', bc), {
+                barcode: bc,
+                barcodeNumber: bc,
+                name: nm,
+                unit: unit || null,
+                addedAt: serverTimestamp(),
+                addedByVenue: venueId,
+                source: 'quick-add',
+              }, { merge: true });
+            }
+          } catch (e: any) {
+            console.warn('[addQuickItem] global catalogue write failed:', e?.message);
+          }
+        }
       }
     } catch {
       // Non-fatal — area item still created without productId
@@ -1580,6 +1605,7 @@ const qty = parseFloat(typed);
     setAddingName('');
     setAddingQty('');
     setAddingSupplier('');
+    setAddingBarcode('');
 
     // Persist unit preference only
     rememberQuickAdd(unit, '');
@@ -3619,7 +3645,7 @@ const openHistory = throttleAction(async (item: Item) => {
               { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
               /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
               { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
-              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setQuickAddSheetOpen(true); }, 0); } },
+              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setQuickAddSheetOpen(true); }, 0); } },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.label}
@@ -3694,6 +3720,20 @@ const openHistory = throttleAction(async (item: Item) => {
               />
             </View>
 
+            <TextInput
+              value={addingBarcode}
+              onChangeText={setAddingBarcode}
+              placeholder="Barcode (optional)"
+              keyboardType="number-pad"
+              style={{
+                borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                paddingHorizontal:12, paddingVertical:10, fontSize:14,
+                color:'#0f172a', marginBottom:10,
+              }}
+              returnKeyType="done"
+              blurOnSubmit={false}
+            />
+
             <TouchableOpacity
               onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
               style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
@@ -3731,6 +3771,13 @@ const openHistory = throttleAction(async (item: Item) => {
         areaItems={items}
         onProductAddedToArea={() => { /* onSnapshot auto-refreshes items */ }}
         onOpenPhotoModal={(barcode) => { setPhotoModalBarcode(barcode); }}
+        onManualEntry={(barcode) => {
+          setAddingName('');
+          setAddingUnit('');
+          setAddingQty('');
+          setAddingBarcode(barcode);
+          setQuickAddSheetOpen(true);
+        }}
         onBeforeAddToArea={(product, write) => {
           setBarcodeScanOpen(false);
           setTimeout(() => {

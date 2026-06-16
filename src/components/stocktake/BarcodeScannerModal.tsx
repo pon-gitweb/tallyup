@@ -45,6 +45,8 @@ export type Props = {
   areaItems: { id: string; name: string; productId?: string }[];
   onProductAddedToArea: () => void;   // tells parent to refresh
   onOpenPhotoModal: (barcode: string) => void;
+  // Optional: opens quick-add form with scanned barcode pre-filled
+  onManualEntry?: (barcode: string) => void;
   // Optional: parent intercepts add to show counting unit picker
   onBeforeAddToArea?: (product: VenueProduct & { caseSize?: number | null }, write: (extras: { countingUnit: string; caseSize: number | null }) => Promise<void>) => void;
 };
@@ -53,7 +55,7 @@ export type Props = {
 
 export default function BarcodeScannerModal({
   visible, onClose, venueId, departmentId, areaId,
-  areaItems, onProductAddedToArea, onOpenPhotoModal, onBeforeAddToArea,
+  areaItems, onProductAddedToArea, onOpenPhotoModal, onManualEntry, onBeforeAddToArea,
 }: Props) {
   const { showError } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
@@ -437,7 +439,10 @@ export default function BarcodeScannerModal({
           >
             <Text style={S.btnPrimaryText}>📸 Photograph front + back</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={S.btnSecondary} onPress={onClose}>
+          <TouchableOpacity style={S.btnSecondary} onPress={() => {
+            onClose();
+            setTimeout(() => onManualEntry?.(scannedBarcode), 300);
+          }}>
             <Text style={S.btnSecondaryText}>✏️ Enter details manually</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onClose} style={{ marginTop: 8 }}>
