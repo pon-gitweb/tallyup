@@ -1,4 +1,4 @@
-import { POSAdapter, POSProduct, POSSale } from '../POSService';
+import { POSAdapter, POSProduct, POSSale, POSSaleItem } from '../POSService';
 
 const NOT_IMPLEMENTED = 'Lightspeed integration coming soon.';
 
@@ -14,6 +14,10 @@ export class LightspeedAdapter implements POSAdapter {
   }
 
   async getSales(_from: Date, _to: Date): Promise<POSSale[]> {
+    throw new Error(NOT_IMPLEMENTED);
+  }
+
+  async getSaleItems(): Promise<POSSaleItem[]> {
     throw new Error(NOT_IMPLEMENTED);
   }
 

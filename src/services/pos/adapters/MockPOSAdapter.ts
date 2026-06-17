@@ -1,4 +1,4 @@
-import { POSAdapter, POSProduct, POSSale } from '../POSService';
+import { POSAdapter, POSProduct, POSSale, POSSaleItem } from '../POSService';
 
 const MOCK_PRODUCTS: POSProduct[] = [
   { id: 'p01', name: 'Heineken 330ml', sku: 'HNK330', category: 'Beer', price: 8.50, unit: 'bottle' },
@@ -62,6 +62,19 @@ export class MockPOSAdapter implements POSAdapter {
 
   async getSales(from: Date, to: Date): Promise<POSSale[]> {
     return generateSales(from, to);
+  }
+
+  async getSaleItems(): Promise<POSSaleItem[]> {
+    await new Promise(r => setTimeout(r, 600));
+    return [
+      { posItemId: 'mock-1', posItemName: 'Steinlager 330',    posSku: 'STN330',      category: 'Beer',     sellPrice: 9.50  },
+      { posItemId: 'mock-2', posItemName: 'Heineken 330',      posSku: 'HKN330',      category: 'Beer',     sellPrice: 10.00 },
+      { posItemId: 'mock-3', posItemName: 'House Sauv Blanc',  posSku: 'WSB-GLS',     category: 'Wine',     sellPrice: 12.00 },
+      { posItemId: 'mock-4', posItemName: 'Espresso Martini',  posSku: 'COK-ESPM',    category: 'Cocktail', sellPrice: 18.00 },
+      { posItemId: 'mock-5', posItemName: 'Old Fashioned',     posSku: 'COK-OLDF',    category: 'Cocktail', sellPrice: 19.00 },
+      { posItemId: 'mock-6', posItemName: 'Absolut Vodka Nip', posSku: 'VOD-ABS-NIP', category: 'Spirits',  sellPrice: 8.50  },
+      { posItemId: 'mock-7', posItemName: 'Soda Water',        posSku: 'MIX-SODA',    category: 'Mixer',    sellPrice: 2.00  },
+    ];
   }
 
   async connect(_credentials: Record<string, string>): Promise<void> {

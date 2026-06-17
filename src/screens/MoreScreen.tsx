@@ -1,14 +1,16 @@
 // @ts-nocheck
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { useColours, useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/common/Toast';
 import { useConfirmModal } from '../components/common/useConfirmModal';
+import { useVenueId, useVenue } from '../context/VenueProvider';
 import IdentityBadge from '../components/IdentityBadge';
 import { openIzzy } from '../components/IzzyAssistant';
 
@@ -52,6 +54,23 @@ export default function MoreScreen() {
   const { theme } = useTheme();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
+  const venueId = useVenueId();
+  const { user } = useVenue();
+  const [isManager, setIsManager] = useState(false);
+
+  useEffect(() => {
+    if (!venueId || !user?.uid) return;
+    const db = getFirestore();
+    (async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', venueId));
+        if (venueSnap.data()?.ownerUid === user.uid) { setIsManager(true); return; }
+        const memberSnap = await getDoc(doc(db, 'venues', venueId, 'members', user.uid));
+        const role = memberSnap.data()?.role;
+        setIsManager(role === 'manager' || role === 'owner');
+      } catch {}
+    })();
+  }, [venueId, user?.uid]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }}>
@@ -80,6 +99,26 @@ export default function MoreScreen() {
           <Row icon="🛒" label="Suggested Orders" onPress={() => nav.navigate('SuggestedOrders')} />
           <Row icon="📋" label="Stocktake History" onPress={() => nav.navigate('StocktakeHistory')} />
           <Row icon="📊" label="Stock Control" onPress={() => nav.navigate('StockControl')} />
+          {isManager && (
+            <TouchableOpacity
+              onPress={() => nav.navigate('POSMapping')}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 14, paddingHorizontal: 16,
+                borderBottomWidth: 1, borderBottomColor: c.border,
+              }}
+            >
+              <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>🖥️</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, color: c.navy, fontWeight: '500' }}>POS product mapping</Text>
+                <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2 }}>
+                  Match your POS sale items to stock products
+                </Text>
+              </View>
+              <Text style={{ fontSize: 20, color: c.deepBlue, fontWeight: '300' }}>›</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={{ backgroundColor: c.surface, borderRadius: 12, marginHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: c.border, overflow: 'hidden' }}>
