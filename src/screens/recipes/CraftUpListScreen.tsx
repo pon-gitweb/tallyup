@@ -6,8 +6,14 @@ import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
+import { createRecipeDraft } from '../../services/recipes/createRecipeDraft';
 import RecipeDetailScreen from './RecipeDetailScreen';
+import DraftRecipeDetailPanel from './DraftRecipeDetailPanel';
+import RecipeGenerationModal from '../../components/recipes/RecipeGenerationModal';
+import RecipeVariantSelector from '../../components/recipes/RecipeVariantSelector';
+import RecipeGenerationResult from '../../components/recipes/RecipeGenerationResult';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 
 type Filter = 'all' | 'confirmed' | 'drafts';
 
@@ -29,10 +35,18 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
   const venueId = useVenueId();
   const colours = useColours();
   const S = makeStyles(colours);
+  const { showError } = useToast();
   const [rows, setRows] = useState<Recipe[]>([]);
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string|null>(null);
   const [viewId, setViewId] = useState<string|null>(null);
+
+  // AI recipe generation state
+  const [showGenModal, setShowGenModal] = useState(false);
+  const [generatedRecipe, setGeneratedRecipe] = useState<any | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<any | null>(null);
+  const [showVariants, setShowVariants] = useState(false);
+  const [genResult, setGenResult] = useState<{ id: string; prefill: any } | null>(null);
 
   const load = useCallback(async ()=>{
     try{
@@ -49,6 +63,76 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
   },[venueId]);
 
   useEffect(()=>{ (async ()=>{ await load(); })(); },[load]);
+
+  const onRecipeGenerated = (recipe: any) => {
+    setGeneratedRecipe(recipe);
+    if (Array.isArray(recipe?.variants) && recipe.variants.length > 1) {
+      setShowVariants(true);
+    } else {
+      setSelectedVariant(recipe?.variants?.[0] ?? null);
+    }
+  };
+
+  const handleSaveGenerated = async (aiRecipe: any) => {
+    try {
+      if (!venueId) throw new Error('No venue');
+
+      const aiType: string = generatedRecipe?._type || 'cocktail';
+      const isDrink = aiType === 'cocktail' || aiType === 'drink';
+      const recCategory: 'food' | 'beverage' = isDrink || !!aiRecipe.iceIngredient ? 'beverage' : 'food';
+      const recMode: 'batch' | 'single' | 'dish' = aiType === 'batch' ? 'batch' : (isDrink ? 'single' : 'dish');
+
+      const products: any[] = Array.isArray(generatedRecipe?._products) ? generatedRecipe._products : [];
+      const productByName = new Map(products.map((p) => [String(p.name).toLowerCase().trim(), p]));
+
+      const items = (aiRecipe.ingredients || []).map((ing: any) => {
+        const matched = ing.matchedProductName
+          ? productByName.get(String(ing.matchedProductName).toLowerCase().trim())
+          : null;
+        const qty = Number(ing.qty) || 0;
+        const cost = Number(ing.costPerServe) || 0;
+        const pricePerUnit = qty > 0 ? cost / qty : cost;
+
+        return {
+          key: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: matched ? matched.name : ing.name,
+          qty,
+          unit: ing.unit || 'ml',
+          link: matched
+            ? { productId: matched.id, packSize: matched.packSize ?? null, packUnit: matched.unit ?? null, packPrice: matched.costPrice ?? null }
+            : (cost > 0 ? { productId: 'misc', packSize: 1, packUnit: ing.unit || 'ml', packPrice: pricePerUnit } : undefined),
+        };
+      });
+
+      const { id: newId } = await createRecipeDraft({
+        venueId,
+        name: aiRecipe.name || 'Untitled',
+        category: recCategory,
+        mode: recMode,
+      });
+
+      const prefill = {
+        name: aiRecipe.name,
+        method: aiRecipe.method,
+        glassware: aiRecipe.glassware,
+        garnish: aiRecipe.garnish,
+        description: aiRecipe.description,
+        bartenderNotes: aiRecipe.bartenderNotes,
+        rrp: aiRecipe.pricing?.suggestedSellingPrice ?? null,
+        items,
+        batchRecipe: aiRecipe.batchRecipe ?? null,
+        iceIngredient: aiRecipe.iceIngredient ?? null,
+        aiGenerated: true,
+      };
+
+      setGeneratedRecipe(null);
+      setSelectedVariant(null);
+      setShowVariants(false);
+      setGenResult({ id: newId, prefill });
+    } catch (e: any) {
+      showError(String(e?.message || e) || 'Could not save generated recipe');
+    }
+  };
 
   const searched = useMemo(()=>{
     const q = search.trim().toLowerCase();
@@ -162,11 +246,45 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
       {/* FAB — create new recipe */}
       <TouchableOpacity
         style={S.fab}
-        onPress={() => nav.navigate('DraftRecipeDetail', { recipeId: 'new' })}
+        onPress={() => setShowGenModal(true)}
         activeOpacity={0.85}
       >
         <Text style={S.fabText}>+</Text>
       </TouchableOpacity>
+
+      <RecipeGenerationModal
+        visible={showGenModal}
+        onClose={() => setShowGenModal(false)}
+        onRecipeGenerated={(recipe) => { setShowGenModal(false); onRecipeGenerated(recipe); }}
+        onBuildManually={() => { setShowGenModal(false); nav.navigate('DraftRecipeDetail', { recipeId: 'new' }); }}
+      />
+
+      {generatedRecipe && (
+        <RecipeVariantSelector
+          visible={showVariants}
+          variants={generatedRecipe.variants || []}
+          onSelect={(variant) => { setSelectedVariant(variant); setShowVariants(false); }}
+          onCancel={() => { setShowVariants(false); setGeneratedRecipe(null); setSelectedVariant(null); }}
+        />
+      )}
+
+      {generatedRecipe && !showVariants && (
+        <RecipeGenerationResult
+          visible={!!generatedRecipe && !showVariants}
+          recipeData={generatedRecipe}
+          selectedVariant={selectedVariant}
+          onSave={handleSaveGenerated}
+          onDiscard={() => { setGeneratedRecipe(null); setSelectedVariant(null); }}
+        />
+      )}
+
+      <Modal visible={!!genResult} animationType="slide" onRequestClose={() => setGenResult(null)}>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
+          {genResult ? (
+            <DraftRecipeDetailPanel recipeId={genResult.id} prefill={genResult.prefill} onClose={() => setGenResult(null)} />
+          ) : null}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
