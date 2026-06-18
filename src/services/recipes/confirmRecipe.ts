@@ -4,6 +4,40 @@ import { db } from '../../services/firebase';
 import { computeConsumption } from './consumption';
 import { makeFirestoreItemSnapshot } from './itemSnapshot';
 
+export class UnpricedIngredientsError extends Error {
+  code = 'UNPRICED_INGREDIENTS' as const;
+  items: { name: string; qty: number | null; unit: string | null }[];
+  constructor(items: { name: string; qty: number | null; unit: string | null }[]) {
+    super(`${items.length} ingredient${items.length === 1 ? '' : 's'} need pricing before this recipe can be confirmed.`);
+    this.items = items;
+  }
+}
+
+// An item is unpriced unless it's explicitly in-house (free by design) and has no
+// usable cost: no costPerServe, and no linked product (productId + packSize + packPrice)
+// to derive one from. Most persisted items don't carry costPerServe directly — cost is
+// usually implied by their product link — so we derive it the same way the live UI does
+// (qty / packSize * packPrice) before deciding an ingredient still needs pricing.
+function effectiveCostPerServe(item: any): number | null {
+  if (item?.costPerServe != null) {
+    const explicit = Number(item.costPerServe);
+    return Number.isFinite(explicit) ? explicit : null;
+  }
+  const qty = Number(item?.qty) || 0;
+  const packSize = Number(item?.packSize) > 0 ? Number(item.packSize) : 0;
+  const packPrice = Number(item?.packPrice);
+  if (item?.productId && packSize > 0 && Number.isFinite(packPrice)) {
+    return (qty / packSize) * packPrice;
+  }
+  return null;
+}
+
+function isItemUnpriced(item: any): boolean {
+  if (item?.isInHouse === true) return false;
+  const cost = effectiveCostPerServe(item);
+  return cost == null || !Number.isFinite(cost) || cost === 0;
+}
+
 /**
  * Confirm a recipe (stable, controlled):
  * - Freezes the explicit items snapshot if provided; else uses doc.items (array or []).
@@ -51,6 +85,19 @@ export async function confirmRecipe(
 
   // Clean snapshot to be Firestore-safe and consistent
   const items = makeFirestoreItemSnapshot(rawItems);
+
+  // Guard: every ingredient must have a valid, non-zero cost (or be marked in-house)
+  // before this recipe can be confirmed. Throw before any Firestore write.
+  const unpriced = items
+    .filter(isItemUnpriced)
+    .map((it: any) => ({
+      name: it.name ?? it.productName ?? 'Ingredient',
+      qty: it.qty ?? null,
+      unit: it.unit ?? null,
+    }));
+  if (unpriced.length > 0) {
+    throw new UnpricedIngredientsError(unpriced);
+  }
 
   // Local view used for consumption math only (not written as-is)
   const localRecipe = {

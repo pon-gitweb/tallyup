@@ -11,6 +11,12 @@ export type UiRow = {
   qty: number;
   unit: 'ml'|'g'|'each'|string;
   link?: { productId?: string; packSize?: number|null; packUnit?: string|null; packPrice?: number|null };
+  // Recipe pricing-integrity fields (optional — pass through only when present)
+  costPerServe?: number | null;
+  manualCost?: boolean;
+  isInHouse?: boolean;
+  matchedProductName?: string | null;
+  needsRepricing?: boolean;
 };
 
 function n(x: any): number|null {
@@ -39,6 +45,13 @@ export function makeFirestoreItemSnapshot(rows: UiRow[]|null|undefined) {
       packUnit: s(r?.link?.packUnit),
       packPrice: n(r?.link?.packPrice),
     };
+    // Additive pricing-integrity fields — only written when explicitly present on the row,
+    // so existing rows/readers that never set them are completely unaffected.
+    if (r?.costPerServe !== undefined) out.costPerServe = n(r.costPerServe);
+    if (r?.manualCost !== undefined) out.manualCost = !!r.manualCost;
+    if (r?.isInHouse !== undefined) out.isInHouse = !!r.isInHouse;
+    if (r?.matchedProductName !== undefined) out.matchedProductName = s(r.matchedProductName);
+    if (r?.needsRepricing !== undefined) out.needsRepricing = !!r.needsRepricing;
     Object.keys(out).forEach(k => { if (out[k] === undefined) out[k] = null; });
     return out;
   });

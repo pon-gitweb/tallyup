@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, Modal } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -14,6 +14,7 @@ import RecipeVariantSelector from '../../components/recipes/RecipeVariantSelecto
 import RecipeGenerationResult from '../../components/recipes/RecipeGenerationResult';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type Filter = 'all' | 'confirmed' | 'drafts';
 
@@ -36,10 +37,12 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
   const colours = useColours();
   const S = makeStyles(colours);
   const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [rows, setRows] = useState<Recipe[]>([]);
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string|null>(null);
   const [viewId, setViewId] = useState<string|null>(null);
+  const [editDraftId, setEditDraftId] = useState<string|null>(null);
 
   // AI recipe generation state
   const [showGenModal, setShowGenModal] = useState(false);
@@ -158,26 +161,31 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
   const confirmFromList = useCallback((r: Recipe) => {
     if ((r.status||'draft') !== 'draft') return; // ignore confirmed
     if (filter !== 'drafts') return; // safety: only allow in Drafts view
-    Alert.alert(
-      'Confirm recipe?',
-      `Lock "${r.name}" and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Confirm', style: 'destructive', onPress: async () => {
-          try{
-            if (!venueId) throw new Error('No venue');
-            setBusyId(r.id);
-            await confirmRecipe(venueId, r.id, { name: r.name?.trim() || null });
-            await load();
-          }catch(e){
-            Alert.alert('Confirm failed', String(e?.message || e));
-          }finally{
-            setBusyId(null);
+    confirm({
+      title: 'Confirm recipe?',
+      message: `Lock "${r.name}" and freeze its current items & costs.\nYou can still duplicate to a new draft later.`,
+      confirmLabel: 'Confirm',
+      destructive: true,
+      onConfirm: async () => {
+        try{
+          if (!venueId) throw new Error('No venue');
+          setBusyId(r.id);
+          await confirmRecipe(venueId, r.id, { name: r.name?.trim() || null });
+          await load();
+        }catch(e: any){
+          if (e?.code === 'UNPRICED_INGREDIENTS') {
+            const count = Array.isArray(e.items) ? e.items.length : 0;
+            showError(`This recipe can't be confirmed yet — ${count} ingredient${count === 1 ? '' : 's'} need pricing. Open the recipe to fix them.`);
+            setEditDraftId(r.id);
+          } else {
+            showError(String(e?.message || e) || 'Confirm failed');
           }
-        }}
-      ]
-    );
-  },[venueId, load, filter]);
+        }finally{
+          setBusyId(null);
+        }
+      },
+    });
+  },[venueId, load, filter, confirm, showError]);
 
   const Row = ({ r }: { r: Recipe })=>{
     const status = (r.status||'draft');
@@ -242,6 +250,16 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
           {viewId ? <RecipeDetailScreen recipeId={viewId} onBack={() => setViewId(null)} /> : null}
         </SafeAreaView>
       </Modal>
+
+      {/* Draft editor — opened automatically when a confirm attempt hits unpriced ingredients */}
+      <Modal visible={!!editDraftId} animationType="slide" onRequestClose={() => setEditDraftId(null)}>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
+          {editDraftId ? (
+            <DraftRecipeDetailPanel recipeId={editDraftId} onClose={() => { setEditDraftId(null); load(); }} />
+          ) : null}
+        </SafeAreaView>
+      </Modal>
+      {modal}
 
       {/* FAB — create new recipe */}
       <TouchableOpacity

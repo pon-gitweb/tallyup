@@ -1142,6 +1142,15 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /notifications/{notificationId} {
+        allow read: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager', 'owner'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['read']);
+        // Written by Cloud Functions only (Admin SDK bypasses these rules)
+        allow create: if false;
+        allow delete: if false;
+      }
+
       match /priceDisputes/{disputeId} {
         allow read: if isVenueMember(venueId);
         allow create: if hasVenueRole(venueId, ['owner', 'manager'])

@@ -585,7 +585,13 @@ function DraftsTab() {
       showSuccess(`✓ ${r?.name || 'Recipe'} confirmed.`);
       await load();
     } catch (e:any) {
-      showError(String(e?.message || e) || 'Confirm failed');
+      if (e?.code === 'UNPRICED_INGREDIENTS') {
+        const count = Array.isArray(e.items) ? e.items.length : 0;
+        showError(`This recipe can't be confirmed yet — ${count} ingredient${count === 1 ? '' : 's'} need pricing. Open the recipe to fix them.`);
+        setOpenId(r.id);
+      } else {
+        showError(String(e?.message || e) || 'Confirm failed');
+      }
     }
   }, [venueId, load]);
 

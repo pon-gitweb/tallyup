@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
@@ -259,6 +259,52 @@ export default function DashboardScreen() {
     );
     return () => unsub();
   }, [venueId]);
+
+  // Price-cascade notifications — recipes auto-updated after a product price change
+  const [priceCascadeNotifs, setPriceCascadeNotifs] = React.useState<Array<{ id: string; recipesAffected: number }>>([]);
+  const [priceCascadeDismissing, setPriceCascadeDismissing] = React.useState(false);
+  React.useEffect(() => {
+    if (!venueId || !isManager) { setPriceCascadeNotifs([]); return; }
+    const db = getFirestore();
+    const sevenDaysAgo = Timestamp.fromMillis(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const unsub = onSnapshot(
+      query(
+        collection(db, 'venues', venueId, 'notifications'),
+        where('type', '==', 'price_cascade'),
+        where('read', '==', false),
+        where('createdAt', '>=', sevenDaysAgo)
+      ),
+      snap => setPriceCascadeNotifs(snap.docs.map(d => ({
+        id: d.id,
+        recipesAffected: Number((d.data() as any)?.recipesAffected) || 0,
+      }))),
+      () => setPriceCascadeNotifs([])
+    );
+    return () => unsub();
+  }, [venueId, isManager]);
+
+  const priceCascadeSummary = React.useMemo(() => {
+    if (priceCascadeNotifs.length === 0) return null;
+    return {
+      priceChangesCount: priceCascadeNotifs.length,
+      recipesUpdatedTotal: priceCascadeNotifs.reduce((sum, n) => sum + n.recipesAffected, 0),
+    };
+  }, [priceCascadeNotifs]);
+
+  async function dismissPriceCascadeCard() {
+    if (!venueId || priceCascadeNotifs.length === 0) return;
+    setPriceCascadeDismissing(true);
+    try {
+      const db = getFirestore();
+      await Promise.all(priceCascadeNotifs.map(n =>
+        updateDoc(doc(db, 'venues', venueId, 'notifications', n.id), { read: true })
+      ));
+    } catch (e) {
+      if (__DEV__) console.log('[Dashboard] dismiss price cascade failed', e);
+    } finally {
+      setPriceCascadeDismissing(false);
+    }
+  }
 
   // Pending deliveries awaiting invoice confirmation (packing slips / delivery notes)
   const [pendingDeliveriesCount, setPendingDeliveriesCount] = React.useState(0);
@@ -602,6 +648,42 @@ export default function DashboardScreen() {
             </View>
             <Text style={{ color: colours.stellarAmber || '#c47b2b', fontSize: 16 }}>→</Text>
           </TouchableOpacity>
+        )}
+
+        {/* ── Price cascade notification (managers/owners) ─────────────── */}
+        {isManager && priceCascadeSummary && (
+          <View style={{
+            backgroundColor: colours.primaryLight,
+            borderColor: colours.deepBlue,
+            borderWidth: 1.5,
+            borderRadius: 12,
+            padding: 14,
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}>
+            <TouchableOpacity
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+              onPress={() => nav.navigate('CraftUp')}
+            >
+              <Text style={{ fontSize: 18, marginRight: 10 }}>💲</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colours.deepBlue, fontFamily: theme.fontBodySemiBold, fontSize: 14 }}>
+                  {priceCascadeSummary.priceChangesCount} price change{priceCascadeSummary.priceChangesCount !== 1 ? 's' : ''} updated {priceCascadeSummary.recipesUpdatedTotal} recipe{priceCascadeSummary.recipesUpdatedTotal !== 1 ? 's' : ''} in the last 7 days.
+                </Text>
+                <Text style={{ color: colours.deepBlue, fontFamily: theme.fontBody, fontSize: 12, marginTop: 2, opacity: 0.8 }}>
+                  Tap to review
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={dismissPriceCascadeCard}
+              disabled={priceCascadeDismissing}
+              style={{ padding: 4, marginLeft: 8 }}
+            >
+              <Text style={{ fontSize: 16, color: colours.textSecondary }}>×</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* ── Pending deliveries (stock received, awaiting invoice) ────── */}

@@ -1,9 +1,11 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, ScrollView, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, Switch } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
-import { doc, getDoc } from 'firebase/firestore';
+import { useToast } from '../../components/common/Toast';
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { updateRecipeDraft } from '../../services/recipes/updateRecipeDraft';
 import { confirmRecipe } from '../../services/recipes/confirmRecipe';
@@ -60,6 +62,8 @@ export default function DraftRecipeDetailPanel({
 }: Props) {
   const venueId = useVenueId();
   const colours = useColours();
+  const nav = useNavigation<any>();
+  const { showSuccess, showError } = useToast();
 
   // Prefill & state
   const [name, setName] = useState<string>(initialName || prefill?.name || '');
@@ -97,6 +101,12 @@ export default function DraftRecipeDetailPanel({
   const [method, setMethod] = useState<string>(() => buildPrefillMethod(prefill));
 
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  // Unpriced-ingredients confirmation guard
+  const [unpricedItems, setUnpricedItems] = useState<{ name: string; qty: number|null; unit: string|null }[] | null>(null);
+  const [manualCostInputs, setManualCostInputs] = useState<Record<string, string>>({});
+  const [invoiceSuggestions, setInvoiceSuggestions] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (mode === 'single') {
@@ -286,6 +296,73 @@ const isRrpManual =
   );
   // ---------------------------------------------------
 
+  // Best-effort: scan recent invoice lines for a price match on an unpriced ingredient name.
+  // Advisory only — never blocks or throws into the confirm flow.
+  const loadInvoiceSuggestions = useCallback(async (unpriced: { name: string }[]) => {
+    if (!venueId || !unpriced.length) return;
+    try {
+      const invoicesSnap = await getDocs(collection(db, 'venues', venueId, 'invoices'));
+      const invoiceDocs = invoicesSnap.docs.slice().sort((a, b) => {
+        const ad = (a.data() as any)?.date?.toMillis?.() ?? 0;
+        const bd = (b.data() as any)?.date?.toMillis?.() ?? 0;
+        return bd - ad;
+      }).slice(0, 15);
+
+      const lineEntries: Array<{ name: string; price: number }> = [];
+      for (const invDoc of invoiceDocs) {
+        const linesSnap = await getDocs(collection(db, 'venues', venueId, 'invoices', invDoc.id, 'lines'));
+        linesSnap.forEach(l => {
+          const data: any = l.data() || {};
+          const lineName = String(data.productName || data.name || '').toLowerCase().trim();
+          const price = Number(data.cost ?? data.unitCost ?? data.unitPrice ?? data.price);
+          if (lineName && Number.isFinite(price) && price > 0) lineEntries.push({ name: lineName, price });
+        });
+      }
+
+      const next: Record<string, number> = {};
+      for (const u of unpriced) {
+        const target = u.name.toLowerCase().trim();
+        if (!target) continue;
+        const hit = lineEntries.find(e => e.name.includes(target) || target.includes(e.name));
+        if (hit) next[target] = hit.price;
+      }
+      setInvoiceSuggestions(next);
+    } catch (e) {
+      if (__DEV__) console.log('[DraftRecipeDetailPanel] invoice suggestion lookup failed', e);
+      setInvoiceSuggestions({});
+    }
+  }, [venueId]);
+
+  const saveManualCost = useCallback(async (ingredientName: string, rawValue: string) => {
+    const cost = Number(rawValue);
+    if (!Number.isFinite(cost) || cost <= 0) {
+      showError('Enter a valid cost');
+      return;
+    }
+    const nextItems = items.map((it: any) => {
+      if ((it.name ?? it.productName) !== ingredientName) return it;
+      const qty = Number(it.qty) > 0 ? Number(it.qty) : 1;
+      return {
+        ...it,
+        costPerServe: cost,
+        manualCost: true,
+        link: { productId: 'misc', packSize: qty, packUnit: it.unit, packPrice: cost },
+      };
+    });
+    try {
+      await updateRecipeDraft(venueId, recipeId, { items: makeFirestoreItemSnapshot(nextItems) });
+      setItems(nextItems);
+      setUnpricedItems(prev => (prev ? prev.filter(u => u.name !== ingredientName) : prev));
+      showSuccess(`✓ Cost set for ${ingredientName}`);
+    } catch (e: any) {
+      showError(e?.message || 'Could not save cost');
+    }
+  }, [venueId, recipeId, items, showError, showSuccess]);
+
+  const goAddToInventory = useCallback((ingredientName: string) => {
+    nav.navigate('EditProductScreen', { product: { name: ingredientName } });
+  }, [nav]);
+
   const save = useCallback(async () => {
     try {
       if (!venueId) throw new Error('No venueId');
@@ -308,12 +385,12 @@ const isRrpManual =
         rrp: Number.isFinite(rrpVal) ? Number(rrpVal.toFixed(2)) : null,
         method: method || null
       });
-      Alert.alert('Saved', 'Draft updated.');
+      showSuccess('Draft updated.');
       onClose();
     } catch (e:any) {
-      Alert.alert('Save failed', String(e?.message || e));
+      showError(String(e?.message || e) || 'Save failed');
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, items, onClose, mode]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, items, onClose, mode, showSuccess, showError]);
 
   const confirmNow = useCallback(async () => {
     try {
@@ -341,14 +418,21 @@ const isRrpManual =
         itemsSnapshot: itemsClean,
       });
 
-      Alert.alert('Confirmed', 'Recipe locked and saved.');
+      setUnpricedItems(null);
+      showSuccess('Recipe locked and saved.');
       onClose();
-    } catch (e) {
-      Alert.alert('Confirm failed', String((e as any)?.message || e));
+    } catch (e: any) {
+      if (e?.code === 'UNPRICED_INGREDIENTS') {
+        const list = Array.isArray(e.items) ? e.items : [];
+        setUnpricedItems(list);
+        loadInvoiceSuggestions(list);
+      } else {
+        showError(String(e?.message || e) || 'Confirm failed');
+      }
     } finally {
       setBusy(false);
     }
-  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, items]);
+  }, [venueId, recipeId, name, yieldQty, servesFromBatch, unit, cogsPerServe, rrp, rrpDisplay, method, gpPct, rrpIncludesGst, mode, onClose, items, showSuccess, showError, loadInvoiceSuggestions]);
 
   return (
     <View style={{ flex:1, backgroundColor:'#fff' }}>
@@ -601,6 +685,78 @@ const isRrpManual =
           </Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Unpriced ingredients — non-blocking guard modal */}
+      <Modal visible={!!unpricedItems} transparent animationType="slide" onRequestClose={() => setUnpricedItems(null)}>
+        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', justifyContent:'flex-end' }}>
+          <View style={{ backgroundColor: colours.surface, borderTopLeftRadius:20, borderTopRightRadius:20, padding:20, maxHeight:'85%' }}>
+            <Text style={{ fontSize:18, fontWeight:'800', color: colours.text, marginBottom:4 }}>
+              Pricing needed before confirming
+            </Text>
+            <Text style={{ color: colours.textSecondary, marginBottom:16, fontSize:13 }}>
+              These ingredients need a cost before this recipe can be confirmed.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 360 }}>
+              {(unpricedItems || []).map((u) => {
+                const suggestion = invoiceSuggestions[u.name.toLowerCase().trim()];
+                return (
+                  <View key={u.name} style={{
+                    borderWidth:1, borderColor: colours.amber, backgroundColor: colours.amber + '14',
+                    borderRadius:12, padding:12, marginBottom:10,
+                  }}>
+                    <Text style={{ fontWeight:'800', color: colours.text }}>{u.name}</Text>
+                    <Text style={{ color: colours.textSecondary, fontSize:12, marginTop:2 }}>
+                      {u.qty != null ? u.qty : ''} {u.unit || ''}
+                    </Text>
+
+                    {suggestion != null && (
+                      <TouchableOpacity onPress={() => saveManualCost(u.name, String(suggestion))} style={{ marginTop:8 }}>
+                        <Text style={{ color: colours.deepBlue, fontSize:12 }}>
+                          Last seen on invoice: ${suggestion.toFixed(2)} per unit — use this?
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={{ flexDirection:'row', gap:8, marginTop:10, alignItems:'center' }}>
+                      <TextInput
+                        value={manualCostInputs[u.name] ?? ''}
+                        onChangeText={(v) => setManualCostInputs(prev => ({ ...prev, [u.name]: v }))}
+                        placeholder="$0.00"
+                        keyboardType="decimal-pad"
+                        style={{ flex:1, borderWidth:1, borderColor: colours.border, borderRadius:8, paddingHorizontal:10, paddingVertical:8, color: colours.text }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => saveManualCost(u.name, manualCostInputs[u.name] ?? '')}
+                        style={{ backgroundColor: colours.primary, paddingHorizontal:12, paddingVertical:9, borderRadius:8 }}
+                      >
+                        <Text style={{ color: colours.primaryText, fontWeight:'700', fontSize:12 }}>Save</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity onPress={() => goAddToInventory(u.name)} style={{ marginTop:8 }}>
+                      <Text style={{ color: colours.deepBlue, fontSize:12, fontWeight:'700' }}>+ Add to inventory</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              disabled={retrying}
+              onPress={async () => { setRetrying(true); try { await confirmNow(); } finally { setRetrying(false); } }}
+              style={{ marginTop:12, padding:14, borderRadius:12, backgroundColor: colours.success }}
+            >
+              <Text style={{ color: colours.primaryText, fontWeight:'800', textAlign:'center' }}>
+                {retrying ? 'Checking…' : 'Retry confirmation'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setUnpricedItems(null)} style={{ padding:12, alignItems:'center' }}>
+              <Text style={{ color: colours.textSecondary }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

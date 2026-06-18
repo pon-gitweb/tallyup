@@ -48,6 +48,9 @@ export { onStocktakeCompleted, onOrderSubmitted, onAiFeatureUsed } from "./analy
 // === Bar item velocity threshold push notifications ===
 export { onBarItemVelocityUpdate } from "./barItemNotifications";
 
+// === Product price-change cascade to recipe COGS ===
+export { onProductPriceChanged } from "./priceCascade";
+
 // === Legacy functions — deployed directly, must remain exported to avoid deletion ===
 export {
   processInvoicesCsv,
