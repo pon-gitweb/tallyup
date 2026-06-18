@@ -118,19 +118,54 @@ export default function RecipeGenerationResult({ visible, recipeData, selectedVa
       <SafeAreaView style={{ flex: 1, backgroundColor: c.oat }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
           {/* Banner */}
-          <View
-            style={{
-              backgroundColor: c.positiveSoft,
-              borderRadius: 10,
-              paddingVertical: 8,
-              paddingHorizontal: 12,
-              marginBottom: 16,
-            }}
-          >
-            <Text style={{ fontFamily: theme.fontBodyMedium, fontSize: 12, color: c.positiveStrong }}>
-              ✦ AI generated — review and edit before saving
-            </Text>
-          </View>
+          {recipeData?._source === 'global_recipes' ? (
+            <View
+              style={{
+                backgroundColor: c.oatMuted,
+                borderRadius: 10,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                marginBottom: 16,
+              }}
+            >
+              <Text style={{ fontFamily: theme.fontBodyMedium, fontSize: 12, color: c.textSecondary }}>
+                ✓ From recipe library — review before saving
+              </Text>
+            </View>
+          ) : (
+            <View
+              style={{
+                backgroundColor: c.positiveSoft,
+                borderRadius: 10,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                marginBottom: 16,
+              }}
+            >
+              <Text style={{ fontFamily: theme.fontBodyMedium, fontSize: 12, color: c.positiveStrong }}>
+                ✦ AI generated — review and edit before saving
+              </Text>
+            </View>
+          )}
+
+          {/* Partial pricing warning */}
+          {pricing?.isPartial === true && (
+            <View
+              style={{
+                backgroundColor: c.amber + '22',
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: c.amber,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                marginBottom: 16,
+              }}
+            >
+              <Text style={{ fontFamily: theme.fontBodyMedium, fontSize: 12, color: c.amber }}>
+                GP is estimated — {pricing.missingCount ?? 0} ingredient(s) not priced. Add costs manually or add products to your inventory.
+              </Text>
+            </View>
+          )}
 
           {/* Name */}
           <TextInput

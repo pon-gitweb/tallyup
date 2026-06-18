@@ -431,6 +431,21 @@ app.post("/generate-recipe", async (req, res) => {
     }
     await verifyVenueMembership(uid, venueId);
 
+    // ── Global recipe cache — skip the AI call entirely on a hit ──────────────
+    const recipeNameNorm = normNameForMatch(name);
+    const globalRecipeRef = recipeNameNorm
+      ? admin.firestore().doc(`global_recipes/${recipeNameNorm}`)
+      : null;
+
+    if (globalRecipeRef) {
+      const cachedSnap = await globalRecipeRef.get();
+      if (cachedSnap.exists) {
+        console.log("[api/generate-recipe] cache hit", { uid, venueId, name, recipeNameNorm });
+        res.json({ ok: true, ...cachedSnap.data(), _source: "global_recipes" });
+        return;
+      }
+    }
+
     const lcRG = await checkAiLimit(venueId, 'recipe_generation');
     if (!lcRG.allowed) {
       res.status(429).json({
@@ -468,6 +483,10 @@ app.post("/generate-recipe", async (req, res) => {
       "- If an ingredient cannot be matched to a venue product, mark it unmatched and suggest a supplier from the venue's supplier list if relevant (or null if none fit).",
       "- 'In-house' ingredients are things venues typically make/stock themselves (e.g. simple syrup, garnish, ice) that don't need a supplier match — mark isInHouse true for these.",
       "- Always include realistic NZ hospitality pricing (NZD).",
+      "- The recipe must always be generated in full, complete, and ready to use. Missing products in the venue's inventory must never block or degrade the recipe output.",
+      "- For every unmatched ingredient (not found in venue products and not in-house), put a plain-English suggestion in supplierSuggestion — if a reasonable alternative exists in the venue's product list, name it and explain why it works, e.g. \"We don't have Kahlúa in your products — Tia Maria or another coffee liqueur would work\". If no venue alternative exists, suggest a generic known substitute instead, e.g. \"any coffee liqueur\". supplierSuggestion should always be a plain English note, not just a supplier or product name.",
+      "- GP and cost calculations run on whatever can be priced. Never omit or zero out the pricing block. Set pricing.isPartial to true if any ingredient is unmatched or has no cost, and set pricing.missingCount to the number of ingredients that couldn't be priced (0 and false when everything is priced).",
+      "- bartenderNotes must always include a plain-English note naming any ingredients missing from the venue's inventory and pointing at the substitutes shown, e.g. \"Note: Kahlúa and Frangelico are not in your current products — add them or use the substitutes shown.\" Omit this note only if every ingredient matched or is in-house.",
       `- Recipe type is "${recipeType}".`,
       isCocktail
         ? "- Since this is a drink, include an iceIngredient block describing dilution % and ice handling."
@@ -514,7 +533,9 @@ app.post("/generate-recipe", async (req, res) => {
     "estimatedCostPerServe": number,
     "suggestedSellingPrice": number,
     "estimatedGpPct": number,
-    "priceGuide": { "budget": number, "mid": number, "premium": number }
+    "priceGuide": { "budget": number, "mid": number, "premium": number },
+    "isPartial": boolean,
+    "missingCount": number
   },
   "batchRecipe": {
     "serves": 10,
@@ -574,7 +595,24 @@ app.post("/generate-recipe", async (req, res) => {
 
     await trackAiCall(venueId, 'recipe_generation');
     console.log("[api/generate-recipe] OK", { uid, venueId, name, type: recipeType });
-    res.json({ ok: true, ...recipeJson });
+
+    const responseBody = { ok: true, ...recipeJson };
+
+    if (globalRecipeRef) {
+      try {
+        await globalRecipeRef.set({
+          ...responseBody,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdBy: uid,
+          recipeName: name.trim(),
+          recipeType,
+        }, { merge: true });
+      } catch (e: any) {
+        console.error("[api/generate-recipe] global_recipes cache write failed", e?.message || e);
+      }
+    }
+
+    res.json(responseBody);
   } catch (e: any) {
     console.error("[api/generate-recipe] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Recipe generation failed" });

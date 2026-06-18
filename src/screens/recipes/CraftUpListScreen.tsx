@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, Modal } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -24,6 +25,7 @@ type Recipe = {
 };
 
 export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter }) {
+  const nav = useNavigation<any>();
   const venueId = useVenueId();
   const colours = useColours();
   const S = makeStyles(colours);
@@ -156,6 +158,15 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
           {viewId ? <RecipeDetailScreen recipeId={viewId} onBack={() => setViewId(null)} /> : null}
         </SafeAreaView>
       </Modal>
+
+      {/* FAB — create new recipe */}
+      <TouchableOpacity
+        style={S.fab}
+        onPress={() => nav.navigate('DraftRecipeDetail', { recipeId: 'new' })}
+        activeOpacity={0.85}
+      >
+        <Text style={S.fabText}>+</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -180,5 +191,22 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     chipText: { fontSize:12, fontWeight:'700', color:'#111' },
     chipDraft: { backgroundColor:'#FEF3C7', borderWidth:1, borderColor:'#F59E0B' },
     chipConfirmed: { backgroundColor:'#DCFCE7', borderWidth:1, borderColor: c.success },
+    fab: {
+      position: 'absolute',
+      right: 20,
+      bottom: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: c.navy,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: c.navy,
+      shadowOpacity: 0.25,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 5,
+    },
+    fabText: { color: c.primaryText, fontSize: 28, fontWeight: '300', lineHeight: 32 },
   });
 }

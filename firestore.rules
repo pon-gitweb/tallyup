@@ -77,6 +77,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /global_recipes/{id} {
+      allow read: if isSignedIn();
+      // Written by the generate-recipe Cloud Function via the Admin SDK, which
+      // bypasses these rules — no client-side writes are permitted.
+      allow write: if false;
+    }
+
     match /global_suppliers/{id} {
       allow read: if isSignedIn();
       // Any signed-in user may contribute public supplier data.
