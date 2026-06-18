@@ -8,6 +8,7 @@ import { collection, getDocs, addDoc, query, where, serverTimestamp } from 'fire
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
 import { MockPOSAdapter } from '../../services/pos/adapters/MockPOSAdapter';
+import { getCurrentAdapter } from '../../services/pos/POSRegistry';
 import { suggestMatch } from '../../services/pos/posMatching';
 import { useToast } from '../../components/common/Toast';
 import type { POSSaleItem } from '../../services/pos/POSService';
@@ -41,6 +42,7 @@ export default function POSMappingScreen() {
   const [items, setItems] = useState<ItemState[]>([]);
   const [products, setProducts] = useState<Array<{ id: string; name: string; category?: string }>>([]);
   const [recipes, setRecipes] = useState<Array<{ id: string; name: string }>>([]);
+  const [adapterName, setAdapterName] = useState('Mock POS');
 
   // Picker modal
   const [pickerIdx, setPickerIdx] = useState<number | null>(null);
@@ -72,7 +74,8 @@ export default function POSMappingScreen() {
       setProducts(prods);
       setRecipes(recs);
 
-      const adapter = new MockPOSAdapter();
+      const adapter = (await getCurrentAdapter(venueId)) ?? new MockPOSAdapter();
+      setAdapterName(adapter.name);
       const posItems = await adapter.getSaleItems();
 
       const newItems: ItemState[] = posItems.map(posItem => {
@@ -229,7 +232,7 @@ export default function POSMappingScreen() {
         borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
       }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ fontWeight: '700', fontSize: 15, color: '#111' }}>Mock POS · {items.length} items</Text>
+          <Text style={{ fontWeight: '700', fontSize: 15, color: '#111' }}>{adapterName} · {items.length} items</Text>
           <Text style={{ fontWeight: '800', color: mapped === items.length && items.length > 0 ? '#059669' : '#6B7280' }}>
             {mapped} of {items.length} mapped
           </Text>

@@ -62,6 +62,7 @@ import SupplierSpecialsScreen from '../../screens/supplier/SupplierSpecialsScree
 
 // POS
 import POSMappingScreen from '../../screens/pos/POSMappingScreen';
+import POSConnectionScreen from '../../screens/pos/POSConnectionScreen';
 
 // Invoices
 import InvoiceSummaryScreen from '../../screens/invoices/InvoiceSummaryScreen';
@@ -363,6 +364,7 @@ export default function MainStack() {
       />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
       <Stack.Screen name="POSMapping" component={POSMappingScreen} options={{ title: 'POS Product Mapping' }} />
+      <Stack.Screen name="POSConnection" component={POSConnectionScreen} options={{ title: 'POS Connection' }} />
     </Stack.Navigator>
     <IzzyAssistant />
     </View>

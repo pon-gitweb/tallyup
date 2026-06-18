@@ -101,6 +101,26 @@ export default function MoreScreen() {
           <Row icon="📊" label="Stock Control" onPress={() => nav.navigate('StockControl')} />
           {isManager && (
             <TouchableOpacity
+              onPress={() => nav.navigate('POSConnection')}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingVertical: 14, paddingHorizontal: 16,
+                borderBottomWidth: 1, borderBottomColor: c.border,
+              }}
+            >
+              <Text style={{ fontSize: 18, marginRight: 12, width: 26 }}>🔌</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, color: c.navy, fontWeight: '500' }}>POS connection</Text>
+                <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2 }}>
+                  Connect your venue's POS system
+                </Text>
+              </View>
+              <Text style={{ fontSize: 20, color: c.deepBlue, fontWeight: '300' }}>›</Text>
+            </TouchableOpacity>
+          )}
+          {isManager && (
+            <TouchableOpacity
               onPress={() => nav.navigate('POSMapping')}
               activeOpacity={0.7}
               style={{

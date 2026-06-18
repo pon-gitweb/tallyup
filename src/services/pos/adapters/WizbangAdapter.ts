@@ -1,32 +1,28 @@
 import { POSAdapter, POSProduct, POSSale, POSSaleItem } from '../POSService';
 
-const NOT_IMPLEMENTED =
-  'Wizbang integration coming soon.\nContact support@wizbang.co.nz to request access.';
-
 export class WizbangAdapter implements POSAdapter {
   readonly name = 'Wizbang Onetap';
 
   async isConnected(): Promise<boolean> {
-    throw new Error(NOT_IMPLEMENTED);
+    return false;
   }
 
   async getProducts(): Promise<POSProduct[]> {
-    throw new Error(NOT_IMPLEMENTED);
+    return [];
   }
 
   async getSales(_from: Date, _to: Date): Promise<POSSale[]> {
-    throw new Error(NOT_IMPLEMENTED);
+    return [];
   }
 
   async getSaleItems(): Promise<POSSaleItem[]> {
-    throw new Error(NOT_IMPLEMENTED);
+    return [];
   }
 
   async connect(_credentials: Record<string, string>): Promise<void> {
-    throw new Error(NOT_IMPLEMENTED);
+    // Credentials are stored by the connection screen; real OAuth/API wiring pending partnership.
   }
 
   async disconnect(): Promise<void> {
-    throw new Error(NOT_IMPLEMENTED);
   }
 }
