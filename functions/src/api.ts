@@ -329,7 +329,7 @@ async function callClaude(systemPrompt: string, userMessage: string): Promise<st
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }],
@@ -570,7 +570,7 @@ app.post("/generate-recipe", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 2500,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
@@ -919,7 +919,7 @@ app.post("/extract-inventory", async (req, res) => {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-6",
           max_tokens: 4096,
           system: systemPrompt,
           messages: [{ role: "user", content: imageContent }],
@@ -960,7 +960,7 @@ app.post("/extract-inventory", async (req, res) => {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-6",
           max_tokens: 4096,
           system: systemPrompt,
           messages: [{ role: "user", content: "Extract items from this stocktake sheet:\n\n" + text }],
@@ -3034,7 +3034,7 @@ ${context}`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 800,
         system: systemPrompt,
         messages,
@@ -3123,7 +3123,7 @@ Current screen context will be provided with each message. Use it to give contex
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 500,
         system: systemPrompt,
         messages: [{ role: "user", content: question }],
@@ -3473,7 +3473,7 @@ ${context}`;
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 800,
       system: systemPrompt,
       messages,
@@ -3633,7 +3633,7 @@ app.post("/writeFestivalDebrief", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1500,
         system: `You are an event debrief analyst. Given festival event data, generate a structured debrief with three sections.
 Return ONLY valid JSON in this format (no markdown, no other text):
@@ -4380,7 +4380,7 @@ app.post("/extract-festival-contract", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
@@ -4550,7 +4550,7 @@ app.post("/extract-festival-rider", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 2048,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
