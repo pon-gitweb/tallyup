@@ -1220,7 +1220,7 @@ app.post("/photo-count", async (req, res) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         max_tokens: 512,
         system: systemPrompt,
         messages: [{
