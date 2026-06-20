@@ -2117,6 +2117,11 @@ try {
         if (isFestivalSession && finalized) {
           await startNewDepartmentCycle(venueId!, departmentId);
         }
+        if (finalized) {
+          showSuccess('Department complete — nice work!');
+        } else {
+          showSuccess(`${areaName || 'Area'} counted ✅`);
+        }
         if (!finalized) nav.goBack();
       } catch (e: any) {
         toastService.error(e?.message ?? 'Could not complete area.');
