@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Modal, ScrollView, Switch } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenueCountry } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
@@ -20,8 +20,6 @@ type Props = {
   initialMode?: 'batch' | 'single' | 'dish' | null;
   prefill?: any | null;
 };
-
-const GST_RATE = 0.15; // NZ
 
 function buildPrefillMethod(p: any): string {
   if (!p) return '';
@@ -61,6 +59,8 @@ export default function DraftRecipeDetailPanel({
   recipeId, onClose, initialName = null, initialCategory = null, initialMode = null, prefill = null
 }: Props) {
   const venueId = useVenueId();
+  const venueCountry = useVenueCountry();
+  const gstRate = venueCountry === 'AU' ? 0.10 : 0.15;
   const colours = useColours();
   const nav = useNavigation<any>();
   const { showSuccess, showError } = useToast();
@@ -180,20 +180,20 @@ export default function DraftRecipeDetailPanel({
     const c  = Math.max(0, cogsPerServe);
     if (gp >= 99.9) return '';
     const net = c / (1 - gp / 100);
-    const gross = rrpIncludesGst ? net * (1 + GST_RATE) : net;
+    const gross = rrpIncludesGst ? net * (1 + gstRate) : net;
     return Number.isFinite(gross) ? gross.toFixed(2) : '';
-  }, [gpPct, cogsPerServe, rrpIncludesGst]);
+  }, [gpPct, cogsPerServe, rrpIncludesGst, gstRate]);
 
   const onChangeRrp = useCallback((value:string) => {
     setRrp(value);
     const price = toNumber(value);
-    const net = rrpIncludesGst ? price / (1 + GST_RATE) : price;
+    const net = rrpIncludesGst ? price / (1 + gstRate) : price;
     const c = Math.max(0, cogsPerServe);
     if (net > 0 && net >= c) {
       const gp = ((net - c) / net) * 100;
       setGpPct(gp.toFixed(1));
     }
-  }, [rrpIncludesGst, cogsPerServe]);
+  }, [rrpIncludesGst, cogsPerServe, gstRate]);
 
   const onIngredientsSummary = useCallback((s) => {
     setDerivedBatchCost(s?.totalCost || 0);
@@ -270,8 +270,8 @@ const isRrpManual =
 
   const netPrice = useMemo(() => {
     if (!effectiveRrp) return 0;
-    return rrpIncludesGst ? effectiveRrp / (1 + GST_RATE) : effectiveRrp;
-  }, [effectiveRrp, rrpIncludesGst]);
+    return rrpIncludesGst ? effectiveRrp / (1 + gstRate) : effectiveRrp;
+  }, [effectiveRrp, rrpIncludesGst, gstRate]);
 
   const gpLive = useMemo(() => {
     const v = Number(gpPct || '0') || 0;
@@ -499,7 +499,7 @@ const isRrpManual =
           <View style={{ height:8 }} />
 
           <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
-            <Text style={{ fontWeight:'700' }}>RRP includes GST (15%)</Text>
+            <Text style={{ fontWeight:'700' }}>RRP includes GST ({gstRate * 100}%)</Text>
             <Switch value={rrpIncludesGst} onValueChange={setRrpIncludesGst} />
           </View>
 

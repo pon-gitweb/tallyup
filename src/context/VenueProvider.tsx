@@ -27,6 +27,7 @@ type VenueCtx = {
   activeVenueId: string | null;
   venueIds: string[];
   venueType: string | null;
+  venueCountry: string;
   switchVenue: (newVenueId: string) => Promise<void>;
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
@@ -39,7 +40,7 @@ type VenueCtx = {
 };
 
 const Ctx = createContext<VenueCtx>({
-  loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null,
+  loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null, venueCountry: 'NZ',
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
@@ -54,6 +55,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [nonce, setNonce] = useState(0);
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
   const [venueType, setVenueType] = useState<string | null>(null);
+  const [venueCountry, setVenueCountry] = useState<string>('NZ');
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
@@ -185,7 +187,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setVenueType(null); return; }
+    if (!venueId) { setSubscription(null); setVenueType(null); setVenueCountry('NZ'); return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
@@ -196,6 +198,8 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       const vt = (data?.venueType as string) || 'venue';
       setVenueType(vt);
       AsyncStorage.setItem('lastKnownVenueType', vt).catch(() => {});
+      // Default to 'NZ' so venues with no country set keep today's 15% GST behaviour
+      setVenueCountry((data?.country as string) || 'NZ');
       const sub = data?.subscription ?? null;
       setSubscription(sub ? {
         status: sub.status || 'pilot',
@@ -209,6 +213,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       setSubscription(null);
       setVenueType(null);
+      setVenueCountry('NZ');
       if (err?.code === 'permission-denied') {
         // User has been removed from this venue — clear context so HomeRouter can redirect
         setVenueId(null);
@@ -246,6 +251,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     activeVenueId: venueId,
     venueIds,
     venueType,
+    venueCountry,
     switchVenue: async (newVenueId: string) => {
       if (!user) throw new Error('Not signed in');
       const memberSnap = await getDoc(doc(db, 'venues', newVenueId, 'members', user.uid));
@@ -263,7 +269,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     plan,
     hasModule,
     billingState,
-  }), [loading, user, venueId, venueIds, venueType, subscription, isPilot, isActive, plan]);
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, isPilot, isActive, plan]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -311,6 +317,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 export function useVenue() { return useContext(Ctx); }
 export function useVenueId(): string | null { return useContext(Ctx).venueId; }
 export function useVenueType(): string | null { return useContext(Ctx).venueType; }
+export function useVenueCountry(): string { return useContext(Ctx).venueCountry; }
 export function useSubscription() {
   const { subscription, isPilot, isActive, plan, hasModule, billingState } = useContext(Ctx);
   return { subscription, isPilot, isActive, plan, hasModule, billingState };

@@ -14,6 +14,7 @@ export default function CreateVenueScreen() {
   const { showError } = useToast();
   const [name, setName] = useState('');
   const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
+  const [country, setCountry] = useState<'NZ' | 'AU'>('NZ');
   const [busy, setBusy] = useState(false);
   const navigation = useNavigation<any>();
 
@@ -66,6 +67,7 @@ export default function CreateVenueScreen() {
         name: name.trim(),
         ownerUid: uid,
         venueType: projectType,
+        country,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -214,6 +216,44 @@ export default function CreateVenueScreen() {
       </View>
 
       <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+        Country
+      </Text>
+
+      <View style={styles.chipRow}>
+        <TouchableOpacity
+          onPress={() => setCountry('NZ')}
+          disabled={busy}
+          style={[
+            styles.chip,
+            {
+              backgroundColor: country === 'NZ' ? c.deepBlue : c.surface,
+              borderColor: country === 'NZ' ? c.deepBlue : c.border,
+            },
+          ]}
+        >
+          <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'NZ' ? c.primaryText : c.missionSlate }}>
+            New Zealand
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setCountry('AU')}
+          disabled={busy}
+          style={[
+            styles.chip,
+            {
+              backgroundColor: country === 'AU' ? c.deepBlue : c.surface,
+              borderColor: country === 'AU' ? c.deepBlue : c.border,
+            },
+          ]}
+        >
+          <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'AU' ? c.primaryText : c.missionSlate }}>
+            Australia
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
         {projectType === 'festival' ? 'Festival name' : projectType === 'venue' ? 'Venue name' : 'Project name'}
       </Text>
 
@@ -290,5 +330,16 @@ const styles = {
   },
   typeLabel: {
     fontSize: 15,
+  },
+  chipRow: {
+    flexDirection: 'row' as const,
+    gap: 10,
+  },
+  chip: {
+    flex: 1,
+    borderRadius: 999,
+    borderWidth: 2,
+    paddingVertical: 10,
+    alignItems: 'center' as const,
   },
 };

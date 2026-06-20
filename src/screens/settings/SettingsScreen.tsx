@@ -39,7 +39,7 @@ import IdentityBadge from '../../components/IdentityBadge';
 import { friendlyIdentity, useVenueInfo } from '../../hooks/useIdentityLabels';
 import { usePendingAdjustmentsCount } from '../../hooks/usePendingAdjustments';
 import { usePendingBudgetApprovalsCount } from '../../hooks/usePendingBudgetApprovals';
-import { useVenueId, useVenueType } from '../../context/VenueProvider';
+import { useVenueId, useVenueType, useVenueCountry } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -77,6 +77,7 @@ export default function SettingsScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const venueType = useVenueType();
+  const venueCountry = useVenueCountry();
   const isFestival = venueType === 'festival';
 
   const [isManager, setIsManager] = useState(false);
@@ -91,6 +92,11 @@ export default function SettingsScreen() {
   const [editingVenueName, setEditingVenueName] = useState(false);
   const [venueNameInput, setVenueNameInput] = useState('');
   const [savingVenueName, setSavingVenueName] = useState(false);
+
+  // Inline edit — venue country
+  const [editingVenueCountry, setEditingVenueCountry] = useState(false);
+  const [venueCountryInput, setVenueCountryInput] = useState<'NZ' | 'AU'>('NZ');
+  const [savingVenueCountry, setSavingVenueCountry] = useState(false);
 
   // Success toast
   const [toast, setToast] = React.useState<string | null>(null);
@@ -249,6 +255,20 @@ export default function SettingsScreen() {
       showError('Could not save venue name.');
     } finally {
       setSavingVenueName(false);
+    }
+  }
+
+  async function saveVenueCountry() {
+    if (!venueId) return;
+    setSavingVenueCountry(true);
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { country: venueCountryInput });
+      setEditingVenueCountry(false);
+      showToast('Country updated ✓');
+    } catch (e: any) {
+      showError('Could not save country.');
+    } finally {
+      setSavingVenueCountry(false);
     }
   }
 
@@ -600,6 +620,73 @@ export default function SettingsScreen() {
 
         {/* ─── MY VENUE ─── */}
         <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>My Venue</Text></View>
+
+        {/* Country — owner-only, drives GST rate used in recipe pricing */}
+        <View style={styles.card}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+            Country
+          </Text>
+          {isOwner && editingVenueCountry ? (
+            <View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => setVenueCountryInput('NZ')}
+                  style={{
+                    flex: 1, paddingVertical: 9, borderRadius: 999, alignItems: 'center',
+                    borderWidth: 1,
+                    backgroundColor: venueCountryInput === 'NZ' ? themeColours.primary : themeColours.surface,
+                    borderColor: venueCountryInput === 'NZ' ? themeColours.primary : themeColours.border,
+                  }}
+                >
+                  <Text style={{ color: venueCountryInput === 'NZ' ? themeColours.primaryText : themeColours.text, fontWeight: '700', fontSize: 13 }}>
+                    New Zealand
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setVenueCountryInput('AU')}
+                  style={{
+                    flex: 1, paddingVertical: 9, borderRadius: 999, alignItems: 'center',
+                    borderWidth: 1,
+                    backgroundColor: venueCountryInput === 'AU' ? themeColours.primary : themeColours.surface,
+                    borderColor: venueCountryInput === 'AU' ? themeColours.primary : themeColours.border,
+                  }}
+                >
+                  <Text style={{ color: venueCountryInput === 'AU' ? themeColours.primaryText : themeColours.text, fontWeight: '700', fontSize: 13 }}>
+                    Australia
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={saveVenueCountry}
+                  disabled={savingVenueCountry}
+                  style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                >
+                  {savingVenueCountry
+                    ? <ActivityIndicator color={themeColours.primaryText} size="small" />
+                    : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setEditingVenueCountry(false)}
+                  style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                >
+                  <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                {venueCountry === 'AU' ? 'Australia' : 'New Zealand'}
+              </Text>
+              {isOwner ? (
+                <TouchableOpacity onPress={() => { setVenueCountryInput(venueCountry === 'AU' ? 'AU' : 'NZ'); setEditingVenueCountry(true); }}>
+                  <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        </View>
 
         {/* Team Members — owners and managers only */}
         {isManager && (
