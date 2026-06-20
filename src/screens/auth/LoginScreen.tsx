@@ -94,7 +94,7 @@ function LoginScreenInner() {
               Welcome back.
             </Text>
             <Text style={{ fontSize: 15, color: colours.textSecondary, marginTop: 8, lineHeight: 22 }}>
-              Yesterday's count is ready.
+              Know your stock. Know your numbers.
             </Text>
           </View>
 

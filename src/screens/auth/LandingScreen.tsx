@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useColours } from '../../context/ThemeContext';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const CARD_W = Math.round(SW * 0.65);
@@ -29,6 +30,8 @@ const appIcon = require('../../../assets/icon.png');
 
 export default function LandingScreen() {
   const nav = useNavigation<any>();
+  const c = useColours();
+  const S = makeStyles(c);
   const [slideIndex, setSlideIndex] = useState(0);
   const slideRef = useRef(0);
   const opacity = useRef(new Animated.Value(1)).current;
@@ -131,111 +134,113 @@ export default function LandingScreen() {
   );
 }
 
-const S = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#f5f3ee',
-  },
+function makeStyles(c: ReturnType<typeof useColours>) {
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: c.oat,
+    },
 
-  brand: {
-    alignItems: 'center',
-    paddingTop: 40,
-    paddingBottom: 20,
-  },
-  icon: {
-    width: 80,
-    height: 80,
-    borderRadius: 18,
-    marginBottom: 14,
-  },
-  appName: {
-    fontSize: 34,
-    fontWeight: '700',
-    color: '#0B132B',
-    letterSpacing: 0.4,
-  },
-  tagline: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginTop: 6,
-    textAlign: 'center',
-    paddingHorizontal: 32,
-    lineHeight: 22,
-  },
+    brand: {
+      alignItems: 'center',
+      paddingTop: 40,
+      paddingBottom: 20,
+    },
+    icon: {
+      width: 80,
+      height: 80,
+      borderRadius: 18,
+      marginBottom: 14,
+    },
+    appName: {
+      fontSize: 34,
+      fontWeight: '700',
+      color: c.navy,
+      letterSpacing: 0.4,
+    },
+    tagline: {
+      fontSize: 16,
+      color: c.slateMid,
+      marginTop: 6,
+      textAlign: 'center',
+      paddingHorizontal: 32,
+      lineHeight: 22,
+    },
 
-  carouselWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  card: {
-    width: CARD_W,
-    height: CARD_H,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: '#e5e3de',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  screenshot: {
-    width: '100%',
-    height: '100%',
-  },
+    carouselWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    card: {
+      width: CARD_W,
+      height: CARD_H,
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: c.border,
+      shadowColor: c.missionSlate,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.14,
+      shadowRadius: 10,
+      elevation: 5,
+    },
+    screenshot: {
+      width: '100%',
+      height: '100%',
+    },
 
-  dots: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 18,
-    alignItems: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#D1D5DB',
-  },
-  dotActive: {
-    width: 20,
-    backgroundColor: '#1b4f72',
-  },
+    dots: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 18,
+      alignItems: 'center',
+    },
+    dot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: c.oatMuted,
+    },
+    dotActive: {
+      width: 20,
+      backgroundColor: c.deepBlue,
+    },
 
-  bottom: {
-    paddingHorizontal: 24,
-    paddingBottom: 12,
-  },
-  btnPrimary: {
-    height: 52,
-    borderRadius: 14,
-    backgroundColor: '#1b4f72',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnPrimaryText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  btnSecondary: {
-    height: 52,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#0B132B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-  },
-  btnSecondaryText: {
-    color: '#0B132B',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  copyright: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    marginTop: 16,
-  },
-});
+    bottom: {
+      paddingHorizontal: 24,
+      paddingBottom: 12,
+    },
+    btnPrimary: {
+      height: 52,
+      borderRadius: 14,
+      backgroundColor: c.deepBlue,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    btnPrimaryText: {
+      color: c.surface,
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    btnSecondary: {
+      height: 52,
+      borderRadius: 14,
+      borderWidth: 1.5,
+      borderColor: c.navy,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 12,
+    },
+    btnSecondaryText: {
+      color: c.navy,
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    copyright: {
+      fontSize: 11,
+      color: c.oatMuted,
+      textAlign: 'center',
+      marginTop: 16,
+    },
+  });
+}

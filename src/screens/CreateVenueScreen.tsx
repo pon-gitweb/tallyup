@@ -6,10 +6,12 @@ import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useColours, useTheme } from '../context/ThemeContext';
+import { useToast } from '../components/common/Toast';
 
 export default function CreateVenueScreen() {
   const c = useColours();
   const { theme } = useTheme();
+  const { showError } = useToast();
   const [name, setName] = useState('');
   const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -131,7 +133,7 @@ export default function CreateVenueScreen() {
     } catch (e: any) {
       clearTimeout(timeoutId);
       console.log('[CreateVenue] error', JSON.stringify({ code: e?.code || e?.name, msg: e?.message || String(e) }));
-      Alert.alert('Could not create project', e?.message || 'Missing or insufficient permissions.');
+      showError(`Could not create project: ${e?.message || 'Missing or insufficient permissions.'}`);
     } finally {
       setBusy(false);
     }
