@@ -240,7 +240,14 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
       </View>
       <ScrollView style={{flex:1}} contentContainerStyle={{padding:16, paddingTop:0}}>
         {filtered.length === 0 ? (
-          <Text style={{ color:'#94A3B8', marginTop:12 }}>No recipes yet.</Text>
+          <View style={{ marginTop:32, alignItems:'center', paddingHorizontal:12 }}>
+            <Text style={{ color:colours.text, fontSize:16, fontWeight:'800', marginBottom:6, textAlign:'center' }}>
+              Build your first recipe
+            </Text>
+            <Text style={{ color:colours.textSecondary, fontSize:13, textAlign:'center', lineHeight:18 }}>
+              Tap + and tell us what you'd like to make — we'll cost it out and match it to your products in seconds.
+            </Text>
+          </View>
         ) : filtered.map(r => <Row key={r.id} r={r} />)}
       </ScrollView>
 
