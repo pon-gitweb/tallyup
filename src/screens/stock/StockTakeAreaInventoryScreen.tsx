@@ -49,6 +49,8 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
 import { findMatchingProduct } from '../../services/matching';
+import { ScaleService } from '../../services/scale/ScaleService';
+import { toBaseUnit } from '../../services/units';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import OfflineBanner from '../../components/OfflineBanner';
 import { parseSpokenCount } from '../../utils/parseSpokenCount';
@@ -1068,6 +1070,15 @@ function StockTakeAreaInventoryScreen() {
   const [adjModalFor, setAdjModalFor] = useState<Item | null>(null);
   const [adjQty, setAdjQty] = useState('');
   const [adjReason, setAdjReason] = useState('');
+
+  // Bluetooth scale — live weight modal
+  const [scaleModalFor, setScaleModalFor] = useState<Item | null>(null);
+  const [scaleModalPhase, setScaleModalPhase] = useState<'checking' | 'reconnecting' | 'live' | 'unavailable'>('checking');
+  const [scaleWeight, setScaleWeight] = useState<number | null>(null);
+  const [scaleStable, setScaleStable] = useState(false);
+  const [scaleReconnectName, setScaleReconnectName] = useState<string | null>(null);
+  const [scaleConversionMsg, setScaleConversionMsg] = useState<string | null>(null);
+  const scaleRequestRef = useRef(0);
 
   const [addingName, setAddingName] = useState('');
   const [addingUnit, setAddingUnit] = useState('');
@@ -2161,18 +2172,80 @@ try {
 });
   };
 
-  const useBluetoothFor = (_item: Item) => {
-    try {
-      Alert.alert(
-        'Bluetooth Scale',
-        'Bluetooth scale integration coming soon. Connect a compatible scale in Settings once available.',
-        [
-          { text: 'Open Scale Settings', onPress: () => { setMenuFor(null); nav.navigate('ScaleSettings' as never); } },
-          { text: 'Got it', style: 'cancel' },
-        ]
-      );
-    } catch {}
+  const closeScaleModal = () => {
+    setScaleModalFor(null);
+    setScaleModalPhase('checking');
+    setScaleWeight(null);
+    setScaleStable(false);
+    setScaleReconnectName(null);
+    setScaleConversionMsg(null);
   };
+
+  const useBluetoothFor = async (item: Item) => {
+    const requestId = ++scaleRequestRef.current;
+    setScaleModalFor(item);
+    setScaleModalPhase('checking');
+    setScaleWeight(null);
+    setScaleStable(false);
+    setScaleReconnectName(null);
+    setScaleConversionMsg(null);
+
+    await ScaleService.init();
+    if (scaleRequestRef.current !== requestId) return; // superseded by a newer request
+
+    if (ScaleService.getStatus() === 'connected') {
+      setScaleModalPhase('live');
+      return;
+    }
+
+    const last = ScaleService.getLastKnownDevice();
+    if (!last) {
+      setScaleModalPhase('unavailable');
+      return;
+    }
+
+    setScaleReconnectName(last.deviceName || 'your scale');
+    setScaleModalPhase('reconnecting');
+    const ok = await ScaleService.tryReconnectLastDevice();
+    if (scaleRequestRef.current !== requestId) return; // superseded by a newer request
+    setScaleModalPhase(ok ? 'live' : 'unavailable');
+  };
+
+  const onScaleTare = () => { ScaleService.tare(); };
+
+  const useScaleWeightForItem = () => {
+    const item = scaleModalFor;
+    if (!item || scaleWeight == null) return;
+
+    const base = toBaseUnit(item.unit);
+    if (base !== 'g') {
+      setScaleConversionMsg(
+        `"${item.unit || 'No unit set'}" isn't a weight unit, so the scale reading can't be converted automatically. Enter the count manually, or change this item's counting unit to g/kg.`
+      );
+      return;
+    }
+
+    const unitLower = (item.unit || '').toLowerCase().trim();
+    const isKg = unitLower === 'kg' || unitLower === 'kilogram';
+    const value = isKg ? scaleWeight / 1000 : scaleWeight;
+    const rounded = isKg ? Math.round(value * 1000) / 1000 : Math.round(value);
+
+    setLocalQty(m => ({ ...m, [item.id]: String(rounded) }));
+    hapticSuccess();
+    showSuccess(`✓ ${rounded}${isKg ? 'kg' : 'g'} from scale → ${item.name}`);
+    closeScaleModal();
+  };
+
+  // Subscribe to live weight only while the scale modal is open and connected.
+  useEffect(() => {
+    if (!scaleModalFor || scaleModalPhase !== 'live') return;
+    const unsub = ScaleService.onWeight(r => {
+      setScaleWeight(r.weightGrams);
+      setScaleStable(r.stable);
+    });
+    return () => { unsub(); };
+  }, [scaleModalFor, scaleModalPhase]);
+
   const usePhotoFor = (item: Item) => {
     setPhotoFor(item);
     setPhotoOpen(true);
@@ -2983,6 +3056,87 @@ const openHistory = throttleAction(async (item: Item) => {
                 <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bluetooth Scale Modal */}
+      <Modal visible={!!scaleModalFor} animationType="slide" transparent onRequestClose={closeScaleModal}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colours.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 10, color: colours.text }} numberOfLines={1}>
+              Bluetooth Scale — {scaleModalFor?.name ?? 'Item'}
+            </Text>
+
+            {scaleModalPhase === 'checking' && (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <ActivityIndicator color={colours.primary} />
+              </View>
+            )}
+
+            {scaleModalPhase === 'reconnecting' && (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <ActivityIndicator color={colours.primary} />
+                <Text style={{ marginTop: 10, color: colours.textSecondary }}>
+                  Reconnecting to {scaleReconnectName || 'your scale'}…
+                </Text>
+              </View>
+            )}
+
+            {scaleModalPhase === 'unavailable' && (
+              <View>
+                <Text style={{ color: colours.textSecondary, marginBottom: 14, lineHeight: 20 }}>
+                  {scaleReconnectName
+                    ? `Couldn't reconnect to ${scaleReconnectName}. Make sure it's powered on and in range, or pair it again in Scale Settings.`
+                    : 'No Bluetooth scale paired yet. Pair one in Scale Settings to enable weight-based counting.'}
+                </Text>
+                <TouchableOpacity onPress={() => { closeScaleModal(); nav.navigate('ScaleSettings' as never); }}
+                  style={{ backgroundColor: colours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={{ color: colours.primaryText, fontWeight: '800' }}>Open Scale Settings</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={closeScaleModal} style={{ padding: 10, alignItems: 'center' }}>
+                  <Text style={{ color: colours.textSecondary, fontWeight: '700' }}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {scaleModalPhase === 'live' && (
+              <View>
+                <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                  <Text style={{ fontSize: 48, fontWeight: '900', color: colours.text }}>
+                    {scaleWeight != null ? scaleWeight.toFixed(1) : '—'}
+                    <Text style={{ fontSize: 18, color: colours.textSecondary }}> g</Text>
+                  </Text>
+                  {scaleStable ? (
+                    <Text style={{ color: colours.success, fontWeight: '700', marginTop: 4 }}>Stable ✓</Text>
+                  ) : scaleWeight != null ? (
+                    <Text style={{ color: colours.warning, fontWeight: '700', marginTop: 4 }}>Settling...</Text>
+                  ) : (
+                    <Text style={{ color: colours.textSecondary, marginTop: 4 }}>Waiting for reading…</Text>
+                  )}
+                </View>
+
+                {scaleConversionMsg && (
+                  <View style={{ backgroundColor: colours.negativeSoft, borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                    <Text style={{ color: colours.error, fontSize: 13 }}>{scaleConversionMsg}</Text>
+                  </View>
+                )}
+
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity onPress={onScaleTare}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: colours.surface, borderWidth: 1, borderColor: colours.border, alignItems: 'center' }}>
+                    <Text style={{ fontWeight: '800', color: colours.text }}>Tare</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={useScaleWeightForItem} disabled={scaleWeight == null}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: scaleWeight == null ? colours.border : colours.primary, alignItems: 'center' }}>
+                    <Text style={{ fontWeight: '800', color: scaleWeight == null ? colours.textSecondary : colours.primaryText }}>Use this weight</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity onPress={closeScaleModal} style={{ padding: 12, alignItems: 'center', marginTop: 6 }}>
+                  <Text style={{ color: colours.textSecondary, fontWeight: '700' }}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </Modal>

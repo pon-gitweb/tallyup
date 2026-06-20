@@ -9,9 +9,11 @@ import {
   View, Text, TouchableOpacity, FlatList,
   ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
-import { ScaleService, ScaleType, ScaleInfo, ScaleStatus } from '../../services/scale/ScaleService';
+import { ScaleService, ScaleType, ScaleInfo, ScaleStatus, LastKnownScaleDevice } from '../../services/scale/ScaleService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 const SCALE_TYPES: { type: ScaleType; name: string; description: string; price: string; link: string; verified: boolean }[] = [
   {
@@ -42,15 +44,22 @@ const SCALE_TYPES: { type: ScaleType; name: string; description: string; price: 
 
 function ScaleSettingsScreen() {
   const colours = useColours();
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [selectedType, setSelectedType] = useState<ScaleType>(ScaleService.getScaleType());
   const [status, setStatus] = useState<ScaleStatus>(ScaleService.getStatus());
   const [scanning, setScanning] = useState(false);
   const [foundScales, setFoundScales] = useState<ScaleInfo[]>([]);
   const [weight, setWeight] = useState<number | null>(null);
   const [stable, setStable] = useState(false);
+  const [lastKnownDevice, setLastKnownDevice] = useState<LastKnownScaleDevice | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
-    ScaleService.init();
+    (async () => {
+      await ScaleService.init();
+      setLastKnownDevice(ScaleService.getLastKnownDevice());
+    })();
     const unsubStatus = ScaleService.onStatus(setStatus);
     const unsubWeight = ScaleService.onWeight(r => {
       setWeight(r.weightGrams);
@@ -58,6 +67,29 @@ function ScaleSettingsScreen() {
     });
     return () => { unsubStatus(); unsubWeight(); };
   }, []);
+
+  const onReconnect = useCallback(async () => {
+    setReconnecting(true);
+    try {
+      const ok = await ScaleService.tryReconnectLastDevice();
+      if (!ok) showError(`Could not reconnect to ${lastKnownDevice?.deviceName || 'your scale'}. Make sure it's powered on and in range.`);
+    } finally {
+      setReconnecting(false);
+    }
+  }, [lastKnownDevice]);
+
+  const onForget = useCallback(() => {
+    confirm({
+      title: 'Forget this scale?',
+      message: `Hosti will no longer try to reconnect to ${lastKnownDevice?.deviceName || 'your scale'} automatically. You can pair it again any time.`,
+      confirmLabel: 'Forget',
+      destructive: true,
+      onConfirm: async () => {
+        await ScaleService.forgetLastDevice();
+        setLastKnownDevice(null);
+      },
+    });
+  }, [lastKnownDevice]);
 
   const onScan = useCallback(async () => {
     if (!selectedType) {
@@ -83,6 +115,7 @@ function ScaleSettingsScreen() {
   const onConnect = useCallback(async (scale: ScaleInfo) => {
     try {
       await ScaleService.connect(scale.id, selectedType);
+      setLastKnownDevice(ScaleService.getLastKnownDevice());
     } catch (e: any) {
       Alert.alert('Connection failed', e?.message || 'Could not connect to scale.');
     }
@@ -132,6 +165,31 @@ function ScaleSettingsScreen() {
               <Text style={{ fontWeight: '800', color: colours.error }}>Disconnect</Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity onPress={onForget} style={{ marginTop: 12 }}>
+            <Text style={{ color: colours.textSecondary, fontWeight: '700', fontSize: 13 }}>Forget this scale</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Reconnect to last paired device */}
+      {!isConnected && lastKnownDevice && (
+        <View style={{ backgroundColor: colours.primaryLight, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colours.border }}>
+          <Text style={{ fontWeight: '800', color: colours.text, marginBottom: 4 }}>
+            Previously paired: {lastKnownDevice.deviceName || 'Bluetooth scale'}
+          </Text>
+          <Text style={{ color: colours.textSecondary, fontSize: 13, marginBottom: 10 }}>
+            Make sure it's powered on and nearby, then reconnect — no need to scan again.
+          </Text>
+          <TouchableOpacity onPress={onReconnect} disabled={reconnecting}
+            style={{ backgroundColor: colours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 8 }}>
+            {reconnecting
+              ? <ActivityIndicator color={colours.primaryText} />
+              : <Text style={{ color: colours.primaryText, fontWeight: '900' }}>Reconnect to {lastKnownDevice.deviceName || 'scale'}</Text>
+            }
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onForget}>
+            <Text style={{ color: colours.textSecondary, fontWeight: '700', fontSize: 13, textAlign: 'center' }}>Forget this scale</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -241,6 +299,8 @@ function ScaleSettingsScreen() {
           If your scale works, we'd love to hear about it. If it doesn't, we're working on it — hardware verification partnerships are in progress.
         </Text>
       </View>
+
+      {modal}
 
     </ScrollView>
   );

@@ -41,6 +41,12 @@ export type ScaleInfo = {
   rssi?: number;
 };
 
+export type LastKnownScaleDevice = {
+  deviceId: string;
+  deviceName: string | null;
+  type: ScaleType;
+};
+
 // ── Scale adapter definitions ─────────────────────────────────────────────────
 
 const DECENT_SCALE = {
@@ -93,6 +99,7 @@ const GENERIC_BLE = {
 // ── ScaleService ──────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = '@hosti_scale_type';
+const DEVICE_STORAGE_KEY = '@hosti_scale_device';
 
 class ScaleServiceClass {
   private manager: BleManager | null = null;
@@ -104,13 +111,22 @@ class ScaleServiceClass {
   private heartbeatInterval: any = null;
   private lastWeight: number = 0;
   private stableCount: number = 0;
+  private lastKnownDevice: LastKnownScaleDevice | null = null;
 
   async init() {
     try {
-      const { BleManager: BM } = require('react-native-ble-plx');
-      this.manager = new BM();
+      if (!this.manager) {
+        const { BleManager: BM } = require('react-native-ble-plx');
+        this.manager = new BM();
+      }
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
       if (saved) this.scaleType = saved as ScaleType;
+      if (!this.lastKnownDevice) {
+        const savedDevice = await AsyncStorage.getItem(DEVICE_STORAGE_KEY);
+        if (savedDevice) {
+          try { this.lastKnownDevice = JSON.parse(savedDevice); } catch {}
+        }
+      }
     } catch (e) {
       console.log('[ScaleService] init error', e);
     }
@@ -199,6 +215,7 @@ class ScaleServiceClass {
       await device.discoverAllServicesAndCharacteristics();
       this.connectedDevice = device;
       this.emitStatus('connected');
+      await this.saveLastDevice(deviceId, device.name || device.localName || null, type);
 
       // Start weight notifications based on scale type
       if (type === 'decent') await this.startDecentScale(device);
@@ -317,9 +334,44 @@ class ScaleServiceClass {
     try { await this.connectedDevice?.cancelConnection(); } catch {}
     this.connectedDevice = null;
     this.emitStatus('disconnected');
+    // Stored device info is deliberately kept — disconnect is often just
+    // app backgrounding, not un-pairing. Use forgetLastDevice() to clear it.
   }
 
   isConnected(): boolean { return this.status === 'connected'; }
+
+  private async saveLastDevice(deviceId: string, deviceName: string | null, type: ScaleType) {
+    this.lastKnownDevice = { deviceId, deviceName, type };
+    try {
+      await AsyncStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(this.lastKnownDevice));
+    } catch (e) {
+      console.log('[ScaleService] saveLastDevice error', e);
+    }
+  }
+
+  getLastKnownDevice(): LastKnownScaleDevice | null {
+    return this.lastKnownDevice;
+  }
+
+  async forgetLastDevice(): Promise<void> {
+    this.lastKnownDevice = null;
+    try { await AsyncStorage.removeItem(DEVICE_STORAGE_KEY); } catch {}
+  }
+
+  async tryReconnectLastDevice(): Promise<boolean> {
+    try {
+      if (!this.lastKnownDevice) {
+        const savedDevice = await AsyncStorage.getItem(DEVICE_STORAGE_KEY);
+        if (savedDevice) this.lastKnownDevice = JSON.parse(savedDevice);
+      }
+      if (!this.lastKnownDevice) return false;
+      await this.connect(this.lastKnownDevice.deviceId, this.lastKnownDevice.type);
+      return true;
+    } catch (e) {
+      console.log('[ScaleService] tryReconnectLastDevice failed', e);
+      return false;
+    }
+  }
 }
 
 export const ScaleService = new ScaleServiceClass();
