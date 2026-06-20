@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { OrdersService } from '../../domain/orders';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import {
   getFirestore,
@@ -75,7 +76,7 @@ const S = StyleSheet.create({
   emptyText:{color:'#6B7280'},
 
   // FAB
-  fab:{position:'absolute',right:16,bottom:24,backgroundColor:'#111827',paddingVertical:14,paddingHorizontal:18,borderRadius:999,shadowColor:'#000',shadowOpacity:0.2,shadowRadius:6,elevation:4},
+  fab:{position:'absolute',right:16,backgroundColor:'#111827',paddingVertical:14,paddingHorizontal:18,borderRadius:999,shadowColor:'#000',shadowOpacity:0.2,shadowRadius:6,elevation:4},
   fabText:{color:'#fff',fontWeight:'800'}
 });
 
@@ -161,6 +162,7 @@ export default function OrdersScreen(){
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const colours = useColours();
+  const insets = useSafeAreaInsets();
   const db = getFirestore();
   const { showError } = useToast();
   const { confirm, modal } = useConfirmModal();
@@ -472,7 +474,7 @@ export default function OrdersScreen(){
       />
 
       {/* FAB for New Order */}
-      <TouchableOpacity style={S.fab} onPress={()=>nav.navigate('NewOrderStart' as never)}>
+      <TouchableOpacity style={[S.fab, { bottom: 24 + insets.bottom }]} onPress={()=>nav.navigate('NewOrderStart' as never)}>
         <Text style={S.fabText}>New Order</Text>
       </TouchableOpacity>
 

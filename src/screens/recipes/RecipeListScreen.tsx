@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { getRecipes } from '../../services/recipes/getRecipes';
@@ -15,6 +16,7 @@ type Filter = typeof filters[number];
 export default function RecipeListScreen({ onOpen }: Props) {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
@@ -103,7 +105,7 @@ export default function RecipeListScreen({ onOpen }: Props) {
 
       {/* FAB — create new recipe */}
       <TouchableOpacity
-        style={fabStyles.fab}
+        style={[fabStyles.fab, { bottom: 24 + insets.bottom }]}
         onPress={() => nav.navigate('DraftRecipeDetail', { recipeId: 'new' })}
         activeOpacity={0.85}
       >
@@ -117,7 +119,6 @@ const fabStyles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 24,
     width: 56,
     height: 56,
     borderRadius: 28,

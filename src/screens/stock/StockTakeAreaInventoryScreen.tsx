@@ -18,7 +18,7 @@ import {
   Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal,
   Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import HintBubble from '../../components/hints/HintBubble';
@@ -415,6 +415,7 @@ function StockTakeAreaInventoryScreen() {
   dlog('[AreaInv ACTIVE FILE] src/screens/stock/StockTakeAreaInventoryScreen.tsx');
 
   const colours = useColours();
+  const insets = useSafeAreaInsets();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const nav = useNavigation<any>();
@@ -3369,7 +3370,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Bottom snackbar — Undo */}
       {undoToast.visible ? (
-        <View style={{ position:'absolute', left:12, right:12, bottom:16, backgroundColor:'#111827', borderRadius:12, padding:12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+        <View style={{ position:'absolute', left:12, right:12, bottom:16 + insets.bottom, backgroundColor:'#111827', borderRadius:12, padding:12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
           <Text style={{ color:'white', fontWeight:'700' }}>Saved</Text>
           <TouchableOpacity onPress={undoLast} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#374151', borderRadius:8 }}>
             <Text style={{ color:'#93C5FD', fontWeight:'800' }}>Undo</Text>
@@ -3433,7 +3434,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Keyboard Accessory */}
       {showSteppers && focusedInputId ? (
-        <View style={{ position:'absolute', left:12, right:12, bottom:16, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
+        <View style={{ position:'absolute', left:12, right:12, bottom:16 + insets.bottom, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
           <TouchableOpacity onPress={() => {
             setLocalQty(prev => {
               const raw = (prev[focusedInputId] ?? '').trim();
@@ -3471,7 +3472,7 @@ const openHistory = throttleAction(async (item: Item) => {
       {/* Next Uncounted FAB */}
       <TouchableOpacity
         onPress={() => focusNext()}
-        style={{ position:'absolute', right:16, bottom: showSteppers && focusedInputId ? 72 : 16, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
+        style={{ position:'absolute', right:16, bottom: (showSteppers && focusedInputId ? 72 : 16) + insets.bottom, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
         activeOpacity={0.9}
       >
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
