@@ -23,7 +23,7 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 const SECTIONS = [
   { key: 'basics',         label: 'Event basics' },
   { key: 'bars',           label: 'Bar configuration' },
-  { key: 'sourceLocations',label: 'Source locations' },
+  { key: 'sourceLocations',label: 'Storage spaces' },
   { key: 'productPlanning',label: 'Product planning' },
   { key: 'suppliers',      label: 'Supplier setup' },
   { key: 'historicalData', label: 'Historical data' },
@@ -126,6 +126,11 @@ export default function FestivalDashboardScreen() {
           Let's set up your event.{'\n'}
           This takes about 5 minutes and you can add more detail any time.
         </Text>
+        {hasMultipleProjects && (
+          <TouchableOpacity style={S.settingsLink} onPress={() => nav.navigate('VenueList')}>
+            <Text style={S.settingsLinkText}>My Projects →</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={S.cta} onPress={() => nav.navigate('FestivalEventSetup')}>
           <Text style={S.ctaText}>Set up your event →</Text>
         </TouchableOpacity>

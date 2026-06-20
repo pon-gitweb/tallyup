@@ -5,11 +5,13 @@ import {
   Switch, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { doc, setDoc, getDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { determineCycleLength, getCycleConfig } from '../../services/festival/cycleConfig';
+import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -155,6 +157,7 @@ function LockedBox({ text }: { text: string }) {
 export default function FestivalEventSetupScreen() {
   const venueId = useVenueId();
   const navigation = useNavigation<any>();
+  const c = useColours();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
 
@@ -166,6 +169,11 @@ export default function FestivalEventSetupScreen() {
   const [dailyAttend,    setDailyAttend]    = useState('');
   const [numBars,        setNumBars]        = useState('1');
   const [stockModel,     setStockModel]     = useState('sale_or_return');
+
+  // ── Date picker visibility (FIX: native pickers) ─────────────────────────
+  const [showStartPicker,    setShowStartPicker]    = useState(false);
+  const [showEndPicker,      setShowEndPicker]      = useState(false);
+  const [deliveryPickerFor,  setDeliveryPickerFor]  = useState<string | null>(null);
 
   // ── Section 2 state ──────────────────────────────────────────────────────
   const [barForms, setBarForms] = useState<BarForm[]>([
@@ -359,6 +367,20 @@ export default function FestivalEventSetupScreen() {
   useFocusEffect(useCallback(() => { loadHistoricalData(); }, [venueId]));
 
   // ── Date helpers ─────────────────────────────────────────────────────────
+  // Display/format helpers for the native date pickers only — saveBasics()
+  // keeps its own independent parseEventDate validation, unchanged.
+  function ddmmyyyyToDate(s: string): Date | null {
+    const m = (s || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return null;
+    const d = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function dateToDdmmyyyy(d: Date): string {
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${d.getFullYear()}`;
+  }
+
   function parseDuration(start: string, end: string): number {
     try {
       const [ds, ms, ys] = start.split('/');
@@ -525,7 +547,7 @@ export default function FestivalEventSetupScreen() {
       const newProgress = { ...progress, sourceLocations: true };
       await setDoc(doc(db, 'venues', venueId, 'event', 'details'), { setupProgress: newProgress, updatedAt: serverTimestamp() }, { merge: true });
       setProgress(newProgress);
-      showToast('✓ Source locations saved');
+      showToast('✓ Storage spaces saved');
       setExpandedSection(4);
     } catch (e: any) {
       showError(e?.message || 'Save failed — please try again.');
@@ -670,7 +692,7 @@ export default function FestivalEventSetupScreen() {
           {[
             ['Event basics',      progress.basics],
             ['Bar configuration', progress.bars],
-            ['Source locations',  progress.sourceLocations],
+            ['Storage spaces',  progress.sourceLocations],
             ['Supplier setup',    progress.suppliers],
             ['Product planning',  progress.productPlanning],
             ['Historical data',   progress.historicalData],
@@ -697,11 +719,50 @@ export default function FestivalEventSetupScreen() {
           ))}
 
           <Text style={S.label}>Start date *</Text>
-          <TextInput value={startDate} onChangeText={setStartDate} placeholder="DD/MM/YYYY" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numbers-and-punctuation" />
+          <TouchableOpacity
+            style={[S.input, { backgroundColor: c.surface, borderColor: c.border }]}
+            onPress={() => setShowStartPicker(true)}
+          >
+            <Text style={{ fontSize: 14, color: startDate ? c.navy : c.slateMid }}>
+              {startDate || 'Select date'}
+            </Text>
+          </TouchableOpacity>
+          {showStartPicker && (
+            <DateTimePicker
+              value={ddmmyyyyToDate(startDate) || new Date()}
+              mode="date"
+              display="default"
+              onChange={(event: any, selectedDate?: Date) => {
+                setShowStartPicker(false);
+                if (event?.type === 'dismissed' || !selectedDate) return;
+                setStartDate(dateToDdmmyyyy(selectedDate));
+              }}
+            />
+          )}
 
           <Text style={S.label}>End date *</Text>
           <Text style={S.helper}>Same as start date = single-day event</Text>
-          <TextInput value={endDate} onChangeText={setEndDate} placeholder="DD/MM/YYYY" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numbers-and-punctuation" />
+          <TouchableOpacity
+            style={[S.input, { backgroundColor: c.surface, borderColor: c.border }]}
+            onPress={() => setShowEndPicker(true)}
+          >
+            <Text style={{ fontSize: 14, color: endDate ? c.navy : c.slateMid }}>
+              {endDate || 'Select date'}
+            </Text>
+          </TouchableOpacity>
+          {showEndPicker && (
+            <DateTimePicker
+              value={ddmmyyyyToDate(endDate) || ddmmyyyyToDate(startDate) || new Date()}
+              mode="date"
+              display="default"
+              minimumDate={ddmmyyyyToDate(startDate) || undefined}
+              onChange={(event: any, selectedDate?: Date) => {
+                setShowEndPicker(false);
+                if (event?.type === 'dismissed' || !selectedDate) return;
+                setEndDate(dateToDdmmyyyy(selectedDate));
+              }}
+            />
+          )}
 
           {/* Cycle length auto-detection (FIX 2) */}
           {startDate && endDate && (() => {
@@ -786,7 +847,7 @@ export default function FestivalEventSetupScreen() {
                   <TextInput value={bar.fridgeUnderBar} onChangeText={v => updateBar(bar.id, 'fridgeUnderBar', v)} placeholder="e.g. 2" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
 
                   <View style={S.infoBox}>
-                    <Text style={S.infoText}>Primary source location set up after adding source locations in Section 3.</Text>
+                    <Text style={S.infoText}>Primary storage space set up after adding storage spaces in Section 3.</Text>
                   </View>
                 </View>
               ))}
@@ -803,7 +864,7 @@ export default function FestivalEventSetupScreen() {
 
         {/* ── SECTION 3: Source locations ── */}
         <View style={S.section}>
-          <SectionHeader n="3" title="Source locations" complete={progress.sourceLocations} expanded={expandedSection === 3} onPress={() => setExpandedSection(expandedSection === 3 ? 0 : 3)} />
+          <SectionHeader n="3" title="Storage spaces" complete={progress.sourceLocations} expanded={expandedSection === 3} onPress={() => setExpandedSection(expandedSection === 3 ? 0 : 3)} />
           {expandedSection === 3 && (<>
           {!progress.basics ? (
             <LockedBox text="Complete Event Basics first." />
@@ -927,7 +988,26 @@ export default function FestivalEventSetupScreen() {
                   {cfg.selected && (
                     <>
                       <Text style={S.label}>Delivery date</Text>
-                      <TextInput value={cfg.deliveryDate || ''} onChangeText={v => updateSup(sup.id, 'deliveryDate', v)} placeholder="DD/MM/YYYY" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numbers-and-punctuation" />
+                      <TouchableOpacity
+                        style={[S.input, { backgroundColor: c.surface, borderColor: c.border }]}
+                        onPress={() => setDeliveryPickerFor(sup.id)}
+                      >
+                        <Text style={{ fontSize: 14, color: cfg.deliveryDate ? c.navy : c.slateMid }}>
+                          {cfg.deliveryDate || 'Select date'}
+                        </Text>
+                      </TouchableOpacity>
+                      {deliveryPickerFor === sup.id && (
+                        <DateTimePicker
+                          value={ddmmyyyyToDate(cfg.deliveryDate || '') || new Date()}
+                          mode="date"
+                          display="default"
+                          onChange={(event: any, selectedDate?: Date) => {
+                            setDeliveryPickerFor(null);
+                            if (event?.type === 'dismissed' || !selectedDate) return;
+                            updateSup(sup.id, 'deliveryDate', dateToDdmmyyyy(selectedDate));
+                          }}
+                        />
+                      )}
 
                       <Text style={S.label}>Return policy</Text>
                       {RETURN_POLICIES.map(rp => (

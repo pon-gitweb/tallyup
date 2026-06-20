@@ -2256,6 +2256,13 @@
   dependencies:
     merge-options "^3.0.4"
 
+"@react-native-community/datetimepicker@8.4.1":
+  version "8.4.1"
+  resolved "https://registry.npmjs.org/@react-native-community/datetimepicker/-/datetimepicker-8.4.1.tgz"
+  integrity sha512-DrK+CUS5fZnz8dhzBezirkzQTcNDdaXer3oDLh0z4nc2tbdIdnzwvXCvi8IEOIvleoc9L95xS5tKUl0/Xv71Mg==
+  dependencies:
+    invariant "^2.2.4"
+
 "@react-native-community/netinfo@11.4.1":
   version "11.4.1"
   resolved "https://registry.npmjs.org/@react-native-community/netinfo/-/netinfo-11.4.1.tgz"
@@ -4613,7 +4620,7 @@ expo-updates@^0.28.18:
     ignore "^5.3.1"
     resolve-from "^5.0.0"
 
-expo@*, expo@>=49.0.0, expo@~53.0.20:
+expo@*, expo@>=49.0.0, expo@>=52.0.0, expo@~53.0.20:
   version "53.0.23"
   resolved "https://registry.npmjs.org/expo/-/expo-53.0.23.tgz"
   integrity sha512-6TOLuNCP3AsSkXBJA5W6U/7wpZUop3Q6BxHMtRD2OOgT7CCPvnYgJdnTzqU+gD1hMfcryD8Ejq9RdHbLduXohg==

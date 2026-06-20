@@ -201,7 +201,7 @@ export default function FestivalStockOverviewScreen() {
         <>
           {srcStocks.length > 0 && (
             <>
-              <Text style={S.sectionHeading}>SOURCE LOCATIONS</Text>
+              <Text style={S.sectionHeading}>STORAGE SPACES</Text>
               {srcStocks.map(loc => (
                 <View key={loc.locationId} style={S.locationCard}>
                   <Text style={S.locationName}>{loc.locationName}</Text>

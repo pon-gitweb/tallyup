@@ -404,9 +404,9 @@ export default function FestivalGoodsInScreen() {
         <Text style={S.heading}>Goods In — Receive</Text>
         <Text style={S.sub}>Select where stock is arriving from, then enter quantities received.</Text>
 
-        <Text style={S.label}>Source location</Text>
+        <Text style={S.label}>Storage space</Text>
         {sourceLocations.length === 0 ? (
-          <Text style={S.empty}>No source locations set up yet.</Text>
+          <Text style={S.empty}>No storage spaces set up yet.</Text>
         ) : (
           sourceLocations.map(loc => (
             <TouchableOpacity

@@ -241,7 +241,7 @@ export default function FestivalDeliveryTasksScreen() {
         {req.sourceLocationId ? (
           <Text style={S.activeLocationText}>📍 {req.sourceLocationId}</Text>
         ) : (
-          <Text style={S.activeLocationNote}>Source location not yet assigned by ops</Text>
+          <Text style={S.activeLocationNote}>Storage space not yet assigned by ops</Text>
         )}
 
         <Text style={[S.activeSection, { marginTop: 10 }]}>ITEMS:</Text>
