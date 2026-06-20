@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Modal } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -36,6 +37,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
   const venueId = useVenueId();
   const colours = useColours();
   const S = makeStyles(colours);
+  const insets = useSafeAreaInsets();
   const { showError } = useToast();
   const { confirm, modal } = useConfirmModal();
   const [rows, setRows] = useState<Recipe[]>([]);
@@ -270,7 +272,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
 
       {/* FAB — create new recipe */}
       <TouchableOpacity
-        style={S.fab}
+        style={[S.fab, { bottom: 24 + insets.bottom }]}
         onPress={() => setShowGenModal(true)}
         activeOpacity={0.85}
       >
@@ -337,7 +339,6 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     fab: {
       position: 'absolute',
       right: 20,
-      bottom: 24,
       width: 56,
       height: 56,
       borderRadius: 28,
