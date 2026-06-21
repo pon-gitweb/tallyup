@@ -371,8 +371,9 @@ service cloud.firestore {
             }
             function isInductedCreate() {
               return hasOnlyFields(request.resource.data, [
-                'name','unit','supplierName',
+                'name','unit','supplierName','supplierId',
                 'productId','productName',
+                'category','brand','size',
                 'inductionStatus','inductionSource',
                 'countingUnit','caseSize',
                 'costPrice','parLevel',
@@ -385,11 +386,15 @@ service cloud.firestore {
               && request.resource.data.createdAt is timestamp
               && request.resource.data.updatedAt is timestamp
               && request.resource.data.inductionStatus in ['pending','complete']
-              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','bulk-assign','barcode-scan']
+              && request.resource.data.inductionSource in ['quick-add','smart-shelf-scan','shelf-scan','product-photo','venue-search','venue-search-batch','bulk-assign','barcode-scan']
               && (!('supplierName' in request.resource.data) || request.resource.data.supplierName == null || request.resource.data.supplierName is string)
+              && (!('supplierId' in request.resource.data) || request.resource.data.supplierId == null || request.resource.data.supplierId is string)
               && (!('unit' in request.resource.data) || request.resource.data.unit == null || request.resource.data.unit is string)
               && (!('productId' in request.resource.data) || request.resource.data.productId == null || request.resource.data.productId is string)
               && (!('productName' in request.resource.data) || request.resource.data.productName == null || request.resource.data.productName is string)
+              && (!('category' in request.resource.data) || request.resource.data.category == null || request.resource.data.category is string)
+              && (!('brand' in request.resource.data) || request.resource.data.brand == null || request.resource.data.brand is string)
+              && (!('size' in request.resource.data) || request.resource.data.size == null || request.resource.data.size is string)
               && (!('countingUnit' in request.resource.data) || request.resource.data.countingUnit == null || request.resource.data.countingUnit is string)
               && (!('caseSize' in request.resource.data) || request.resource.data.caseSize == null || request.resource.data.caseSize is number)
               && (!('costPrice' in request.resource.data) || request.resource.data.costPrice == null || request.resource.data.costPrice is number)
