@@ -442,6 +442,7 @@ export default function BringYourDataScreen() {
           })).filter((r) => r.name);
 
       let importStockValue = 0;
+      let areaNameForMsg: string | null = null;
 
       if (allProducts.length > 0) {
         const batch = writeBatch(fsdb);
@@ -472,7 +473,6 @@ export default function BringYourDataScreen() {
         await batch.commit();
 
         // FIX 3: Create area items for each product in the first available area
-        let areaNameForMsg: string | null = null;
         try {
           const deptSnap = await getDocs(collection(fsdb, 'venues', venueId, 'departments'));
           let targetDeptId: string | null = null;
