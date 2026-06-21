@@ -349,7 +349,7 @@ service cloud.firestore {
                 (
                   request.resource.data.keys().hasOnly([
                     'name','unit','supplierId','costPrice','salePrice','parLevel',
-                    'lastCount','lastCountAt','createdAt','updatedAt'
+                    'lastCount','lastCountAt','openingStock','openingSetAt','createdAt','updatedAt'
                   ]) &&
                   request.resource.data.name is string &&
                   request.resource.data.createdAt is timestamp &&
@@ -358,11 +358,13 @@ service cloud.firestore {
                 (
                   request.resource.data.keys().hasOnly([
                     'name','unit','supplierId','costPrice','salePrice','parLevel',
-                    'lastCount','lastCountAt'
+                    'lastCount','lastCountAt','openingStock','openingSetAt'
                   ]) &&
                   request.resource.data.name is string
                 )
-              );
+              )
+              && (!('openingStock' in request.resource.data) || request.resource.data.openingStock == null || request.resource.data.openingStock is number)
+              && (!('openingSetAt' in request.resource.data) || request.resource.data.openingSetAt == null || request.resource.data.openingSetAt is timestamp);
             }
             function isMetaUpdate() {
               return request.resource.data.diff(resource.data).changedKeys().hasOnly([
