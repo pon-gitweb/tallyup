@@ -352,7 +352,7 @@ service cloud.firestore {
                     'lastCount','lastCountAt','openingStock','openingSetAt','createdAt','updatedAt'
                   ]) &&
                   request.resource.data.name is string &&
-                  request.resource.data.createdAt is timestamp &&
+                  (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp) &&
                   request.resource.data.updatedAt is timestamp
                 ) ||
                 (
