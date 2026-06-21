@@ -6,7 +6,13 @@ export function parseSpokenCount(
   input: string
 ): number | null {
   if (!input) return null;
-  const text = input.toLowerCase().trim();
+
+  // Strip common filler words once, up front, so every match path below
+  // (exact-match and regex) benefits automatically without rewriting each one.
+  // Real speech-to-text output often includes extras like "half a bottle"
+  // or "a half please".
+  const text = stripFillerWords(input.toLowerCase().trim());
+  if (!text) return null;
 
   // Direct decimal or integer — try this first
   // Handles "1", "10", "100", "1.5", "12.5"
@@ -21,6 +27,10 @@ export function parseSpokenCount(
   if (text === 'quarter' || text === 'a quarter')
     return 0.25;
 
+  // "three quarters" or "three quarter" → 0.75
+  if (text === 'three quarters' || text === 'three quarter')
+    return 0.75;
+
   // "point five", "point two five" etc
   const pointMatch = text.match(
     /^point\s+(\w+(?:\s+\w+)?)$/
@@ -32,8 +42,10 @@ export function parseSpokenCount(
   }
 
   // "X and a half" → X.5
+  // "a" is optional here since stripFillerWords() removes standalone "a"
+  // before we ever reach this regex (e.g. "one and a half" → "one and half").
   const halfMatch = text.match(
-    /^(.+?)\s+and\s+a\s+half$/
+    /^(.+?)\s+and\s+(?:a\s+)?half$/
   );
   if (halfMatch) {
     const base = parseSpokenCount(halfMatch[1]);
@@ -56,6 +68,16 @@ export function parseSpokenCount(
   if (wordResult !== null) return wordResult;
 
   return null;
+}
+
+// Common filler words real speech-to-text output tends to include around
+// a count (e.g. "half a bottle", "a half please", "one and a half bottles").
+// Matched as whole words only, so substrings inside other words are untouched
+// (e.g. stripping "bottle" never touches "bottles", and vice versa).
+const FILLER_WORDS_REGEX = /\b(?:a|the|of|bottle|bottles|please)\b/g;
+
+function stripFillerWords(text: string): string {
+  return text.replace(FILLER_WORDS_REGEX, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // Converts word numbers to integer
