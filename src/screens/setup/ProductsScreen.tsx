@@ -23,6 +23,7 @@ import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/nativ
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, query, where, deleteDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { listProducts, deleteProductById } from '../../services/products';
 import { listSuppliers } from '../../services/suppliers';
 import { adoptGlobalCatalogToVenue } from '../../services/catalog/adoptGlobalCatalogToVenue';
@@ -178,6 +179,21 @@ function PathCard({
   );
 }
 
+// ─── Incomplete-product check (client-side only, no Firestore field) ────────
+
+function computeMissingFields(p: any): string[] {
+  const missing: string[] = [];
+  if (!p.unit) missing.push('Unit');
+  if (!p.packSize) missing.push('Pack size');
+  if (p.gstPercent == null) missing.push('GST%');
+  if (!p.supplierName || p.supplierName === 'Unassigned') missing.push('Supplier');
+  return missing;
+}
+
+function isIncomplete(p: any): boolean {
+  return computeMissingFields(p).length > 0;
+}
+
 // ─── Unassigned check (non-critical, silent-fail) ────────────────────────────
 
 async function fetchAssignedProductIds(venueId: string): Promise<{ ids: Set<string>; names: Set<string> }> {
@@ -207,6 +223,7 @@ export default function ProductsScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueId = useVenueId();
+  const colours = useColours();
   const { showError } = useToast();
   const { confirm, modal } = useConfirmModal();
 
@@ -232,6 +249,10 @@ export default function ProductsScreen() {
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
   const [showOnlyNoSupplier, setShowOnlyNoSupplier] = useState(false);
   const [addToAreaHintSeen, setAddToAreaHintSeen] = useState(true);
+
+  // Incomplete products (client-side only — unit/packSize/gstPercent/supplier gaps)
+  const [showOnlyIncomplete, setShowOnlyIncomplete] = useState(false);
+  const [incompleteDismissed, setIncompleteDismissed] = useState(false);
 
   // Multi-select
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -645,6 +666,8 @@ export default function ProductsScreen() {
     }
   }
 
+  const incompleteIds = useMemo(() => rows.filter(isIncomplete).map((p: any) => p.id), [rows]);
+
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyUnassigned) {
@@ -653,6 +676,10 @@ export default function ProductsScreen() {
     }
     if (showOnlyNoSupplier) {
       base = base.filter((p: any) => !p.supplierId);
+    }
+    if (showOnlyIncomplete) {
+      const idSet = new Set(incompleteIds);
+      base = base.filter((p: any) => idSet.has(p.id));
     }
     const needle = q.trim().toLowerCase();
     if (!needle) return base;
@@ -668,7 +695,7 @@ export default function ProductsScreen() {
         supplier.includes(needle)
       );
     });
-  }, [rows, q, showOnlyUnassigned, unassignedIds, showOnlyNoSupplier]);
+  }, [rows, q, showOnlyUnassigned, unassignedIds, showOnlyNoSupplier, showOnlyIncomplete, incompleteIds]);
 
   const filteredVenueSuppliers = useMemo(() => {
     const needle = supplierQ.trim().toLowerCase();
@@ -782,6 +809,44 @@ export default function ProductsScreen() {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={{ fontSize: 16, color: '#94a3b8', fontWeight: '600' }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Incomplete products card — missing unit/pack size/GST%/supplier */}
+      {!incompleteDismissed && incompleteIds.length > 0 && (
+        <View style={[S.unassignedCard, { backgroundColor: colours.surface, borderColor: colours.warning }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <Text style={{ fontSize: 20 }}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[S.unassignedTitle, { color: colours.warning }]}>
+                {showOnlyIncomplete
+                  ? `Showing ${incompleteIds.length} incomplete product${incompleteIds.length !== 1 ? 's' : ''}`
+                  : `${incompleteIds.length} product${incompleteIds.length !== 1 ? 's' : ''} missing details`}
+              </Text>
+              <Text style={[S.unassignedBody, { color: colours.text }]}>
+                {showOnlyIncomplete
+                  ? 'Tap a product to fill in what\'s missing.'
+                  : 'Missing unit, pack size, GST%, or supplier — fixable any time.'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowOnlyIncomplete(v => !v);
+                  if (showOnlyIncomplete) setQ('');
+                }}
+                style={[S.unassignedBtn, { backgroundColor: colours.background }]}
+              >
+                <Text style={[S.unassignedBtnText, { color: colours.warning }]}>
+                  {showOnlyIncomplete ? '← Show all products' : 'View incomplete products →'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => { setIncompleteDismissed(true); setShowOnlyIncomplete(false); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={{ fontSize: 16, color: colours.textSecondary, fontWeight: '600' }}>✕</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -952,7 +1017,7 @@ export default function ProductsScreen() {
         keyboardShouldPersistTaps="handled"
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         renderItem={({ item }) => {
-          const supplierName = item.supplierName ? String(item.supplierName) : '';
+          const supplierName = (item.supplierName && item.supplierName !== 'Unassigned') ? String(item.supplierName) : '';
           const isSelected = selectedIds.has(item.id);
           return (
             <TouchableOpacity
@@ -984,6 +1049,11 @@ export default function ProductsScreen() {
                   {showOnlyUnassigned && (
                     <Text style={[S.badge, { backgroundColor: '#fef3c7', color: '#92400e' }]}>
                       Not in any area
+                    </Text>
+                  )}
+                  {showOnlyIncomplete && (
+                    <Text style={[S.badge, { backgroundColor: colours.background, color: colours.warning }]}>
+                      Missing: {computeMissingFields(item).join(', ')}
                     </Text>
                   )}
                   <Text style={[S.badge, supplierName ? S.badgeOk : S.badgeWarn]}>

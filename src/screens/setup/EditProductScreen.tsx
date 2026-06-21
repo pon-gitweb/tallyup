@@ -17,6 +17,7 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
+import { searchGlobalCatalogByNamePrefix, catalogHitToProductPatch, CatalogHit } from '../../services/globalCatalog';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -125,6 +126,10 @@ export default function EditProductScreen() {
   const [saving, setSaving] = useState(false);
   const [inductionMissing, setInductionMissing] = useState<string[] | null>(null);
 
+  // Background catalogue matching — best-effort suggestion banner while typing the name
+  const [catalogSuggestion, setCatalogSuggestion] = useState<CatalogHit | null>(null);
+  const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
+
   // Supplier picker state
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -144,6 +149,72 @@ export default function EditProductScreen() {
   const canSave = useMemo(() => {
     return clean(form.name).length > 0 && !!venueId;
   }, [form, venueId]);
+
+  // Shared merge logic — used by both the manual AutoFillFromCatalog search
+  // and the background suggestion banner below, so a catalogue hit is always
+  // applied the same way: fill empty fields only, never overwrite typed values.
+  function applyCatalogPatch(patch: any) {
+    setForm((prev: any) => {
+      const newCategory = patch.categorySuggested ?? prev.categorySuggested ?? null;
+      const existingPar = intOrNull(prev.parLevel);
+      const autoPar = existingPar == null ? defaultParForCategory(newCategory) : null;
+      return {
+        ...prev,
+        name: clean(prev.name).length ? prev.name : patch.name,
+        sku: prev.sku ?? patch.sku ?? null,
+        unit: clean(prev.unit) ? prev.unit : (patch.unit ?? prev.unit ?? null),
+        size: clean(prev.size) ? prev.size : (patch.size ?? prev.size ?? null),
+        packSize: intOrNull(prev.packSize) != null ? prev.packSize : (patch.packSize ?? prev.packSize ?? null),
+        abv: numOrNull(prev.abv) != null ? prev.abv : (patch.abv ?? prev.abv ?? null),
+        costPrice: numOrNull(prev.costPrice) != null ? prev.costPrice : (patch.costPrice ?? prev.costPrice ?? null),
+        gstPercent: prev.gstPercent ?? patch.gstPercent ?? 15,
+        supplierNameSuggested: prev.supplierNameSuggested ?? patch.supplierNameSuggested ?? null,
+        supplierGlobalId: prev.supplierGlobalId ?? patch.supplierGlobalId ?? null,
+        categorySuggested: newCategory,
+        parLevel: existingPar != null ? prev.parLevel : (autoPar != null ? String(autoPar) : prev.parLevel),
+      };
+    });
+  }
+
+  // Background catalogue matching — debounced ~500ms after the name stops
+  // changing. Best-effort: any failure or empty result just means no banner,
+  // never an error shown to the user.
+  useEffect(() => {
+    const name = clean(form.name);
+    if (name.length < 3) { setCatalogSuggestion(null); return; }
+
+    const h = setTimeout(async () => {
+      try {
+        const hits = await searchGlobalCatalogByNamePrefix(name, 10, 40);
+        const top = Array.isArray(hits) && hits.length > 0 ? hits[0] : null;
+        if (!top) { setCatalogSuggestion(null); return; }
+        // Only worth suggesting if it would actually fill something still empty
+        const wouldHelp = !clean(form.unit) || !intOrNull(form.packSize) || !clean(form.supplierName);
+        setCatalogSuggestion(wouldHelp ? top : null);
+      } catch (e: any) {
+        console.log('[EditProductScreen] catalog suggestion search failed (non-fatal):', e?.message || e);
+        setCatalogSuggestion(null);
+      }
+    }, 500);
+
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.name]);
+
+  const suggestionKey = catalogSuggestion
+    ? `${catalogSuggestion.supplierGlobalId || ''}:${catalogSuggestion.name || ''}`
+    : null;
+  const showSuggestionBanner = !!catalogSuggestion && suggestionKey !== dismissedSuggestionKey;
+
+  function applySuggestion() {
+    if (!catalogSuggestion) return;
+    applyCatalogPatch(catalogHitToProductPatch(catalogSuggestion));
+    setDismissedSuggestionKey(suggestionKey);
+  }
+
+  function dismissSuggestion() {
+    setDismissedSuggestionKey(suggestionKey);
+  }
 
   // Load suppliers when the picker is opened
   useEffect(() => {
@@ -261,7 +332,7 @@ export default function EditProductScreen() {
       return;
     }
 
-    // Induction: enforce minimum metadata for a fully valid product
+    // Induction: surface minimum metadata gaps — informational only, never blocks.
     const missing: string[] = [];
     if (!clean(form.unit)) missing.push('Unit');
     if (!intOrNull(form.packSize)) missing.push('Pack size (units per case)');
@@ -274,22 +345,36 @@ export default function EditProductScreen() {
       return;
     }
 
+    await performSave();
+  }
+
+  // The actual write — called either directly from save() when nothing is
+  // missing, or from the inductionMissing modal's "Save anyway" button.
+  // Proceeds with whatever values are present; missing fields are written
+  // as null (or 'Unassigned' for supplier), same as the venue-search
+  // induction path already does elsewhere in the app.
+  async function performSave() {
+    const gstNum = numOrNull(form.gstPercent ?? 15) ?? 15;
+
     // Prepare payload: keep fields flat and tolerant to your legacy schema
     const skuClean = clean(form.sku || '');
     const payload:any = {
       name: clean(form.name),
       sku: skuClean || null,
-      unit: clean(form.unit),
+      unit: clean(form.unit) || null,
       size: form.size || null,               // free text "700ml"
       packSize: intOrNull(form.packSize),
       caseSize: intOrNull(form.packSize),   // alias — prediction + packing slips read caseSize
       abv: numOrNull(form.abv),
       costPrice: numOrNull(form.costPrice),
-      gstPercent: gstNum ?? 15,
+      gstPercent: gstNum,
       parLevel: intOrNull(form.parLevel),
 
       supplierId: form.supplierId || null,
-      supplierName: clean(form.supplierName),
+      // Matches the "Unassigned" convention already used by Bring Your Data —
+      // keeps this product alongside other unassigned products rather than
+      // as a separate null/empty category.
+      supplierName: clean(form.supplierName) || 'Unassigned',
 
       // keep hints for UI; they’re safe to store or ignore
       supplierNameSuggested: form.supplierNameSuggested || null,
@@ -392,6 +477,29 @@ export default function EditProductScreen() {
             });
           }}
         />
+
+        {/* ---- Background catalogue match suggestion (passive, dismissible) ---- */}
+        {showSuggestionBanner && (
+          <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.warning }]}>
+            <Text style={{ color: colours.text, fontSize: 13, lineHeight: 18 }}>
+              Found <Text style={{ fontWeight: '800' }}>"{catalogSuggestion!.name}"</Text> in our catalogue — use this to fill in unit, pack size, and supplier?
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                onPress={applySuggestion}
+                style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, backgroundColor: colours.warning }}
+              >
+                <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Use this</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={dismissSuggestion}
+                style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: colours.border }}
+              >
+                <Text style={{ color: colours.textSecondary, fontWeight: '700', fontSize: 13 }}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* ---- Core fields ---- */}
         <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
@@ -832,14 +940,24 @@ export default function EditProductScreen() {
                 <Text key={m} style={[styles.modalBullet, { color: colours.text }]}>• {m}</Text>
               ))}
               <Text style={[styles.modalText, { color: colours.text, marginTop: 8 }]}>
-                Fill these in above and tap Save again.
+                You can go back and fill these in now, or save anyway and complete them later.
               </Text>
               <View style={styles.modalActions}>
                 <TouchableOpacity
-                  style={[styles.modalBtn, { backgroundColor: colours.navy }]}
+                  style={[styles.modalBtn, { backgroundColor: colours.border, marginRight: 8 }]}
                   onPress={() => setInductionMissing(null)}
+                  disabled={saving}
                 >
-                  <Text style={[styles.modalBtnText, { color: colours.primaryText }]}>Got it</Text>
+                  <Text style={[styles.modalBtnText, { color: colours.text }]}>Go back and fill in</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: colours.navy }]}
+                  onPress={() => { setInductionMissing(null); performSave(); }}
+                  disabled={saving}
+                >
+                  {saving
+                    ? <ActivityIndicator color={colours.primaryText} size="small" />
+                    : <Text style={[styles.modalBtnText, { color: colours.primaryText }]}>Save anyway</Text>}
                 </TouchableOpacity>
               </View>
             </View>
