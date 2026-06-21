@@ -59,10 +59,9 @@ import {
   matchProductByVoice, detectVoiceCommand, VOICE_MESSAGES,
   VoicePhase, VoiceSessionState,
 } from '../../services/stocktake/voiceCountingSession';
-
-// Voice counting — graceful degradation if native module not linked
-let Voice: any = null;
-try { Voice = require('@react-native-voice/voice').default; } catch {}
+import {
+  ExpoSpeechRecognitionModule, useSpeechRecognitionEvent, isRecognitionAvailable,
+} from 'expo-speech-recognition';
 
 type Item = {
   id: string; name: string;
@@ -821,218 +820,265 @@ function StockTakeAreaInventoryScreen() {
     return { item: match, message: `Found ${match.name}. What's the count?` };
   };
 
+  // Speech recognition device-capability check (mount) + cleanup (unmount).
+  // expo-speech-recognition is a TurboModule built for New Architecture, so
+  // unlike the old @react-native-voice/voice it doesn't need a try/catch
+  // around the import — but every call here still logs its outcome, so a
+  // future linking regression shows up immediately instead of silently
+  // dimming the mic button again.
   useEffect(() => {
-    if (!Voice) return;
-    Voice.isAvailable().then((v: boolean) => setVoiceAvailable(!!v)).catch(() => {});
+    try {
+      const available = isRecognitionAvailable();
+      console.log('[VoiceDebug] isRecognitionAvailable:', available);
+      setVoiceAvailable(!!available);
+    } catch (e: any) {
+      console.log('[VoiceDebug] isRecognitionAvailable threw:', e?.message || e);
+      setVoiceAvailable(false);
+    }
 
-    // ── Two-phase session handler ─────────────────────────────────────────
-    // All state read via refs — no stale closure over phase or candidateItems.
-    Voice.onSpeechResults = async (e: any) => {
-      const results: string[] = e?.value ?? [];
-      const spoken = results[0] ?? '';
-      if (!spoken || !voiceSessionActiveRef.current) return;
+    return () => {
+      try {
+        ExpoSpeechRecognitionModule.abort();
+      } catch (e: any) {
+        console.log('[VoiceDebug] abort on unmount threw:', e?.message || e);
+      }
+    };
+  }, []);
 
-      const phase = voicePhaseRef.current;
+  // Every place that used to call Voice.start()/.stop() now goes through
+  // these two helpers — every error path logs. No bare .catch(() => {})
+  // anywhere in this voice flow; this is the standard going forward.
+  const startListening = () => {
+    try {
+      ExpoSpeechRecognitionModule.start({ lang: 'en-NZ', interimResults: false, continuous: false });
+    } catch (e: any) {
+      console.log('[VoiceDebug] start threw:', e?.message || e);
+    }
+  };
 
-      // ── ADVANCED COMMANDS ──────────────────────────────────────────────
-      // undo / correction / skip / repeat / recount — checked first, in any
-      // phase, and take priority over normal product/number matching.
-      const advancedCmd = detectAdvancedVoiceCommand(spoken);
-      if (advancedCmd.command) {
-        switch (advancedCmd.command) {
-          case 'undo': {
-            const feedback = handleVoiceUndo();
+  const stopListening = () => {
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch (e: any) {
+      console.log('[VoiceDebug] stop threw:', e?.message || e);
+    }
+  };
+
+  // ── Two-phase session handler ─────────────────────────────────────────
+  // All state read via refs — no stale closure over phase or candidateItems.
+  // useSpeechRecognitionEvent always invokes the latest version of this
+  // function internally (via its own ref), so it's safe to define fresh
+  // each render rather than wiring it up imperatively in a useEffect.
+  const handleVoiceResult = (event: any) => {
+    if (!event?.isFinal) return;
+    const spoken = event?.results?.[0]?.transcript ?? '';
+    if (!spoken || !voiceSessionActiveRef.current) return;
+
+    const phase = voicePhaseRef.current;
+
+    // ── ADVANCED COMMANDS ──────────────────────────────────────────────
+    // undo / correction / skip / repeat / recount — checked first, in any
+    // phase, and take priority over normal product/number matching.
+    const advancedCmd = detectAdvancedVoiceCommand(spoken);
+    if (advancedCmd.command) {
+      switch (advancedCmd.command) {
+        case 'undo': {
+          const feedback = handleVoiceUndo();
+          setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+          startListening();
+          return;
+        }
+        case 'correction': {
+          if (advancedCmd.value === undefined) break;
+          const feedback = handleVoiceCorrection(advancedCmd.value);
+          setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+          startListening();
+          return;
+        }
+        case 'repeat': {
+          const feedback = handleVoiceRepeat();
+          setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+          startListening();
+          return;
+        }
+        case 'skip': {
+          const current = activeVoiceItemRef.current;
+          const feedback = handleVoiceSkip(current?.id ?? null, current?.name ?? null);
+          if (current) {
+            activeVoiceItemRef.current = null;
+            candidateItemsRef.current = [];
+            voicePhaseRef.current = 'product';
+            setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: feedback, bannerColour: 'amber' }));
+          } else {
             setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
-            Voice.start('en-NZ').catch(() => {});
-            return;
           }
-          case 'correction': {
-            if (advancedCmd.value === undefined) break;
-            const feedback = handleVoiceCorrection(advancedCmd.value);
-            setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
-            Voice.start('en-NZ').catch(() => {});
-            return;
+          startListening();
+          return;
+        }
+        case 'recount': {
+          if (!advancedCmd.productHint) break;
+          const found = handleVoiceRecount(advancedCmd.productHint);
+          if (found.item) {
+            activeVoiceItemRef.current = found.item;
+            candidateItemsRef.current = [];
+            voicePhaseRef.current = 'count';
+            setHighlightedVoiceItemId(found.item.id);
+            setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+            setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: found.item, candidateItems: [], bannerMessage: found.message, bannerColour: 'teal' }));
+          } else {
+            setVoiceSessionState(prev => ({ ...prev, bannerMessage: found.message, bannerColour: 'terracotta' }));
           }
-          case 'repeat': {
-            const feedback = handleVoiceRepeat();
-            setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
-            Voice.start('en-NZ').catch(() => {});
-            return;
-          }
-          case 'skip': {
-            const current = activeVoiceItemRef.current;
-            const feedback = handleVoiceSkip(current?.id ?? null, current?.name ?? null);
-            if (current) {
-              activeVoiceItemRef.current = null;
-              candidateItemsRef.current = [];
-              voicePhaseRef.current = 'product';
-              setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: feedback, bannerColour: 'amber' }));
-            } else {
-              setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
-            }
-            Voice.start('en-NZ').catch(() => {});
-            return;
-          }
-          case 'recount': {
-            if (!advancedCmd.productHint) break;
-            const found = handleVoiceRecount(advancedCmd.productHint);
-            if (found.item) {
-              activeVoiceItemRef.current = found.item;
-              candidateItemsRef.current = [];
-              voicePhaseRef.current = 'count';
-              setHighlightedVoiceItemId(found.item.id);
-              setTimeout(() => setHighlightedVoiceItemId(null), 3000);
-              setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: found.item, candidateItems: [], bannerMessage: found.message, bannerColour: 'teal' }));
-            } else {
-              setVoiceSessionState(prev => ({ ...prev, bannerMessage: found.message, bannerColour: 'terracotta' }));
-            }
-            Voice.start('en-NZ').catch(() => {});
-            return;
-          }
+          startListening();
+          return;
         }
       }
+    }
 
-      // ── PRODUCT PHASE ──────────────────────────────────────────────────
-      if (phase === 'product') {
-        const command = detectVoiceCommand(spoken);
+    // ── PRODUCT PHASE ──────────────────────────────────────────────────
+    if (phase === 'product') {
+      const command = detectVoiceCommand(spoken);
 
-        if (command === 'end_session') {
-          voiceSessionActiveRef.current = false;
-          voicePhaseRef.current = 'idle';
-          activeVoiceItemRef.current = null;
-          candidateItemsRef.current = [];
-          Voice.stop().catch(() => {});
-          setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
-          return;
-        }
+      if (command === 'end_session') {
+        voiceSessionActiveRef.current = false;
+        voicePhaseRef.current = 'idle';
+        activeVoiceItemRef.current = null;
+        candidateItemsRef.current = [];
+        stopListening();
+        setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+        return;
+      }
 
-        // Handle selection from multiple-match list
-        const candidates = candidateItemsRef.current;
-        if (candidates.length > 1) {
-          const idx = command === 'select_1' ? 0 : command === 'select_2' ? 1 : command === 'select_3' ? 2 : -1;
-          if (idx >= 0 && candidates[idx]) {
-            const matched = candidates[idx];
-            activeVoiceItemRef.current = matched;
-            voicePhaseRef.current = 'count';
-            candidateItemsRef.current = [];
-            setHighlightedVoiceItemId(matched.id);
-            setTimeout(() => setHighlightedVoiceItemId(null), 3000);
-            setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
-            Voice.start('en-NZ').catch(() => {});
-            return;
-          }
-        }
-
-        const matches = matchProductByVoice(spoken, itemsRef.current);
-
-        if (matches.length === 0) {
-          candidateItemsRef.current = [];
-          setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
-          setTimeout(() => { if (voiceSessionActiveRef.current) Voice.start('en-NZ').catch(() => {}); }, 1500);
-          return;
-        }
-
-        if (matches.length === 1) {
-          const matched = matches[0];
+      // Handle selection from multiple-match list
+      const candidates = candidateItemsRef.current;
+      if (candidates.length > 1) {
+        const idx = command === 'select_1' ? 0 : command === 'select_2' ? 1 : command === 'select_3' ? 2 : -1;
+        if (idx >= 0 && candidates[idx]) {
+          const matched = candidates[idx];
           activeVoiceItemRef.current = matched;
           voicePhaseRef.current = 'count';
           candidateItemsRef.current = [];
           setHighlightedVoiceItemId(matched.id);
           setTimeout(() => setHighlightedVoiceItemId(null), 3000);
           setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
-          Voice.start('en-NZ').catch(() => {});
+          startListening();
           return;
         }
+      }
 
-        // Multiple matches — present top 3, wait for "one" / "two" / "three"
-        const top3 = matches.slice(0, 3);
-        candidateItemsRef.current = top3;
-        const matchList = top3.map((m: Item, i: number) => `${i + 1}. ${m.name}`).join('\n');
-        setVoiceSessionState(prev => ({ ...prev, candidateItems: top3, bannerMessage: `Multiple matches:\n${matchList}`, bannerColour: 'amber' }));
-        Voice.start('en-NZ').catch(() => {});
+      const matches = matchProductByVoice(spoken, itemsRef.current);
+
+      if (matches.length === 0) {
+        candidateItemsRef.current = [];
+        setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
+        setTimeout(() => { if (voiceSessionActiveRef.current) startListening(); }, 1500);
         return;
       }
 
-      // ── COUNT PHASE ────────────────────────────────────────────────────
-      if (phase === 'count') {
-        const command = detectVoiceCommand(spoken);
+      if (matches.length === 1) {
+        const matched = matches[0];
+        activeVoiceItemRef.current = matched;
+        voicePhaseRef.current = 'count';
+        candidateItemsRef.current = [];
+        setHighlightedVoiceItemId(matched.id);
+        setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+        setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
+        startListening();
+        return;
+      }
 
-        if (command === 'end_session') {
-          voiceSessionActiveRef.current = false;
-          voicePhaseRef.current = 'idle';
-          activeVoiceItemRef.current = null;
-          candidateItemsRef.current = [];
-          Voice.stop().catch(() => {});
-          setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
-          return;
-        }
+      // Multiple matches — present top 3, wait for "one" / "two" / "three"
+      const top3 = matches.slice(0, 3);
+      candidateItemsRef.current = top3;
+      const matchList = top3.map((m: Item, i: number) => `${i + 1}. ${m.name}`).join('\n');
+      setVoiceSessionState(prev => ({ ...prev, candidateItems: top3, bannerMessage: `Multiple matches:\n${matchList}`, bannerColour: 'amber' }));
+      startListening();
+      return;
+    }
 
-        if (command === 'skip') {
-          // Skip this product — return to listening for next product name
-          activeVoiceItemRef.current = null;
-          candidateItemsRef.current = [];
-          voicePhaseRef.current = 'product';
-          setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
-          Voice.start('en-NZ').catch(() => {});
-          return;
-        }
+    // ── COUNT PHASE ────────────────────────────────────────────────────
+    if (phase === 'count') {
+      const command = detectVoiceCommand(spoken);
 
-        const count = parseSpokenCount(spoken);
-
-        if (count === null) {
-          setVoiceSessionState(prev => ({ ...prev, bannerMessage: "Didn't catch that — say the count again", bannerColour: 'amber' }));
-          Voice.start('en-NZ').catch(() => {});
-          return;
-        }
-
-        const item = activeVoiceItemRef.current;
-        if (!item) return;
-
-        // Update localQty for immediate UI feedback (green border on row)
-        setLocalQty(prev => ({ ...prev, [item.id]: String(count) }));
-        // Write to Firestore — forceReplace=true skips the add-or-replace alert
-        saveCountRef.current(item, count, true);
-
-        // Record in voice history for undo/correction/repeat (last 10 entries)
-        const prevRaw = (localQtyRef.current[item.id] ?? '').trim();
-        const previousCount = /^(\d+(\.\d+)?|\.\d+)$/.test(prevRaw) ? parseFloat(prevRaw) : null;
-        voiceHistoryRef.current = [
-          ...voiceHistoryRef.current.slice(-9),
-          { itemId: item.id, itemName: item.name, previousCount, newCount: count, timestamp: Date.now() },
-        ];
-
-        const itemName = item.name;
-        voicePhaseRef.current = 'saving';
+      if (command === 'end_session') {
+        voiceSessionActiveRef.current = false;
+        voicePhaseRef.current = 'idle';
         activeVoiceItemRef.current = null;
         candidateItemsRef.current = [];
-        setVoiceSessionState(prev => ({ ...prev, phase: 'saving', lastSavedItem: itemName, lastSavedCount: count, bannerMessage: VOICE_MESSAGES.saved(itemName, count), bannerColour: 'green' }));
-
-        // Brief confirmation flash, then listen for next product name
-        setTimeout(() => {
-          if (!voiceSessionActiveRef.current) return;
-          voicePhaseRef.current = 'product';
-          setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
-          Voice.start('en-NZ').catch(() => {});
-        }, 800);
+        stopListening();
+        setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+        return;
       }
-    };
 
-    Voice.onSpeechError = () => {
-      // Restart listening for the current phase after a recognition error
-      if (!voiceSessionActiveRef.current) return;
-      const phase = voicePhaseRef.current;
-      if (phase === 'product' || phase === 'count') {
-        setTimeout(() => { if (voiceSessionActiveRef.current) Voice.start('en-NZ').catch(() => {}); }, 500);
+      if (command === 'skip') {
+        // Skip this product — return to listening for next product name
+        activeVoiceItemRef.current = null;
+        candidateItemsRef.current = [];
+        voicePhaseRef.current = 'product';
+        setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+        startListening();
+        return;
       }
-    };
 
-    return () => { Voice?.destroy?.().catch(() => {}); };
-  }, []);
+      const count = parseSpokenCount(spoken);
+
+      if (count === null) {
+        setVoiceSessionState(prev => ({ ...prev, bannerMessage: "Didn't catch that — say the count again", bannerColour: 'amber' }));
+        startListening();
+        return;
+      }
+
+      const item = activeVoiceItemRef.current;
+      if (!item) return;
+
+      // Update localQty for immediate UI feedback (green border on row)
+      setLocalQty(prev => ({ ...prev, [item.id]: String(count) }));
+      // Write to Firestore — forceReplace=true skips the add-or-replace alert
+      saveCountRef.current(item, count, true);
+
+      // Record in voice history for undo/correction/repeat (last 10 entries)
+      const prevRaw = (localQtyRef.current[item.id] ?? '').trim();
+      const previousCount = /^(\d+(\.\d+)?|\.\d+)$/.test(prevRaw) ? parseFloat(prevRaw) : null;
+      voiceHistoryRef.current = [
+        ...voiceHistoryRef.current.slice(-9),
+        { itemId: item.id, itemName: item.name, previousCount, newCount: count, timestamp: Date.now() },
+      ];
+
+      const itemName = item.name;
+      voicePhaseRef.current = 'saving';
+      activeVoiceItemRef.current = null;
+      candidateItemsRef.current = [];
+      setVoiceSessionState(prev => ({ ...prev, phase: 'saving', lastSavedItem: itemName, lastSavedCount: count, bannerMessage: VOICE_MESSAGES.saved(itemName, count), bannerColour: 'green' }));
+
+      // Brief confirmation flash, then listen for next product name
+      setTimeout(() => {
+        if (!voiceSessionActiveRef.current) return;
+        voicePhaseRef.current = 'product';
+        setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+        startListening();
+      }, 800);
+    }
+  };
+
+  useSpeechRecognitionEvent('result', handleVoiceResult);
+
+  const handleVoiceError = (event: any) => {
+    // Every recognition error now logs clearly — this is the standard going
+    // forward for the whole voice flow, not just the one call originally
+    // diagnosed (Voice.isAvailable() throwing silently under New Architecture).
+    console.log('[VoiceDebug] recognition error:', event?.error, event?.message);
+    if (!voiceSessionActiveRef.current) return;
+    const phase = voicePhaseRef.current;
+    if (phase === 'product' || phase === 'count') {
+      setTimeout(() => { if (voiceSessionActiveRef.current) startListening(); }, 500);
+    }
+  };
+
+  useSpeechRecognitionEvent('error', handleVoiceError);
 
   // ── Toggle voice session on/off ────────────────────────────────────────────
   // Called by the header mic button. Checks connection and Voice availability.
-  const toggleVoiceSession = () => {
-    if (!Voice || !voiceAvailable) {
+  const toggleVoiceSession = async () => {
+    if (!voiceAvailable) {
       showInfo('Voice counting is not available on this device.');
       return;
     }
@@ -1045,20 +1091,28 @@ function StockTakeAreaInventoryScreen() {
       voicePhaseRef.current = 'idle';
       activeVoiceItemRef.current = null;
       candidateItemsRef.current = [];
-      Voice.stop().catch(() => {});
+      stopListening();
       setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
     } else {
+      // expo-speech-recognition surfaces permission denial via requestPermissionsAsync()
+      // (the old library instead rejected Voice.start() with a "permissions" error code).
+      let permission: any;
+      try {
+        permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      } catch (e: any) {
+        console.log('[VoiceDebug] requestPermissionsAsync threw:', e?.message || e);
+        showInfo('Could not check microphone permission.');
+        return;
+      }
+      if (!permission?.granted) {
+        console.log('[VoiceDebug] permission not granted:', permission);
+        showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
+        return;
+      }
       voiceSessionActiveRef.current = true;
       voicePhaseRef.current = 'product';
       setVoiceSessionState(prev => ({ ...prev, isActive: true, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
-      Voice.start('en-NZ').catch((e: any) => {
-        voiceSessionActiveRef.current = false;
-        voicePhaseRef.current = 'idle';
-        setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
-        if (e?.code === 'permissions') {
-          showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
-        }
-      });
+      startListening();
     }
   };
 

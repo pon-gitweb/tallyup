@@ -80,6 +80,13 @@
         }
       ],
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Hosti-Stock uses your microphone for voice counting during stocktake.",
+          "speechRecognitionPermission": "Hosti uses speech recognition to let you count stock by speaking numbers out loud."
+        }
+      ],
+      [
         "@sentry/react-native/expo",
         {
           "url": "https://sentry.io/",
