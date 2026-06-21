@@ -28,6 +28,7 @@
       "extends": "base",
       "autoIncrement": true,
       "environment": "production",
+      "channel": "production",
       "env": {
         "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
@@ -43,6 +44,7 @@
       },
       "distribution": "store",
       "environment": "production",
+      "channel": "production",
       "env": {
         "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
         "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN"
