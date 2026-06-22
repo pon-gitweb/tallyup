@@ -10,6 +10,8 @@ import MainStack from './stacks/MainStack';
 import AuthGate from './AuthGate';
 import OfflineBanner from '../components/OfflineBanner';
 import WelcomeBetaScreen from '../screens/WelcomeBetaScreen';
+import { useToast } from '../components/common/Toast';
+import { AI_BASE_URL } from '../config/ai';
 
 const Stack = createNativeStackNavigator();
 
@@ -37,6 +39,20 @@ function navigateToInvite(params: { venueId: string; inviteId: string }) {
   if (navigationRef.isReady()) {
     navigationRef.navigate('AcceptInvite', params);
   }
+}
+
+// Square's OAuth redirect_uri (registered in the Square Developer Dashboard
+// once activated) — the device browser lands here after the seller authorises.
+function parseSquareCallbackUrl(url: string): { code: string; state: string } | null {
+  try {
+    const match = url.match(/tallyup:\/\/square-callback\?(.+)/);
+    if (!match) return null;
+    const params = new URLSearchParams(match[1]);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (code && state) return { code, state };
+  } catch {}
+  return null;
 }
 
 function AuthedStack({ pendingInvite, clearPendingInvite }: {
@@ -99,8 +115,33 @@ function AuthedStack({ pendingInvite, clearPendingInvite }: {
 }
 
 export default function RootNavigator() {
+  const { showSuccess, showError } = useToast();
   const [pendingInvite, setPendingInvite] = React.useState<{ venueId: string; inviteId: string } | null>(null);
   const pendingInviteRef = React.useRef<{ venueId: string; inviteId: string } | null>(null);
+
+  // Square OAuth callback — code/state arrive via the deep link; code_verifier
+  // was stashed in AsyncStorage (keyed by venueId, which is what `state` is)
+  // before the browser was opened. See POSConnectionScreen's Square connect flow.
+  const handleSquareCallback = React.useCallback(async (code: string, state: string) => {
+    try {
+      const verifier = await AsyncStorage.getItem(`square_pkce_verifier_${state}`);
+      const resp = await fetch(`${AI_BASE_URL}/api/square/oauth-callback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, state, code_verifier: verifier }),
+      });
+      const json = await resp.json().catch(() => null);
+      await AsyncStorage.removeItem(`square_pkce_verifier_${state}`).catch(() => {});
+      if (!resp.ok || !json?.ok) {
+        showError('Could not connect to Square. Please try again.');
+        return;
+      }
+      showSuccess('Square connected');
+      if (navigationRef.isReady()) navigationRef.navigate('POSConnection' as never);
+    } catch {
+      showError('Could not connect to Square. Please try again.');
+    }
+  }, [showSuccess, showError]);
 
   // Persist pending invite to AsyncStorage so it survives auth flow
   const storePendingInvite = React.useCallback(async (params: { venueId: string; inviteId: string }) => {
@@ -129,11 +170,13 @@ export default function RootNavigator() {
       }
     }).catch(() => {});
 
-    // Handle initial URL (app opened via invite link)
+    // Handle initial URL (app opened via invite link or Square OAuth redirect)
     Linking.getInitialURL().then((url) => {
       if (!url) return;
       const invite = parseInviteUrl(url);
-      if (invite) storePendingInvite(invite);
+      if (invite) { storePendingInvite(invite); return; }
+      const square = parseSquareCallbackUrl(url);
+      if (square) handleSquareCallback(square.code, square.state);
     }).catch(() => {});
 
     // Handle URL events while app is in foreground/background
@@ -146,11 +189,14 @@ export default function RootNavigator() {
           navigationRef.navigate('AcceptInvite', invite);
           clearPendingInvite();
         }
+        return;
       }
+      const square = parseSquareCallbackUrl(url);
+      if (square) handleSquareCallback(square.code, square.state);
     });
 
     return () => sub.remove();
-  }, [storePendingInvite, clearPendingInvite]);
+  }, [storePendingInvite, clearPendingInvite, handleSquareCallback]);
 
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>

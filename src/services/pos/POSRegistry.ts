@@ -29,6 +29,10 @@ export async function getCurrentAdapter(venueId: string): Promise<POSAdapter | n
     if (!snap.exists()) return null;
     const adapterName: string = (snap.data() as any)?.adapter ?? '';
     if (!adapterName) return null;
+    // Square needs a venue-scoped instance (its calls go through a Cloud
+    // Function keyed by venueId) — the other adapters are stateless mocks/
+    // stubs and can keep sharing the static singleton above.
+    if (adapterName.toLowerCase() === 'square') return new SquareAdapter(venueId);
     return ADAPTERS[adapterName.toLowerCase()] ?? null;
   } catch {
     return null;

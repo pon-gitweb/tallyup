@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
@@ -8,6 +9,44 @@ import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { getAdapter, listAdapters } from '../../services/pos/POSRegistry';
+import { SquareAdapter } from '../../services/pos/adapters/SquareAdapter';
+
+// Square app credential — placeholder until the developer account is
+// registered. The OAuth tile stays inert (shows a stub message instead of
+// opening a real authorize URL) while this is a placeholder.
+const SQUARE_APP_ID = 'YOUR_SQUARE_APP_ID';
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes[i], b2 = bytes[i + 1], b3 = bytes[i + 2];
+    result += chars[b1 >> 2];
+    result += chars[((b1 & 3) << 4) | (b2 !== undefined ? b2 >> 4 : 0)];
+    result += b2 !== undefined ? chars[((b2 & 15) << 2) | (b3 !== undefined ? b3 >> 6 : 0)] : '';
+    result += b3 !== undefined ? chars[b3 & 63] : '';
+  }
+  return result.replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function generateCodeVerifier(): string {
+  const bytes = new Uint8Array(64);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return base64UrlEncode(bytes).slice(0, 128);
+}
+
+// PKCE code_challenge = base64url(SHA-256(code_verifier)) — needs a SHA-256
+// primitive. expo-crypto is the obvious one but isn't installed yet (flagged
+// rather than installed silently, per instruction). Returns null until that's
+// resolved; the caller treats null as "not ready" rather than opening a
+// broken OAuth URL with a missing/incorrect challenge.
+async function generateCodeChallenge(_verifier: string): Promise<string | null> {
+  return null;
+}
 
 function useManagerAccess(venueId: string | null) {
   const { user } = useVenue();
@@ -54,7 +93,7 @@ type PosConfig = { adapter: string; connectedAt?: any };
 export default function POSConnectionScreen() {
   const venueId = useVenueId();
   const c = useColours();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const { allowed, checked } = useManagerAccess(venueId);
 
@@ -62,8 +101,22 @@ export default function POSConnectionScreen() {
   const [config, setConfig] = useState<PosConfig | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [squareConnected, setSquareConnected] = useState<boolean | null>(null);
 
   const adapterKeys = listAdapters();
+
+  // Square's status isn't read from posIntegration/config directly — it goes
+  // through a Cloud Function that checks the server-side token (see
+  // SquareAdapter.isConnected), so a stale/missing config doc can't show a
+  // false "connected" state.
+  useEffect(() => {
+    if (!venueId || !allowed) return;
+    let active = true;
+    new SquareAdapter(venueId).isConnected().then(connected => {
+      if (active) setSquareConnected(connected);
+    });
+    return () => { active = false; };
+  }, [venueId, allowed]);
 
   const load = useCallback(async () => {
     if (!venueId) return;
@@ -89,8 +142,43 @@ export default function POSConnectionScreen() {
     if (venueId && allowed) load();
   }, [venueId, allowed, load]);
 
+  // Square has no credentials to type in — connecting means opening Square's
+  // OAuth authorize page in the browser. PKCE: code_verifier is generated and
+  // stashed locally (keyed by venueId, which doubles as the OAuth `state`),
+  // and the callback deep link exchanges it server-side. See RootNavigator's
+  // handleSquareCallback for the other half of this flow.
+  async function connectSquare() {
+    if (!venueId) return;
+    setSaving(true);
+    try {
+      const verifier = generateCodeVerifier();
+      const challenge = await generateCodeChallenge(verifier);
+      if (!challenge) {
+        showInfo('Square connection setup needs one more step on our side before it can go live — check back soon.');
+        return;
+      }
+      await AsyncStorage.setItem(`square_pkce_verifier_${venueId}`, verifier);
+      const url = `https://connect.squareup.com/oauth2/authorize` +
+        `?client_id=${encodeURIComponent(SQUARE_APP_ID)}` +
+        `&scope=ITEMS_READ+MERCHANT_PROFILE_READ` +
+        `&session=false` +
+        `&state=${encodeURIComponent(venueId)}` +
+        `&code_challenge=${encodeURIComponent(challenge)}` +
+        `&code_challenge_method=S256`;
+      await Linking.openURL(url);
+    } catch (e: any) {
+      showError(e?.message || 'Could not start Square connection.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function onSave() {
     if (!venueId || !selected) return;
+    if (selected === 'square') {
+      await connectSquare();
+      return;
+    }
     setSaving(true);
     try {
       await setDoc(doc(db, 'venues', venueId, 'posIntegration', 'config'), {
@@ -175,7 +263,24 @@ export default function POSConnectionScreen() {
               {adapterKeys.map(key => {
                 const adapter = getAdapter(key);
                 const isMock = key === 'mock';
+                const isSquare = key === 'square';
                 const isSelected = selected === key;
+
+                let badgeBg = c.primaryLight, badgeBorder = c.border, badgeText = c.warning;
+                let badgeLabel = 'Coming soon — partnership pending';
+                if (isMock) {
+                  badgeBg = c.positiveSoft; badgeBorder = c.positiveStrong; badgeText = c.positiveStrong;
+                  badgeLabel = 'Test / Demo mode';
+                } else if (isSquare) {
+                  if (squareConnected) {
+                    badgeBg = c.positiveSoft; badgeBorder = c.positiveStrong; badgeText = c.positiveStrong;
+                    badgeLabel = 'Connected';
+                  } else {
+                    badgeBg = c.surface; badgeBorder = c.border; badgeText = c.textSecondary;
+                    badgeLabel = squareConnected === null ? 'Checking…' : 'Not connected';
+                  }
+                }
+
                 return (
                   <TouchableOpacity
                     key={key}
@@ -192,12 +297,12 @@ export default function POSConnectionScreen() {
                         {adapter.name}
                       </Text>
                       <View style={{
-                        backgroundColor: isMock ? c.positiveSoft : c.primaryLight,
+                        backgroundColor: badgeBg,
                         paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                        borderWidth: 1, borderColor: isMock ? c.positiveStrong : c.border,
+                        borderWidth: 1, borderColor: badgeBorder,
                       }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: isMock ? c.positiveStrong : c.warning }}>
-                          {isMock ? 'Test / Demo mode' : 'Coming soon — partnership pending'}
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: badgeText }}>
+                          {badgeLabel}
                         </Text>
                       </View>
                     </View>
@@ -206,8 +311,8 @@ export default function POSConnectionScreen() {
               })}
             </View>
 
-            {/* Credentials placeholder — real adapters only */}
-            {selected && selected !== 'mock' && (
+            {/* Credentials placeholder — real adapters only; Square uses OAuth, not typed credentials */}
+            {selected && selected !== 'mock' && selected !== 'square' && (
               <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border, gap: 8 }}>
                 <Text style={{ fontWeight: '700', fontSize: 13, color: c.textSecondary }}>
                   API credentials will be configured here when integration is active

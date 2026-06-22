@@ -1703,6 +1703,303 @@ app.post("/myob/push-invoice", async (req, res) => {
   }
 });
 
+// ── Square POS ────────────────────────────────────────────────────────────────
+// Mirrors the MYOB Business pattern above: structure built and ready, gated
+// inert behind squareIsActivated() until real Square developer credentials
+// replace the placeholders. Mobile client uses PKCE for the authorization-code
+// exchange (no client_secret on-device); this Cloud Function holds the secret
+// for token refresh and is the only thing that ever sees the access token.
+
+// TODO: replace with real Square developer credentials once the app is registered.
+const SQUARE_APP_ID = process.env.SQUARE_APP_ID || "YOUR_SQUARE_APP_ID";
+const SQUARE_APP_SECRET = process.env.SQUARE_APP_SECRET || "YOUR_SQUARE_APP_SECRET";
+const SQUARE_VERSION = "2026-05-20";
+const SQUARE_API_BASE = "https://connect.squareup.com";
+
+function squareIsActivated(): boolean {
+  return (
+    SQUARE_APP_ID !== "YOUR_SQUARE_APP_ID" &&
+    SQUARE_APP_SECRET !== "YOUR_SQUARE_APP_SECRET"
+  );
+}
+
+type SquareTokens = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string; // ISO timestamp — Square's token response gives this directly
+  merchantId: string | null;
+  locationId: string | null;
+  connectedAt: string;
+};
+
+// Tokens are stored server-side only, in a collection with no Firestore client
+// rule at all (venues/{venueId}/integrationTokens/square) — this function (via
+// the Admin SDK, which bypasses security rules) is the only way in or out. The
+// client-visible venues/{venueId}/posIntegration/config doc never holds tokens,
+// only connection status metadata.
+async function getSquareTokens(venueId: string): Promise<SquareTokens | null> {
+  const snap = await admin.firestore().doc(`venues/${venueId}/integrationTokens/square`).get();
+  return snap.exists ? (snap.data() as SquareTokens) : null;
+}
+
+async function storeSquareTokens(venueId: string, tokens: SquareTokens): Promise<void> {
+  await admin.firestore().doc(`venues/${venueId}/integrationTokens/square`).set(tokens, { merge: true });
+}
+
+// Returns a valid access token, refreshing first if it's within refreshThresholdMs
+// of expiry. Updates stored tokens in place. Returns null if there's no connection.
+async function getValidSquareAccessToken(venueId: string, refreshThresholdMs: number): Promise<string | null> {
+  const tokens = await getSquareTokens(venueId);
+  if (!tokens) return null;
+  const expiresAt = new Date(tokens.expiresAt).getTime();
+  if (Number.isFinite(expiresAt) && expiresAt - Date.now() > refreshThresholdMs) {
+    return tokens.accessToken;
+  }
+  const resp = await fetch(`${SQUARE_API_BASE}/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Square-Version": SQUARE_VERSION },
+    body: JSON.stringify({
+      client_id: SQUARE_APP_ID,
+      client_secret: SQUARE_APP_SECRET,
+      refresh_token: tokens.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!resp.ok) {
+    console.error("[square] token refresh failed", await resp.text().catch(() => ""));
+    return null;
+  }
+  const data: any = await resp.json();
+  const newTokens: SquareTokens = {
+    ...tokens,
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || tokens.refreshToken,
+    expiresAt: data.expires_at || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  await storeSquareTokens(venueId, newTokens);
+  return newTokens.accessToken;
+}
+
+// Fetches every page of Square's Catalog List API (types=ITEM,CATEGORY — both
+// in the same call so item.category_id can be resolved to a category name
+// without a second round trip).
+async function fetchAllSquareCatalogObjects(accessToken: string): Promise<any[]> {
+  const all: any[] = [];
+  let cursor: string | undefined;
+  do {
+    const url = new URL(`${SQUARE_API_BASE}/v2/catalog/list`);
+    url.searchParams.set("types", "ITEM,CATEGORY");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const resp = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}`, "Square-Version": SQUARE_VERSION },
+    });
+    const data: any = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data?.errors?.[0]?.detail || "Square catalog fetch failed");
+    }
+    all.push(...(data.objects || []));
+    cursor = data.cursor;
+  } while (cursor);
+  return all;
+}
+
+// Maps Square CatalogObject[] (ITEM + CATEGORY) to POSSaleItem[] — see
+// src/services/pos/POSService.ts for the shape this must match.
+function mapSquareCatalogToSaleItems(objects: any[]): Array<{
+  posItemId: string; posItemName: string; posSku: string | null; category: string | null; sellPrice: number | null;
+}> {
+  const categoryNames = new Map<string, string>();
+  for (const obj of objects) {
+    if (obj.type === "CATEGORY" && obj.category_data?.name) {
+      categoryNames.set(obj.id, obj.category_data.name);
+    }
+  }
+  const items: Array<{ posItemId: string; posItemName: string; posSku: string | null; category: string | null; sellPrice: number | null }> = [];
+  for (const obj of objects) {
+    if (obj.type !== "ITEM") continue;
+    const itemData = obj.item_data || {};
+    const variations: any[] = itemData.variations || [];
+    const firstVariation = variations[0]?.item_variation_data || {};
+    const priceMoney = firstVariation.price_money;
+    items.push({
+      posItemId: obj.id,
+      posItemName: itemData.name || "Unnamed item",
+      posSku: firstVariation.sku || null,
+      category: itemData.category_id ? (categoryNames.get(itemData.category_id) || null) : null,
+      sellPrice: priceMoney?.amount != null ? priceMoney.amount / 100 : null,
+    });
+  }
+  return items;
+}
+
+// GET /square/status — connection status for a venue, refreshing the token
+// first if it's within 24h of expiry.
+app.get("/square/status", async (req, res) => {
+  try {
+    if (!squareIsActivated()) {
+      res.json({ ok: false, error: "Square integration not yet activated" });
+      return;
+    }
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const venueId = String(req.query.venueId || "");
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const accessToken = await getValidSquareAccessToken(venueId, 24 * 60 * 60 * 1000);
+    if (!accessToken) {
+      res.json({ ok: true, connected: false });
+      return;
+    }
+    const tokens = await getSquareTokens(venueId);
+    res.json({ ok: true, connected: true, locationId: tokens?.locationId, expiresAt: tokens?.expiresAt });
+  } catch (e: any) {
+    console.error("[api/square/status] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Status check failed" });
+  }
+});
+
+// POST /square/oauth-callback — exchanges the PKCE authorization code for
+// tokens. Called by the client itself after intercepting the OAuth redirect
+// deep link (Square has no server endpoint of ours to redirect to directly).
+app.post("/square/oauth-callback", async (req, res) => {
+  try {
+    if (!squareIsActivated()) {
+      res.json({ ok: false, error: "Square integration not yet activated" });
+      return;
+    }
+    const { code, state, code_verifier } = req.body || {};
+    if (!code || !state || !code_verifier) {
+      res.status(400).json({ ok: false, error: "Missing code, state, or code_verifier" });
+      return;
+    }
+    const venueId = String(state);
+
+    const tokenResp = await fetch(`${SQUARE_API_BASE}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Square-Version": SQUARE_VERSION },
+      body: JSON.stringify({
+        client_id: SQUARE_APP_ID,
+        grant_type: "authorization_code",
+        code,
+        code_verifier,
+      }),
+    });
+    const tokenData: any = await tokenResp.json().catch(() => ({}));
+    if (!tokenResp.ok) {
+      console.error("[api/square/oauth-callback] token exchange failed", tokenData);
+      res.status(500).json({ ok: false, error: tokenData?.message || "Token exchange failed" });
+      return;
+    }
+
+    const accessToken = tokenData.access_token;
+    const expiresAt = tokenData.expires_at || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const locResp = await fetch(`${SQUARE_API_BASE}/v2/locations`, {
+      headers: { Authorization: `Bearer ${accessToken}`, "Square-Version": SQUARE_VERSION },
+    });
+    const locData: any = await locResp.json().catch(() => ({}));
+    if (!locResp.ok) {
+      console.error("[api/square/oauth-callback] locations fetch failed", locData);
+      res.status(500).json({ ok: false, error: "Could not fetch Square location" });
+      return;
+    }
+    const locationId = locData?.locations?.[0]?.id || null;
+
+    await storeSquareTokens(venueId, {
+      accessToken,
+      refreshToken: tokenData.refresh_token,
+      expiresAt,
+      merchantId: tokenData.merchant_id || null,
+      locationId,
+      connectedAt: new Date().toISOString(),
+    });
+
+    // Client-visible connection status — no tokens stored here.
+    await admin.firestore().doc(`venues/${venueId}/posIntegration/config`).set({
+      adapter: "square",
+      connectedAt: new Date().toISOString(),
+      locationId,
+      merchantId: tokenData.merchant_id || null,
+    }, { merge: true });
+
+    console.log("[api/square/oauth-callback] OK", { venueId, locationId });
+    res.json({ ok: true, locationId });
+  } catch (e: any) {
+    console.error("[api/square/oauth-callback] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Callback failed" });
+  }
+});
+
+// POST /square/catalog-items — fetches and maps Square's catalog to POSSaleItem[].
+app.post("/square/catalog-items", async (req, res) => {
+  try {
+    if (!squareIsActivated()) {
+      res.json({ ok: false, error: "Square integration not yet activated" });
+      return;
+    }
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId } = req.body || {};
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const accessToken = await getValidSquareAccessToken(venueId, 0);
+    if (!accessToken) {
+      res.status(400).json({ ok: false, error: "Square not connected for this venue" });
+      return;
+    }
+
+    const objects = await fetchAllSquareCatalogObjects(accessToken);
+    const items = mapSquareCatalogToSaleItems(objects);
+
+    console.log("[api/square/catalog-items] OK", { venueId, itemsCount: items.length });
+    res.json({ ok: true, items });
+  } catch (e: any) {
+    console.error("[api/square/catalog-items] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Catalog fetch failed" });
+  }
+});
+
+// POST /square/disconnect — revokes the token (non-fatal if it fails) and
+// deletes both the server-side tokens and the client-visible status doc.
+app.post("/square/disconnect", async (req, res) => {
+  try {
+    if (!squareIsActivated()) {
+      res.json({ ok: false, error: "Square integration not yet activated" });
+      return;
+    }
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId } = req.body || {};
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    await verifyVenueMembership(uid, venueId);
+
+    const tokens = await getSquareTokens(venueId);
+    if (tokens?.accessToken) {
+      try {
+        await fetch(`${SQUARE_API_BASE}/oauth2/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Square-Version": SQUARE_VERSION },
+          body: JSON.stringify({ client_id: SQUARE_APP_ID, access_token: tokens.accessToken }),
+        });
+      } catch (e: any) {
+        console.log("[api/square/disconnect] revoke error (non-fatal)", e?.message);
+      }
+    }
+
+    const db = admin.firestore();
+    await db.doc(`venues/${venueId}/integrationTokens/square`).delete();
+    await db.doc(`venues/${venueId}/posIntegration/config`).delete();
+
+    console.log("[api/square/disconnect] OK", { venueId });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/square/disconnect] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Disconnect failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
@@ -4593,7 +4890,15 @@ app.post("/extract-festival-contract", async (req, res) => {
 
     // Extract text with pdf-parse
     const pdfParse = require("pdf-parse");
-    const pdfData = await pdfParse(fileBuffer);
+    console.log('[contract-parse] fileBuffer type:', typeof fileBuffer, 'isBuffer:', Buffer.isBuffer(fileBuffer), 'length:', fileBuffer?.length);
+    let pdfData: any;
+    try {
+      pdfData = await pdfParse(fileBuffer);
+      console.log('[contract-parse] pdfParse ok, text length:', pdfData?.text?.length);
+    } catch (e: any) {
+      console.error('[contract-parse] pdfParse threw:', e?.message || e);
+      throw e;
+    }
     const rawText = (pdfData.text || "").trim();
 
     // Truncate to avoid token limits (~12k chars ≈ ~3k tokens)
