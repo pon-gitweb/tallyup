@@ -16,15 +16,17 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useColours } from '../../context/ThemeContext';
 import { VoiceSessionState } from '../../services/stocktake/voiceCountingSession';
 
 interface VoiceSessionBannerProps {
   state: VoiceSessionState;
+  speechEnabled?: boolean;
+  onToggleSpeech?: () => void;
 }
 
-export function VoiceSessionBanner({ state }: VoiceSessionBannerProps) {
+export function VoiceSessionBanner({ state, speechEnabled, onToggleSpeech }: VoiceSessionBannerProps) {
   const themeColours = useColours();
 
   if (!state.isActive && state.phase === 'idle') return null;
@@ -46,6 +48,13 @@ export function VoiceSessionBanner({ state }: VoiceSessionBannerProps) {
       <Text style={styles.bannerText} numberOfLines={3}>
         {state.bannerMessage}
       </Text>
+      {state.isActive && onToggleSpeech && (
+        <TouchableOpacity onPress={onToggleSpeech} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={[styles.speechToggle, { color: themeColours.primaryText }]}>
+            {speechEnabled ? '🔊' : '🔇'}
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -71,5 +80,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     flex: 1,
+  },
+  speechToggle: {
+    fontSize: 18,
+    flexShrink: 0,
   },
 });

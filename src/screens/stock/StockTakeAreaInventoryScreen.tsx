@@ -35,6 +35,7 @@ import { writeDepartmentSnapshot } from '../../services/reports/snapshotWriter';
 import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 import { startNewDepartmentCycle } from '../../services/cycles';
 import * as Haptics from 'expo-haptics';
+import * as Speech from 'expo-speech';
 import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as FS from 'expo-file-system';
@@ -704,9 +705,27 @@ function StockTakeAreaInventoryScreen() {
   useEffect(() => { itemsRef.current = items; }, [items]);
   const candidateItemsRef = useRef<Item[]>([]);
 
+  // Tier-2 not-found fallback — full venue product catalogue (already loaded
+  // for unified search) so a spoken product not yet in this area can still
+  // be auto-added instead of immediately falling back to "not found".
+  const venueProductsRef = useRef<any[]>(venueProducts);
+  useEffect(() => { venueProductsRef.current = venueProducts; }, [venueProducts]);
+
+  // Genuinely-unknown spoken product names collected during a session —
+  // local only, no Firestore write; surfaced as a single toast when the
+  // session ends so the user can review them afterwards.
+  const flaggedVoiceProductsRef = useRef<string[]>([]);
+
   // saveCount ref — always points to the latest saveCount regardless of closure age
   const saveCountRef = useRef(saveCount);
   useEffect(() => { saveCountRef.current = saveCount; });
+
+  // ── Spoken prompts (hands-free) ─────────────────────────────────────────
+  // Default on; persisted across sessions and toggleable from the banner.
+  const [voiceSpeechEnabled, setVoiceSpeechEnabled] = useState(true);
+  const voiceSpeechEnabledRef = useRef(true);
+  useEffect(() => { voiceSpeechEnabledRef.current = voiceSpeechEnabled; }, [voiceSpeechEnabled]);
+  useEffect(() => { if (!AS) return; AS.setItem('hosti_voice_speech_enabled', voiceSpeechEnabled ? '1' : '0').catch(() => {}); }, [voiceSpeechEnabled]);
 
   // Highlighted item from voice product match
   const [highlightedVoiceItemId, setHighlightedVoiceItemId] = useState<string | null>(null);
@@ -836,6 +855,14 @@ function StockTakeAreaInventoryScreen() {
       setVoiceAvailable(false);
     }
 
+    (async () => {
+      if (!AS) return;
+      try {
+        const stored = await AS.getItem('hosti_voice_speech_enabled');
+        if (stored != null) setVoiceSpeechEnabled(stored === '1');
+      } catch {}
+    })();
+
     return () => {
       try {
         ExpoSpeechRecognitionModule.abort();
@@ -864,6 +891,37 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // Spoken prompts — natural English, distinct from the banner's visual
+  // shorthand. Silent no-op when speech is muted or on any failure; never
+  // blocks the recognition flow.
+  const speakIfEnabled = async (text: string) => {
+    if (!voiceSpeechEnabledRef.current) return;
+    try {
+      await Speech.stop();
+      Speech.speak(text, { language: 'en-NZ', rate: 1.05, pitch: 1.0 });
+    } catch (e: any) {
+      console.log('[VoiceDebug] speak threw:', e?.message || e);
+    }
+  };
+
+  // Interrupts any in-progress speech without speaking anything new —
+  // used when the session ends, regardless of whether speech is enabled.
+  const stopSpeech = () => {
+    try {
+      Speech.stop().catch(() => {});
+    } catch {}
+  };
+
+  // Surfaces everything flagged as "genuinely unknown" during the session
+  // as a single toast, then clears the list for the next session.
+  const flushFlaggedVoiceProducts = () => {
+    const flagged = flaggedVoiceProductsRef.current;
+    if (flagged.length > 0) {
+      showInfo(`${flagged.length} product${flagged.length > 1 ? 's' : ''} flagged — check after your count: ${flagged.join(', ')}`);
+      flaggedVoiceProductsRef.current = [];
+    }
+  };
+
   // ── Two-phase session handler ─────────────────────────────────────────
   // All state read via refs — no stale closure over phase or candidateItems.
   // useSpeechRecognitionEvent always invokes the latest version of this
@@ -885,6 +943,7 @@ function StockTakeAreaInventoryScreen() {
         case 'undo': {
           const feedback = handleVoiceUndo();
           setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
+          speakIfEnabled('Undone.');
           startListening();
           return;
         }
@@ -912,6 +971,7 @@ function StockTakeAreaInventoryScreen() {
           } else {
             setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
           }
+          speakIfEnabled('Skipped. Say the next product.');
           startListening();
           return;
         }
@@ -944,7 +1004,9 @@ function StockTakeAreaInventoryScreen() {
         activeVoiceItemRef.current = null;
         candidateItemsRef.current = [];
         stopListening();
+        stopSpeech();
         setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+        flushFlaggedVoiceProducts();
         return;
       }
 
@@ -960,6 +1022,7 @@ function StockTakeAreaInventoryScreen() {
           setHighlightedVoiceItemId(matched.id);
           setTimeout(() => setHighlightedVoiceItemId(null), 3000);
           setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
+          speakIfEnabled(`${matched.name}. Say the count.`);
           startListening();
           return;
         }
@@ -968,6 +1031,70 @@ function StockTakeAreaInventoryScreen() {
       const matches = matchProductByVoice(spoken, itemsRef.current);
 
       if (matches.length === 0) {
+        // Tier 2 — check the full venue product catalogue before giving up.
+        const venueMatches = matchProductByVoice(spoken, venueProductsRef.current);
+        if (venueMatches.length > 0) {
+          const match = venueMatches[0];
+          speakIfEnabled(`${match.name} isn't in this area yet. Adding it now.`);
+          (async () => {
+            try {
+              await ensureAreaStarted();
+              const newRef = await addDoc(
+                collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
+                {
+                  name: match.name || '',
+                  unit: match.unit || null,
+                  supplierId: match.supplierId || null,
+                  supplierName: match.supplierName || null,
+                  productId: match.id || null,
+                  countingUnit: 'unit',
+                  caseSize: null,
+                  costPrice: match.costPrice || null,
+                  parLevel: match.parLevel || null,
+                  barcode: match.barcode || null,
+                  barcodeNumber: match.barcodeNumber || match.barcode || null,
+                  category: match.category || match.categorySuggested || null,
+                  brand: match.brand || null,
+                  size: match.size || null,
+                  inductionStatus: 'pending',
+                  inductionSource: 'venue-search',
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                }
+              );
+              const newItem: Item = {
+                id: newRef.id,
+                name: match.name || '',
+                unit: match.unit || undefined,
+                supplierId: match.supplierId || undefined,
+                supplierName: match.supplierName || undefined,
+                costPrice: match.costPrice || undefined,
+                parLevel: match.parLevel || undefined,
+                productId: match.id || undefined,
+                countingUnit: 'unit',
+                caseSize: null,
+              };
+              activeVoiceItemRef.current = newItem;
+              voicePhaseRef.current = 'count';
+              candidateItemsRef.current = [];
+              setHighlightedVoiceItemId(newItem.id);
+              setTimeout(() => setHighlightedVoiceItemId(null), 3000);
+              setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: newItem, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(newItem.name), bannerColour: 'teal' }));
+              speakIfEnabled(`${newItem.name}. Say the count.`);
+              startListening();
+            } catch (e: any) {
+              console.log('[VoiceDebug] auto-add venue product failed:', e?.message || e);
+              speakIfEnabled("Couldn't add that product. Say the next product.");
+              setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
+              startListening();
+            }
+          })();
+          return;
+        }
+
+        // Genuinely unknown — flag for later, no Firestore write during the session.
+        flaggedVoiceProductsRef.current = [...flaggedVoiceProductsRef.current, spoken];
+        speakIfEnabled(`${spoken} isn't set up yet. I'll flag it for later. Say the next product.`);
         candidateItemsRef.current = [];
         setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
         setTimeout(() => { if (voiceSessionActiveRef.current) startListening(); }, 1500);
@@ -982,6 +1109,7 @@ function StockTakeAreaInventoryScreen() {
         setHighlightedVoiceItemId(matched.id);
         setTimeout(() => setHighlightedVoiceItemId(null), 3000);
         setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
+        speakIfEnabled(`${matched.name}. Say the count.`);
         startListening();
         return;
       }
@@ -991,6 +1119,11 @@ function StockTakeAreaInventoryScreen() {
       candidateItemsRef.current = top3;
       const matchList = top3.map((m: Item, i: number) => `${i + 1}. ${m.name}`).join('\n');
       setVoiceSessionState(prev => ({ ...prev, candidateItems: top3, bannerMessage: `Multiple matches:\n${matchList}`, bannerColour: 'amber' }));
+      if (top3.length === 2) {
+        speakIfEnabled(`Did you mean ${top3[0].name}, or ${top3[1].name}?`);
+      } else {
+        speakIfEnabled(`${top3[0].name}, ${top3[1].name}, or ${top3[2].name}?`);
+      }
       startListening();
       return;
     }
@@ -1005,7 +1138,9 @@ function StockTakeAreaInventoryScreen() {
         activeVoiceItemRef.current = null;
         candidateItemsRef.current = [];
         stopListening();
+        stopSpeech();
         setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+        flushFlaggedVoiceProducts();
         return;
       }
 
@@ -1015,6 +1150,7 @@ function StockTakeAreaInventoryScreen() {
         candidateItemsRef.current = [];
         voicePhaseRef.current = 'product';
         setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+        speakIfEnabled('Skipped. Say the next product.');
         startListening();
         return;
       }
@@ -1023,6 +1159,7 @@ function StockTakeAreaInventoryScreen() {
 
       if (count === null) {
         setVoiceSessionState(prev => ({ ...prev, bannerMessage: "Didn't catch that — say the count again", bannerColour: 'amber' }));
+        speakIfEnabled("Didn't catch that. Say the count again.");
         startListening();
         return;
       }
@@ -1048,6 +1185,7 @@ function StockTakeAreaInventoryScreen() {
       activeVoiceItemRef.current = null;
       candidateItemsRef.current = [];
       setVoiceSessionState(prev => ({ ...prev, phase: 'saving', lastSavedItem: itemName, lastSavedCount: count, bannerMessage: VOICE_MESSAGES.saved(itemName, count), bannerColour: 'green' }));
+      speakIfEnabled(`Got it. ${count} saved.`);
 
       // Brief confirmation flash, then listen for next product name
       setTimeout(() => {
@@ -1092,7 +1230,9 @@ function StockTakeAreaInventoryScreen() {
       activeVoiceItemRef.current = null;
       candidateItemsRef.current = [];
       stopListening();
+      stopSpeech();
       setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
+      flushFlaggedVoiceProducts();
     } else {
       // expo-speech-recognition surfaces permission denial via requestPermissionsAsync()
       // (the old library instead rejected Voice.start() with a "permissions" error code).
@@ -1109,11 +1249,23 @@ function StockTakeAreaInventoryScreen() {
         showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
         return;
       }
+      flaggedVoiceProductsRef.current = [];
       voiceSessionActiveRef.current = true;
       voicePhaseRef.current = 'product';
       setVoiceSessionState(prev => ({ ...prev, isActive: true, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
+      speakIfEnabled('Say a product name');
       startListening();
     }
+  };
+
+  // Speech toggle — flips state, persists (via the effect above), and
+  // interrupts any speech immediately when turning off.
+  const onToggleVoiceSpeech = () => {
+    setVoiceSpeechEnabled(prev => {
+      const next = !prev;
+      if (!next) stopSpeech();
+      return next;
+    });
   };
 
   // Keep screen awake during counting session
@@ -2963,7 +3115,7 @@ const openHistory = throttleAction(async (item: Item) => {
       )}
 
       {/* Voice session banner — amber=listening, teal=matched, green=saved, hidden=off */}
-      <VoiceSessionBanner state={voiceSessionState} />
+      <VoiceSessionBanner state={voiceSessionState} speechEnabled={voiceSpeechEnabled} onToggleSpeech={onToggleVoiceSpeech} />
 
       <FlatList
         ref={listRef}
