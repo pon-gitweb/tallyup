@@ -68,7 +68,10 @@ export default function VenueListScreen() {
   async function doSwitch(venueId: string) {
     if (venueId === activeVenueId) return;
     setSwitching(venueId);
-    try { await switchVenue(venueId); } catch {}
+    try {
+      await switchVenue(venueId);
+      nav.navigate('HomeRouter');
+    } catch {}
     setSwitching(null);
   }
 

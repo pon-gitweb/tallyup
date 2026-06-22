@@ -13,6 +13,7 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -84,8 +85,16 @@ export default function DashboardScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const venueType = useVenueType();
-  const { venueIds } = useVenue();
+  const { venueIds, refresh } = useVenue();
   const hasMultipleProjects = (venueIds?.length || 0) > 1;
+
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = async () => {
+    setRefreshing(true);
+    refresh();
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    setRefreshing(false);
+  };
 
   // Live display name — read from users/{uid} so updates in Settings reflect immediately
   const [liveDisplayName, setLiveDisplayName] = React.useState<string>(
@@ -433,7 +442,13 @@ export default function DashboardScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       {modal}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colours.deepBlue} />
+        }
+      >
 
         {/* ── Header ────────────────────────────────────────────────────── */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 8 }}>

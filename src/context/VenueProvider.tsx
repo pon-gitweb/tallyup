@@ -256,6 +256,13 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       if (!user) throw new Error('Not signed in');
       const memberSnap = await getDoc(doc(db, 'venues', newVenueId, 'members', user.uid));
       if (!memberSnap.exists()) throw new Error('Not a member of this venue');
+      // Fetch new venue's type immediately so UI updates before onSnapshot fires
+      const venueSnap = await getDoc(doc(db, 'venues', newVenueId));
+      const newType = (venueSnap.data()?.venueType as string) || 'venue';
+      const newCountry = (venueSnap.data()?.country as string) || 'NZ';
+      setVenueType(newType);
+      setVenueCountry(newCountry);
+      // Then write to Firestore — onSnapshot will confirm/reconcile
       await updateDoc(doc(db, 'users', user.uid), {
         activeVenueId: newVenueId,
         touchedAt: serverTimestamp(),
