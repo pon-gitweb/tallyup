@@ -720,6 +720,11 @@ function StockTakeAreaInventoryScreen() {
   const saveCountRef = useRef(saveCount);
   useEffect(() => { saveCountRef.current = saveCount; });
 
+  // Best available English TTS voice locale, resolved on mount — falls back
+  // through en-NZ → en-AU → en-GB → en-US → en since many Android devices
+  // (e.g. Samsung Galaxy A06) ship with zero en-NZ voices installed.
+  const voiceLangRef = useRef<string>('en-NZ');
+
   // ── Spoken prompts (hands-free) ─────────────────────────────────────────
   // Default on; persisted across sessions and toggleable from the banner.
   const [voiceSpeechEnabled, setVoiceSpeechEnabled] = useState(true);
@@ -855,6 +860,15 @@ function StockTakeAreaInventoryScreen() {
       setVoiceAvailable(false);
     }
 
+    Speech.getAvailableVoicesAsync().then(voices => {
+      const langs = ['en-NZ', 'en-AU', 'en-GB', 'en-US', 'en'];
+      const best = langs.find(l =>
+        voices.some(v => v.language?.startsWith(l.replace('-', '_')) || v.language?.startsWith(l))
+      );
+      if (best) voiceLangRef.current = best;
+      console.log('[SpeechDebug] selected voice language:', voiceLangRef.current);
+    }).catch(e => console.log('[SpeechDebug] getAvailableVoices threw:', e?.message));
+
     (async () => {
       if (!AS) return;
       try {
@@ -898,7 +912,7 @@ function StockTakeAreaInventoryScreen() {
     if (!voiceSpeechEnabledRef.current) return;
     try {
       await Speech.stop();
-      Speech.speak(text, { language: 'en-NZ', rate: 1.05, pitch: 1.0 });
+      Speech.speak(text, { language: voiceLangRef.current, rate: 1.05, pitch: 1.0 });
     } catch (e: any) {
       console.log('[VoiceDebug] speak threw:', e?.message || e);
     }
