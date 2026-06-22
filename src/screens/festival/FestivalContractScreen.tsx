@@ -10,7 +10,7 @@ import * as FileSystem from 'expo-file-system';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, auth, storage } from '../../services/firebase';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenue } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { apiBase } from '../../services/apiBase';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -21,8 +21,8 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 export default function FestivalContractScreen() {
   const nav      = useNavigation<any>();
-  const venueId  = useVenueId();
-  const uid      = auth.currentUser?.uid;
+  const { venueId, user } = useVenue();
+  const uid      = user?.uid;
   const c = useColours();
   const { theme } = useTheme();
   const { showSuccess, showError, showInfo } = useToast();
@@ -104,7 +104,11 @@ export default function FestivalContractScreen() {
   }
 
   async function confirmUpload() {
-    if (!pendingFile || !venueId || !uid) return;
+    if (!pendingFile) return;
+    if (!venueId || !uid) {
+      showError('Authentication error — please try again.');
+      return;
+    }
     setUploading(true);
     try {
       // 1. Read as base64
@@ -133,6 +137,7 @@ export default function FestivalContractScreen() {
 
       // 4. Call Cloud Function
       const token = await auth.currentUser?.getIdToken();
+      console.log('[contract-upload] calling extract-festival-contract', { venueId, contractId, hasToken: !!token });
       const resp = await fetch(`${apiBase()}/extract-festival-contract`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
