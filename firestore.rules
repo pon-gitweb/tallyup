@@ -436,8 +436,9 @@ service cloud.firestore {
               && (
                 (
                   hasOnlyFields(request.resource.data, [
-                    'name','unit','supplierName',
+                    'name','unit','supplierName','supplierId',
                     'productId','productName',
+                    'category','brand','size',
                     'inductionStatus','inductionSource',
                     'countingUnit','caseSize',
                     'lastCount','lastCountAt',
@@ -455,8 +456,15 @@ service cloud.firestore {
                 )
               );
 
+            // resource is null for a brand-new document on create — areaOpen()/areaIsFresh()
+            // dereference resource.data, which throws and denies this whole rule for every
+            // role (confirmed: manager/owner creates only ever succeeded via the separate
+            // hasVenueRole-gated rule above, which never calls these functions; isVenueMember
+            // staff creates had no fallback and were always rejected). A new item can always
+            // be created into a valid area regardless of prior state — there's no prior
+            // document to check completedAt against — so resource == null short-circuits safely.
             allow create: if isVenueMember(venueId)
-              && (areaOpen() || areaIsFresh())
+              && (resource == null || areaOpen() || areaIsFresh())
               && (isNameOnlyCreate() || isMetaCreateFull() || isInductedCreate());
 
             allow update: if isVenueMember(venueId) && areaOpen()
