@@ -1412,6 +1412,297 @@ app.get("/stripe/portal", async (req, res) => {
   }
 });
 
+// ── MYOB Business ────────────────────────────────────────────────────────────
+// Structure ready, activation pending MYOB developer account registration and
+// sandbox testing. Mirrors the Stripe lazy-init pattern above: every endpoint
+// checks myobIsActivated() first and returns a clear, non-throwing response —
+// nothing else in this file is affected while credentials are placeholders,
+// and there is no risk of accidentally calling MYOB's real API with them.
+//
+// OAuth2 + API details confirmed against MYOB's own docs (not guessed — their
+// flow differs from Xero's):
+// - Authorize:            https://secure.myob.com/oauth2/account/authorize
+// - Token exchange/refresh: https://secure.myob.com/oauth2/v1/authorize
+//   (POST, application/x-www-form-urlencoded body, not query params)
+// - Access token lifetime: 1200s (20 min). Refresh token: ~1 week.
+// - Required API headers: Authorization: Bearer <token>, x-myobapi-key: <API key>,
+//   x-myobapi-version: v2
+// - Data API base: https://api.myob.com/accountright/{companyFileId}/...
+
+// TODO: replace with real MYOB developer credentials once the app is registered.
+const MYOB_CLIENT_ID = process.env.MYOB_CLIENT_ID || "YOUR_MYOB_CLIENT_ID";
+const MYOB_CLIENT_SECRET = process.env.MYOB_CLIENT_SECRET || "YOUR_MYOB_CLIENT_SECRET";
+const MYOB_API_KEY = process.env.MYOB_API_KEY || "YOUR_MYOB_API_KEY";
+const MYOB_TOKEN_URL = "https://secure.myob.com/oauth2/v1/authorize";
+const MYOB_API_BASE = "https://api.myob.com/accountright";
+
+function myobIsActivated(): boolean {
+  return (
+    MYOB_CLIENT_ID !== "YOUR_MYOB_CLIENT_ID" &&
+    MYOB_CLIENT_SECRET !== "YOUR_MYOB_CLIENT_SECRET" &&
+    MYOB_API_KEY !== "YOUR_MYOB_API_KEY"
+  );
+}
+
+type MYOBTokens = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string; // ISO timestamp
+};
+
+// Tokens are stored server-side only, in a collection with no Firestore
+// client rule at all (venues/{venueId}/integrationTokens/myob) — this
+// function (via the Admin SDK, which bypasses security rules) is the only
+// way in or out. The client-visible venues/{venueId}/integrations/myob doc
+// never holds raw tokens, only connection status metadata.
+async function getMyobTokens(venueId: string): Promise<MYOBTokens | null> {
+  const snap = await admin.firestore().doc(`venues/${venueId}/integrationTokens/myob`).get();
+  return snap.exists ? (snap.data() as MYOBTokens) : null;
+}
+
+async function storeMyobTokens(venueId: string, tokens: MYOBTokens): Promise<void> {
+  await admin.firestore().doc(`venues/${venueId}/integrationTokens/myob`).set(tokens, { merge: true });
+}
+
+// Returns a valid access token, refreshing first if it's expired (or about
+// to expire within 60s). Updates stored tokens in place. Returns null if
+// there's no connection to refresh.
+async function getValidMyobAccessToken(venueId: string): Promise<string | null> {
+  const tokens = await getMyobTokens(venueId);
+  if (!tokens) return null;
+  const expiresAt = new Date(tokens.expiresAt).getTime();
+  if (Number.isFinite(expiresAt) && expiresAt - Date.now() > 60_000) {
+    return tokens.accessToken;
+  }
+  const resp = await fetch(MYOB_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: MYOB_CLIENT_ID,
+      client_secret: MYOB_CLIENT_SECRET,
+      refresh_token: tokens.refreshToken,
+      grant_type: "refresh_token",
+    }).toString(),
+  });
+  if (!resp.ok) {
+    console.error("[myob] token refresh failed", await resp.text().catch(() => ""));
+    return null;
+  }
+  const data: any = await resp.json();
+  const newTokens: MYOBTokens = {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || tokens.refreshToken,
+    expiresAt: new Date(Date.now() + (Number(data.expires_in) || 1200) * 1000).toISOString(),
+  };
+  await storeMyobTokens(venueId, newTokens);
+  return newTokens.accessToken;
+}
+
+// Decides Bill_Layout from the order/invoice's own line data: 'Item' when at
+// least one line is linked to a stock-tracked product (productId set —
+// matches src/services/orders/drafts.ts OrderLine and the 'product' case of
+// src/services/invoices/types.ts InvoiceLineType), otherwise 'Service' for
+// freeform/non-stock charges (freight, surcharges, etc.).
+function myobLayoutForLines(lines: any[]): "Item" | "Service" {
+  return lines.some((l) => !!l?.productId) ? "Item" : "Service";
+}
+
+function myobBillLinesPayload(lines: any[], layout: "Item" | "Service") {
+  return lines.map((l: any) => {
+    const qty = Number(l.qty ?? 0);
+    const unitCost = Number(l.cost ?? l.unitCost ?? 0);
+    return {
+      Description: l.productName || l.name || "Item",
+      ...(layout === "Item"
+        ? { ShipQuantity: qty, UnitPrice: unitCost }
+        : { Total: qty * unitCost }),
+    };
+  });
+}
+
+async function postMyobBill(
+  companyFileId: string,
+  accessToken: string,
+  layout: "Item" | "Service",
+  payload: any
+): Promise<{ ok: boolean; billId?: string; error?: string }> {
+  const resp = await fetch(`${MYOB_API_BASE}/${companyFileId}/Purchase/Bill/${layout}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "x-myobapi-key": MYOB_API_KEY,
+      "x-myobapi-version": "v2",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data: any = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    return { ok: false, error: data?.Errors?.[0]?.Message || "MYOB API error" };
+  }
+  return { ok: true, billId: data.UID };
+}
+
+// POST /myob/callback — OAuth2 callback handler. Exchanges the authorization
+// code for access + refresh tokens and persists the connection. This is the
+// piece Xero's equivalent flow never built — make sure it actually persists.
+app.post("/myob/callback", async (req, res) => {
+  try {
+    if (!myobIsActivated()) {
+      res.json({ ok: false, error: "MYOB integration not yet activated" });
+      return;
+    }
+    const { code, state, businessId, companyFileName } = req.body || {};
+    if (!code || !state) {
+      res.status(400).json({ ok: false, error: "Missing code or state" });
+      return;
+    }
+    let venueId: string | undefined;
+    try { venueId = JSON.parse(state)?.venueId; } catch { /* malformed state */ }
+    if (!venueId) {
+      res.status(400).json({ ok: false, error: "Missing venueId in state" });
+      return;
+    }
+
+    const redirectUri = `${req.protocol}://${req.get("host")}/api/myob/callback`;
+    const tokenResp = await fetch(MYOB_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: MYOB_CLIENT_ID,
+        client_secret: MYOB_CLIENT_SECRET,
+        code,
+        redirect_uri: redirectUri,
+        scope: "CompanyFile",
+        grant_type: "authorization_code",
+      }).toString(),
+    });
+    const tokenData: any = await tokenResp.json().catch(() => ({}));
+    if (!tokenResp.ok) {
+      console.error("[api/myob/callback] token exchange failed", tokenData);
+      res.status(500).json({ ok: false, error: tokenData?.error_description || "Token exchange failed" });
+      return;
+    }
+
+    // MYOB tokens: access token expires in 20 minutes, refresh token lasts 1 week.
+    const expiresAt = new Date(Date.now() + (Number(tokenData.expires_in) || 1200) * 1000).toISOString();
+    await storeMyobTokens(venueId, {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresAt,
+    });
+
+    // Client-visible connection status — no tokens stored here.
+    await admin.firestore().doc(`venues/${venueId}/integrations/myob`).set({
+      status: "connected",
+      companyFileId: businessId || null,
+      companyFileName: companyFileName || null,
+      connectedAt: new Date().toISOString(),
+      expiresAt,
+    }, { merge: true });
+
+    console.log("[api/myob/callback] OK", { venueId, businessId });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/myob/callback] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Callback failed" });
+  }
+});
+
+// POST /myob/push-bill — push a placed order to MYOB as a Bill
+app.post("/myob/push-bill", async (req, res) => {
+  try {
+    if (!myobIsActivated()) {
+      res.json({ ok: false, error: "MYOB integration not yet activated" });
+      return;
+    }
+    const { venueId, orderId, companyFileId } = req.body || {};
+    if (!venueId || !orderId || !companyFileId) {
+      res.status(400).json({ ok: false, error: "Missing venueId, orderId, or companyFileId" });
+      return;
+    }
+
+    const accessToken = await getValidMyobAccessToken(venueId);
+    if (!accessToken) {
+      res.status(400).json({ ok: false, error: "MYOB not connected for this venue" });
+      return;
+    }
+
+    const orderSnap = await admin.firestore().doc(`venues/${venueId}/orders/${orderId}`).get();
+    if (!orderSnap.exists) {
+      res.status(404).json({ ok: false, error: "Order not found" });
+      return;
+    }
+    const order = orderSnap.data() as any;
+    const lines: any[] = Array.isArray(order?.lines) ? order.lines : [];
+    const layout = myobLayoutForLines(lines);
+
+    const result = await postMyobBill(companyFileId, accessToken, layout, {
+      Date: new Date().toISOString().slice(0, 10),
+      Lines: myobBillLinesPayload(lines, layout),
+    });
+    if (!result.ok) {
+      console.error("[api/myob/push-bill] MYOB API error", result.error);
+      res.status(502).json({ ok: false, error: result.error });
+      return;
+    }
+
+    console.log("[api/myob/push-bill] OK", { venueId, orderId, layout });
+    res.json({ ok: true, billId: result.billId });
+  } catch (e: any) {
+    console.error("[api/myob/push-bill] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Push failed" });
+  }
+});
+
+// POST /myob/push-invoice — push a received/matched invoice to MYOB as a Bill
+app.post("/myob/push-invoice", async (req, res) => {
+  try {
+    if (!myobIsActivated()) {
+      res.json({ ok: false, error: "MYOB integration not yet activated" });
+      return;
+    }
+    const { venueId, invoiceId, companyFileId } = req.body || {};
+    if (!venueId || !invoiceId || !companyFileId) {
+      res.status(400).json({ ok: false, error: "Missing venueId, invoiceId, or companyFileId" });
+      return;
+    }
+
+    const accessToken = await getValidMyobAccessToken(venueId);
+    if (!accessToken) {
+      res.status(400).json({ ok: false, error: "MYOB not connected for this venue" });
+      return;
+    }
+
+    const db = admin.firestore();
+    const invoiceSnap = await db.doc(`venues/${venueId}/invoices/${invoiceId}`).get();
+    if (!invoiceSnap.exists) {
+      res.status(404).json({ ok: false, error: "Invoice not found" });
+      return;
+    }
+    const linesSnap = await db.collection(`venues/${venueId}/invoices/${invoiceId}/lines`).get();
+    const lines = linesSnap.docs.map((d) => d.data());
+    const layout = myobLayoutForLines(lines);
+
+    const invoice = invoiceSnap.data() as any;
+    const result = await postMyobBill(companyFileId, accessToken, layout, {
+      Date: invoice?.date?.toDate ? invoice.date.toDate().toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+      Lines: myobBillLinesPayload(lines, layout),
+    });
+    if (!result.ok) {
+      console.error("[api/myob/push-invoice] MYOB API error", result.error);
+      res.status(502).json({ ok: false, error: result.error });
+      return;
+    }
+
+    console.log("[api/myob/push-invoice] OK", { venueId, invoiceId, layout });
+    res.json({ ok: true, billId: result.billId });
+  } catch (e: any) {
+    console.error("[api/myob/push-invoice] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Push failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });

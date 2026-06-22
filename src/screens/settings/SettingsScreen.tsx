@@ -774,6 +774,18 @@ export default function SettingsScreen() {
           </View>
         )}
 
+        {/* MYOB — venue only */}
+        {!isFestival && (
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => nav.navigate('MYOB')}
+            >
+              <Text style={styles.btnText}>MYOB Integration</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* POS Integration — venue only */}
         {!isFestival && (
           <>

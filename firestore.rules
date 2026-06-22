@@ -187,6 +187,17 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/venues/$(venueId)).data.ownerUid == request.auth.uid;
       }
 
+      match /integrations/{integrationId} {
+        // Connection-status docs for OAuth-style external integrations (Xero,
+        // MYOB). No path existed here before — Xero's client reads/writes to
+        // this same path but had nothing granting access; this rule covers
+        // both. Tokens are never stored here — see venues/{venueId}/integrationTokens,
+        // which has no client rule at all and is only ever written server-side
+        // via the Admin SDK (which bypasses these rules entirely).
+        allow read, create, update, delete: if isVenueMember(venueId)
+          && integrationId in ['xero', 'myob'];
+      }
+
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);

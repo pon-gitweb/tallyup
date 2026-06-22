@@ -43,6 +43,7 @@ import AdvancedSettingsScreen from '../../screens/settings/AdvancedSettingsScree
 import PricingScreen from '../../screens/settings/PricingScreen';
 import TermsScreen from '../../screens/settings/TermsScreen';
 import XeroScreen from '../../screens/settings/XeroScreen';
+import MYOBScreen from '../../screens/settings/MYOBScreen';
 import ReportPreferencesScreen from '../../screens/settings/ReportPreferencesScreen';
 import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
@@ -270,6 +271,7 @@ export default function MainStack() {
       <Stack.Screen name="Pricing" component={PricingScreen} options={{ title: 'Pricing' }} />
       <Stack.Screen name="Terms" component={TermsScreen} options={{ title: 'Terms of Service' }} />
       <Stack.Screen name="Xero" component={XeroScreen} options={{ title: 'Xero Integration' }} />
+      <Stack.Screen name="MYOB" component={MYOBScreen} options={{ title: 'MYOB Integration' }} />
       <Stack.Screen name="ReportPreferences" component={ReportPreferencesScreen} options={{ title: 'Report Preferences' }} />
       <Stack.Screen name="AiUsage" component={AiUsageScreen} options={{ title: 'AI Usage' }} />
       <Stack.Screen name="InventoryImport" component={InventoryImportScreen} options={{ title: 'Import Inventory' }} />
