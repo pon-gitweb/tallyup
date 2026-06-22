@@ -111,8 +111,19 @@ export default function FestivalContractScreen() {
     }
     setUploading(true);
     try {
-      // 1. Read as base64
-      const base64 = await FileSystem.readAsStringAsync(pendingFile.uri, { encoding: FileSystem.EncodingType.Base64 });
+      // 1. Read as base64 — copy to local cache first, since Android
+      // content:// URIs can fail with FileSystem.readAsStringAsync
+      let base64: string;
+      try {
+        const localUri = FileSystem.cacheDirectory + (pendingFile.name.replace(/[^a-zA-Z0-9._-]/g, '_'));
+        await FileSystem.copyAsync({ from: pendingFile.uri, to: localUri });
+        base64 = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
+        FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+      } catch (readError: any) {
+        showError('Could not read this PDF. Please try a different file or export it as a standard PDF.');
+        setUploading(false);
+        return;
+      }
       const dataUrl = `data:application/pdf;base64,${base64}`;
 
       // 2. Upload to Firebase Storage
