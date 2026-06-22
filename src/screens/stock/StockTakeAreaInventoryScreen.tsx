@@ -416,7 +416,7 @@ function StockTakeAreaInventoryScreen() {
 
   const colours = useColours();
   const insets = useSafeAreaInsets();
-  const { showSuccess, showError, showInfo } = useToast();
+  const { showSuccess, showError, showInfo, show } = useToast();
   const { confirm, modal } = useConfirmModal();
   const nav = useNavigation<any>();
   const route = useRoute<any>();
@@ -1249,6 +1249,23 @@ function StockTakeAreaInventoryScreen() {
         showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
         return;
       }
+
+      // First-time explanation — informational only, never blocks session start.
+      (async () => {
+        if (!AS) return;
+        try {
+          const seen = await AS.getItem('hosti_voice_intro_seen');
+          if (!seen) {
+            show({
+              message: `Hands-free mode — say a product name, then say the count. Say 'stop' when done.`,
+              variant: 'info',
+              duration: 5000,
+            });
+            await AS.setItem('hosti_voice_intro_seen', '1');
+          }
+        } catch {}
+      })();
+
       flaggedVoiceProductsRef.current = [];
       voiceSessionActiveRef.current = true;
       voicePhaseRef.current = 'product';
@@ -3221,7 +3238,7 @@ const openHistory = throttleAction(async (item: Item) => {
           { icon: '📸', label: 'Shelf', onPress: () => setCaptureShelfOpen(true) },
           {
             icon: voiceSessionState.isActive ? '🔴' : '🎤',
-            label: 'Voice',
+            label: 'Hands-free',
             onPress: voiceAvailable
               ? toggleVoiceSession
               : () => showInfo('Voice counting is available in the full release build.'),
