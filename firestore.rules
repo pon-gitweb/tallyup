@@ -663,8 +663,9 @@ service cloud.firestore {
             && (
               (
                 hasOnlyFields(request.resource.data, [
-                  'name','unit','supplierName',
+                  'name','unit','supplierName','supplierId',
                   'productId','productName',
+                  'category','brand','size',
                   'inductionStatus','inductionSource',
                   'countingUnit','caseSize',
                   'lastCount','lastCountAt',
@@ -680,8 +681,10 @@ service cloud.firestore {
               )
             );
 
+          // resource is null for a brand-new document on create — see the same fix
+          // already deployed on the department-nested block for the full reasoning.
           allow create: if isVenueMember(venueId)
-            && (areaOpen() || areaIsFresh())
+            && (resource == null || areaOpen() || areaIsFresh())
             && (isNameOnlyCreate() || isMetaCreateFull() || isInductedCreate());
 
           allow update: if isVenueMember(venueId) && areaOpen()
