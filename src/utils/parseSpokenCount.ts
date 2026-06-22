@@ -31,11 +31,18 @@ export function parseSpokenCount(
   if (text === 'three quarters' || text === 'three quarter')
     return 0.75;
 
-  // "point five", "point two five" etc
+  // "point five", "point two five", "point five five" etc
   const pointMatch = text.match(
-    /^point\s+(\w+(?:\s+\w+)?)$/
+    /^point\s+(\w+(?:\s+\w+)*)$/
   );
   if (pointMatch) {
+    // Try digit-by-digit first, so each word after "point" maps to a single
+    // decimal digit (e.g. "point five five" -> 0.55, not wordsToNumber("five five")
+    // which can't combine two standalone ones-words into one number).
+    const digits = pointMatch[1].split(/\s+/).map((w) => DIGIT_WORDS[w]);
+    if (digits.every((d) => d !== undefined))
+      return parseFloat(`0.${digits.join('')}`);
+
     const afterPoint = wordsToNumber(pointMatch[1]);
     if (afterPoint !== null)
       return parseFloat(`0.${afterPoint}`);
@@ -75,6 +82,13 @@ export function parseSpokenCount(
 // Matched as whole words only, so substrings inside other words are untouched
 // (e.g. stripping "bottle" never touches "bottles", and vice versa).
 const FILLER_WORDS_REGEX = /\b(?:a|the|of|bottle|bottles|please)\b/g;
+
+// Single decimal digit words, used to parse "point five five" -> 0.55
+// digit-by-digit rather than as one combined number.
+const DIGIT_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4,
+  five: 5, six: 6, seven: 7, eight: 8, nine: 9
+};
 
 function stripFillerWords(text: string): string {
   return text.replace(FILLER_WORDS_REGEX, ' ').replace(/\s+/g, ' ').trim();
@@ -140,6 +154,22 @@ function wordsToNumber(text: string): number | null {
     if (remainderVal !== null)
       return hundredVal + remainderVal;
     return hundredVal;
+  }
+
+  // Thousands: "one thousand", "twelve thousand three hundred and forty five"
+  // Practical maximum for any stocktake count is 999,999.
+  if (text.includes('thousand')) {
+    const thousandIdx = text.indexOf('thousand');
+    const beforePart = text.slice(0, thousandIdx).trim();
+    const afterPart = text
+      .slice(thousandIdx + 'thousand'.length)
+      .trim()
+      .replace(/^and\s+/, '');
+
+    const thousandsVal = beforePart ? wordsToNumber(beforePart) : 1;
+    const remainderVal = afterPart ? wordsToNumber(afterPart) : 0;
+    if (thousandsVal !== null && remainderVal !== null)
+      return thousandsVal * 1000 + remainderVal;
   }
 
   // Try parseFloat as last resort

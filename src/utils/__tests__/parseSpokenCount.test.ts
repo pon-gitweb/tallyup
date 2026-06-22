@@ -48,6 +48,39 @@ describe('parseSpokenCount — GAP 2: filler-word tolerance', () => {
   });
 });
 
+describe('parseSpokenCount — GAP 3: thousands', () => {
+  it('parses "one thousand"', () => {
+    expect(parseSpokenCount('one thousand')).toBe(1000);
+  });
+  it('parses "two thousand"', () => {
+    expect(parseSpokenCount('two thousand')).toBe(2000);
+  });
+  it('parses "one thousand five hundred"', () => {
+    expect(parseSpokenCount('one thousand five hundred')).toBe(1500);
+  });
+  it('parses "twelve thousand three hundred and forty five"', () => {
+    expect(parseSpokenCount('twelve thousand three hundred and forty five')).toBe(12345);
+  });
+  it('parses "one thousand and twenty"', () => {
+    expect(parseSpokenCount('one thousand and twenty')).toBe(1020);
+  });
+});
+
+describe('parseSpokenCount — GAP 4: deeper decimals via digit-by-digit point parsing', () => {
+  it('parses "point five five"', () => {
+    expect(parseSpokenCount('point five five')).toBe(0.55);
+  });
+  it('parses "point two five"', () => {
+    expect(parseSpokenCount('point two five')).toBe(0.25);
+  });
+  it('parses "point one two five"', () => {
+    expect(parseSpokenCount('point one two five')).toBe(0.125);
+  });
+  it('parses "point seven five"', () => {
+    expect(parseSpokenCount('point seven five')).toBe(0.75);
+  });
+});
+
 describe('parseSpokenCount — edge cases return null', () => {
   it('returns null for empty string', () => {
     expect(parseSpokenCount('')).toBeNull();
