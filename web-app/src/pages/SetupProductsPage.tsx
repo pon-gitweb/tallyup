@@ -1,0 +1,589 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  collection,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from 'firebase/firestore'
+import { db } from '../firebase'
+import styles from './SetupProductsPage.module.css'
+
+type Product = {
+  id: string
+  name: string
+  unit: string | null
+  packSize: number | null
+  costPrice: number | null
+  supplierName: string | null
+  gstPercent: number | null
+}
+
+type EditableField = 'name' | 'unit' | 'packSize' | 'costPrice' | 'supplierName'
+
+const COLUMNS: { field: EditableField; label: string }[] = [
+  { field: 'name', label: 'Name' },
+  { field: 'unit', label: 'Unit' },
+  { field: 'packSize', label: 'Pack Size' },
+  { field: 'costPrice', label: 'Cost Price' },
+  { field: 'supplierName', label: 'Supplier' },
+]
+
+// Matches the mobile app's isIncomplete logic (see computeMissingFields in
+// src/screens/setup/ProductsScreen.tsx) — unit, pack size, GST%, and a real
+// supplier (not the "Unassigned" placeholder) must all be set.
+function isIncomplete(p: Product): boolean {
+  if (!p.unit) return true
+  if (!p.packSize) return true
+  if (p.gstPercent == null) return true
+  if (!p.supplierName || p.supplierName === 'Unassigned') return true
+  return false
+}
+
+function displayValue(p: Product, field: EditableField): string {
+  switch (field) {
+    case 'name':
+      return p.name || ''
+    case 'unit':
+      return p.unit || ''
+    case 'packSize':
+      return p.packSize != null ? String(p.packSize) : ''
+    case 'costPrice':
+      return p.costPrice != null ? p.costPrice.toFixed(2) : ''
+    case 'supplierName':
+      return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
+  }
+}
+
+function buildUpdatePayload(field: EditableField, raw: string): Record<string, unknown> {
+  const trimmed = raw.trim()
+  switch (field) {
+    case 'name':
+      return { name: trimmed, updatedAt: serverTimestamp() }
+    case 'unit':
+      return { unit: trimmed || null, updatedAt: serverTimestamp() }
+    case 'packSize': {
+      const n = trimmed === '' ? null : Math.round(Number(trimmed))
+      const val = n != null && Number.isFinite(n) ? n : null
+      // caseSize is the field name the mobile app's prediction/packing-slip
+      // code reads — kept as an alias of packSize, same as EditProductScreen.
+      return { packSize: val, caseSize: val, updatedAt: serverTimestamp() }
+    }
+    case 'costPrice': {
+      const n = trimmed === '' ? null : Number(trimmed)
+      return { costPrice: n != null && Number.isFinite(n) ? n : null, updatedAt: serverTimestamp() }
+    }
+    case 'supplierName':
+      // "Unassigned" is the mobile app's convention for "no supplier set".
+      return { supplierName: trimmed || 'Unassigned', updatedAt: serverTimestamp() }
+  }
+}
+
+function getAdjacentCell(
+  rows: Product[],
+  id: string,
+  field: EditableField,
+  dir: 1 | -1
+): { id: string; field: EditableField } | null {
+  const rowIdx = rows.findIndex((r) => r.id === id)
+  if (rowIdx === -1) return null
+  const colIdx = COLUMNS.findIndex((c) => c.field === field)
+  let nextCol = colIdx + dir
+  let nextRow = rowIdx
+  if (nextCol >= COLUMNS.length) {
+    nextCol = 0
+    nextRow += 1
+  } else if (nextCol < 0) {
+    nextCol = COLUMNS.length - 1
+    nextRow -= 1
+  }
+  if (nextRow < 0 || nextRow >= rows.length) return null
+  return { id: rows[nextRow].id, field: COLUMNS[nextCol].field }
+}
+
+// ─── Minimal CSV parsing — handles quoted fields with embedded commas ────────
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let inQuotes = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        field += ch
+      }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
+      row.push(field)
+      field = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++
+      row.push(field)
+      field = ''
+      rows.push(row)
+      row = []
+    } else {
+      field += ch
+    }
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''))
+}
+
+type CsvRow = {
+  name: string
+  unit: string
+  packSize: number | null
+  costPrice: number | null
+  supplierName: string
+}
+
+function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null } {
+  if (rows.length === 0) return { parsed: [], error: 'The file is empty.' }
+  const header = rows[0].map((h) => h.trim().toLowerCase())
+  const nameIdx = header.findIndex((h) => h === 'name')
+  const unitIdx = header.findIndex((h) => h === 'unit')
+  const packSizeIdx = header.findIndex((h) => h === 'pack size' || h === 'packsize')
+  const costPriceIdx = header.findIndex((h) => h === 'cost price' || h === 'costprice')
+  const supplierIdx = header.findIndex(
+    (h) => h === 'supplier' || h === 'supplier name' || h === 'suppliername'
+  )
+
+  if (nameIdx === -1) return { parsed: [], error: 'CSV must include a "Name" column.' }
+
+  const parsed = rows
+    .slice(1)
+    .map((r) => ({
+      name: (r[nameIdx] || '').trim(),
+      unit: unitIdx >= 0 ? (r[unitIdx] || '').trim() : '',
+      packSize:
+        packSizeIdx >= 0 && (r[packSizeIdx] || '').trim() !== ''
+          ? Math.round(Number(r[packSizeIdx]))
+          : null,
+      costPrice:
+        costPriceIdx >= 0 && (r[costPriceIdx] || '').trim() !== '' ? Number(r[costPriceIdx]) : null,
+      supplierName: supplierIdx >= 0 ? (r[supplierIdx] || '').trim() : '',
+    }))
+    .filter((r) => r.name)
+
+  return { parsed, error: parsed.length === 0 ? 'No valid rows found — each row needs a Name.' : null }
+}
+
+export default function SetupProductsPage({ venueId }: { venueId: string }) {
+  const [products, setProducts] = useState<Product[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [sortField, setSortField] = useState<EditableField | 'status'>('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const [editingCell, setEditingCell] = useState<{ id: string; field: EditableField } | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [pinnedNewId, setPinnedNewId] = useState<string | null>(null)
+  const skipNextBlur = useRef(false)
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  const [dragActive, setDragActive] = useState(false)
+  const [csvFileName, setCsvFileName] = useState<string | null>(null)
+  const [csvRows, setCsvRows] = useState<CsvRow[] | null>(null)
+  const [csvError, setCsvError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    const unsub = onSnapshot(
+      collection(db, 'venues', venueId, 'products'),
+      (snap) => {
+        setProducts(
+          snap.docs.map((d) => {
+            const data = d.data() as any
+            return {
+              id: d.id,
+              name: data.name || '',
+              unit: data.unit ?? null,
+              packSize: data.packSize ?? null,
+              costPrice: data.costPrice ?? null,
+              supplierName: data.supplierName ?? null,
+              gstPercent: data.gstPercent ?? null,
+            }
+          })
+        )
+        setLoading(false)
+      },
+      () => setLoading(false)
+    )
+    return unsub
+  }, [venueId])
+
+  // Focus the active cell's input once it's rendered (handles both clicking
+  // a cell, and the auto-focus on a freshly-added row arriving via onSnapshot).
+  useEffect(() => {
+    if (!editingCell) return
+    inputRefs.current[`${editingCell.id}:${editingCell.field}`]?.focus()
+  }, [editingCell, products])
+
+  // Clear the "pin to top" once the user moves on to a different row.
+  useEffect(() => {
+    if (pinnedNewId && editingCell && editingCell.id !== pinnedNewId) {
+      setPinnedNewId(null)
+    }
+  }, [editingCell, pinnedNewId])
+
+  function toggleSort(field: EditableField | 'status') {
+    if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
+  const visibleRows = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    let rows = products
+    if (needle) {
+      rows = rows.filter(
+        (p) =>
+          p.name.toLowerCase().includes(needle) ||
+          (p.unit || '').toLowerCase().includes(needle) ||
+          (p.supplierName || '').toLowerCase().includes(needle)
+      )
+    }
+    const sorted = [...rows].sort((a, b) => {
+      let av: string | number
+      let bv: string | number
+      if (sortField === 'status') {
+        av = isIncomplete(a) ? 1 : 0
+        bv = isIncomplete(b) ? 1 : 0
+      } else {
+        av = a[sortField] ?? ''
+        bv = b[sortField] ?? ''
+      }
+      if (typeof av === 'string') av = av.toLowerCase()
+      if (typeof bv === 'string') bv = bv.toLowerCase()
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    if (pinnedNewId) {
+      const idx = sorted.findIndex((p) => p.id === pinnedNewId)
+      if (idx > 0) {
+        const [row] = sorted.splice(idx, 1)
+        sorted.unshift(row)
+      }
+    }
+    return sorted
+  }, [products, search, sortField, sortDir, pinnedNewId])
+
+  async function commitEdit(id: string, field: EditableField, rawValue: string) {
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'products', id), buildUpdatePayload(field, rawValue))
+    } catch (e) {
+      console.error('[SetupProductsPage] failed to save field', field, e)
+    }
+  }
+
+  function startEdit(product: Product, field: EditableField) {
+    setEditingCell({ id: product.id, field })
+    setEditValue(displayValue(product, field))
+  }
+
+  function handleBlur() {
+    if (skipNextBlur.current) {
+      skipNextBlur.current = false
+      return
+    }
+    if (editingCell) commitEdit(editingCell.id, editingCell.field, editValue)
+    setEditingCell(null)
+  }
+
+  function handleCellKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!editingCell) return
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      skipNextBlur.current = true
+      commitEdit(editingCell.id, editingCell.field, editValue)
+      setEditingCell(null)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      skipNextBlur.current = true
+      setEditingCell(null)
+    } else if (e.key === 'Tab') {
+      e.preventDefault()
+      skipNextBlur.current = true
+      commitEdit(editingCell.id, editingCell.field, editValue)
+      const next = getAdjacentCell(visibleRows, editingCell.id, editingCell.field, e.shiftKey ? -1 : 1)
+      if (next) {
+        const nextProduct = visibleRows.find((p) => p.id === next.id)!
+        setEditingCell(next)
+        setEditValue(displayValue(nextProduct, next.field))
+      } else {
+        setEditingCell(null)
+      }
+    }
+  }
+
+  async function handleAddProduct() {
+    // Pre-generate the doc ref so we know its id before the write resolves —
+    // lets us pin the row to the top and start editing it immediately,
+    // rather than waiting on the snapshot round-trip.
+    const ref = doc(collection(db, 'venues', venueId, 'products'))
+    setPinnedNewId(ref.id)
+    setEditingCell({ id: ref.id, field: 'name' })
+    setEditValue('')
+    await setDoc(ref, {
+      name: '',
+      unit: null,
+      packSize: null,
+      caseSize: null,
+      costPrice: null,
+      supplierId: null,
+      supplierName: 'Unassigned',
+      gstPercent: 15,
+      active: true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  }
+
+  function handleFiles(files: FileList | null) {
+    const file = files?.[0]
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setCsvError('Please upload a .csv file.')
+      return
+    }
+    setCsvFileName(file.name)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const text = String(reader.result || '')
+      const { parsed, error } = mapCsvRows(parseCsv(text))
+      setCsvError(error)
+      setCsvRows(error ? null : parsed)
+    }
+    reader.onerror = () => setCsvError('Could not read file.')
+    reader.readAsText(file)
+  }
+
+  async function confirmImport() {
+    if (!csvRows || csvRows.length === 0) return
+    setImporting(true)
+    try {
+      for (let i = 0; i < csvRows.length; i += 500) {
+        const chunk = csvRows.slice(i, i + 500)
+        const batch = writeBatch(db)
+        for (const row of chunk) {
+          const ref = doc(collection(db, 'venues', venueId, 'products'))
+          batch.set(ref, {
+            name: row.name,
+            unit: row.unit || null,
+            packSize: row.packSize,
+            caseSize: row.packSize,
+            costPrice: row.costPrice,
+            supplierId: null,
+            supplierName: row.supplierName || 'Unassigned',
+            gstPercent: 15,
+            active: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+        }
+        await batch.commit()
+      }
+      setCsvRows(null)
+      setCsvFileName(null)
+    } catch (e: any) {
+      setCsvError(e?.message || 'Import failed.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  function renderCell(product: Product, field: EditableField) {
+    const isEditing = editingCell?.id === product.id && editingCell.field === field
+    if (isEditing) {
+      return (
+        <input
+          ref={(el) => {
+            inputRefs.current[`${product.id}:${field}`] = el
+          }}
+          className={styles.cellInput}
+          type={field === 'packSize' || field === 'costPrice' ? 'number' : 'text'}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleCellKeyDown}
+        />
+      )
+    }
+    const value = displayValue(product, field)
+    return (
+      <div
+        className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
+        onClick={() => startEdit(product, field)}
+      >
+        {value || '—'}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <h1 className={styles.heading}>Products</h1>
+      <p className={styles.subhead}>Add and edit products with a real keyboard.</p>
+
+      <div className={styles.importSection}>
+        <p className={styles.importLabel}>Bulk import from CSV</p>
+        <div
+          className={`${styles.dropZone} ${dragActive ? styles.dropZoneActive : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragActive(true)
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragActive(false)
+            handleFiles(e.dataTransfer.files)
+          }}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            hidden
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+          <p className={styles.dropZoneTitle}>Drag a CSV here, or click to upload</p>
+          <p className={styles.dropZoneHint}>Columns: Name, Unit, Pack Size, Cost Price, Supplier</p>
+        </div>
+        {csvError && <p className={styles.csvError}>{csvError}</p>}
+
+        {csvRows && (
+          <div className={styles.csvPreview}>
+            <p className={styles.csvPreviewTitle}>
+              {csvRows.length} row{csvRows.length !== 1 ? 's' : ''} parsed from {csvFileName}
+            </p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Unit</th>
+                    <th>Pack Size</th>
+                    <th>Cost Price</th>
+                    <th>Supplier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvRows.slice(0, 20).map((row, i) => (
+                    <tr key={i}>
+                      <td className={styles.cellText}>{row.name}</td>
+                      <td className={styles.cellText}>{row.unit || '—'}</td>
+                      <td className={styles.cellText}>{row.packSize ?? '—'}</td>
+                      <td className={styles.cellText}>{row.costPrice != null ? row.costPrice.toFixed(2) : '—'}</td>
+                      <td className={styles.cellText}>{row.supplierName || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {csvRows.length > 20 && (
+              <p className={styles.dropZoneHint} style={{ marginTop: 8 }}>
+                Showing first 20 of {csvRows.length} rows.
+              </p>
+            )}
+            <div className={styles.csvActions}>
+              <button
+                type="button"
+                className={styles.csvCancel}
+                onClick={() => {
+                  setCsvRows(null)
+                  setCsvFileName(null)
+                }}
+                disabled={importing}
+              >
+                Cancel
+              </button>
+              <button type="button" className={styles.csvConfirm} onClick={confirmImport} disabled={importing}>
+                {importing ? 'Importing…' : `Import ${csvRows.length} product${csvRows.length !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className={styles.toolbar}>
+        <input
+          className={styles.search}
+          placeholder="Search by name, unit, or supplier"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button type="button" className={styles.addButton} onClick={handleAddProduct}>
+          + Add product
+        </button>
+      </div>
+
+      {loading ? (
+        <p className={styles.loading}>Loading products…</p>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                {COLUMNS.map((col) => (
+                  <th key={col.field} onClick={() => toggleSort(col.field)}>
+                    {col.label}
+                    {sortField === col.field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                  </th>
+                ))}
+                <th onClick={() => toggleSort('status')}>
+                  Status{sortField === 'status' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((product) => (
+                <tr key={product.id}>
+                  {COLUMNS.map((col) => (
+                    <td key={col.field}>{renderCell(product, col.field)}</td>
+                  ))}
+                  <td className={styles.statusCell}>
+                    <span
+                      className={`${styles.statusBadge} ${
+                        isIncomplete(product) ? styles.statusIncomplete : styles.statusComplete
+                      }`}
+                    >
+                      {isIncomplete(product) ? 'Incomplete' : 'Complete'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {visibleRows.length === 0 && (
+            <p className={styles.empty}>
+              {search.trim() ? 'No products match your search.' : 'No products yet — add one above.'}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
