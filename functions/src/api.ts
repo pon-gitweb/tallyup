@@ -2666,6 +2666,35 @@ app.delete("/account", async (req, res) => {
   }
 });
 
+// ── POST /deleteVenue ──────────────────────────────────────────────────────────
+// Deletes a single venue and all its data. Owner-only.
+app.post("/deleteVenue", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId } = req.body || {};
+    if (!venueId) { res.status(400).json({ ok: false, error: "venueId required" }); return; }
+
+    const db = admin.firestore();
+
+    // Confirm caller is owner of this venue
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    if (!memberSnap.exists || (memberSnap.data() as any)?.role !== "owner") {
+      res.status(403).json({ ok: false, error: "Only the venue owner can delete a project" });
+      return;
+    }
+
+    await deleteVenueAllData(db, venueId);
+
+    console.log(`[api/deleteVenue] OK venueId=${venueId} uid=${uid}`);
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/deleteVenue] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Delete failed" });
+  }
+});
+
 async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string): Promise<void> {
   // Departments → areas → items (recursive structure)
   const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
