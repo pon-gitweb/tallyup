@@ -150,12 +150,24 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         const currentVenueIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
         if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot', JSON.stringify({ uid: u.uid, venueId: currentVenue ?? null, venueIds: currentVenueIds }));
 
-        // Auto-select first venue if user has venues but no active one set (once per uid)
+        // Auto-select first venue if user has venues but no active one set (once per uid).
+        // Skips soft-deleted venues (deletedAt set) — those only surface in the
+        // "Recently deleted" recovery section, never as the active venue.
         if (!currentVenue && currentVenueIds.length > 0 && triedAutoAttachForUid.current !== u.uid) {
           triedAutoAttachForUid.current = u.uid;
           try {
-            await updateDoc(doc(db, 'users', u.uid), { activeVenueId: currentVenueIds[0], touchedAt: new Date() });
-            return; // onSnapshot will fire again with updated data
+            let nextVenueId: string | null = null;
+            for (const candidateId of currentVenueIds) {
+              const candidateSnap = await getDoc(doc(db, 'venues', candidateId));
+              if (candidateSnap.exists() && !candidateSnap.data()?.deletedAt) {
+                nextVenueId = candidateId;
+                break;
+              }
+            }
+            if (nextVenueId) {
+              await updateDoc(doc(db, 'users', u.uid), { activeVenueId: nextVenueId, touchedAt: new Date() });
+              return; // onSnapshot will fire again with updated data
+            }
           } catch {}
         }
 

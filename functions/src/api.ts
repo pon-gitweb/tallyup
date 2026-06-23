@@ -2667,7 +2667,8 @@ app.delete("/account", async (req, res) => {
 });
 
 // ── POST /deleteVenue ──────────────────────────────────────────────────────────
-// Deletes a single venue and all its data. Owner-only.
+// Soft-deletes a venue: owner-only. Actual data removal happens 48h later via
+// the scheduledHardDelete Cloud Function, giving a recovery window via /restoreVenue.
 app.post("/deleteVenue", async (req, res) => {
   try {
     const uid = await verifyToken(req);
@@ -2685,17 +2686,67 @@ app.post("/deleteVenue", async (req, res) => {
       return;
     }
 
-    await deleteVenueAllData(db, venueId);
+    const scheduledHardDeleteAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    await db.doc(`venues/${venueId}`).update({
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: uid,
+      scheduledHardDeleteAt,
+    });
 
-    console.log(`[api/deleteVenue] OK venueId=${venueId} uid=${uid}`);
-    res.json({ ok: true });
+    console.log(`[api/deleteVenue] soft-deleted venueId=${venueId} uid=${uid}`);
+    res.json({ ok: true, softDeleted: true, recoverableUntil: scheduledHardDeleteAt });
   } catch (e: any) {
     console.error("[api/deleteVenue] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "Delete failed" });
   }
 });
 
-async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string): Promise<void> {
+// ── POST /restoreVenue ──────────────────────────────────────────────────────────
+// Restores a venue that's still within its 48-hour soft-delete recovery window.
+// Owner-only — same auth pattern as /deleteVenue.
+app.post("/restoreVenue", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId } = req.body || {};
+    if (!venueId) { res.status(400).json({ ok: false, error: "venueId required" }); return; }
+
+    const db = admin.firestore();
+
+    const memberSnap = await db.doc(`venues/${venueId}/members/${uid}`).get();
+    if (!memberSnap.exists || (memberSnap.data() as any)?.role !== "owner") {
+      res.status(403).json({ ok: false, error: "Only the venue owner can restore a project" });
+      return;
+    }
+
+    const venueRef = db.doc(`venues/${venueId}`);
+    const venueSnap = await venueRef.get();
+    if (!venueSnap.exists) { res.status(404).json({ ok: false, error: "Venue not found" }); return; }
+
+    const data = venueSnap.data() as any;
+    const scheduledHardDeleteAt: admin.firestore.Timestamp | null = data?.scheduledHardDeleteAt ?? null;
+    const isRecoverable = !!data?.deletedAt && !!scheduledHardDeleteAt && scheduledHardDeleteAt.toMillis() > Date.now();
+    if (!isRecoverable) {
+      res.status(400).json({ ok: false, error: "This project is no longer recoverable" });
+      return;
+    }
+
+    await venueRef.update({
+      deletedAt: admin.firestore.FieldValue.delete(),
+      deletedBy: admin.firestore.FieldValue.delete(),
+      scheduledHardDeleteAt: admin.firestore.FieldValue.delete(),
+    });
+
+    console.log(`[api/restoreVenue] OK venueId=${venueId} uid=${uid}`);
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("[api/restoreVenue] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Restore failed" });
+  }
+});
+
+export async function deleteVenueAllData(db: admin.firestore.Firestore, venueId: string): Promise<void> {
   // Departments → areas → items (recursive structure)
   const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
   for (const dept of deptsSnap.docs) {

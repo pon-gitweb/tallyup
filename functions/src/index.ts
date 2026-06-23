@@ -1,4 +1,6 @@
 import * as admin from "firebase-admin";
+import * as functions from "firebase-functions";
+import { deleteVenueAllData } from "./api";
 
 // Initialize Admin exactly once (safe on hot reload)
 try {
@@ -50,6 +52,43 @@ export { onBarItemVelocityUpdate } from "./barItemNotifications";
 
 // === Product price-change cascade to recipe COGS ===
 export { onProductPriceChanged } from "./priceCascade";
+
+// === Soft-deleted venue hard-delete sweep ===
+// Runs hourly — for any venue past its 48h recovery window (set by
+// POST /deleteVenue), permanently removes all its data. Venues restored via
+// POST /restoreVenue before this fires are skipped (scheduledHardDeleteAt is cleared).
+export const scheduledHardDelete = functions
+  .region("us-central1")
+  .runWith({ memory: "512MB", timeoutSeconds: 540 })
+  .pubsub.schedule("every 1 hours")
+  .onRun(async () => {
+    const db = admin.firestore();
+
+    let dueSnap: FirebaseFirestore.QuerySnapshot;
+    try {
+      dueSnap = await db.collection("venues").where("scheduledHardDeleteAt", "<=", new Date()).get();
+    } catch (e) {
+      console.error("[scheduledHardDelete] failed to query due venues:", e);
+      return null;
+    }
+
+    if (dueSnap.empty) {
+      console.log("[scheduledHardDelete] no venues due for hard delete this run");
+      return null;
+    }
+
+    for (const venueDoc of dueSnap.docs) {
+      const venueId = venueDoc.id;
+      try {
+        await deleteVenueAllData(db, venueId);
+        console.log(`[scheduledHardDelete] hard-deleted venueId=${venueId}`);
+      } catch (e: any) {
+        console.error(`[scheduledHardDelete] failed to hard-delete venueId=${venueId}:`, e?.message || e);
+      }
+    }
+
+    return null;
+  });
 
 // === Legacy functions — deployed directly, must remain exported to avoid deletion ===
 export {
