@@ -1269,13 +1269,15 @@ function StockTakeAreaInventoryScreen() {
         if (!AS) return;
         try {
           const seen = await AS.getItem('hosti_voice_intro_seen');
-          if (!seen) {
+          const tipVersion = await AS.getItem('hosti_voice_intro_v');
+          if (!seen || tipVersion !== '2') {
             show({
-              message: `Hands-free mode — say a product name, then say the count. Say 'stop' when done.`,
+              message: `Hands-free mode — say a product name, then say the count clearly. For small numbers say 'one bottle' or 'two units' so the mic catches it. Say 'stop' when done.`,
               variant: 'info',
-              duration: 5000,
+              duration: 6000,
             });
             await AS.setItem('hosti_voice_intro_seen', '1');
+            await AS.setItem('hosti_voice_intro_v', '2');
           }
         } catch {}
       })();
