@@ -622,7 +622,10 @@ function StockTakeAreaInventoryScreen() {
     if (!venueId) return;
     getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
       setVenueProducts(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-    }).catch(() => {});
+      console.log('[VoiceDebug] venueProducts loaded:', snap.docs.length);
+    }).catch((e) => {
+      console.log('[VoiceDebug] venueProducts load failed:', e?.message || e);
+    });
   }, [venueId]);
 
   // Persist/restore view prefs
@@ -1262,6 +1265,16 @@ function StockTakeAreaInventoryScreen() {
         console.log('[VoiceDebug] permission not granted:', permission);
         showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
         return;
+      }
+
+      // Retry venueProducts load if it failed on mount
+      if (venueProductsRef.current.length === 0 && venueId) {
+        getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+          const prods = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+          setVenueProducts(prods);
+          venueProductsRef.current = prods;
+          console.log('[VoiceDebug] venueProducts retry loaded:', prods.length);
+        }).catch((e) => console.log('[VoiceDebug] venueProducts retry failed:', e?.message));
       }
 
       // First-time explanation — informational only, never blocks session start.

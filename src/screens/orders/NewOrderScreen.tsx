@@ -44,7 +44,7 @@ export default function NewOrderScreen() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      if (!venueId) return;
+      if (!venueId) { setLoading(false); return; }
       try {
         setLoading(true);
         const [ss, ps] = await Promise.all([listSuppliers(venueId), listProducts(venueId)]);

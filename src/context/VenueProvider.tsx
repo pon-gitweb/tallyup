@@ -223,13 +223,16 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       } : null);
     }, (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
-      setSubscription(null);
-      setVenueType(null);
-      setVenueCountry('NZ');
+      // Only clear state on permanent errors — not transient network issues
       if (err?.code === 'permission-denied') {
         // User has been removed from this venue — clear context so HomeRouter can redirect
         setVenueId(null);
+        setSubscription(null);
+        setVenueType(null);
+        setVenueCountry('NZ');
       }
+      // For transient errors (unavailable, network, etc.) — leave existing state intact
+      // Firebase will automatically retry the snapshot when the connection recovers
     });
     return () => {
       if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
