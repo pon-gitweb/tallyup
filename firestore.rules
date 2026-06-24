@@ -199,11 +199,11 @@ service cloud.firestore {
       }
 
       match /posIntegration/{docId} {
-        // Connection-status doc for the venue's POS adapter (see
-        // POSConnectionScreen.tsx). No sensitive data here — OAuth tokens
-        // are stored server-side in venues/{venueId}/integrationTokens,
-        // which has no client rule and is only ever written via the Admin SDK.
-        allow read, write: if isVenueMember(venueId);
+        // POS integration config — adapter selection, connection status.
+        // No tokens stored here (those live in integrationTokens, Admin SDK only).
+        // Any venue member can read; only managers/owners can write.
+        allow read: if isVenueMember(venueId);
+        allow write: if hasVenueRole(venueId, ['manager', 'owner']);
       }
 
       match /invites/{inviteId} {
