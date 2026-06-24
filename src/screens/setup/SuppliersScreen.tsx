@@ -219,6 +219,7 @@ export default function SuppliersScreen() {
 
       if (editingId) {
         await updateSupplier(venueId, editingId, payload);
+        showSuccess(`${name.trim()} updated.`);
         setFormVisible(false);
         await load();
       } else {
@@ -230,30 +231,26 @@ export default function SuppliersScreen() {
         });
         if (mr.confidence >= 0.85 && mr.match) {
           setSaving(false);
-          // TODO: replace with branded modal when supplier matching is redesigned
-          Alert.alert(
-            'Similar supplier exists',
-            `"${mr.match.name}" looks like the same supplier (${Math.round(mr.confidence * 100)}% match).\n\nDo you want to edit the existing supplier or create a new one?`,
-            [
-              { text: 'Edit existing', onPress: () => { openEditForm(mr.match as Supplier); } },
-              {
-                text: 'Create new',
-                onPress: async () => {
-                  setSaving(true);
-                  try {
-                    await createSupplier(venueId, payload);
-                    setFormVisible(false);
-                    await load();
-                  } catch (e2: any) {
-                    showError(e2?.message || 'Could not save supplier.');
-                  } finally { setSaving(false); }
-                },
-              },
-            ]
-          );
+          confirm({
+            title: 'Similar supplier exists',
+            message: `"${mr.match.name}" looks like the same supplier (${Math.round(mr.confidence * 100)}% match). Create a new supplier anyway, or cancel and edit "${mr.match.name}" instead.`,
+            confirmLabel: 'Create new',
+            onConfirm: async () => {
+              setSaving(true);
+              try {
+                await createSupplier(venueId, payload);
+                showSuccess(`${name.trim()} added.`);
+                setFormVisible(false);
+                await load();
+              } catch (e2: any) {
+                showError(e2?.message || 'Could not save supplier.');
+              } finally { setSaving(false); }
+            },
+          });
           return;
         }
         await createSupplier(venueId, payload);
+        showSuccess(`${name.trim()} added.`);
         setFormVisible(false);
         await load();
       }
