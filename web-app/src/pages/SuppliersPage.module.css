@@ -1,0 +1,272 @@
+.heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 20px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 9px 12px;
+  font-size: 14px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0B132B;
+  outline: none;
+}
+
+.search:focus {
+  border-color: #1b4f72;
+}
+
+.addButton {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tableWrap {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 14px;
+  overflow-x: auto;
+  margin-bottom: 28px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  border-bottom: 1.5px solid #e5e3de;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+
+.table td {
+  padding: 0;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+}
+
+.cellText {
+  padding: 9px 14px;
+  cursor: text;
+  min-height: 20px;
+}
+
+.cellText:hover {
+  background: #f5f3ee;
+}
+
+.cellTextEmpty {
+  color: #b5b0a4;
+}
+
+.cellInput {
+  width: 100%;
+  height: 100%;
+  padding: 9px 14px;
+  font-size: 14px;
+  border: none;
+  outline: 2px solid #1b4f72;
+  outline-offset: -2px;
+  background: #ffffff;
+  color: #0B132B;
+  box-sizing: border-box;
+}
+
+.cellSelect {
+  width: 100%;
+  height: 100%;
+  padding: 9px 14px;
+  font-size: 14px;
+  border: none;
+  outline: 2px solid #1b4f72;
+  outline-offset: -2px;
+  background: #ffffff;
+  color: #0B132B;
+  box-sizing: border-box;
+}
+
+.readonlyCell {
+  padding: 9px 14px;
+  color: #6B7280;
+}
+
+.empty {
+  padding: 32px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 14px;
+}
+
+.loading {
+  font-size: 14px;
+  color: #6B7280;
+}
+
+/* Name cell — text (expand trigger) + small inline-edit affordance */
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+}
+
+.nameText {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.nameText:hover {
+  text-decoration: underline;
+}
+
+.nameEditTrigger {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #9aa3b8;
+  cursor: pointer;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.nameEditTrigger:hover {
+  background: #f5f3ee;
+  color: #1b4f72;
+}
+
+/* Delete column */
+.actionCell {
+  padding: 6px 10px;
+}
+
+.deleteTrigger {
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #9aa3b8;
+}
+
+.deleteTrigger:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.deleteConfirmRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.deleteConfirmText {
+  font-size: 12px;
+  color: #0B132B;
+}
+
+.deleteConfirmButton {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.deleteCancelButton {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0B132B;
+  background: #f5f3ee;
+  border: 1px solid #e5e3de;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+/* Expand panel — advanced/rarely-changed fields */
+.expandRow td {
+  padding: 0;
+  border-bottom: 1px solid #f1efe9;
+}
+
+.expandPanel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 16px 20px;
+  background: #f5f3ee;
+}
+
+.expandField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.expandLabel {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+}
+
+.expandInput {
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0B132B;
+  outline: none;
+}
+
+.expandInput:focus {
+  border-color: #1b4f72;
+}

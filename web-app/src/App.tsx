@@ -4,6 +4,7 @@ import { auth } from './firebase'
 import LoginPage from './pages/LoginPage'
 import ProjectsPage, { type VenueRow } from './pages/ProjectsPage'
 import SetupProductsPage from './pages/SetupProductsPage'
+import SuppliersPage from './pages/SuppliersPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import styles from './App.module.css'
 
@@ -51,7 +52,8 @@ function App() {
         <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} />
       )}
       {page === 'setup-products' && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
-      {page === 'setup-products' && !activeVenue && (
+      {page === 'suppliers' && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
+      {(page === 'setup-products' || page === 'suppliers') && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}
           <button type="button" className={styles.noVenueLink} onClick={() => setPage('projects')}>

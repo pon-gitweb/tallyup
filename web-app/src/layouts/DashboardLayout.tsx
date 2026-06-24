@@ -3,11 +3,12 @@ import { signOut, type User } from 'firebase/auth'
 import { auth } from '../firebase'
 import styles from './DashboardLayout.module.css'
 
-export type Page = 'projects' | 'setup-products' | 'reports' | 'craftit' | 'orders' | 'settings'
+export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings'
 
 const NAV_ITEMS: { key: Page; label: string; enabled: boolean }[] = [
   { key: 'projects', label: 'Projects', enabled: true },
   { key: 'setup-products', label: 'Setup', enabled: true },
+  { key: 'suppliers', label: 'Suppliers', enabled: true },
   { key: 'reports', label: 'Reports', enabled: false },
   { key: 'craftit', label: 'CraftIt', enabled: false },
   { key: 'orders', label: 'Orders', enabled: false },
