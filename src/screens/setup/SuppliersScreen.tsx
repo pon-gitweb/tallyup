@@ -22,7 +22,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, query, where, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, query, where, limit, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
 import { useVenueId } from '../../context/VenueProvider';
 import { useNavigation } from '@react-navigation/native';
@@ -452,13 +452,17 @@ export default function SuppliersScreen() {
     try {
       setDirectoryLoading(true);
       const db = getFirestore();
-      const snap = await getDocs(collection(db, 'global_suppliers'));
+      const snap = await Promise.race([
+        getDocs(query(collection(db, 'global_suppliers'), limit(50))),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Directory took too long to load')), 10000)),
+      ]);
       const rows: any[] = [];
       snap.forEach(d => rows.push({ id: d.id, ...(d.data() as any) }));
       rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setDirectoryRows(rows);
     } catch (e: any) {
       console.log('[SuppliersScreen] loadDirectory error', e?.message);
+      showError('Directory is taking too long — check your connection and try again.');
     } finally {
       setDirectoryLoading(false);
     }
@@ -942,12 +946,12 @@ export default function SuppliersScreen() {
                 <TouchableOpacity
                   style={{ backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
                   onPress={() => {
-                    if (item.name && !name.trim()) setName(item.name);
-                    else if (item.name) setName(item.name);
+                    if (item.name) setName(item.name);
                     if (item.phone && !phone.trim()) setPhone(item.phone);
                     if (item.email && !email.trim()) setEmail(item.email);
                     if (item.website && !portalUrl.trim()) setPortalUrl(item.website);
                     setDirectoryOpen(false);
+                    showInfo(`${item.name} details filled in — tap Save to add them.`);
                   }}
                 >
                   <View style={{ flex: 1 }}>
