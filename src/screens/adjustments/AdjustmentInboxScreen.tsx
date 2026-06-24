@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Text, TextInput,
+  ActivityIndicator, FlatList, Modal, Text, TextInput,
   TouchableOpacity, View, ScrollView
 } from 'react-native';
 import { collection, onSnapshot, orderBy, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { dlog } from '../../utils/devlog';
 import { throttleAction } from '../../utils/pressThrottle';
@@ -45,6 +47,8 @@ function AdjustmentInboxScreen() {
   const venueId = useVenueId();
   const isManager = useIsManager(venueId);
   const uid = getAuth().currentUser?.uid ?? null;
+  const colours = useColours();
+  const { showError, showInfo } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<AdjustmentRequest[]>([]);
@@ -83,7 +87,7 @@ function AdjustmentInboxScreen() {
 
   const approve = throttleAction(async (req: AdjustmentRequest) => {
     try { await approveAdjustment(req); }
-    catch (e: any) { Alert.alert('Approve failed', e?.message || 'Unknown error'); }
+    catch (e: any) { showError(e?.message || 'Approve failed.'); }
   });
 
   const openDeny = (req: AdjustmentRequest) => { setDenyFor(req); setDenyReason(''); };
@@ -93,13 +97,13 @@ function AdjustmentInboxScreen() {
       await denyAdjustment(denyFor, denyReason.trim());
       setDenyFor(null); setDenyReason('');
     } catch (e: any) {
-      Alert.alert('Deny failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Deny failed.');
     }
   });
 
   const Empty = () => (
     <View style={{ padding: 24, alignItems: 'center' }}>
-      <Text style={{ color: '#6B7280' }}>No pending adjustment requests.</Text>
+      <Text style={{ color: colours.textSecondary }}>No pending adjustment requests.</Text>
     </View>
   );
 
@@ -107,19 +111,19 @@ function AdjustmentInboxScreen() {
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6, gap: 8 }}>
       <TouchableOpacity
         onPress={() => setDeptFilter(null)}
-        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
-                 borderColor: deptFilter == null ? '#0A84FF' : '#E5E7EB', backgroundColor: deptFilter == null ? '#D6E9FF' : 'white' }}
+        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+                 borderColor: deptFilter == null ? colours.deepBlue : colours.border, backgroundColor: deptFilter == null ? colours.deepBlue + '22' : colours.surface }}
       >
-        <Text style={{ fontWeight: '700', color: '#0A84FF' }}>All</Text>
+        <Text style={{ fontWeight: '700', color: colours.deepBlue }}>All</Text>
       </TouchableOpacity>
       {departments.map(d => (
         <TouchableOpacity
           key={d.id}
           onPress={() => setDeptFilter(d.id === deptFilter ? null : d.id)}
-          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
-                   borderColor: d.id === deptFilter ? '#0A84FF' : '#E5E7EB', backgroundColor: d.id === deptFilter ? '#D6E9FF' : 'white' }}
+          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, flexShrink: 0,
+                   borderColor: d.id === deptFilter ? colours.deepBlue : colours.border, backgroundColor: d.id === deptFilter ? colours.deepBlue + '22' : colours.surface }}
         >
-          <Text style={{ fontWeight: '700', color: '#0A84FF' }}>{d.name}</Text>
+          <Text style={{ fontWeight: '700', color: colours.deepBlue }}>{d.name}</Text>
         </TouchableOpacity>
       ))}
     </ScrollView>
@@ -141,14 +145,14 @@ function AdjustmentInboxScreen() {
           reason: item.reason || '',
           requestedBy: item.requestedBy || null,
         })}
-        style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, gap: 6 }}
+        style={{ borderWidth: 1, borderColor: colours.border, borderRadius: 12, padding: 12, gap: 6 }}
       >
         <Text style={{ fontWeight: '800' }}>{item.itemName || 'Item'}</Text>
         <Text style={{ color: '#374151' }}>
           Proposed: <Text style={{ fontWeight: '800' }}>{item.proposedQty}</Text>{'  '}
           From: <Text style={{ fontWeight: '800' }}>{item.fromQty ?? '—'}</Text>
         </Text>
-        <Text style={{ color: '#6B7280' }}>Reason: {item.reason || '—'}</Text>
+        <Text style={{ color: colours.textSecondary }}>Reason: {item.reason || '—'}</Text>
         <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
           Requested by: {item.requestedBy || '—'} {selfRequest ? '(you)' : ''}
         </Text>
@@ -161,7 +165,7 @@ function AdjustmentInboxScreen() {
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
           <TouchableOpacity
-            onPress={() => selfRequest ? Alert.alert('Not allowed', 'Another manager must approve your request.') : approve(item)}
+            onPress={() => selfRequest ? showInfo('Another manager must approve your request.') : approve(item)}
             disabled={selfRequest}
             style={{
               flex: 1,
@@ -169,7 +173,7 @@ function AdjustmentInboxScreen() {
               paddingVertical: 10, borderRadius: 10, alignItems: 'center'
             }}
           >
-            <Text style={{ color: 'white', fontWeight: '800' }}>Approve</Text>
+            <Text style={{ color: colours.surface, fontWeight: '800' }}>Approve</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => openDeny(item)}
@@ -191,13 +195,13 @@ function AdjustmentInboxScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: 'white' }}>
+    <View style={{ flex: 1, padding: 16, backgroundColor: colours.surface }}>
       <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>Adjustment Requests</Text>
       <DeptChips />
       {loading ? (
         <View style={{ alignItems:'center', padding: 20 }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#6B7280' }}>Loading…</Text>
+          <Text style={{ marginTop: 8, color: colours.textSecondary }}>Loading…</Text>
         </View>
       ) : (
         <FlatList
@@ -212,17 +216,17 @@ function AdjustmentInboxScreen() {
 
       <Modal visible={!!denyFor} transparent animationType="fade" onRequestClose={() => setDenyFor(null)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', alignItems:'center', justifyContent:'center', padding:16 }}>
-          <View style={{ backgroundColor:'white', borderRadius:12, padding:16, width:'100%', gap:10 }}>
+          <View style={{ backgroundColor: colours.surface, borderRadius:12, padding:16, width:'100%', gap:10 }}>
             <Text style={{ fontWeight:'800', fontSize:16 }}>Deny request</Text>
             <Text>Provide a reason for denying this adjustment.</Text>
             <TextInput
               placeholder="Reason"
               value={denyReason}
               onChangeText={setDenyReason}
-              style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, paddingHorizontal:12, height:40, backgroundColor:'#F9FAFB' }}
+              style={{ borderWidth:1, borderColor: colours.border, borderRadius:10, paddingHorizontal:12, height:40, backgroundColor:'#F9FAFB' }}
             />
             <View style={{ flexDirection:'row', gap:10, marginTop:4 }}>
-              <TouchableOpacity onPress={() => setDenyFor(null)} style={{ flex:1, padding:10, borderRadius:10, alignItems:'center', backgroundColor:'#E5E7EB' }}>
+              <TouchableOpacity onPress={() => setDenyFor(null)} style={{ flex:1, padding:10, borderRadius:10, alignItems:'center', backgroundColor: colours.border }}>
                 <Text style={{ fontWeight:'700' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => denyReason.trim() ? undefined : null} disabled={!denyReason.trim()} style={{ flex:1, padding:10, borderRadius:10, alignItems:'center', backgroundColor: denyReason.trim() ? '#F59E0B' : '#FDE68A' }}>

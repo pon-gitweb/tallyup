@@ -104,9 +104,18 @@ export default function TeamMembersScreen() {
   // Subscribe to members
   useEffect(() => {
     if (!venueId) return;
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'members'), (snap) => {
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'members'), async (snap) => {
       const list: Member[] = snap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }));
-      setMembers(list);
+      // Enrich members missing displayName/email from users/{uid}
+      const enriched = await Promise.all(list.map(async (m) => {
+        if (m.displayName || m.email) return m;
+        try {
+          const uSnap = await getDoc(doc(db, 'users', m.uid));
+          const u = uSnap.data() as any;
+          return { ...m, displayName: u?.displayName || null, email: u?.email || null };
+        } catch { return m; }
+      }));
+      setMembers(enriched);
       setLoading(false);
     });
     return () => unsub();

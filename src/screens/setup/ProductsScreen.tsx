@@ -254,6 +254,10 @@ export default function ProductsScreen() {
   const [showOnlyIncomplete, setShowOnlyIncomplete] = useState(false);
   const [incompleteDismissed, setIncompleteDismissed] = useState(false);
 
+  // Supplier filter — for bulk reassignment (e.g. filter to Gilmores, select
+  // all, bulk-assign to Allied)
+  const [supplierFilter, setSupplierFilter] = useState<string | null>(null);
+
   // Multi-select
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -668,6 +672,16 @@ export default function ProductsScreen() {
 
   const incompleteIds = useMemo(() => rows.filter(isIncomplete).map((p: any) => p.id), [rows]);
 
+  // Unique suppliers present on current products — drives the supplier filter
+  // chips used for bulk reassignment (filter to Gilmores → select all → assign to Allied).
+  const supplierOptions = useMemo(() => {
+    const seen = new Map();
+    rows.forEach((p: any) => {
+      if (p.supplierId && p.supplierName && p.supplierName !== 'Unassigned') seen.set(p.supplierId, p.supplierName);
+    });
+    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     let base = rows;
     if (showOnlyUnassigned) {
@@ -676,6 +690,9 @@ export default function ProductsScreen() {
     }
     if (showOnlyNoSupplier) {
       base = base.filter((p: any) => !p.supplierId);
+    }
+    if (supplierFilter) {
+      base = base.filter((p: any) => p.supplierId === supplierFilter);
     }
     if (showOnlyIncomplete) {
       const idSet = new Set(incompleteIds);
@@ -695,7 +712,7 @@ export default function ProductsScreen() {
         supplier.includes(needle)
       );
     });
-  }, [rows, q, showOnlyUnassigned, unassignedIds, showOnlyNoSupplier, showOnlyIncomplete, incompleteIds]);
+  }, [rows, q, showOnlyUnassigned, unassignedIds, showOnlyNoSupplier, supplierFilter, showOnlyIncomplete, incompleteIds]);
 
   const filteredVenueSuppliers = useMemo(() => {
     const needle = supplierQ.trim().toLowerCase();
@@ -742,6 +759,61 @@ export default function ProductsScreen() {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={{ fontSize: 16, color: '#9ca3af', fontWeight: '600' }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Supplier filter chips — for bulk reassignment */}
+      {supplierOptions.length > 1 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8 }}
+          style={{ marginBottom: 8 }}
+        >
+          {supplierFilter && (
+            <TouchableOpacity
+              onPress={() => setSupplierFilter(null)}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+                borderWidth: 1, borderColor: colours.border, backgroundColor: colours.surface,
+                flexShrink: 0,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colours.textSecondary }}>× Clear</Text>
+            </TouchableOpacity>
+          )}
+          {supplierOptions.map(s => {
+            const active = s.id === supplierFilter;
+            return (
+              <TouchableOpacity
+                key={s.id}
+                onPress={() => setSupplierFilter(active ? null : s.id)}
+                style={{
+                  paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+                  borderWidth: 1.5,
+                  borderColor: active ? colours.deepBlue : colours.border,
+                  backgroundColor: active ? colours.deepBlue + '22' : colours.surface,
+                  flexShrink: 0,
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: active ? colours.deepBlue : colours.textSecondary }}>
+                  {s.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Active supplier filter banner — bulk reassignment entry point */}
+      {supplierFilter && (
+        <View style={{ backgroundColor: colours.deepBlue + '11', borderRadius: 8, padding: 10, flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+          <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '600', flex: 1 }}>
+            Showing {filtered.length} product{filtered.length !== 1 ? 's' : ''} from {supplierOptions.find(s => s.id === supplierFilter)?.name || 'supplier'}
+          </Text>
+          <TouchableOpacity onPress={() => setMultiSelectMode(true)}>
+            <Text style={{ color: colours.deepBlue, fontSize: 13, fontWeight: '700' }}>Bulk reassign supplier →</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -987,7 +1059,11 @@ export default function ProductsScreen() {
                 selectAllVisible();
               }
             }}>
-              <Text style={MS.selectAllText}>Select all ({filtered.length})</Text>
+              <Text style={MS.selectAllText}>
+                {supplierFilter
+                  ? `Select all ${filtered.length} from ${supplierOptions.find(s => s.id === supplierFilter)?.name || 'supplier'}`
+                  : `Select all (${filtered.length})`}
+              </Text>
             </TouchableOpacity>
           </View>
           <View style={{ flexDirection: 'row', gap: 6 }}>
