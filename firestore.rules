@@ -206,6 +206,13 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['manager', 'owner']);
       }
 
+      match /posProductMappings/{mappingId} {
+        // POS product mappings — links between venue products/recipes and POS items.
+        // Any venue member can read; managers/owners can write.
+        allow read: if isVenueMember(venueId);
+        allow write: if hasVenueRole(venueId, ['manager', 'owner']);
+      }
+
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);
