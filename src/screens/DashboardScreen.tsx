@@ -16,7 +16,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
@@ -211,13 +211,16 @@ export default function DashboardScreen() {
   const [supplierCount, setSupplierCount] = React.useState<number | null>(null);
   const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
 
-  // Re-fetched on every focus (not just mount) so counts reflect products/
-  // suppliers added while the user was on another screen (e.g. Products).
-  useFocusEffect(
-    React.useCallback(() => {
-      if (!venueId) return;
-      const db = getFirestore();
-      getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+  // Live counts — these are the numbers users see immediately on the
+  // dashboard, so they subscribe rather than fetch once per focus. The
+  // products listener also derives unassignedCount (used by the
+  // "products not in a stocktake area" nudge below) from the same snapshot.
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    const unsubProducts = onSnapshot(
+      collection(db, 'venues', venueId, 'products'),
+      (snap) => {
         let unassigned = 0;
         snap.forEach(d => {
           const data = d.data();
@@ -225,14 +228,20 @@ export default function DashboardScreen() {
         });
         setProductCount(snap.size);
         setUnassignedCount(unassigned);
-      }).catch(() => {});
-      getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
+      },
+      () => {} // silent error — count stays at last known value
+    );
+    const unsubSuppliers = onSnapshot(
+      collection(db, 'venues', venueId, 'suppliers'),
+      (snap) => {
         let count = 0;
         snap.forEach(d => { if (!d.data().isHoldingSupplier) count++; });
         setSupplierCount(count);
-      }).catch(() => {});
-    }, [venueId])
-  );
+      },
+      () => {}
+    );
+    return () => { unsubProducts(); unsubSuppliers(); };
+  }, [venueId]);
 
   const [deptNames, setDeptNames] = React.useState<string[]>([]);
   React.useEffect(() => {

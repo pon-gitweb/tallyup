@@ -100,7 +100,7 @@ export default function VenueListScreen() {
     setSwitching(venueId);
     try {
       await switchVenue(venueId);
-      nav.navigate('HomeRouter');
+      nav.reset({ index: 0, routes: [{ name: 'HomeRouter' }] });
     } catch {}
     setSwitching(null);
   }
