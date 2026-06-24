@@ -921,6 +921,36 @@ function StockTakeAreaInventoryScreen() {
     }
   };
 
+  // Speaks the prompt, then starts listening only once speech actually
+  // finishes — on iOS, starting recognition immediately after Speech.speak()
+  // lets the device hear the tail of its own voice output, corrupting the
+  // next product name or swallowing the count. A 300ms pad after onDone
+  // gives iOS time to close the audio output session before the mic opens.
+  const speakThenListen = (text: string) => {
+    if (!voiceSpeechEnabledRef.current) {
+      // Speech disabled — start listening immediately
+      startListening();
+      return;
+    }
+    Speech.stop().catch(() => {});
+    Speech.speak(text, {
+      language: voiceLangRef.current,
+      rate: 1.05,
+      pitch: 1.0,
+      onDone: () => {
+        // Wait 300ms after speech ends before starting to listen
+        // Gives iOS time to close the audio output session
+        setTimeout(() => {
+          if (voiceSessionActiveRef.current) startListening();
+        }, 300);
+      },
+      onError: () => {
+        // Speech failed — start listening anyway
+        if (voiceSessionActiveRef.current) startListening();
+      },
+    });
+  };
+
   // Interrupts any in-progress speech without speaking anything new —
   // used when the session ends, regardless of whether speech is enabled.
   const stopSpeech = () => {
@@ -960,8 +990,7 @@ function StockTakeAreaInventoryScreen() {
         case 'undo': {
           const feedback = handleVoiceUndo();
           setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
-          speakIfEnabled('Undone.');
-          startListening();
+          speakThenListen('Undone.');
           return;
         }
         case 'correction': {
@@ -988,8 +1017,7 @@ function StockTakeAreaInventoryScreen() {
           } else {
             setVoiceSessionState(prev => ({ ...prev, bannerMessage: feedback, bannerColour: 'amber' }));
           }
-          speakIfEnabled('Skipped. Say the next product.');
-          startListening();
+          speakThenListen('Skipped. Say the next product.');
           return;
         }
         case 'recount': {
@@ -1039,8 +1067,7 @@ function StockTakeAreaInventoryScreen() {
           setHighlightedVoiceItemId(matched.id);
           setTimeout(() => setHighlightedVoiceItemId(null), 3000);
           setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
-          speakIfEnabled(`${matched.name}. Say the count.`);
-          startListening();
+          speakThenListen(`${matched.name}. Say the count.`);
           return;
         }
       }
@@ -1097,13 +1124,11 @@ function StockTakeAreaInventoryScreen() {
               setHighlightedVoiceItemId(newItem.id);
               setTimeout(() => setHighlightedVoiceItemId(null), 3000);
               setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: newItem, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(newItem.name), bannerColour: 'teal' }));
-              speakIfEnabled(`${newItem.name}. Say the count.`);
-              startListening();
+              speakThenListen(`${newItem.name}. Say the count.`);
             } catch (e: any) {
               console.log('[VoiceDebug] auto-add venue product failed:', e?.message || e);
-              speakIfEnabled("Couldn't add that product. Say the next product.");
               setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
-              startListening();
+              speakThenListen("Couldn't add that product. Say the next product.");
             }
           })();
           return;
@@ -1111,10 +1136,9 @@ function StockTakeAreaInventoryScreen() {
 
         // Genuinely unknown — flag for later, no Firestore write during the session.
         flaggedVoiceProductsRef.current = [...flaggedVoiceProductsRef.current, spoken];
-        speakIfEnabled(`${spoken} isn't set up yet. I'll flag it for later. Say the next product.`);
         candidateItemsRef.current = [];
         setVoiceSessionState(prev => ({ ...prev, candidateItems: [], bannerMessage: VOICE_MESSAGES.not_found, bannerColour: 'terracotta' }));
-        setTimeout(() => { if (voiceSessionActiveRef.current) startListening(); }, 1500);
+        speakThenListen(`${spoken} isn't set up yet. I'll flag it for later. Say the next product.`);
         return;
       }
 
@@ -1126,8 +1150,7 @@ function StockTakeAreaInventoryScreen() {
         setHighlightedVoiceItemId(matched.id);
         setTimeout(() => setHighlightedVoiceItemId(null), 3000);
         setVoiceSessionState(prev => ({ ...prev, phase: 'count', matchedItem: matched, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_count(matched.name), bannerColour: 'teal' }));
-        speakIfEnabled(`${matched.name}. Say the count.`);
-        startListening();
+        speakThenListen(`${matched.name}. Say the count.`);
         return;
       }
 
@@ -1137,11 +1160,10 @@ function StockTakeAreaInventoryScreen() {
       const matchList = top3.map((m: Item, i: number) => `${i + 1}. ${m.name}`).join('\n');
       setVoiceSessionState(prev => ({ ...prev, candidateItems: top3, bannerMessage: `Multiple matches:\n${matchList}`, bannerColour: 'amber' }));
       if (top3.length === 2) {
-        speakIfEnabled(`Did you mean ${top3[0].name}, or ${top3[1].name}?`);
+        speakThenListen(`Did you mean ${top3[0].name}, or ${top3[1].name}?`);
       } else {
-        speakIfEnabled(`${top3[0].name}, ${top3[1].name}, or ${top3[2].name}?`);
+        speakThenListen(`${top3[0].name}, ${top3[1].name}, or ${top3[2].name}?`);
       }
-      startListening();
       return;
     }
 
@@ -1167,8 +1189,7 @@ function StockTakeAreaInventoryScreen() {
         candidateItemsRef.current = [];
         voicePhaseRef.current = 'product';
         setVoiceSessionState(prev => ({ ...prev, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
-        speakIfEnabled('Skipped. Say the next product.');
-        startListening();
+        speakThenListen('Skipped. Say the next product.');
         return;
       }
 
@@ -1176,8 +1197,7 @@ function StockTakeAreaInventoryScreen() {
 
       if (count === null) {
         setVoiceSessionState(prev => ({ ...prev, bannerMessage: "Didn't catch that — say the count again", bannerColour: 'amber' }));
-        speakIfEnabled("Didn't catch that. Say the count again.");
-        startListening();
+        speakThenListen("Didn't catch that. Say the count again.");
         return;
       }
 
@@ -1299,8 +1319,7 @@ function StockTakeAreaInventoryScreen() {
       voiceSessionActiveRef.current = true;
       voicePhaseRef.current = 'product';
       setVoiceSessionState(prev => ({ ...prev, isActive: true, phase: 'product', matchedItem: null, candidateItems: [], bannerMessage: VOICE_MESSAGES.listening_product, bannerColour: 'amber' }));
-      speakIfEnabled('Say a product name');
-      startListening();
+      speakThenListen('Say a product name');
     }
   };
 
