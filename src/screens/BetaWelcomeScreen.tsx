@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useColours } from '../context/ThemeContext';
+import { useColours, useTheme } from '../context/ThemeContext';
 import React from 'react';
 import {
   View,
@@ -9,7 +9,6 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-// Font package not installed — using system font
 import { useNavigation } from '@react-navigation/native';
 
 // Uses your app icon from /assets/icon.png
@@ -17,7 +16,7 @@ const appIcon = require('../assets/icon.png');
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
-  const fontsLoaded = false;
+  const { theme } = useTheme();
 
   const goDashboard = () => navigation.navigate('Dashboard');
   const goStockTake = () => navigation.navigate('DepartmentSelection');
@@ -30,7 +29,7 @@ export default function BetaWelcomeScreen() {
       <ScrollView contentContainerStyle={S.scroll} bounces={false}>
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
-          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti</Text>
+          <Text style={[S.title, { fontFamily: theme.fontTitleBold }]}>Welcome to Hosti</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.

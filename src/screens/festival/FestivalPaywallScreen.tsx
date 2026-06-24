@@ -61,7 +61,7 @@ export default function FestivalPaywallScreen({ navigation, route }: any) {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.emoji}>🎪</Text>
-          <Text style={[styles.title, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitle }]}>
+          <Text style={[styles.title, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitleBold }]}>
             Activate {venueName}
           </Text>
           <Text style={[styles.subtitle, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
@@ -71,7 +71,7 @@ export default function FestivalPaywallScreen({ navigation, route }: any) {
 
         {/* Price card */}
         <View style={[styles.priceCard, { backgroundColor: c.deepBlue || '#1b4f72' }]}>
-          <Text style={[styles.price, { fontFamily: theme.fontTitle }]}>$349</Text>
+          <Text style={[styles.price, { fontFamily: theme.fontTitleBold }]}>$349</Text>
           <Text style={[styles.priceNote, { fontFamily: theme.fontBody }]}>
             One-time payment per event. No subscription. No recurring charges.
           </Text>

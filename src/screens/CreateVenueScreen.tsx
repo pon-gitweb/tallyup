@@ -150,7 +150,7 @@ export default function CreateVenueScreen() {
 
   return (
     <View style={{ flex: 1, padding: 16, backgroundColor: c.oat }}>
-      <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitle, marginBottom: 12 }}>
+      <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 12 }}>
         Create a new project
       </Text>
       <Text style={{ color: c.slateMid, fontFamily: theme.fontBody, lineHeight: 20 }}>

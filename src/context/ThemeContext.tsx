@@ -8,7 +8,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
-import { useFonts, PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic } from '@expo-google-fonts/playfair-display';
+import { useFonts, PlayfairDisplay_400Regular, PlayfairDisplay_500Medium, PlayfairDisplay_400Regular_Italic, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 
 export type ThemeColours = {
@@ -56,7 +56,8 @@ export type ThemeConfig = {
   // Typography — swap from 'System' once @expo-google-fonts are installed:
   //   npx expo install @expo-google-fonts/playfair-display @expo-google-fonts/inter
   //   then load PlayfairDisplay_700Bold + Inter_400Regular at app entry
-  fontTitle: string;          // Playfair Display — screen titles, section headers
+  fontTitle: string;      // Playfair Display 500 Medium — section headers, labels
+  fontTitleBold: string;  // Playfair Display 700 Bold — screen titles, hero numbers, big moments
   fontBody: string;           // Inter 400 — body copy, labels, inputs
   fontBodyMedium: string;     // Inter 500 — subheadings, secondary labels
   fontBodySemiBold: string;   // Inter 600 — buttons, emphasis
@@ -115,6 +116,7 @@ export const DEFAULT_THEME: ThemeConfig = {
   cardRadius: 14,
   density: 'comfortable',
   fontTitle: 'System',       // → 'PlayfairDisplay_500Medium' when fonts load
+  fontTitleBold: 'System',   // → 'PlayfairDisplay_700Bold' when fonts load
   fontBody: 'System',        // → 'Inter_400Regular' when fonts load
   fontBodyMedium: 'System',  // → 'Inter_500Medium' when fonts load
   fontBodySemiBold: 'System',// → 'Inter_600SemiBold' when fonts load
@@ -150,6 +152,7 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
     PlayfairDisplay_400Regular,
     PlayfairDisplay_500Medium,
     PlayfairDisplay_400Regular_Italic,
+    PlayfairDisplay_700Bold,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
@@ -159,6 +162,7 @@ export function ThemeProvider({ venueId, children }: { venueId: string | null; c
     () => ({
       ...theme,
       fontTitle:       fontsLoaded ? 'PlayfairDisplay_500Medium' : 'System',
+      fontTitleBold:   fontsLoaded ? 'PlayfairDisplay_700Bold'   : 'System',
       fontBody:        fontsLoaded ? 'Inter_400Regular'          : 'System',
       fontBodyMedium:  fontsLoaded ? 'Inter_500Medium'           : 'System',
       fontBodySemiBold:fontsLoaded ? 'Inter_600SemiBold'         : 'System',

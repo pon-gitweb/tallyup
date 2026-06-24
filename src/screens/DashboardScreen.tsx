@@ -548,8 +548,8 @@ export default function DashboardScreen() {
               <Text style={{
                 fontSize: 52,
                 color: colours.oat,
-                fontFamily: theme.fontTitle,
-                fontWeight: fontsLoaded ? '400' : '600',
+                fontFamily: theme.fontTitleBold,
+                fontWeight: fontsLoaded ? '700' : '600',
                 letterSpacing: -0.78,
                 marginTop: 14,
                 lineHeight: 60,

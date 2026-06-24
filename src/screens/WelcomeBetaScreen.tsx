@@ -8,9 +8,9 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-// Font package not installed — using system font
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTheme } from '../context/ThemeContext';
 
 // IMPORTANT: path is from src/screens → up to project root → assets
 const appIcon = require('../../assets/icon.png');
@@ -19,7 +19,7 @@ const WELCOME_STORAGE_KEY = 'tallyup_welcome_seen_v1';
 
 export default function BetaWelcomeScreen() {
   const navigation = useNavigation<any>();
-  const fontsLoaded = false;
+  const { theme } = useTheme();
 
   const markSeenAndGoMain = async (mode: 'tour' | 'skip') => {
     try {
@@ -43,7 +43,7 @@ export default function BetaWelcomeScreen() {
       <ScrollView contentContainerStyle={S.scroll} bounces={false}>
         <View style={S.heroCard}>
           <Image source={appIcon} style={S.icon} />
-          <Text style={[S.title, fontsLoaded && { fontFamily: 'PlayfairDisplay_700Bold' }]}>Welcome to Hosti</Text>
+          <Text style={[S.title, { fontFamily: theme.fontTitleBold }]}>Welcome to Hosti</Text>
           <Text style={S.subtitle}>
             Built for real hospitality venues. Load your products, run a full stock take,
             and let the AI help you order smarter.

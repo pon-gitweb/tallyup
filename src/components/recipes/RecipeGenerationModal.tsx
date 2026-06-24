@@ -176,7 +176,7 @@ export default function RecipeGenerationModal({ visible, onClose, onRecipeGenera
 
                 <Text
                   style={{
-                    fontFamily: theme.fontTitle,
+                    fontFamily: theme.fontTitleBold,
                     fontSize: 22,
                     color: c.text,
                     marginBottom: 4,
