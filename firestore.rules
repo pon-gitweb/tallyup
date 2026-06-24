@@ -198,6 +198,14 @@ service cloud.firestore {
           && integrationId in ['xero', 'myob'];
       }
 
+      match /posIntegration/{docId} {
+        // Connection-status doc for the venue's POS adapter (see
+        // POSConnectionScreen.tsx). No sensitive data here — OAuth tokens
+        // are stored server-side in venues/{venueId}/integrationTokens,
+        // which has no client rule and is only ever written via the Admin SDK.
+        allow read, write: if isVenueMember(venueId);
+      }
+
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);
