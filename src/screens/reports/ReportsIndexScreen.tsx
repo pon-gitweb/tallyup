@@ -126,6 +126,7 @@ export default function ReportsIndexScreen() {
   const [slowMovers, setSlowMovers] = useState<any[]>([]);
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
+  const [totalStocktakesCompleted, setTotalStocktakesCompleted] = useState(0);
   const [reportsIntroSeen, setReportsIntroSeen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [recalcDismissed, setRecalcDismissed] = useState(false);
@@ -254,6 +255,22 @@ export default function ReportsIndexScreen() {
         if (!cancelled) setLatestSnapshots(snaps);
       } catch {}
     })();
+    return () => { cancelled = true; };
+  }, [venueId]);
+
+  // ── Total stocktakes completed (venue doc) — fallback signal for trend unlock.
+  // totalStocktakesCompleted only increments when ALL departments finish at once,
+  // which may never happen for single-department venues or staggered submissions —
+  // so this is OR'd with hasPrevCycleData and per-department cycleNumber below. ──
+  useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
+    getDoc(doc(db, 'venues', venueId))
+      .then(snap => {
+        if (cancelled) return;
+        setTotalStocktakesCompleted((snap.data() as any)?.totalStocktakesCompleted ?? 0);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [venueId]);
 
@@ -505,6 +522,12 @@ export default function ReportsIndexScreen() {
 
   const netVariance = data.shortfallDollars - data.excessDollars;
   const hasDollarData = data.dollarItemCount > 0;
+  // Trend lane unlock: hasPrevCycleData (per-item baseline) OR'd with two fallbacks —
+  // a full-venue stocktake count, or any single department on its 2nd+ cycle. Either
+  // fallback alone is enough; this only ever widens when the lane unlocks, never narrows it.
+  const hasEnoughForTrend = data.hasPrevCycleData
+    || totalStocktakesCompleted >= 2
+    || latestSnapshots.some((s: any) => (s.cycleNumber ?? 0) >= 2);
 
   return (
     <LocalThemeGate>
@@ -611,7 +634,7 @@ export default function ReportsIndexScreen() {
                 {data.totalAreasCompleted}/{data.totalAreas} areas done
               </Text>
               <Text style={S.anchorMeta}>
-                {data.totalItemsCounted} items counted this cycle
+                {data.totalItemsCounted} items counted this stocktake
               </Text>
             </View>
           )}
@@ -655,7 +678,7 @@ export default function ReportsIndexScreen() {
               {data.topShortages.length === 0 ? (
                 <Text style={S.laneEmpty}>
                   {data.hasPrevCycleData
-                    ? 'No shortages detected this cycle.'
+                    ? 'No shortages detected this stocktake.'
                     : 'Nothing to compare yet — par levels used as baseline.'}
                 </Text>
               ) : (
@@ -698,16 +721,16 @@ export default function ReportsIndexScreen() {
           {/* ── LANE 2: WHAT THE TREND SAYS ── */}
           {isManager && (
             <Lane S={S} label="WHAT THE TREND SAYS">
-              {!data.hasPrevCycleData ? (
+              {!hasEnoughForTrend ? (
                 <View style={S.unlockBox}>
-                  <Text style={S.unlockTitle}>Needs 2 completed stocktakes</Text>
+                  <Text style={S.unlockTitle}>Complete one more stocktake to unlock</Text>
                   <Text style={S.unlockBody}>
                     Complete another full stocktake and trend detection will activate — showing you
-                    items that are consistently short cycle after cycle.
+                    items that are consistently short stocktake after stocktake.
                   </Text>
                 </View>
               ) : data.trendItems.length === 0 ? (
-                <Text style={S.laneEmpty}>No items short in two consecutive cycles.</Text>
+                <Text style={S.laneEmpty}>No items short in two consecutive stocktakes.</Text>
               ) : (
                 <>
                   <Text style={S.trendIntro}>
@@ -775,7 +798,7 @@ export default function ReportsIndexScreen() {
           )}
 
           {/* ── AREA STATS (all roles) ── */}
-          <Lane S={S} label={isManager ? 'AREA BREAKDOWN' : 'YOUR AREAS THIS CYCLE'}>
+          <Lane S={S} label={isManager ? 'AREA BREAKDOWN' : 'YOUR AREAS THIS STOCKTAKE'}>
             {data.areaStats.length === 0 ? (
               <Text style={S.laneEmpty}>No areas counted yet.</Text>
             ) : (
@@ -916,7 +939,7 @@ export default function ReportsIndexScreen() {
 
                 <Lane S={S} label="📊 DATA COMPLETENESS">
                   <Text style={[S.laneEmpty, { color: c.slateMid, marginBottom: 8 }]}>
-                    Cycle intelligence: Tier {tierMin} of 4
+                    Stocktake intelligence: Tier {tierMin} of 4
                     {tierMin === 1 ? ' · Counts only' : tierMin === 2 ? ' · Counts + invoices' : tierMin >= 3 ? ' · Counts + invoices + sales' : ''}
                   </Text>
                   {unpricedTotal > 0 && (

@@ -59,6 +59,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   const triedAutoAttachForUid = useRef<string | null>(null);
   const lastVenueIdRef = useRef<string | null>(undefined as any);
+  const lastVenueTypeRef = useRef<string | null>(null);
   const unsubUserDocRef = useRef<Unsubscribe | null>(null);
   const unsubVenueDocRef = useRef<Unsubscribe | null>(null);
   const userSnapshotFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -202,17 +203,24 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setVenueType(null); setVenueCountry('NZ'); return; }
+    if (!venueId) { setSubscription(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
         return;
       }
       const data = snap.data();
-      // Default to 'venue' so null/undefined venueType never triggers festival routing
-      const vt = (data?.venueType as string) || 'venue';
-      setVenueType(vt);
-      AsyncStorage.setItem('lastKnownVenueType', vt).catch(() => {});
+      // The venue doc updates for reasons unrelated to venueType too (e.g.
+      // totalStocktakesCompleted incrementing after a stocktake). Only adopt a new
+      // venueType when this snapshot actually carries one — never overwrite a known
+      // type with a missing/falsy value, which would otherwise re-trigger routing.
+      const newVenueType = (data?.venueType as string) || null;
+      const resolvedVenueType = newVenueType || lastVenueTypeRef.current || 'venue';
+      if (resolvedVenueType !== lastVenueTypeRef.current) {
+        lastVenueTypeRef.current = resolvedVenueType;
+        setVenueType(resolvedVenueType);
+        AsyncStorage.setItem('lastKnownVenueType', resolvedVenueType).catch(() => {});
+      }
       // Default to 'NZ' so venues with no country set keep today's 15% GST behaviour
       setVenueCountry((data?.country as string) || 'NZ');
       const sub = data?.subscription ?? null;
