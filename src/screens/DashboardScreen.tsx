@@ -16,7 +16,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
@@ -211,24 +211,28 @@ export default function DashboardScreen() {
   const [supplierCount, setSupplierCount] = React.useState<number | null>(null);
   const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
 
-  React.useEffect(() => {
-    if (!venueId) return;
-    const db = getFirestore();
-    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
-      let unassigned = 0;
-      snap.forEach(d => {
-        const data = d.data();
-        if (!data.supplierId || data.supplierId === 'unassigned') unassigned++;
-      });
-      setProductCount(snap.size);
-      setUnassignedCount(unassigned);
-    }).catch(() => {});
-    getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
-      let count = 0;
-      snap.forEach(d => { if (!d.data().isHoldingSupplier) count++; });
-      setSupplierCount(count);
-    }).catch(() => {});
-  }, [venueId]);
+  // Re-fetched on every focus (not just mount) so counts reflect products/
+  // suppliers added while the user was on another screen (e.g. Products).
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!venueId) return;
+      const db = getFirestore();
+      getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+        let unassigned = 0;
+        snap.forEach(d => {
+          const data = d.data();
+          if (!data.supplierId || data.supplierId === 'unassigned') unassigned++;
+        });
+        setProductCount(snap.size);
+        setUnassignedCount(unassigned);
+      }).catch(() => {});
+      getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
+        let count = 0;
+        snap.forEach(d => { if (!d.data().isHoldingSupplier) count++; });
+        setSupplierCount(count);
+      }).catch(() => {});
+    }, [venueId])
+  );
 
   const [deptNames, setDeptNames] = React.useState<string[]>([]);
   React.useEffect(() => {

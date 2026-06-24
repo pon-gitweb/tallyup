@@ -1271,6 +1271,11 @@ function StockTakeAreaInventoryScreen() {
       setVoiceSessionState({ isActive: false, phase: 'idle', matchedItem: null, candidateItems: [], lastSavedItem: null, lastSavedCount: null, bannerMessage: '', bannerColour: 'hidden' });
       flushFlaggedVoiceProducts();
     } else {
+      if (itemsRef.current.length === 0) {
+        showInfo('Products are still loading — try again in a moment.');
+        return;
+      }
+
       // expo-speech-recognition surfaces permission denial via requestPermissionsAsync()
       // (the old library instead rejected Voice.start() with a "permissions" error code).
       let permission: any;
