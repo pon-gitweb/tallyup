@@ -174,6 +174,9 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         if (lastVenueIdRef.current !== currentVenue) {
           lastVenueIdRef.current = currentVenue;
           setVenueId(currentVenue ?? null);
+          if (currentVenue) {
+            AsyncStorage.setItem('lastKnownVenueId', currentVenue).catch(() => {});
+          }
         }
         setVenueIds(currentVenueIds);
         setLoading(false);
@@ -276,6 +279,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       const newType = (venueSnap.data()?.venueType as string) || 'venue';
       const newCountry = (venueSnap.data()?.country as string) || 'NZ';
       setVenueType(newType);
+      AsyncStorage.setItem('lastKnownVenueType', newType).catch(() => {});
       setVenueCountry(newCountry);
       // Then write to Firestore — onSnapshot will confirm/reconcile
       await updateDoc(doc(db, 'users', user.uid), {

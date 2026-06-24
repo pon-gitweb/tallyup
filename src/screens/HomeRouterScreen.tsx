@@ -20,16 +20,36 @@ export default function HomeRouterScreen() {
 
   // Emergency last-resort fallback — the venue-doc fetch below has its own
   // 8s internal timeout, so this should never fire in practice. It exists
-  // only to guarantee `loading` can never spin forever (10s > 8s getDoc bound).
+  // only to guarantee `loading` can never spin forever (5s > most VenueProvider
+  // iOS startup races, while still under the 8s getDoc bound it's backstopping).
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (routed.current) return;
       routed.current = true;
       let lastKnownType: string | null = null;
-      try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
+      let lastKnownVenueId: string | null = null;
+      try {
+        [lastKnownType, lastKnownVenueId] = await Promise.all([
+          AsyncStorage.getItem('lastKnownVenueType'),
+          AsyncStorage.getItem('lastKnownVenueId'),
+        ]);
+      } catch {}
       console.warn('[HomeRouter] emergency fallback — routing to', lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs');
+      // If we have a last known venueId, set it directly so the dashboard has context
+      if (lastKnownVenueId) {
+        try {
+          const { getFirestore, doc, updateDoc } = await import('firebase/firestore');
+          const { getAuth } = await import('firebase/auth');
+          const auth = getAuth();
+          if (auth.currentUser) {
+            await updateDoc(doc(getFirestore(), 'users', auth.currentUser.uid), {
+              activeVenueId: lastKnownVenueId,
+            });
+          }
+        } catch {}
+      }
       nav.reset({ index: 0, routes: [{ name: lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs' }] });
-    }, 10000);
+    }, 5000);
     return () => clearTimeout(timer);
   }, []);
 
