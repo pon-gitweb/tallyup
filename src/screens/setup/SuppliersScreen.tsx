@@ -599,11 +599,70 @@ export default function SuppliersScreen() {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
         >
         <View style={styles.formWrap}>
-          <Text style={styles.formTitle}>
-            {editingId ? 'Edit Supplier' : 'New Supplier'}
-          </Text>
+          {directoryOpen ? (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800' }}>Hosti Directory</Text>
+                <TouchableOpacity onPress={() => setDirectoryOpen(false)}>
+                  <Text style={{ color: '#6B7280', fontWeight: '700' }}>← Back to form</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>
+                Select a supplier to pre-fill your form. You can edit any details before saving.
+              </Text>
+              <TextInput
+                value={directorySearch}
+                onChangeText={setDirectorySearch}
+                placeholder="Search suppliers…"
+                autoCapitalize="none"
+                style={{ borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', marginBottom: 10 }}
+              />
+              {directoryLoading ? (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator />
+                  <Text style={{ marginTop: 8, color: '#6B7280' }}>Loading directory…</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={directoryRows.filter(r => !directorySearch.trim() || (r.name || '').toLowerCase().includes(directorySearch.toLowerCase()))}
+                  keyExtractor={(r, i) => r.id || String(i)}
+                  ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                      onPress={() => {
+                        if (item.name) setName(item.name);
+                        if (item.phone && !phone.trim()) setPhone(item.phone);
+                        if (item.email && !email.trim()) setEmail(item.email);
+                        if (item.website && !portalUrl.trim()) setPortalUrl(item.website);
+                        setDirectoryOpen(false);
+                        showInfo(`${item.name} details filled in — tap Save to add them.`);
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '700' }}>{item.name}</Text>
+                        <Text style={{ opacity: 0.7, marginTop: 2, fontSize: 12 }}>
+                          {[item.phone, item.category].filter(Boolean).join(' · ')}
+                        </Text>
+                      </View>
+                      <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Use →</Text>
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 20 }}>
+                      {directorySearch.trim() ? 'No suppliers match your search.' : 'No suppliers in directory yet.'}
+                    </Text>
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <Text style={styles.formTitle}>
+                {editingId ? 'Edit Supplier' : 'New Supplier'}
+              </Text>
 
-          <ScrollView
+              <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.formScroll}
             keyboardShouldPersistTaps="handled"
@@ -823,6 +882,8 @@ export default function SuppliersScreen() {
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+            </>
+          )}
         </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -913,65 +974,6 @@ export default function SuppliersScreen() {
         </View>
       </Modal>
 
-      {/* Hosti Directory modal */}
-      <Modal visible={directoryOpen} animationType="slide" onRequestClose={() => setDirectoryOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <Text style={{ fontSize: 18, fontWeight: '800' }}>Hosti Directory</Text>
-            <TouchableOpacity onPress={() => setDirectoryOpen(false)}>
-              <Text style={{ color: '#6B7280', fontWeight: '700' }}>Close</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>
-            Select a supplier to pre-fill your form. You can edit any details before saving.
-          </Text>
-          <TextInput
-            value={directorySearch}
-            onChangeText={setDirectorySearch}
-            placeholder="Search suppliers…"
-            autoCapitalize="none"
-            style={{ borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', marginBottom: 10 }}
-          />
-          {directoryLoading ? (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <ActivityIndicator />
-              <Text style={{ marginTop: 8, color: '#6B7280' }}>Loading directory…</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={directoryRows.filter(r => !directorySearch.trim() || (r.name || '').toLowerCase().includes(directorySearch.toLowerCase()))}
-              keyExtractor={(r, i) => r.id || String(i)}
-              ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={{ backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                  onPress={() => {
-                    if (item.name) setName(item.name);
-                    if (item.phone && !phone.trim()) setPhone(item.phone);
-                    if (item.email && !email.trim()) setEmail(item.email);
-                    if (item.website && !portalUrl.trim()) setPortalUrl(item.website);
-                    setDirectoryOpen(false);
-                    showInfo(`${item.name} details filled in — tap Save to add them.`);
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '700' }}>{item.name}</Text>
-                    <Text style={{ opacity: 0.7, marginTop: 2, fontSize: 12 }}>
-                      {[item.phone, item.category].filter(Boolean).join(' · ')}
-                    </Text>
-                  </View>
-                  <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Use →</Text>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 20 }}>
-                  {directorySearch.trim() ? 'No suppliers match your search.' : 'No suppliers in directory yet.'}
-                </Text>
-              }
-            />
-          )}
-        </View>
-      </Modal>
       {modal}
     </View>
     </TouchableWithoutFeedback>
