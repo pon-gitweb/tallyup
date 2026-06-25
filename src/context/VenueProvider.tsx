@@ -189,7 +189,10 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       }, (err) => {
         clearUserSnapshotFailsafe();
         if (__DEV__) console.log('[TallyUp VenueProvider] user snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
-        setVenueId(null);
+        // Only clear venueId on permanent errors — transient errors should self-heal
+        if (err?.code === 'permission-denied') {
+          setVenueId(null);
+        }
         setLoading(false);
       });
     });
