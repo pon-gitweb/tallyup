@@ -1,11 +1,8 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { ImageAnnotatorClient } from "@google-cloud/vision";
 import { trackPriceChanges } from "./priceTracking";
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
-
-const vision = new ImageAnnotatorClient();
 
 type ParsedLine = {
   name: string;
@@ -1409,18 +1406,42 @@ export const ocrInvoicePhoto = functions
     const imageBase64 = String(data?.imageBase64 || "");
     if (!imageBase64) throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
 
-    let buf: Buffer;
     try {
-      buf = Buffer.from(imageBase64, "base64");
+      Buffer.from(imageBase64, "base64");
     } catch (e: any) {
       throw new functions.https.HttpsError("invalid-argument", "Invalid imageBase64.");
     }
 
-    const [result] = await vision.textDetection({ image: { content: buf } });
-    const text =
-      result?.fullTextAnnotation?.text ||
-      result?.textAnnotations?.[0]?.description ||
-      "";
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new functions.https.HttpsError("internal", "ANTHROPIC_API_KEY not configured.");
+
+    const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 4096,
+        system: "You are reading a hospitality invoice photo. Extract ALL text you can see exactly as written, preserving the layout as much as possible. Include supplier name, invoice number, date, and all line items with their quantities and prices. Do not summarise — return the full text content.",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+            { type: "text", text: "Extract all text from this invoice image." },
+          ],
+        }],
+      }),
+    });
+
+    if (!claudeResp.ok) {
+      const errBody = await claudeResp.json().catch(() => ({} as any));
+      throw new Error(`Claude vision failed: ${claudeResp.status} ${errBody?.error?.message || ""}`);
+    }
+    const claudeData = await claudeResp.json() as any;
+    const text = claudeData?.content?.[0]?.text || "";
 
     if (!text.trim()) {
       return {
