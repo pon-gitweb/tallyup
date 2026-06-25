@@ -11,8 +11,8 @@
  *  - buildVariance / computeVariance(...)    -> UIResult with summary band
  */
 
-import { fetchCounts, fetchSales, fetchInvoices } from './dataAdapters';
-import { computeUnified } from './varianceEngine';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
 
 // ---------- helpers ----------
 const n = (v: any, d = 0) => Number.isFinite(+v) ? +v : d;
@@ -78,83 +78,94 @@ export type VarianceSnapshotResult = {
   totalExcessValue: number;
 };
 
-// Map unified engine rows into the shape expected by VarianceSnapshotScreen.
-function mapUnifiedToVarianceRow(r: any): VarianceRow {
-  const expected = n(r?.expected, 0);
-  const onHand = n(r?.onHand, 0);
-  const variance = n(r?.variance, onHand - expected);
-
-  const unitCost = Number.isFinite(r?.unitCost) ? Number(r.unitCost) : 0;
-
-  const listCost = Number.isFinite(r?.listCostPerUnit)
-    ? Number(r.listCostPerUnit)
-    : (unitCost || null);
-
-  const landedCost = Number.isFinite(r?.landedCostPerUnit)
-    ? Number(r.landedCostPerUnit)
-    : (listCost ?? null);
-
-  const realCostPerUnit = Number.isFinite(r?.realCostPerUnit)
-    ? Number(r.realCostPerUnit)
-    : (landedCost ?? null);
-
-  const shrinkUnits = Number.isFinite(r?.shrinkUnits)
-    ? Number(r.shrinkUnits)
-    : (r?.shrinkage < 0 ? Math.abs(Number(r.shrinkage)) : 0);
-
-  const shrinkValue = Number.isFinite(r?.shrinkValue)
-    ? Number(r.shrinkValue)
-    : (shrinkUnits && unitCost ? shrinkUnits * unitCost : 0);
-
-  const value = unitCost ? Math.abs(variance) * unitCost : 0;
-
-  return {
-    id: String(r?.sku || r?.productId || ''),
-    productId: String(r?.sku || r?.productId || ''),
-    name: s(r?.name, String(r?.sku || 'Item')),
-    unit: null,
-    supplierName: null,
-    par: expected,
-    onHand,
-    variance,
-    value,
-    listCost,
-    landedCost,
-    realCostPerUnit,
-    shrinkUnits,
-    shrinkValue,
-    salesQty: n(r?.salesQty, 0),
-    invoiceQty: n(r?.invoiceQty, 0),
-    lastDeliveryAt: null,
-    auditTrail: [],
-  };
-}
-
 // ---------- async snapshot: main entry for VarianceSnapshotScreen ----------
+// Reads from departments/{deptId}/snapshots/cycle-{N} (written by snapshotWriter.ts),
+// NOT live item docs. Live docs have confirmedCount stamped to lastCount's value right
+// after a cycle completes, so onHand - expected is always 0 there. The snapshot's
+// openingCount/actualClosing/totalVarianceQty/totalVarianceDollars are the correct,
+// already-computed baseline-vs-closing comparison for that cycle.
 export async function computeVarianceSnapshot(
   venueId: string,
   opts: { departmentId?: string | null; windowDays?: number } = {}
 ): Promise<VarianceSnapshotResult> {
   if (!venueId) throw new Error('venueId is required');
 
-  const window: { from?: number; to?: number } = {};
+  const shortages: VarianceRow[] = [];
+  const excesses: VarianceRow[] = [];
+  let totalShortageValue = 0;
+  let totalExcessValue = 0;
+
   const deptId = opts.departmentId ?? undefined;
 
-  const counts = await fetchCounts(venueId, window, deptId);
-  const sales = await fetchSales(venueId, window, deptId);
-  const invoices = await fetchInvoices(venueId, window, deptId);
+  let deptIds: string[] = [];
+  if (deptId) {
+    deptIds = [deptId];
+  } else {
+    const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+    deptIds = deptsSnap.docs.map(d => d.id);
+  }
 
-  const unified = computeUnified(counts, sales, invoices, {});
+  for (const dId of deptIds) {
+    // Get the latest snapshot for this department
+    const snapshotsSnap = await getDocs(
+      query(
+        collection(db, 'venues', venueId, 'departments', dId, 'snapshots'),
+        orderBy('cycleNumber', 'desc'),
+        limit(1)
+      )
+    );
+    if (snapshotsSnap.empty) continue;
 
-  const shortages = (unified.shortages || []).map(mapUnifiedToVarianceRow);
-  const excesses = (unified.excesses || []).map(mapUnifiedToVarianceRow);
+    const snapshot = snapshotsSnap.docs[0].data() as any;
 
-  return {
-    shortages,
-    excesses,
-    totalShortageValue: n(unified?.totals?.shortageValue, 0),
-    totalExcessValue: n(unified?.totals?.excessValue, 0),
-  };
+    // Skip first cycle snapshots — no baseline to compare against
+    if (snapshot.cycleNumber <= 1 || !snapshot.dataCompleteness?.hasBaseline) continue;
+
+    for (const item of (snapshot.items || [])) {
+      // Only items with a baseline (openingCount known from previous cycle)
+      if (item.openingCount == null) continue;
+
+      const variance = item.totalVarianceQty ?? (item.actualClosing - item.openingCount);
+      if (variance === 0) continue; // No variance — skip
+
+      const value = item.totalVarianceDollars ?? (item.costPrice != null ? variance * item.costPrice : 0);
+
+      const row: VarianceRow = {
+        id: item.productId || item.name,
+        productId: item.productId || item.name,
+        name: item.name,
+        unit: null,
+        supplierName: null,
+        par: item.parLevel ?? 0,
+        onHand: item.actualClosing,
+        variance,
+        value: Math.abs(value),
+        listCost: item.costPrice ?? null,
+        landedCost: item.costPrice ?? null,
+        realCostPerUnit: item.costPrice ?? null,
+        shrinkUnits: variance < 0 ? Math.abs(variance) : 0,
+        shrinkValue: variance < 0 && item.costPrice ? Math.abs(variance) * item.costPrice : 0,
+        salesQty: item.soldQty ?? 0,
+        invoiceQty: item.receivedQty ?? 0,
+        lastDeliveryAt: null,
+        auditTrail: [],
+      };
+
+      if (variance < 0) {
+        shortages.push(row);
+        totalShortageValue += Math.abs(value);
+      } else {
+        excesses.push(row);
+        totalExcessValue += Math.abs(value);
+      }
+    }
+  }
+
+  // Sort by absolute value descending — biggest variances first
+  shortages.sort((a, b) => b.value - a.value);
+  excesses.sort((a, b) => b.value - a.value);
+
+  return { shortages, excesses, totalShortageValue, totalExcessValue };
 }
 
 // ---------- async UI path (banded summary) ----------
