@@ -1193,29 +1193,45 @@ async function extractInvoiceComplete(text: string): Promise<CompleteInvoiceExtr
 }
 
 // ── POST /photo-count ─────────────────────────────────────────────────
-// Body: { venueId, imageBase64, productHint?, unit? }
+// Body: { venueId, imageBase64, productHint?, unit?, mode? }
+// mode: 'bottle-level' estimates fill level (0.0–1.0) instead of counting discrete units.
 // Returns: { estimatedCount, confidence, reasoning, productName?, suggestions }
+//      or: { mode: 'bottle-level', fillLevel, confidence, reasoning, productHint }
 app.post("/photo-count", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { venueId, imageBase64, productHint, unit } = req.body || {};
+    const { venueId, imageBase64, productHint, unit, mode } = req.body || {};
     if (!venueId || !imageBase64) { res.status(400).json({ ok: false, error: "Missing venueId or imageBase64" }); return; }
     await verifyVenueMembership(uid, venueId);
     const lcPC = await checkAiLimit(venueId, 'stocktake_photo');
     if (!lcPC.allowed) { res.status(429).json(lcPC.limitError); return; }
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
-    const systemPrompt = [
-      "You are an expert hospitality inventory counter for NZ bars and restaurants.",
-      "Analyse the photo and count the visible stock items.",
-      "Be specific about what you see. Count individual units, not cases unless asked.",
-      "Consider: bottles behind bar, cans in fridge, kegs, dry goods, produce.",
-      productHint ? "The user is counting: " + productHint : "Identify the main product visible.",
-      unit ? "Count in units of: " + unit : "Count individual units.",
-      "Respond ONLY with valid JSON:",
-      '{ "estimatedCount": 12, "confidence": 0.85, "productName": "what you see", "reasoning": "I can see X rows of Y bottles", "suggestions": ["tip 1", "tip 2"] }'
-    ].filter(Boolean).join("\n");
+    const isBottleLevel = mode === 'bottle-level';
+    const systemPrompt = isBottleLevel
+      ? [
+          "You are estimating how full a spirit bottle is from a photo.",
+          'Return ONLY a JSON object: { "fillLevel": <number>, "confidence": <number>, "reasoning": "<string>" }',
+          "fillLevel must be between 0.0 (completely empty) and 1.0 (completely full, sealed or just opened),",
+          "in increments of 0.05. Examples: 1.0 = full/sealed, 0.75 = three-quarters full, 0.5 = half full,",
+          "0.25 = quarter full, 0.0 = empty.",
+          "confidence is 0.0–1.0. reasoning is one sentence explaining what you can see.",
+          `The bottle in the photo is a ${productHint || 'spirit bottle'}.`,
+          "Consider the bottle shape — liquid level at the visual midpoint may not be exactly 0.5 by volume",
+          "if the bottle tapers. Estimate by volume not by visual height.",
+          "Return ONLY the JSON object, no other text.",
+        ].join("\n")
+      : [
+          "You are an expert hospitality inventory counter for NZ bars and restaurants.",
+          "Analyse the photo and count the visible stock items.",
+          "Be specific about what you see. Count individual units, not cases unless asked.",
+          "Consider: bottles behind bar, cans in fridge, kegs, dry goods, produce.",
+          productHint ? "The user is counting: " + productHint : "Identify the main product visible.",
+          unit ? "Count in units of: " + unit : "Count individual units.",
+          "Respond ONLY with valid JSON:",
+          '{ "estimatedCount": 12, "confidence": 0.85, "productName": "what you see", "reasoning": "I can see X rows of Y bottles", "suggestions": ["tip 1", "tip 2"] }'
+        ].filter(Boolean).join("\n");
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
@@ -1230,7 +1246,9 @@ app.post("/photo-count", async (req, res) => {
             source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
           }, {
             type: "text",
-            text: productHint ? "Count the " + productHint + " visible in this image." : "Count the stock items visible in this image.",
+            text: isBottleLevel
+              ? "Estimate the fill level of this bottle."
+              : (productHint ? "Count the " + productHint + " visible in this image." : "Count the stock items visible in this image."),
           }],
         }],
       }),
@@ -1243,6 +1261,20 @@ app.post("/photo-count", async (req, res) => {
     try { parsed = match ? JSON.parse(match[0]) : {}; } catch { parsed = {}; }
     // Log correction data for learning (venueId + hint + result)
     trackAiCall(venueId, 'stocktake_photo').catch(() => {});
+
+    if (isBottleLevel) {
+      console.log("[api/photo-count] OK (bottle-level)", { uid, venueId, productHint, fillLevel: parsed.fillLevel, confidence: parsed.confidence });
+      res.json({
+        ok: true,
+        mode: 'bottle-level',
+        fillLevel: Number.isFinite(parsed.fillLevel) ? parsed.fillLevel : null,
+        confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : 0,
+        reasoning: parsed.reasoning || null,
+        productHint: productHint || null,
+      });
+      return;
+    }
+
     console.log("[api/photo-count] OK", { uid, venueId, productHint, estimatedCount: parsed.estimatedCount, confidence: parsed.confidence });
     res.json({
       ok: true,

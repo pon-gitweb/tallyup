@@ -40,6 +40,8 @@ import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import * as FS from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as ImagePicker from 'expo-image-picker';
+import { aiUrl } from '../../config/ai';
 
 import { ENABLE_MANAGER_INLINE_APPROVE } from '../../flags/managerInlineApprove';
 import { approveDirectCount } from '../../services/adjustmentsDirect';
@@ -108,6 +110,7 @@ type RowProps = {
   setLocalQty: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   inputRefs: React.MutableRefObject<Record<string, TextInput | null>>;
   setFocusedInputId: React.Dispatch<React.SetStateAction<string | null>>;
+  setLastTouchedItemId: React.Dispatch<React.SetStateAction<string | null>>;
   setMenuFor: (it: Item | null) => void;
   openEditItem: (it: Item, focusPar?: boolean) => void;
   openAdjustment: (it: Item) => void;
@@ -132,6 +135,7 @@ const Row = React.memo(function Row({
   setLocalQty,
   inputRefs,
   setFocusedInputId,
+  setLastTouchedItemId,
   setMenuFor,
   openEditItem,
   openAdjustment,
@@ -270,7 +274,7 @@ const Row = React.memo(function Row({
                 placeholder="0"
                 keyboardType="decimal-pad"
                 maxLength={6}
-                onFocus={() => setFocusedInputId(item.id)}
+                onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); }}
                 onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
                 style={{ width: 52, paddingVertical: 6, paddingHorizontal: 4, borderWidth: 2, borderColor: (localQty[item.id] ?? '').trim() ? '#4CAF50' : '#d1d5db', borderRadius: 8, height: 36, backgroundColor: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' }}
               />
@@ -336,7 +340,7 @@ const Row = React.memo(function Row({
               returnKeyType="done"
               blurOnSubmit={false}
               editable={true}
-              onFocus={() => setFocusedInputId(item.id)}
+              onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); }}
               onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
               onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
               editable={!isLocked}
@@ -1401,6 +1405,11 @@ function StockTakeAreaInventoryScreen() {
   const listRef = useRef<FlatList>(null);
 
   const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
+  // Mirrors focusedInputId but isn't cleared on blur — gives toolbar-level actions
+  // (not tied to a specific row) a stable "which item was the user just working on" signal.
+  const [lastTouchedItemId, setLastTouchedItemId] = useState<string | null>(null);
+  const [photoCountSheetOpen, setPhotoCountSheetOpen] = useState(false);
+  const [bottleLevelBusy, setBottleLevelBusy] = useState(false);
 
   const [offline, setOffline] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
@@ -2540,6 +2549,76 @@ try {
     setPhotoFor(item);
     setPhotoOpen(true);
   };
+
+  // ── AI photo count toolbar button — targets whichever item's count field
+  // was most recently focused (lastTouchedItemId survives blur, unlike focusedInputId).
+  const resolvePhotoCountTarget = (): Item | null => {
+    const targetId = focusedInputId || lastTouchedItemId;
+    if (!targetId) return null;
+    return items.find(i => i.id === targetId) ?? null;
+  };
+
+  const openPhotoCountSheet = () => {
+    if (!resolvePhotoCountTarget()) {
+      showInfo("Tap a product's count field first, then use AI Count.");
+      return;
+    }
+    setPhotoCountSheetOpen(true);
+  };
+
+  const handleCountItemsOnShelf = () => {
+    setPhotoCountSheetOpen(false);
+    const item = resolvePhotoCountTarget();
+    if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
+    usePhotoFor(item);
+  };
+
+  const handleEstimateBottleLevel = async () => {
+    setPhotoCountSheetOpen(false);
+    const item = resolvePhotoCountTarget();
+    if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
+    if (bottleLevelBusy) return;
+    setBottleLevelBusy(true);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.status !== 'granted') {
+        showError('Camera access required — please allow camera access in Settings.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.7 });
+      if (res.canceled || !res.assets?.length) return;
+
+      const base64 = await FS.readAsStringAsync(res.assets[0].uri, { encoding: FS.EncodingType.Base64 });
+      const token = await getAuth().currentUser?.getIdToken().catch(() => null);
+      if (!token) { showError('Not authenticated.'); return; }
+
+      const resp = await fetch(aiUrl('/api/photo-count'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          venueId: venueId || 'unknown',
+          imageBase64: base64,
+          productHint: item.name,
+          mode: 'bottle-level',
+        }),
+      });
+      const json: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || !json?.ok || typeof json.fillLevel !== 'number') {
+        showError(json?.error || 'Could not estimate fill level.');
+        return;
+      }
+
+      const fillLevel = json.fillLevel;
+      setLocalQty(prev => ({ ...prev, [item.id]: String(fillLevel) }));
+      hapticSuccess();
+      showSuccess(`Estimated ${Math.round(fillLevel * 100)}% full — tap save to confirm or adjust`);
+    } catch (e: any) {
+      showError(e?.message || 'Could not estimate fill level.');
+    } finally {
+      setBottleLevelBusy(false);
+    }
+  };
+
 const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
     setHistFor(item); setHistLoading(true);
@@ -3213,6 +3292,7 @@ const openHistory = throttleAction(async (item: Item) => {
             setLocalQty={setLocalQty}
             inputRefs={inputRefs}
             setFocusedInputId={setFocusedInputId}
+            setLastTouchedItemId={setLastTouchedItemId}
             setMenuFor={setMenuFor}
             openEditItem={openEditItem}
             openAdjustment={openAdjustment}
@@ -3306,6 +3386,7 @@ const openHistory = throttleAction(async (item: Item) => {
             dim: !voiceAvailable,
           },
           { icon: '⚡', label: 'Scale', onPress: () => nav.navigate('ScaleSettings' as never) },
+          { icon: '🤖', label: 'AI Count', onPress: openPhotoCountSheet, dim: bottleLevelBusy },
         ].map(btn => (
           <TouchableOpacity
             key={btn.label}
@@ -3318,6 +3399,29 @@ const openHistory = throttleAction(async (item: Item) => {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* AI photo count — choose between discrete counting and bottle fill estimate */}
+      <Modal visible={photoCountSheetOpen} animationType="fade" transparent onRequestClose={() => setPhotoCountSheetOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '100%', maxWidth: 420, padding: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8 }} numberOfLines={1}>
+              AI photo count{resolvePhotoCountTarget() ? ` — ${resolvePhotoCountTarget()!.name}` : ''}
+            </Text>
+
+            <TouchableOpacity onPress={handleCountItemsOnShelf} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#FFF8E1', marginBottom: 8 }}>
+              <Text style={{ fontWeight: '800', color: '#9A3412' }}>📷 Count items on shelf</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={handleEstimateBottleLevel} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F0FFF4', marginBottom: 8 }}>
+              <Text style={{ fontWeight: '800', color: '#14532D' }}>🍾 Estimate bottle fill level</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setPhotoCountSheetOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F3F4F6' }}>
+              <Text style={{ fontWeight: '700', color: '#111827', textAlign: 'center' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
