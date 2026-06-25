@@ -6,14 +6,41 @@ import {
   ScrollView,
   ActivityIndicator,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import LocalThemeGate from '../../theme/LocalThemeGate';
 import MaybeTText from '../../components/themed/MaybeTText';
 import IdentityBadge from '../../components/IdentityBadge';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 import { loadWeeklyPerformance, WeeklyPerformanceSummary } from '../../services/reports/weeklyPerformance';
 import { exportPdf } from '../../utils/exporters';
+
+/**
+ * Honest, plain-language explanations for missing data — derived directly from
+ * the summary fields rather than the generic assessDataQuality() flags, since
+ * those don't distinguish "zero variance from a real comparison" from "no
+ * comparison was possible at all" (the exact conflation this report must avoid).
+ */
+function buildHonestFlags(s: WeeklyPerformanceSummary): string[] {
+  const flags: string[] = [];
+  if (s.sales.totalNetSales == null) {
+    flags.push('Sales data not available — connect a POS to see GP calculations.');
+  }
+  if (s.spend.totalSpend == null) {
+    flags.push('No invoices this week — upload supplier invoices to track spend.');
+  }
+  if (s.stock.areasCompleted === 0) {
+    flags.push('No stocktake completed this week.');
+  }
+  if (s.stock.totalStocktakesCompleted < 2) {
+    flags.push('Variance requires two completed stocktakes to compare.');
+  }
+  if (!flags.length) {
+    flags.push('Data looks good — this report is based on complete, recent information.');
+  }
+  return flags;
+}
 
 const dlog = (...a: any[]) => {
   if (__DEV__) console.log('[TallyUp Reports] WeeklyPerformance', ...a);
@@ -21,6 +48,8 @@ const dlog = (...a: any[]) => {
 
 export default function LastCycleSummaryScreen() {
   const venueId = useVenueId();
+  const c = useColours();
+  const { showError } = useToast();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<WeeklyPerformanceSummary | null>(null);
 
@@ -35,7 +64,7 @@ export default function LastCycleSummaryScreen() {
       dlog({ venueId, ...res.stock });
       setSummary(res);
     } catch (e: any) {
-      Alert.alert('Could not load weekly performance', e?.message || 'Unknown error');
+      showError(`Could not load weekly performance${e?.message ? ': ' + e.message : ''}`);
     } finally {
       setLoading(false);
     }
@@ -53,13 +82,10 @@ export default function LastCycleSummaryScreen() {
       const out = await exportPdf(title, html);
       dlog('Weekly performance PDF', out);
       if (!out.ok && out.reason === 'sharing_unavailable') {
-        Alert.alert(
-          'PDF generated',
-          'Sharing is unavailable on this device, but the PDF was written to storage.',
-        );
+        showError('PDF generated — sharing is unavailable on this device, but the PDF was written to storage.');
       }
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message || 'Could not export report');
+      showError(`Export failed${e?.message ? ': ' + e.message : ''}`);
     }
   };
 
@@ -190,6 +216,16 @@ export default function LastCycleSummaryScreen() {
                       : undefined
                   }
                 />
+                {s.stock.lastCompletedAt && (
+                  <StatLine
+                    label="Last completed"
+                    value={s.stock.lastCompletedAt.toLocaleDateString('en-NZ', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  />
+                )}
                 <HintText>
                   Aim for all areas completed weekly to keep variance and GP
                   honest.
@@ -229,11 +265,11 @@ export default function LastCycleSummaryScreen() {
 
               {/* Data quality / honesty */}
               <SectionCard title="Data quality (how honest is this report?)">
-                {s.flags.map((f, i) => (
+                {buildHonestFlags(s).map((f, i) => (
                   <Text
                     key={i}
                     style={{
-                      color: '#E5E7EB',
+                      color: c.textSecondary,
                       marginBottom: 4,
                       fontSize: 13,
                     }}>
@@ -463,9 +499,10 @@ function buildWeeklyPerformanceHtml(s: WeeklyPerformanceSummary) {
       ? '$' + s.variance.totalShrinkValue.toFixed(2)
       : 'None / not recorded';
 
+  const honestFlags = buildHonestFlags(s);
   const flagsHtml =
-    s.flags && s.flags.length
-      ? '<ul>' + s.flags.map((f) => `<li>${escapeHtml(f)}</li>`).join('') + '</ul>'
+    honestFlags.length
+      ? '<ul>' + honestFlags.map((f) => `<li>${escapeHtml(f)}</li>`).join('') + '</ul>'
       : '<p>No issues detected.</p>';
 
   return `

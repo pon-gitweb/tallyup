@@ -148,7 +148,8 @@ export default function StockHoldingScreen() {
           );
           itemSnap.forEach(itemDoc => {
             const item = itemDoc.data() as any;
-            if (typeof item.lastCount !== 'number' || item.lastCount <= 0) return;
+            // Zero is a valid count — only skip items never counted at all (no lastCountAt).
+            if (typeof item.lastCount !== 'number' || item.lastCountAt == null) return;
             const nameRaw = (item.name ?? '').trim();
             if (!nameRaw) return;
             const key = nameRaw.toLowerCase();
@@ -349,6 +350,9 @@ export default function StockHoldingScreen() {
     );
   }
 
+  const allCountedZero = allRows.length > 0 && allRows.every(r => r.count === 0);
+  const someMissingCostPrice = allRows.some(r => r.costPrice == null && r.count > 0);
+
   return (
     <SafeAreaView style={s.safe}>
       {modal}
@@ -366,6 +370,24 @@ export default function StockHoldingScreen() {
           <Text style={s.sortBtnText}>{sortAZ ? 'A–Z ✓' : 'A–Z'}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* All-items-zero note */}
+      {allCountedZero && (
+        <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: c.amber + '18', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: c.amber }}>
+          <Text style={{ fontSize: 12, color: c.textSecondary }}>
+            All items counted as zero — either stock was empty at count time, or items weren't entered before submitting.
+          </Text>
+        </View>
+      )}
+
+      {/* Missing cost price note */}
+      {someMissingCostPrice && (
+        <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: c.amber + '18', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: c.amber }}>
+          <Text style={{ fontSize: 12, color: c.textSecondary }}>
+            Some items are missing a cost price — add prices in Products to see stock value.
+          </Text>
+        </View>
+      )}
 
       {/* Prior-cycle note */}
       {showingPriorCycle && (

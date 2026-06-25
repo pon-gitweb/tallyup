@@ -133,18 +133,21 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           const confirmedCountAtMs = toMs(d.confirmedCountAt);
           const name = d.name || itemDoc.id;
 
-          // Count data gate — survives reset (lastCount is restored from confirmedCount after reset)
-          if ((lastCount != null && lastCount > 0) || (confirmedCount != null && confirmedCount > 0)) {
+          // Count data gate — survives reset (lastCount is restored from confirmedCount after reset).
+          // Zero is a valid count: gate on whether the item was ever counted (timestamp set),
+          // not on the value being truthy/positive.
+          if (lastCountAtMs != null || confirmedCountAtMs != null) {
             hasCountData = true;
           }
-          if (confirmedCount != null && confirmedCount > 0) hasPrevCycleData = true;
+          // A previous cycle exists if confirmedCountAt is set — even if the value was zero.
+          if (confirmedCountAtMs != null) hasPrevCycleData = true;
 
           // Variance only for items counted in the current cycle (lastCountAt newer than confirmedCountAt)
           const countedInCycle =
             lastCountAtMs != null &&
             (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
 
-          if (!countedInCycle || lastCount == null) continue;
+          if (!countedInCycle || lastCount === null || lastCount === undefined) continue;
 
           areaItemsCounted++;
           totalItemsCounted++;

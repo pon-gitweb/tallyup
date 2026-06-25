@@ -4,6 +4,8 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
   where,
 } from 'firebase/firestore';
@@ -20,6 +22,8 @@ export type WeeklyPerformanceSummary = {
     areasTotal: number;
     areasCompleted: number;
     areasInProgress: number;
+    lastCompletedAt: Date | null;
+    totalStocktakesCompleted: number;
   };
   // Sales over the window
   sales: {
@@ -72,6 +76,8 @@ export async function loadWeeklyPerformance(
       areasTotal: 0,
       areasCompleted: 0,
       areasInProgress: 0,
+      lastCompletedAt: null,
+      totalStocktakesCompleted: 0,
     },
     sales: {
       docs: 0,
@@ -95,43 +101,55 @@ export async function loadWeeklyPerformance(
     flags: [],
   };
 
-  // 1) Venue name
+  // 1) Venue name + total stocktakes completed (one read, two fields)
   try {
     const venSnap = await getDoc(doc(db, 'venues', venueId));
     if (venSnap.exists()) {
       const vd: any = venSnap.data() || {};
       result.venueName = vd.name || vd.venueName || null;
+      result.stock.totalStocktakesCompleted =
+        typeof vd.totalStocktakesCompleted === 'number' ? vd.totalStocktakesCompleted : 0;
     }
   } catch (e: any) {
     // Name is nice-to-have; we report issues through data quality later.
   }
 
-  // 2) Stocktake coverage: departments + areas
+  // 2) Stocktake coverage: departments + cycle history.
+  // Live area docs (completedAt) are cleared on reset, so reading them directly
+  // would show 0/N completed even right after a full stocktake. Instead, read each
+  // department's most recent entry in its `cycles` history subcollection — that
+  // record survives reset and tells us what was actually completed, and when.
   try {
     const deptCol = collection(db, 'venues', venueId, 'departments');
     const deptSnap = await getDocs(deptCol);
     let areasTotal = 0;
     let areasCompleted = 0;
-    let areasInProgress = 0;
+    // areasInProgress can't be derived from cycle history (it's a transient,
+    // in-the-moment state) — left at 0 now that we no longer read live area docs.
+    const areasInProgress = 0;
+    let lastCompletedAt: Date | null = null;
 
     for (const d of deptSnap.docs) {
       const deptId = d.id;
-      const areasCol = collection(
-        db,
-        'venues',
-        venueId,
-        'departments',
-        deptId,
-        'areas',
+      // Read the most recent completed cycle for this department
+      const cyclesSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'departments', deptId, 'cycles'),
+          orderBy('completedAt', 'desc'),
+          limit(1),
+        ),
       );
-      const areasSnap = await getDocs(areasCol);
-      areasTotal += areasSnap.size;
-      for (const a of areasSnap.docs) {
-        const ad: any = a.data() || {};
-        const started = !!ad.startedAt;
-        const completed = !!ad.completedAt;
-        if (completed) areasCompleted += 1;
-        else if (started) areasInProgress += 1;
+      if (cyclesSnap.docs.length > 0) {
+        const lastCycle = cyclesSnap.docs[0].data() as any;
+        const completedAt = lastCycle.completedAt?.toDate?.() || null;
+        if (completedAt && (!lastCompletedAt || completedAt > lastCompletedAt)) {
+          lastCompletedAt = completedAt;
+        }
+        // Only count as completed if within the 7-day window
+        if (completedAt && completedAt >= from) {
+          areasCompleted += lastCycle.areaCount || 1;
+          areasTotal += lastCycle.areaCount || 1;
+        }
       }
     }
 
@@ -139,6 +157,7 @@ export async function loadWeeklyPerformance(
     result.stock.areasTotal = areasTotal;
     result.stock.areasCompleted = areasCompleted;
     result.stock.areasInProgress = areasInProgress;
+    result.stock.lastCompletedAt = lastCompletedAt;
   } catch (e: any) {
     // If this fails, stock coverage stays zero; dataQuality will call that out.
   }
