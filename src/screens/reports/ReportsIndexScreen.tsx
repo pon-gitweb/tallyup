@@ -1760,12 +1760,12 @@ function makeStyles(c: any) {
     borderColor: c.border,
   },
   navTileText: {
-    color: c.border,
+    color: c.text,
     fontSize: 15,
     fontWeight: '500',
   },
   navTileChev: {
-    color: c.text,
+    color: c.slateMid,
     fontSize: 20,
     fontWeight: '300',
   },
