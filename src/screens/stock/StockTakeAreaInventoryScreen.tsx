@@ -2075,6 +2075,9 @@ try {
         console.warn('[stocktake] dept cycle write failed', e);
       }
 
+      // Every department completion counts as a completed stocktake
+      try { await incrementFullStocktakeCompleted(venueId!); } catch {}
+
       // Write rich cycle snapshot for reports — 3 attempts with exponential backoff
       (async () => {
         let snapshotWritten = false;
@@ -2147,8 +2150,13 @@ try {
           console.warn('[stocktake] venue cycle write failed', e);
         }
 
-        // Increment venue-wide cycle counter once all depts are aligned
-        try { await incrementFullStocktakeCompleted(venueId!); } catch {}
+        // Venue-wide completion — track separately for future full-venue report.
+        // (totalStocktakesCompleted now increments unconditionally per department, above.)
+        try {
+          await updateDoc(doc(db, 'venues', venueId!), {
+            lastFullVenueStocktakeAt: serverTimestamp(),
+          });
+        } catch {}
       }
 
       const counted = items.filter(i => i.lastCountAt);

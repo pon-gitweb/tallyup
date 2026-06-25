@@ -254,6 +254,10 @@ export async function buildSuggestedOrdersInMemory(
         const v: any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
         if (!pid) return;
+        // Skip items never counted — lastCount=null means unknown, not zero.
+        // Only items with lastCountAt set have been genuinely counted; items
+        // counted as 0 still appear (they're genuinely empty) and remain included.
+        if (!v?.lastCountAt) return;
         const qty = n(v?.lastCount, 0);
         onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
       });
