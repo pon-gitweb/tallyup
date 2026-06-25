@@ -148,13 +148,14 @@ export default function NewOrderScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={[styles.content, { paddingBottom: footerHeight + 12 }]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           <Text style={styles.title}>New Order</Text>
 
           {/* Supplier selector */}
           <View style={styles.card}>
             <Text style={styles.label}>Supplier</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
               {suppliers.map(s => {
                 const active = s.id === supplierId;
                 return (

@@ -199,16 +199,16 @@ export default function OrderDetailScreen() {
       const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
 
       // If both exist and differ → hard block
-      // TODO: replace with branded modal when order detail is redesigned
+      // Fires while the Receive Options modal is still open — use the in-app
+      // confirm modal, not a native Alert (which renders behind the open modal on iOS).
       if (orderPo && parsedPo && orderPo !== parsedPo) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [
-            { text:'Cancel', style:'cancel' },
-            { text:'Manual Receive', onPress:()=>setManualOpen(true) },
-          ]
-        );
+        confirm({
+          title: 'PO mismatch',
+          message: `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          confirmLabel: 'Manual Receive',
+          cancelLabel: 'Cancel',
+          onConfirm: () => setManualOpen(true),
+        });
         return;
       }
 
@@ -284,16 +284,16 @@ export default function OrderDetailScreen() {
 
       const orderPo = String(orderMeta?.poNumber ?? '').trim();
       const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-      // TODO: replace with branded modal when order detail is redesigned
+      // Fires while the Receive Options modal is still open — use the in-app
+      // confirm modal, not a native Alert (which renders behind the open modal on iOS).
       if (orderPo && parsedPo && orderPo !== parsedPo) {
-        Alert.alert(
-          'PO mismatch',
-          `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-          [
-            { text:'Cancel', style:'cancel' },
-            { text:'Manual Receive', onPress:()=>setManualOpen(true) },
-          ]
-        );
+        confirm({
+          title: 'PO mismatch',
+          message: `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+          confirmLabel: 'Manual Receive',
+          cancelLabel: 'Cancel',
+          onConfirm: () => setManualOpen(true),
+        });
         return;
       }
 
@@ -346,16 +346,16 @@ export default function OrderDetailScreen() {
 
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(parsed?.invoice?.poNumber ?? '').trim();
-        // TODO: replace with branded modal when order detail is redesigned
+        // Fires while the Receive Options modal is still open — use the in-app
+        // confirm modal, not a native Alert (which renders behind the open modal on iOS).
         if (orderPo && parsedPo && orderPo !== parsedPo) {
-          Alert.alert(
-            'PO mismatch',
-            `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-            [
-              { text:'Cancel', style:'cancel' },
-              { text:'Manual Receive', onPress:()=>setManualOpen(true) },
-            ]
-          );
+          confirm({
+            title: 'PO mismatch',
+            message: `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+            confirmLabel: 'Manual Receive',
+            cancelLabel: 'Cancel',
+            onConfirm: () => setManualOpen(true),
+          });
           return;
         }
 
@@ -389,16 +389,16 @@ export default function OrderDetailScreen() {
         const orderPo = String(orderMeta?.poNumber ?? '').trim();
         const parsedPo = String(review?.invoice?.poNumber ?? '').trim();
 
-        // TODO: replace with branded modal when order detail is redesigned
+        // Fires while the Receive Options modal is still open — use the in-app
+        // confirm modal, not a native Alert (which renders behind the open modal on iOS).
         if (orderPo && parsedPo && orderPo !== parsedPo) {
-          Alert.alert(
-            'PO mismatch',
-            `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
-            [
-              { text:'Cancel', style:'cancel' },
-              { text:'Manual Receive', onPress:()=>setManualOpen(true) },
-            ]
-          );
+          confirm({
+            title: 'PO mismatch',
+            message: `Invoice PO (${parsedPo || '—'}) does not match order PO (${orderPo}).\nUse Manual Receive to proceed.`,
+            confirmLabel: 'Manual Receive',
+            cancelLabel: 'Cancel',
+            onConfirm: () => setManualOpen(true),
+          });
           return;
         }
 

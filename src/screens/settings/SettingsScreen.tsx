@@ -460,6 +460,7 @@ export default function SettingsScreen() {
         style={styles.scrollRoot}
         contentContainerStyle={[styles.wrap, { paddingBottom: 40 + (insets?.bottom ?? 0) }]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* Header with badge */}
         <View style={styles.headerRow}>

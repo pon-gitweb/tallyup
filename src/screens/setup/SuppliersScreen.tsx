@@ -663,6 +663,7 @@ export default function SuppliersScreen() {
             style={{ flex: 1 }}
             contentContainerStyle={styles.formScroll}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
             {/* Fast add / capture portal */}
             <View style={styles.captureCard}>

@@ -447,7 +447,11 @@ export default function EditProductScreen() {
       style={{ flex: 1 }}
       behavior={Platform.select({ ios:'padding', android: undefined })}
     >
-      <ScrollView contentContainerStyle={[styles.wrap, { backgroundColor: colours.background }]}>
+      <ScrollView
+        contentContainerStyle={[styles.wrap, { backgroundColor: colours.background }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         <Text style={[styles.title, { color: colours.text }]}>{editingId ? 'Edit Product' : 'Add Product'}</Text>
 
         {/* ---- Global Catalog Autofill (reads-only; applies a patch into the form) ---- */}
@@ -834,7 +838,7 @@ export default function EditProductScreen() {
             ) : (
               <>
                 <Text style={[styles.modalTitle, { color: colours.text }]}>Select Supplier</Text>
-                <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+                <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
                   {suppliers.length === 0 && (
                     <Text style={{ color: colours.textSecondary, fontSize: 13, paddingVertical: 8 }}>
                       No suppliers yet
