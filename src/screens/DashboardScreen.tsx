@@ -173,14 +173,17 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
-    getDoc(doc(db, 'venues', venueId)).then(snap => {
-      if (snap.exists()) {
+    const unsubVenue = onSnapshot(
+      doc(db, 'venues', venueId),
+      (snap) => {
+        if (!snap.exists()) return;
         const data = snap.data() as any;
         setStocktakeCount(data?.totalStocktakesCompleted || 0);
         setOnboardingRoad(data?.onboardingRoad ?? null);
         setOnboardingDismissed(!!(data?.onboardingDismissedAt));
-      }
-    }).catch(() => {});
+      },
+      () => {} // silent error — counts stay at last known value
+    );
     getDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current')).then(latestSnap => {
       if (latestSnap.exists()) {
         const snapData = latestSnap.data() as any;
@@ -195,6 +198,7 @@ export default function DashboardScreen() {
         else if (ts?._seconds) setSnapshotUpdatedAt(new Date(ts._seconds * 1000));
       }
     }).catch(() => {});
+    return () => unsubVenue();
   }, [venueId]);
 
   // ── Setup wizard (show once for new users with 0 stocktakes) ────────────────

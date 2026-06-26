@@ -2559,11 +2559,7 @@ try {
   };
 
   const openPhotoCountSheet = () => {
-    if (!resolvePhotoCountTarget()) {
-      showInfo("Tap a product's count field first, then use AI Count.");
-      return;
-    }
-    setPhotoCountSheetOpen(true);
+    setPhotoCountSheetOpen(true); // Always open — sheet handles no-target case
   };
 
   const handleCountItemsOnShelf = () => {
@@ -3279,6 +3275,7 @@ const openHistory = throttleAction(async (item: Item) => {
         data={filtered}
         keyExtractor={(item) => item.id}
         style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
         renderItem={({ item }) => (
           <Row
             item={item}
@@ -3370,7 +3367,7 @@ const openHistory = throttleAction(async (item: Item) => {
       <View style={{
         flexDirection: 'row', backgroundColor: '#f5f3ee',
         borderTopWidth: 1, borderTopColor: '#e5e1d8',
-        paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 8 : 12,
+        paddingTop: 8, paddingBottom: (Platform.OS === 'ios' ? 8 : 12) + insets.bottom,
         paddingHorizontal: 4,
       }}>
         {[
@@ -3408,13 +3405,21 @@ const openHistory = throttleAction(async (item: Item) => {
               AI photo count{resolvePhotoCountTarget() ? ` — ${resolvePhotoCountTarget()!.name}` : ''}
             </Text>
 
-            <TouchableOpacity onPress={handleCountItemsOnShelf} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#FFF8E1', marginBottom: 8 }}>
-              <Text style={{ fontWeight: '800', color: '#9A3412' }}>📷 Count items on shelf</Text>
-            </TouchableOpacity>
+            {resolvePhotoCountTarget() ? (
+              <>
+                <TouchableOpacity onPress={handleCountItemsOnShelf} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#FFF8E1', marginBottom: 8 }}>
+                  <Text style={{ fontWeight: '800', color: '#9A3412' }}>📷 Count items on shelf</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity onPress={handleEstimateBottleLevel} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F0FFF4', marginBottom: 8 }}>
-              <Text style={{ fontWeight: '800', color: '#14532D' }}>🍾 Estimate bottle fill level</Text>
-            </TouchableOpacity>
+                <TouchableOpacity onPress={handleEstimateBottleLevel} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F0FFF4', marginBottom: 8 }}>
+                  <Text style={{ fontWeight: '800', color: '#14532D' }}>🍾 Estimate bottle fill level</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={{ color: colours.slateMid, textAlign: 'center', paddingVertical: 10, marginBottom: 8 }}>
+                Tap a product's count field first, then tap AI Count again.
+              </Text>
+            )}
 
             <TouchableOpacity onPress={() => setPhotoCountSheetOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F3F4F6' }}>
               <Text style={{ fontWeight: '700', color: '#111827', textAlign: 'center' }}>Cancel</Text>
