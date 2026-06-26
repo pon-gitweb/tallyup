@@ -111,6 +111,7 @@ type RowProps = {
   inputRefs: React.MutableRefObject<Record<string, TextInput | null>>;
   setFocusedInputId: React.Dispatch<React.SetStateAction<string | null>>;
   setLastTouchedItemId: React.Dispatch<React.SetStateAction<string | null>>;
+  onEstimateBottleLevel: (item: Item) => void;
   setMenuFor: (it: Item | null) => void;
   openEditItem: (it: Item, focusPar?: boolean) => void;
   openAdjustment: (it: Item) => void;
@@ -136,6 +137,7 @@ const Row = React.memo(function Row({
   inputRefs,
   setFocusedInputId,
   setLastTouchedItemId,
+  onEstimateBottleLevel,
   setMenuFor,
   openEditItem,
   openAdjustment,
@@ -276,6 +278,10 @@ const Row = React.memo(function Row({
                 maxLength={6}
                 onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); }}
                 onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
+                onLongPress={() => {
+                  Keyboard.dismiss();
+                  setTimeout(() => onEstimateBottleLevel(item), 150);
+                }}
                 style={{ width: 52, paddingVertical: 6, paddingHorizontal: 4, borderWidth: 2, borderColor: (localQty[item.id] ?? '').trim() ? '#4CAF50' : '#d1d5db', borderRadius: 8, height: 36, backgroundColor: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' }}
               />
               {showSteppers && (
@@ -284,6 +290,7 @@ const Row = React.memo(function Row({
                 </TouchableOpacity>
               )}
             </View>
+            <Text style={{ fontSize: 9, color: colours.slateMid, textAlign: 'right' }}>hold for AI</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Text style={{ fontSize: 10, color: '#64748b', width: 34, textAlign: 'right' }}>Loose</Text>
               {effectiveSteppers && (
@@ -343,6 +350,10 @@ const Row = React.memo(function Row({
               onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); }}
               onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
               onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
+              onLongPress={() => {
+                Keyboard.dismiss();
+                setTimeout(() => onEstimateBottleLevel(item), 150);
+              }}
               editable={!isLocked}
               style={{
                 width: 80,
@@ -365,6 +376,7 @@ const Row = React.memo(function Row({
                   : 'cases'}
               </Text>
             )}
+            <Text style={{ fontSize: 9, color: colours.slateMid, marginTop: 2 }}>hold for AI</Text>
           </View>
 
           {effectiveSteppers && (
@@ -2569,10 +2581,7 @@ try {
     usePhotoFor(item);
   };
 
-  const handleEstimateBottleLevel = async () => {
-    setPhotoCountSheetOpen(false);
-    const item = resolvePhotoCountTarget();
-    if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
+  const handleEstimateBottleLevelForItem = async (item: Item) => {
     if (bottleLevelBusy) return;
     setBottleLevelBusy(true);
     try {
@@ -2613,6 +2622,13 @@ try {
     } finally {
       setBottleLevelBusy(false);
     }
+  };
+
+  const handleEstimateBottleLevel = async () => {
+    setPhotoCountSheetOpen(false);
+    const item = resolvePhotoCountTarget();
+    if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
+    await handleEstimateBottleLevelForItem(item);
   };
 
 const openHistory = throttleAction(async (item: Item) => {
@@ -3290,6 +3306,7 @@ const openHistory = throttleAction(async (item: Item) => {
             inputRefs={inputRefs}
             setFocusedInputId={setFocusedInputId}
             setLastTouchedItemId={setLastTouchedItemId}
+            onEstimateBottleLevel={handleEstimateBottleLevelForItem}
             setMenuFor={setMenuFor}
             openEditItem={openEditItem}
             openAdjustment={openAdjustment}
