@@ -957,6 +957,33 @@ async function processTaxInvoice(
     },
   );
 
+  // ── Duplicate invoice check ─────────────────────────────────────────────────
+  if (payload.invoiceNumber) {
+    try {
+      const existingSnap = await db.collection(`venues/${venueId}/invoices`)
+        .where('invoiceNumber', '==', payload.invoiceNumber)
+        .where('supplierId', '==', resolvedSupplierId || '')
+        .limit(1)
+        .get();
+      if (!existingSnap.empty) {
+        const existing = existingSnap.docs[0].data() as any;
+        const existingDate = existing.invoiceDate || existing.date?.toDate?.()?.toISOString?.()?.slice(0, 10) || 'unknown date';
+        return {
+          ok: false,
+          duplicate: true,
+          duplicateInvoiceId: existingSnap.docs[0].id,
+          existingDate,
+          message: `This invoice (${payload.invoiceNumber}) was already processed on ${existingDate}. If this is a new invoice, check the invoice number.`,
+          supplierName: resolvedSupplierName || payload.supplierName,
+          invoiceNumber: payload.invoiceNumber,
+        };
+      }
+    } catch (e: any) {
+      console.log('[ocrInvoicePhoto] duplicate check error — proceeding', e?.message);
+      // Non-fatal — proceed with processing if check fails
+    }
+  }
+
   // Write invoice to venues/{venueId}/invoices with resolved supplierId
   let invoiceDocId: string | undefined;
   try {
@@ -1172,6 +1199,115 @@ async function processTaxInvoice(
   } catch (e: any) {
     console.log("[ocrInvoicePhoto] delivery matching error", e?.message);
     payload.message = "Invoice processed.";
+  }
+
+  // ── PO cross-reference against open orders ──────────────────────────────────
+  // Gated on !payload.matchedOrderId too, not just !payload.matched — findAndLinkOrder
+  // (above) may have already matched this invoice's PO/reference number to an order
+  // and flipped its status to "invoiced". Without this check, that already-matched
+  // invoice would still fall through to the retro/informal-order branch below and
+  // create a spurious duplicate order for an invoice that's already correctly linked.
+  if (!payload.matched && !payload.matchedOrderId) {
+    try {
+      let matchedOrderId: string | null = null;
+      let matchConfidence: 'po-exact' | 'supplier-fuzzy' | 'none' = 'none';
+
+      // Step 1: Try exact PO number match
+      if (payload.purchaseOrderNumber) {
+        const poSnap = await db.collection(`venues/${venueId}/orders`)
+          .where('poNumber', '==', payload.purchaseOrderNumber)
+          .where('status', 'in', ['submitted', 'placed', 'dispatched'])
+          .limit(1)
+          .get();
+        if (!poSnap.empty) {
+          matchedOrderId = poSnap.docs[0].id;
+          matchConfidence = 'po-exact';
+        }
+      }
+
+      // Step 2: Fuzzy supplier + recent date match (within 14 days)
+      if (!matchedOrderId && resolvedSupplierId) {
+        const supplierOrdersSnap = await db.collection(`venues/${venueId}/orders`)
+          .where('supplierId', '==', resolvedSupplierId)
+          .where('status', 'in', ['submitted', 'placed', 'dispatched'])
+          .orderBy('createdAt', 'desc')
+          .limit(5)
+          .get();
+        if (!supplierOrdersSnap.empty && payload.invoiceDate) {
+          const invoiceMs = new Date(payload.invoiceDate).getTime();
+          for (const orderDoc of supplierOrdersSnap.docs) {
+            const orderData = orderDoc.data() as any;
+            const orderMs = orderData.createdAt?.toMillis?.() || 0;
+            if (orderMs && Math.abs(invoiceMs - orderMs) <= 14 * 86400000) {
+              matchedOrderId = orderDoc.id;
+              matchConfidence = 'supplier-fuzzy';
+              break;
+            }
+          }
+        }
+      }
+
+      if (matchedOrderId) {
+        // Link invoice to the matched order
+        payload.matchedOrderId = matchedOrderId;
+        payload.matchConfidence = matchConfidence;
+        payload.matched = true;
+        payload.message = matchConfidence === 'po-exact'
+          ? 'Invoice matched to an existing order by PO number.'
+          : 'Invoice matched to a recent order from this supplier.';
+        // Update the order status to received
+        await db.doc(`venues/${venueId}/orders/${matchedOrderId}`).update({
+          status: 'received',
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          invoiceId: invoiceDocId || null,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        // No match found — create a retrospective order record
+        // This handles: informal phone orders, rep walk-ins, new suppliers, any order placed outside Hosti
+        const retroOrder = await db.collection(`venues/${venueId}/orders`).add({
+          supplierId: resolvedSupplierId || null,
+          supplierName: resolvedSupplierName || payload.supplierName || null,
+          status: 'received',
+          source: 'invoice-scan',
+          informal: true,  // Flag — this order was never placed in Hosti
+          poNumber: payload.purchaseOrderNumber || null,
+          invoiceNumber: payload.invoiceNumber || null,
+          invoiceId: invoiceDocId || null,
+          totalAmount: payload.totalAmount || null,
+          lines: lines.map((l: ParsedLine) => ({
+            name: l.name,
+            qty: l.qty,
+            unitPrice: l.unitPrice ?? null,
+            unit: l.unit || null,
+          })),
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          venueId,
+          notes: 'Created automatically from invoice scan — order was placed outside Hosti.',
+        });
+        payload.matchedOrderId = retroOrder.id;
+        payload.matched = true;
+        payload.retroOrder = true;
+        payload.message = payload.message?.includes('No matching delivery')
+          ? 'Invoice processed. A delivery record has been created — this order was placed outside Hosti.'
+          : payload.message;
+      }
+    } catch (e: any) {
+      console.log("[ocrInvoicePhoto] PO match / retro order error", e?.message);
+      // Non-fatal — invoice processing continues regardless
+    }
+  }
+
+  // Backfill the invoice doc with whatever matchedOrderId was resolved above — the
+  // doc was already written earlier (before this matching ran), so its matchedOrderId
+  // field would otherwise stay stale/null for matches found here.
+  if (payload.matchedOrderId && invoiceDocId) {
+    await db.doc(`venues/${venueId}/invoices/${invoiceDocId}`).update({
+      matchedOrderId: payload.matchedOrderId,
+      informal: payload.retroOrder || false,
+    }).catch(() => {});  // non-fatal
   }
 
   console.log("[ocrInvoicePhoto]", {
