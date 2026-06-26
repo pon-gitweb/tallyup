@@ -4,9 +4,14 @@ import { View, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../common/Toast';
+import { useConfirmModal } from '../common/useConfirmModal';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 import { apiBase } from '../../services/apiBase';
+import { db } from '../../services/firebase';
 
 type Props = {
   // Caller will receive normalized lines to pipe into your existing mapping UI
@@ -31,9 +36,13 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
   const venueId = useVenueId();
   const venueType = useVenueType();
   const navigation = useNavigation<any>();
+  const colours = useColours();
+  const { showSuccess, showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
   const [docTypeHint, setDocTypeHint] = useState('auto');
   const [lastLocalUri, setLastLocalUri] = useState<string | null>(null);
+  const [addingAllStubs, setAddingAllStubs] = useState(false);
 
   // Support request state — shown after invoice scan detects repeated price failures
   const [pendingSupportRequest, setPendingSupportRequest] = useState<{
@@ -301,6 +310,57 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
     }
   }
 
+  // ── Unmatched packing-slip lines — add to products ──────────────────────
+
+  function addUnmatchedLineToProducts(line: any) {
+    navigation.navigate('EditProductScreen', {
+      productId: null,
+      product: {
+        name: line.name || line.productName || '',
+        supplierName: packingSlipResult?.supplierName || null,
+        supplierId: packingSlipResult?.supplierId || null,
+        costPrice: line.unitCost > 0 ? line.unitCost : (line.unitPrice > 0 ? line.unitPrice : null),
+        unit: line.unit || null,
+      },
+    });
+  }
+
+  function addAllUnmatchedAsStubs() {
+    const lines = packingSlipResult?.unmatchedLines || [];
+    if (!venueId || !lines.length) return;
+    confirm({
+      title: 'Add all as products?',
+      message: `This adds ${lines.length} product${lines.length > 1 ? 's' : ''} with just a name and supplier. You can fill in unit, pack size and GST later in Products.`,
+      confirmLabel: 'Add all',
+      cancelLabel: 'Cancel',
+      onConfirm: async () => {
+        setAddingAllStubs(true);
+        try {
+          for (const line of lines) {
+            await addDoc(collection(db, 'venues', venueId, 'products'), {
+              name: line.name || line.productName || '',
+              supplierName: packingSlipResult?.supplierName || 'Unassigned',
+              supplierId: packingSlipResult?.supplierId || null,
+              costPrice: line.unitCost > 0 ? line.unitCost : null,
+              unit: line.unit || null,
+              packSize: null,
+              gstPercent: null,
+              inductionSource: 'invoice-scan',
+              inductionStatus: 'pending',
+              createdAt: serverTimestamp(),
+            });
+          }
+          setPackingSlipResult((prev: any) => (prev ? { ...prev, unmatchedLines: [] } : prev));
+          showSuccess(`${lines.length} product${lines.length > 1 ? 's' : ''} added — tap Products to complete their details.`);
+        } catch (e: any) {
+          showError(e?.message || 'Could not add products.');
+        } finally {
+          setAddingAllStubs(false);
+        }
+      },
+    });
+  }
+
   // ── Result screens ──────────────────────────────────────────────────────
 
   if (lateInvoice) {
@@ -362,22 +422,57 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
   }
 
   if (packingSlipResult) {
+    const unmatchedLines = packingSlipResult.unmatchedLines || [];
     return (
       <View style={panelStyle}>
+        {modal}
         <Text style={{ fontWeight: '700', fontSize: 16 }}>📦 Packing slip scanned</Text>
         <Text style={{ opacity: 0.8, lineHeight: 19 }}>{packingSlipResult.message}</Text>
         <View style={{ backgroundColor: '#F2F2F7', borderRadius: 10, padding: 10, gap: 4 }}>
           <Text>Supplier: {packingSlipResult.supplierName || 'Unknown'}</Text>
           <Text>Lines processed: {packingSlipResult.linesProcessed ?? 0}</Text>
-          {packingSlipResult.unmatchedLines?.length > 0 && (
-            <Text style={{ color: '#B45309' }}>
-              {packingSlipResult.unmatchedLines.length} line(s) couldn't be matched to a product
-            </Text>
-          )}
           {packingSlipResult.provisionalCost != null && (
             <Text>Provisional cost: ${Number(packingSlipResult.provisionalCost).toFixed(2)}</Text>
           )}
         </View>
+
+        {unmatchedLines.length > 0 && (
+          <View style={{ backgroundColor: colours.cream, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: colours.border, gap: 8 }}>
+            <Text style={{ fontWeight: '700', color: colours.text }}>
+              {unmatchedLines.length} line{unmatchedLines.length > 1 ? 's' : ''} couldn't be matched to a product
+            </Text>
+
+            <TouchableOpacity
+              onPress={addAllUnmatchedAsStubs}
+              disabled={addingAllStubs}
+              style={{ backgroundColor: colours.deepBlue, borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}
+            >
+              {addingAllStubs
+                ? <ActivityIndicator color={colours.primaryText} size="small" />
+                : <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Add all {unmatchedLines.length} as products</Text>}
+            </TouchableOpacity>
+
+            {unmatchedLines.map((line: any, i: number) => {
+              const price = line.unitCost > 0 ? line.unitCost : (line.unitPrice > 0 ? line.unitPrice : null);
+              return (
+                <View key={i} style={{ backgroundColor: colours.surface, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: colours.border, gap: 4 }}>
+                  <Text style={{ fontWeight: '700', color: colours.text }}>{line.name || line.productName}</Text>
+                  <Text style={{ fontSize: 12, color: colours.textSecondary }}>
+                    Qty {line.qty}{line.unit ? ` ${line.unit}` : ''}
+                    {price != null ? ` · $${Number(price).toFixed(2)}` : ''}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => addUnmatchedLineToProducts(line)}
+                    style={{ backgroundColor: colours.deepBlue, borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginTop: 2 }}
+                  >
+                    <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Add to products</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         <TouchableOpacity
           onPress={resetResultScreens}
           style={{ backgroundColor: '#0A84FF', paddingVertical: 12, borderRadius: 10, alignItems: 'center' }}
