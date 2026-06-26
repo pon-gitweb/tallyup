@@ -578,7 +578,10 @@ export default function OrderDetailScreen() {
         <View>
           <Text style={S.title}>{orderMeta?.supplierName || 'Order'}</Text>
           <Text style={S.meta}>
-            {orderMeta?.status ? `Status: ${orderMeta.status}` : ''}{orderMeta?.poNumber ? ` • PO: ${orderMeta.poNumber}` : ''}
+            {orderMeta?.informal
+              ? `Received · Order placed outside Hosti${orderMeta?.poNumber ? ` · PO: ${orderMeta.poNumber}` : ''}`
+              : `${orderMeta?.status ? `Status: ${orderMeta.status}` : ''}${orderMeta?.poNumber ? ` · PO: ${orderMeta.poNumber}` : ''}`
+            }
           </Text>
         </View>
         {(() => {

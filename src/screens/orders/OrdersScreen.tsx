@@ -49,6 +49,7 @@ type OrderRow = {
   submitHoldUntil?: number | null;
   cutoffAt?: number | null;
   deptScope?: string[] | string | null;
+  informal?: boolean;
 };
 
 const S = StyleSheet.create({
@@ -254,6 +255,7 @@ export default function OrdersScreen(){
           submitHoldUntil: typeof d.submitHoldUntil === 'number' ? d.submitHoldUntil : (Number(d.submitHoldUntil)||null),
           cutoffAt: typeof d.cutoffAt === 'number' ? d.cutoffAt : (Number(d.cutoffAt)||null),
           deptScope: Array.isArray(d.deptScope) ? d.deptScope : (d.deptScope ?? null),
+          informal: d.informal === true,
         });
       });
       const ms=(x:any)=>x?.toMillis?.()??0;
@@ -323,7 +325,9 @@ export default function OrdersScreen(){
     if(item.linesCount!=null) bits.push(`${item.linesCount} line${item.linesCount===1?'':'s'}`);
     if(item.total!=null) bits.push(`$${item.total.toFixed(2)}`);
     const subtitle=bits.join(' • ');
-    const statusText = (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
+    const statusText = item.informal
+      ? 'Received · via invoice scan'
+      : (item.status==='received') ? 'received' : (item.displayStatus || item.status || '—');
     const isPendingApproval = (item.status || '').toLowerCase().includes('pending-approval');
 
     const isSubmitted=STATUS_GROUPS.submitted(item);
