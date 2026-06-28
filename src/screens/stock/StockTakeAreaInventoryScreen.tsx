@@ -2391,18 +2391,43 @@ try {
           );
         }));
 
-        // Stamp confirmedCount on all items for safe cycle reset
+        // Stamp confirmedCount on all items for safe cycle reset, and collect
+        // lastCountAt timestamps to compute active counting session segments
+        // (Hosti Health Phase 2 — labour efficiency tracking). Reuses this same
+        // read rather than fetching items twice.
+        let countSessionSegments: { startMs: number; endMs: number }[] = [];
+        let activeCountingMinutes = 0;
         try {
           const { getDocs: _getDocs, writeBatch: _writeBatch } = await import('firebase/firestore');
           const itemsSnap = await _getDocs(collection(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items'));
           const confirmBatch = _writeBatch(db);
+          const countTimestamps: number[] = [];
           itemsSnap.forEach(itemDoc => {
             const d = itemDoc.data();
             if (typeof d.lastCount === 'number') {
               confirmBatch.update(itemDoc.ref, { confirmedCount: d.lastCount, confirmedCountAt: serverTimestamp() });
             }
+            const ts = d.lastCountAt?.toMillis?.() || d.lastCountAt;
+            if (typeof ts === 'number' && ts > 0) countTimestamps.push(ts);
           });
           await confirmBatch.commit();
+
+          // Split into segments where gap > 5 minutes = new segment
+          countTimestamps.sort((a, b) => a - b);
+          const GAP_MS = 5 * 60 * 1000;
+          if (countTimestamps.length > 0) {
+            let segStart = countTimestamps[0];
+            let segEnd = countTimestamps[0];
+            for (let i = 1; i < countTimestamps.length; i++) {
+              if (countTimestamps[i] - countTimestamps[i - 1] > GAP_MS) {
+                countSessionSegments.push({ startMs: segStart, endMs: segEnd });
+                segStart = countTimestamps[i];
+              }
+              segEnd = countTimestamps[i];
+            }
+            countSessionSegments.push({ startMs: segStart, endMs: segEnd });
+          }
+          activeCountingMinutes = countSessionSegments.reduce((sum, s) => sum + (s.endMs - s.startMs) / 60000, 0);
         } catch {}
 
         // Clear the local draft after successful submit
@@ -2417,6 +2442,8 @@ try {
             editWindowClosesAt: Timestamp.fromMillis(Date.now() + (60 * 60 * 1000)),
             editWindowOpen: true,
             edits: [],
+            countSessionSegments,
+            activeCountingMinutes: Math.round(activeCountingMinutes),
           }
         );
         const finalized = await maybeFinalizeDepartment();

@@ -519,7 +519,7 @@ export default function DashboardScreen() {
 
         <OfflineBanner />
 
-        {/* ── Hosti Health card (Phase 1) ───────────────────────────────── */}
+        {/* ── Hosti Health card (Phase 1/2) ─────────────────────────────── */}
         {hostiHealthData && (
           <TouchableOpacity
             onPress={() => nav.navigate('ProfitInsights')}
@@ -537,9 +537,19 @@ export default function DashboardScreen() {
               <Text style={{ fontSize: 15, fontWeight: '800', color: colours.navy }}>🏥 Hosti Health</Text>
               {hostiHealthData.stage === 1 ? (
                 <Text style={{ fontSize: 16, color: colours.deepBlue }}>→</Text>
-              ) : (
+              ) : hostiHealthData.stage === 2 ? (
                 <View style={{ backgroundColor: colours.amber, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>Building</Text>
+                </View>
+              ) : (
+                <View style={{
+                  backgroundColor: hostiHealthData.label === 'Excellent' ? colours.success
+                    : hostiHealthData.label === 'Strong' ? colours.deepBlue
+                    : hostiHealthData.label === 'Developing' ? colours.amber
+                    : colours.error,
+                  borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2,
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>{hostiHealthData.label}</Text>
                 </View>
               )}
             </View>
@@ -561,7 +571,7 @@ export default function DashboardScreen() {
                   {hostiHealthData.completedSteps} of {hostiHealthData.totalSteps} steps complete
                 </Text>
               </>
-            ) : (
+            ) : hostiHealthData.stage === 2 ? (
               <>
                 <Text style={{ fontSize: 24, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
                   {hostiHealthData.scoreMin} – {hostiHealthData.scoreMax}
@@ -570,13 +580,29 @@ export default function DashboardScreen() {
                   Complete one more stocktake to{'\n'}unlock your confirmed score
                 </Text>
               </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 24, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
+                  {hostiHealthData.score} / 100
+                </Text>
+                <Text style={{ fontSize: 12, color: colours.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  {hostiHealthData.trend != null && hostiHealthData.trendDirection
+                    ? `${hostiHealthData.trendDirection === 'up' ? '↑' : hostiHealthData.trendDirection === 'down' ? '↓' : '→'} ${hostiHealthData.trend > 0 ? '+' : ''}${hostiHealthData.trend} this month`
+                    : 'Building confidence'}
+                  {hostiHealthData.estimatedImpact != null && hostiHealthData.estimatedImpact > 0
+                    ? `  ·  Est. $${hostiHealthData.estimatedImpact.toFixed(0)} rec.`
+                    : ''}
+                </Text>
+              </>
             )}
 
-            <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>View Profit Insights →</Text>
+            <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>
+              {hostiHealthData.stage === 3 ? 'View Performance →' : 'View Profit Insights →'}
+            </Text>
           </TouchableOpacity>
         )}
 
-        {/* ── KPI pills (Phase 1 — visual building state, no scores yet) ─── */}
+        {/* ── KPI pills — real dot counts once Stage 3 lands, else building ── */}
         {hostiHealthData && (
           <ScrollView
             horizontal
@@ -584,27 +610,38 @@ export default function DashboardScreen() {
             style={{ marginBottom: 12 }}
             contentContainerStyle={{ gap: 8 }}
           >
-            {['Stock', 'Labour', 'Inventory', 'Orders'].map(label => (
-              <TouchableOpacity
-                key={label}
-                onPress={() => nav.navigate('ProfitInsights')}
-                activeOpacity={0.75}
-                style={{
-                  width: 80,
-                  backgroundColor: colours.oat,
-                  borderRadius: 12,
-                  paddingVertical: 10,
-                  paddingHorizontal: 8,
-                  alignItems: 'center',
-                  borderWidth: 1,
-                  borderColor: colours.border,
-                }}
-              >
-                <Text style={{ fontSize: 10, fontWeight: '700', color: colours.navy, marginBottom: 4 }}>{label}</Text>
-                <Text style={{ fontSize: 13, color: colours.border, letterSpacing: 1 }}>○○○○○</Text>
-                <Text style={{ fontSize: 9, color: colours.textSecondary, marginTop: 3 }}>Building</Text>
-              </TouchableOpacity>
-            ))}
+            {([
+              { label: 'Stock', kpiKey: 'stockAccuracy' },
+              { label: 'Labour', kpiKey: 'labourEfficiency' },
+              { label: 'Inventory', kpiKey: 'inventoryHealth' },
+              { label: 'Orders', kpiKey: 'orderingIntelligence' },
+            ] as const).map(({ label, kpiKey }) => {
+              const kpiScore = hostiHealthData.stage === 3 ? hostiHealthData.kpis[kpiKey] : null;
+              const lit = kpiScore != null ? Math.round(kpiScore / 20) : 0;
+              const dotsStr = '●'.repeat(lit) + '○'.repeat(5 - lit);
+              const subtitle = hostiHealthData.stage !== 3 ? 'Building' : kpiScore != null ? `${Math.round(kpiScore)}` : 'Needs data';
+              return (
+                <TouchableOpacity
+                  key={label}
+                  onPress={() => nav.navigate('ProfitInsights')}
+                  activeOpacity={0.75}
+                  style={{
+                    width: 80,
+                    backgroundColor: colours.oat,
+                    borderRadius: 12,
+                    paddingVertical: 10,
+                    paddingHorizontal: 8,
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: colours.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: colours.navy, marginBottom: 4 }}>{label}</Text>
+                  <Text style={{ fontSize: 13, color: lit > 0 ? colours.deepBlue : colours.border, letterSpacing: 1 }}>{dotsStr}</Text>
+                  <Text style={{ fontSize: 9, color: colours.textSecondary, marginTop: 3 }}>{subtitle}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         )}
 

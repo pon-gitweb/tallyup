@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -19,6 +19,53 @@ function dots(lit: number): string {
   return '●'.repeat(safe) + '○'.repeat(5 - safe);
 }
 
+const KPI_META: Record<string, { label: string; calc: string; nullStatus: string }> = {
+  stockAccuracy: {
+    label: 'Stock Accuracy',
+    calc: 'Based on the dollar variance between your expected and counted stock, compared to your total stock value. Lower variance means a higher score (capped at 95).',
+    nullStatus: 'Not enough data',
+  },
+  labourEfficiency: {
+    label: 'Labour Efficiency',
+    calc: "Compares your active counting time this stocktake to your baseline in Settings → Stocktake staff hourly rate. Less time than baseline means a higher score.",
+    nullStatus: 'Configure hourly rate',
+  },
+  inventoryHealth: {
+    label: 'Inventory Health',
+    calc: 'Compares your total stock value month-over-month. Stable or slightly decreasing value scores highest; large swings up or down score lower.',
+    nullStatus: 'Limited data',
+  },
+  orderingIntelligence: {
+    label: 'Ordering Intel.',
+    calc: "Not yet available — this needs order-tracking data we don't collect yet.",
+    nullStatus: 'Needs 3 stocktakes',
+  },
+  wasteControl: {
+    label: 'Waste Control',
+    calc: 'Not yet built — coming in a future update.',
+    nullStatus: 'Coming soon',
+  },
+};
+
+const KPI_ORDER = ['stockAccuracy', 'labourEfficiency', 'inventoryHealth', 'orderingIntelligence', 'wasteControl'];
+
+/** One recommendation, derived from the lowest-scoring available KPI. */
+function buildRecommendation(kpis: Record<string, number | null>): string | null {
+  const candidates: { score: number; message: string }[] = [];
+  if (kpis.stockAccuracy != null) {
+    candidates.push({ score: kpis.stockAccuracy, message: 'Your variance has increased this cycle — review your departments for discrepancies.' });
+  }
+  if (kpis.labourEfficiency != null) {
+    candidates.push({ score: kpis.labourEfficiency, message: 'Your stocktake is taking longer than your baseline — check if all areas are being counted efficiently.' });
+  }
+  if (kpis.inventoryHealth != null) {
+    candidates.push({ score: kpis.inventoryHealth, message: 'Your stock value changed significantly this month — review ordering patterns.' });
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.score - b.score);
+  return candidates[0].message;
+}
+
 export default function ProfitInsightsScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
@@ -26,6 +73,7 @@ export default function ProfitInsightsScreen() {
   const { theme } = useTheme();
   const [health, setHealth] = useState<HostiHealthData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [monthlyScores, setMonthlyScores] = useState<number[] | null>(null);
 
   useEffect(() => {
     if (!venueId) { setLoading(false); return; }
@@ -54,6 +102,24 @@ export default function ProfitInsightsScreen() {
           venueId, totalStocktakesCompleted, productsSnap.size, supplierCount, stockValue,
         );
         if (alive) setHealth(data);
+
+        // Historical trend text (Stage 3 only) — last 3 monthly snapshots, oldest first.
+        if (data.stage === 3) {
+          try {
+            const recentSnaps = await getDocs(query(
+              collection(db, 'venues', venueId, 'profitRecoverySnapshots'),
+              orderBy('calculatedAt', 'desc'),
+              limit(3),
+            ));
+            const scores = recentSnaps.docs
+              .map(d => (d.data() as any)?.score)
+              .filter((s: any) => typeof s === 'number')
+              .reverse();
+            if (alive) setMonthlyScores(scores);
+          } catch {
+            if (alive) setMonthlyScores(null);
+          }
+        }
       } catch {
         // Non-fatal — screen shows nothing extra if this fails
       } finally {
@@ -144,7 +210,7 @@ export default function ProfitInsightsScreen() {
               Your Hosti Health score will be available{'\n'}once your baseline is established.
             </Text>
           </>
-        ) : (
+        ) : health.stage === 2 ? (
           <>
             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
               <Text style={{ fontSize: 32, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold }}>
@@ -156,9 +222,42 @@ export default function ProfitInsightsScreen() {
               We have your first stocktake.{'\n'}Complete a second to unlock your confirmed score.
             </Text>
           </>
+        ) : (
+          <>
+            {/* Stage 3 — real score */}
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+              <Text style={{ fontSize: 32, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold }}>
+                {health.score} / 100
+              </Text>
+              <Text style={{ fontSize: 16, color: c.deepBlue, fontWeight: '700' }}>· {health.label}</Text>
+            </View>
+            <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, marginBottom: 6 }}>
+              {health.trend != null && health.trendDirection
+                ? `${health.trendDirection === 'up' ? '↑' : health.trendDirection === 'down' ? '↓' : '→'} ${health.trend > 0 ? '+' : ''}${health.trend} this month  ·  Confidence: ${health.confidence}`
+                : `Confidence: ${health.confidence}`}
+            </Text>
+            {health.estimatedImpact != null && health.estimatedImpact > 0 && (
+              <Text style={{ fontSize: 14, fontWeight: '700', color: c.success, marginBottom: 16 }}>
+                Est. ${health.estimatedImpact.toFixed(0)} recovered this cycle
+              </Text>
+            )}
+
+            {/* Top recommendation — derived from the lowest-scoring available KPI */}
+            {(() => {
+              const recommendation = buildRecommendation(health.kpis);
+              return recommendation ? (
+                <View style={{ backgroundColor: c.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.amber, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, color: c.navy, fontFamily: theme.fontBody, lineHeight: 18 }}>
+                    💡 {recommendation}
+                  </Text>
+                </View>
+              ) : null;
+            })()}
+          </>
         )}
 
-        {!loading && health && (
+        {/* Stage 1/2 — static KPI previews (no real scores yet) */}
+        {!loading && health && health.stage !== 3 && (
           <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border }}>
             {kpis.map((kpi, i) => (
               <View
@@ -181,8 +280,68 @@ export default function ProfitInsightsScreen() {
             ))}
           </View>
         )}
+
+        {/* Stage 3 — real KPI cards, each independently expandable */}
+        {!loading && health && health.stage === 3 && (
+          <>
+            <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, marginBottom: 16 }}>
+              {KPI_ORDER.map((key, i) => (
+                <View key={key} style={{ borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}>
+                  <KpiCard c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]} />
+                </View>
+              ))}
+            </View>
+
+            {/* Historical trend */}
+            <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, textAlign: 'center', lineHeight: 19 }}>
+              {!monthlyScores || monthlyScores.length < 2
+                ? 'Complete another stocktake next month to see your trend.'
+                : `Last ${monthlyScores.length} months: ${monthlyScores.join(' → ')} ${
+                    monthlyScores[monthlyScores.length - 1] >= monthlyScores[0] ? '↑' : '↓'
+                  }`}
+            </Text>
+          </>
+        )}
       </ScrollView>
     </View>
+  );
+}
+
+function KpiCard({
+  c, theme, kpiKey, score,
+}: {
+  c: any; theme: any; kpiKey: string; score: number | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = KPI_META[kpiKey];
+  const lit = score != null ? Math.round(score / 20) : 0;
+
+  return (
+    <TouchableOpacity
+      onPress={() => setExpanded(prev => !prev)}
+      activeOpacity={0.8}
+      style={{ paddingVertical: 10 }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: c.navy, fontFamily: theme.fontBodySemiBold }}>
+          {meta.label}
+        </Text>
+        <Text style={{ fontSize: 14, color: score != null ? c.deepBlue : c.border, letterSpacing: 2, marginRight: 10 }}>
+          {dots(lit)}
+        </Text>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: c.navy, width: 90, textAlign: 'right' }}>
+          {score != null ? `${Math.round(score)} / 100` : meta.nullStatus}
+        </Text>
+      </View>
+      <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>
+        {expanded ? 'Hide calculation ▲' : 'How is this calculated? ▼'}
+      </Text>
+      {expanded && (
+        <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginTop: 6 }}>
+          {meta.calc}
+        </Text>
+      )}
+    </TouchableOpacity>
   );
 }
 

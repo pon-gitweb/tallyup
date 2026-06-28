@@ -5,7 +5,7 @@
  * Stage 2 (after the first stocktake): an honest, wide estimated score range
  * while confidence builds. Real variance-driven scoring lands in Phase 2.
  */
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export interface HostiHealthStage1 {
@@ -30,7 +30,28 @@ export interface HostiHealthStage2 {
   stockValue: number | null;
 }
 
-export type HostiHealthData = HostiHealthStage1 | HostiHealthStage2;
+export interface HostiHealthStage3 {
+  stage: 3;
+  score: number;           // 0–100, weighted composite
+  label: 'Excellent' | 'Strong' | 'Developing' | 'Needs attention' | 'At risk';
+  confidence: 'Very Low' | 'Building' | 'Medium' | 'High';
+  trend: number | null;    // change vs previous month snapshot, null if no prior snapshot
+  trendDirection: 'up' | 'down' | 'stable' | null;
+  estimatedImpact: number | null;  // dollars recovered this cycle, null if no cost prices
+  kpis: {
+    stockAccuracy: number | null;    // 0–100 or null if no data
+    labourEfficiency: number | null; // 0–100 or null if no hourlyRate or no segments
+    inventoryHealth: number | null;  // 0–100 or null if < 2 monthly snapshots
+    orderingIntelligence: number | null; // 0–100 or null if < 3 cycles
+    wasteControl: null;              // always null — not yet built
+  };
+  completedStocktakes: number;
+  stockValue: number | null;
+  varianceDollars: number | null;
+  calculatedAt: number;  // Date.now()
+}
+
+export type HostiHealthData = HostiHealthStage1 | HostiHealthStage2 | HostiHealthStage3;
 
 export async function getHostiHealthStage(
   venueId: string,
@@ -82,14 +103,226 @@ export async function getHostiHealthStage(
     };
   }
 
-  // Stage 2: 1 completed stocktake — honest wide range, narrows in Phase 2
-  // once real variance data feeds into it. All venues start at 50–70.
+  // Stage 2: exactly 1 completed stocktake — honest wide range. All venues
+  // start at 50–70; narrows into a real score once a 2nd stocktake lands.
+  if (totalStocktakesCompleted < 2) {
+    return {
+      stage: 2,
+      scoreMin: 50,
+      scoreMax: 70,
+      confidence: 'Building',
+      completedStocktakes: totalStocktakesCompleted,
+      stockValue,
+    };
+  }
+
+  // Stage 3: 2+ completed stocktakes — real weighted score.
+  return await calculateFullScore(venueId, totalStocktakesCompleted);
+}
+
+/**
+ * Stage 3 — real score calculation.
+ * Reads department snapshots, labour settings, and monthly profitRecoverySnapshots
+ * to compute a weighted composite score. KPIs without enough data stay null and
+ * their weight is redistributed across whichever KPIs ARE available, rather than
+ * counted as zero — an unconfigured hourly rate should not drag the score down.
+ */
+async function calculateFullScore(
+  venueId: string,
+  totalStocktakesCompleted: number,
+): Promise<HostiHealthStage3> {
+  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+
+  // ── Stock Accuracy — latest snapshot per department, aggregated ──────────
+  let totalVarianceDollars: number | null = null;
+  let totalStockValueAgg: number | null = null;
+  let pricedItemPercentSum = 0;
+  let pricedItemPercentCount = 0;
+  try {
+    let anyHasPrices = false;
+    let sumVariance = 0;
+    let sumStockValue = 0;
+    for (const deptDoc of deptsSnap.docs) {
+      const snapsSnap = await getDocs(query(
+        collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+        orderBy('cycleNumber', 'desc'),
+        limit(1),
+      ));
+      if (snapsSnap.empty) continue;
+      const snap = snapsSnap.docs[0].data() as any;
+      if (snap?.dataCompleteness?.hasPrices) {
+        anyHasPrices = true;
+        sumVariance += snap.summary?.totalVarianceDollars ?? 0;
+        sumStockValue += snap.summary?.totalStockValue ?? 0;
+      }
+      // pricedItemPercent is stored 0–100 on the snapshot; average across depts for confidence.
+      if (typeof snap?.dataCompleteness?.pricedItemPercent === 'number') {
+        pricedItemPercentSum += snap.dataCompleteness.pricedItemPercent;
+        pricedItemPercentCount++;
+      }
+    }
+    if (anyHasPrices) {
+      totalVarianceDollars = sumVariance;
+      totalStockValueAgg = sumStockValue;
+    }
+  } catch {
+    // Non-fatal — stockAccuracy stays null below
+  }
+
+  let stockAccuracy: number | null = null;
+  if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
+    const variancePct = Math.abs(totalVarianceDollars) / totalStockValueAgg * 100;
+    stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
+  }
+
+  // ── Labour Efficiency — sum activeCountingMinutes across all areas ───────
+  let hasHourlyRate = false;
+  let labourEfficiency: number | null = null;
+  try {
+    const labourSnap = await getDoc(doc(db, 'venues', venueId, 'settings', 'labour'));
+    const labourData = labourSnap.exists() ? (labourSnap.data() as any) : null;
+    const hourlyRate = typeof labourData?.hourlyRate === 'number' ? labourData.hourlyRate : null;
+    const baselineMinutes = typeof labourData?.baselineMinutes === 'number' ? labourData.baselineMinutes : null;
+    hasHourlyRate = hourlyRate != null;
+
+    let anySegmentData = false;
+    let sumActiveMinutes = 0;
+    for (const deptDoc of deptsSnap.docs) {
+      const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+      areasSnap.forEach(areaDoc => {
+        const ad = areaDoc.data() as any;
+        if (typeof ad.activeCountingMinutes === 'number') {
+          anySegmentData = true;
+          sumActiveMinutes += ad.activeCountingMinutes;
+        }
+      });
+    }
+
+    if (hourlyRate != null && baselineMinutes != null && anySegmentData) {
+      const savedMinutes = Math.max(0, baselineMinutes - sumActiveMinutes);
+      labourEfficiency = Math.min(95, (savedMinutes / baselineMinutes) * 100);
+    }
+  } catch {
+    // Non-fatal — labourEfficiency stays null below
+  }
+
+  // ── Inventory Health — last 2 monthly snapshots, stockValue month-over-month ──
+  let inventoryHealth: number | null = null;
+  try {
+    const recentSnaps = await getDocs(query(
+      collection(db, 'venues', venueId, 'profitRecoverySnapshots'),
+      orderBy('calculatedAt', 'desc'),
+      limit(2),
+    ));
+    if (recentSnaps.docs.length >= 2) {
+      const currentValue = (recentSnaps.docs[0].data() as any)?.stockValue;
+      const prevValue = (recentSnaps.docs[1].data() as any)?.stockValue;
+      if (typeof currentValue === 'number' && typeof prevValue === 'number' && prevValue !== 0) {
+        // Healthy = stock value stable or slightly decreasing (not over-stocking).
+        // Unhealthy = dramatic increase (over-ordering) or decrease (stockouts).
+        const changePct = (currentValue - prevValue) / prevValue * 100;
+        inventoryHealth = changePct > -5 && changePct < 15 ? 85 : changePct < -20 ? 50 : 70;
+      }
+    }
+  } catch {
+    // Non-fatal — inventoryHealth stays null below
+  }
+
+  // ── Ordering Intelligence — needs order-tagging infra not built yet ──────
+  // Simple version for now: always null. UI shows "Needs 3 stocktakes".
+  const orderingIntelligence: number | null = null;
+
+  // ── Waste Control — not yet built ────────────────────────────────────────
+  const wasteControl: null = null;
+
+  const kpis = { stockAccuracy, labourEfficiency, inventoryHealth, orderingIntelligence, wasteControl };
+
+  // ── Weighted score with redistribution across whichever KPIs are available ──
+  const weights: Record<string, number> = {
+    stockAccuracy: 0.30, labourEfficiency: 0.20, inventoryHealth: 0.20,
+    orderingIntelligence: 0.15, wasteControl: 0.15,
+  };
+  const available = Object.entries(kpis).filter(([, v]) => v !== null) as [string, number][];
+  const totalWeight = available.reduce((s, [k]) => s + weights[k], 0);
+  const score = available.length > 0
+    ? Math.round(available.reduce((s, [k, v]) => s + (v * weights[k] / totalWeight), 0))
+    : 0;
+
+  const label: HostiHealthStage3['label'] =
+    score >= 90 ? 'Excellent' : score >= 75 ? 'Strong' : score >= 60 ? 'Developing' : score >= 40 ? 'Needs attention' : 'At risk';
+
+  // ── Trend + previous-cycle variance — explicit previous calendar month ──
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7); // "2026-06"
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMonthKey = prevMonthDate.toISOString().slice(0, 7);
+
+  let trend: number | null = null;
+  let trendDirection: 'up' | 'down' | 'stable' | null = null;
+  let prevVarianceDollars: number | null = null;
+  try {
+    const prevSnap = await getDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', prevMonthKey));
+    if (prevSnap.exists()) {
+      const prevData = prevSnap.data() as any;
+      const prevScore = typeof prevData?.score === 'number' ? prevData.score : null;
+      prevVarianceDollars = typeof prevData?.varianceDollars === 'number' ? prevData.varianceDollars : null;
+      if (prevScore != null) {
+        trend = score - prevScore;
+        trendDirection = trend > 0 ? 'up' : trend < 0 ? 'down' : 'stable';
+      }
+    }
+  } catch {
+    // Non-fatal — trend stays null below
+  }
+
+  // ── Estimated impact — reduction in variance dollars vs previous cycle ──
+  const estimatedImpact = prevVarianceDollars != null && totalVarianceDollars != null
+    ? Math.max(0, Math.abs(prevVarianceDollars) - Math.abs(totalVarianceDollars))
+    : null;
+
+  // ── Confidence ────────────────────────────────────────────────────────
+  const pricedItemFraction = pricedItemPercentCount > 0
+    ? (pricedItemPercentSum / pricedItemPercentCount) / 100
+    : 0;
+  let confidence = 0;
+  if (totalStocktakesCompleted >= 3) confidence += 30;
+  else if (totalStocktakesCompleted >= 1) confidence += 15;
+  if (pricedItemFraction >= 0.5) confidence += 25;
+  if (hasHourlyRate) confidence += 15;
+  if (labourEfficiency !== null) confidence += 15;
+  if (orderingIntelligence !== null) confidence += 15;
+  const confidenceLabel: HostiHealthStage3['confidence'] =
+    confidence >= 80 ? 'High' : confidence >= 60 ? 'Medium' : confidence >= 30 ? 'Building' : 'Very Low';
+
+  const stockValueResolved = totalStockValueAgg;
+
+  // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
+  try {
+    await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
+      score,
+      confidence: confidenceLabel,
+      kpiScores: kpis,
+      estimatedImpact,
+      stockValue: stockValueResolved,
+      varianceDollars: totalVarianceDollars,
+      calculatedAt: Date.now(),
+    }, { merge: true });
+  } catch {
+    // Non-fatal — score still returns if write fails
+  }
+
   return {
-    stage: 2,
-    scoreMin: 50,
-    scoreMax: 70,
-    confidence: 'Building',
+    stage: 3,
+    score,
+    label,
+    confidence: confidenceLabel,
+    trend,
+    trendDirection,
+    estimatedImpact,
+    kpis,
     completedStocktakes: totalStocktakesCompleted,
-    stockValue,
+    stockValue: stockValueResolved,
+    varianceDollars: totalVarianceDollars,
+    calculatedAt: Date.now(),
   };
 }
