@@ -11,6 +11,7 @@ import MainTabs from './MainTabs';
 
 // Core
 import DashboardScreen from '../../screens/DashboardScreen';
+import ProfitInsightsScreen from '../../screens/health/ProfitInsightsScreen';
 
 // Stock-take
 import DepartmentSelection from '../../screens/stock/DepartmentSelectionScreen';
@@ -196,6 +197,7 @@ export default function MainStack() {
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       {/* Legacy direct route kept for nav.navigate('Dashboard') calls */}
       <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Dashboard' }} />
+      <Stack.Screen name="ProfitInsights" component={ProfitInsightsScreen} options={{ title: 'Profit Insights' }} />
 
       {/* Stock-take */}
       <Stack.Screen

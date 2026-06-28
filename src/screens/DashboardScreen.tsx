@@ -22,6 +22,7 @@ import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orde
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
+import { getHostiHealthStage, HostiHealthData } from '../services/health/hostiHealth';
 
 const NUDGE_KEYS = {
   invoiceFirst:       'tallyup_nudge_invoice_first_v1',
@@ -246,6 +247,16 @@ export default function DashboardScreen() {
     );
     return () => { unsubProducts(); unsubSuppliers(); };
   }, [venueId]);
+
+  // ── Hosti Health (Phase 1) — Stage 1 checklist or Stage 2 building-confidence range.
+  // Shows nothing while loading; only renders once resolved.
+  const [hostiHealthData, setHostiHealthData] = React.useState<HostiHealthData | null>(null);
+  React.useEffect(() => {
+    if (!venueId) return;
+    getHostiHealthStage(venueId, stocktakeCount, productCount ?? 0, supplierCount ?? 0, stockValue)
+      .then(setHostiHealthData)
+      .catch(() => {});
+  }, [venueId, stocktakeCount, productCount, supplierCount, stockValue]);
 
   const [deptNames, setDeptNames] = React.useState<string[]>([]);
   React.useEffect(() => {
@@ -507,6 +518,95 @@ export default function DashboardScreen() {
         </View>
 
         <OfflineBanner />
+
+        {/* ── Hosti Health card (Phase 1) ───────────────────────────────── */}
+        {hostiHealthData && (
+          <TouchableOpacity
+            onPress={() => nav.navigate('ProfitInsights')}
+            activeOpacity={0.85}
+            style={{
+              backgroundColor: colours.oat,
+              borderRadius: 16,
+              padding: 16,
+              marginBottom: 10,
+              borderWidth: 1.5,
+              borderColor: colours.amber,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: colours.navy }}>🏥 Hosti Health</Text>
+              {hostiHealthData.stage === 1 ? (
+                <Text style={{ fontSize: 16, color: colours.deepBlue }}>→</Text>
+              ) : (
+                <View style={{ backgroundColor: colours.amber, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>Building</Text>
+                </View>
+              )}
+            </View>
+
+            {hostiHealthData.stage === 1 ? (
+              <>
+                <Text style={{ fontSize: 13, color: colours.textSecondary, marginBottom: 8 }}>
+                  Building your baseline
+                </Text>
+                <View style={{ height: 8, backgroundColor: colours.border, borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+                  <View style={{
+                    height: 8,
+                    width: `${(hostiHealthData.completedSteps / hostiHealthData.totalSteps) * 100}%`,
+                    backgroundColor: colours.deepBlue,
+                    borderRadius: 4,
+                  }} />
+                </View>
+                <Text style={{ fontSize: 12, color: colours.textSecondary, marginBottom: 10 }}>
+                  {hostiHealthData.completedSteps} of {hostiHealthData.totalSteps} steps complete
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 24, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
+                  {hostiHealthData.scoreMin} – {hostiHealthData.scoreMax}
+                </Text>
+                <Text style={{ fontSize: 12, color: colours.textSecondary, lineHeight: 17, marginBottom: 10 }}>
+                  Complete one more stocktake to{'\n'}unlock your confirmed score
+                </Text>
+              </>
+            )}
+
+            <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>View Profit Insights →</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* ── KPI pills (Phase 1 — visual building state, no scores yet) ─── */}
+        {hostiHealthData && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginBottom: 12 }}
+            contentContainerStyle={{ gap: 8 }}
+          >
+            {['Stock', 'Labour', 'Inventory', 'Orders'].map(label => (
+              <TouchableOpacity
+                key={label}
+                onPress={() => nav.navigate('ProfitInsights')}
+                activeOpacity={0.75}
+                style={{
+                  width: 80,
+                  backgroundColor: colours.oat,
+                  borderRadius: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 8,
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: colours.border,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: '700', color: colours.navy, marginBottom: 4 }}>{label}</Text>
+                <Text style={{ fontSize: 13, color: colours.border, letterSpacing: 1 }}>○○○○○</Text>
+                <Text style={{ fontSize: 9, color: colours.textSecondary, marginTop: 3 }}>Building</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
 
         {/* ── Primary action card ───────────────────────────────────────── */}
         <View style={{

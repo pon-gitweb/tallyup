@@ -28,7 +28,7 @@ import {
   updatePassword, verifyBeforeUpdateEmail,
 } from 'firebase/auth';
 import { db } from '../../services/firebase';
-import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { AI_BASE_URL } from '../../config/ai';
 import { resetAllDepartmentsStockTake } from '../../services/reset';
 
@@ -97,6 +97,15 @@ export default function SettingsScreen() {
   const [editingVenueCountry, setEditingVenueCountry] = useState(false);
   const [venueCountryInput, setVenueCountryInput] = useState<'NZ' | 'AU'>('NZ');
   const [savingVenueCountry, setSavingVenueCountry] = useState(false);
+
+  // Stocktake labour settings (venues/{venueId}/settings/labour) — used by Hosti Health
+  const [labourSettings, setLabourSettings] = useState<{ hourlyRate?: number; baselineMinutes?: number } | null>(null);
+  const [editingHourlyRate, setEditingHourlyRate] = useState(false);
+  const [hourlyRateInput, setHourlyRateInput] = useState('');
+  const [savingHourlyRate, setSavingHourlyRate] = useState(false);
+  const [editingBaselineMinutes, setEditingBaselineMinutes] = useState(false);
+  const [baselineMinutesInput, setBaselineMinutesInput] = useState('');
+  const [savingBaselineMinutes, setSavingBaselineMinutes] = useState(false);
 
   // Success toast
   const [toast, setToast] = React.useState<string | null>(null);
@@ -271,6 +280,56 @@ export default function SettingsScreen() {
       setSavingVenueCountry(false);
     }
   }
+
+  // Stocktake labour settings — load once per venue
+  useEffect(() => {
+    if (!venueId) return;
+    getDoc(doc(db, 'venues', venueId, 'settings', 'labour'))
+      .then(snap => setLabourSettings(snap.exists() ? (snap.data() as any) : {}))
+      .catch(() => setLabourSettings({}));
+  }, [venueId]);
+
+  async function saveHourlyRate() {
+    if (!venueId) return;
+    const val = parseFloat(hourlyRateInput);
+    if (!Number.isFinite(val) || val <= 0) { showInfo('Enter a valid hourly rate.'); return; }
+    setSavingHourlyRate(true);
+    try {
+      await setDoc(doc(db, 'venues', venueId, 'settings', 'labour'), { hourlyRate: val }, { merge: true });
+      setLabourSettings(prev => ({ ...(prev || {}), hourlyRate: val }));
+      setEditingHourlyRate(false);
+      showToast('Hourly rate updated ✓');
+    } catch (e: any) {
+      showError('Could not save hourly rate.');
+    } finally {
+      setSavingHourlyRate(false);
+    }
+  }
+
+  async function saveBaselineMinutes() {
+    if (!venueId) return;
+    const val = parseInt(baselineMinutesInput, 10);
+    if (!Number.isFinite(val) || val <= 0) { showInfo('Enter a valid number of minutes.'); return; }
+    setSavingBaselineMinutes(true);
+    try {
+      await setDoc(doc(db, 'venues', venueId, 'settings', 'labour'), { baselineMinutes: val }, { merge: true });
+      setLabourSettings(prev => ({ ...(prev || {}), baselineMinutes: val }));
+      setEditingBaselineMinutes(false);
+      showToast('Baseline updated ✓');
+    } catch (e: any) {
+      showError('Could not save baseline.');
+    } finally {
+      setSavingBaselineMinutes(false);
+    }
+  }
+
+  const defaultHourlyRate = venueCountry === 'AU' ? 32.0 : 26.0;
+  const hourlyRateIsDefault = labourSettings?.hourlyRate == null;
+  const hourlyRate = labourSettings?.hourlyRate ?? defaultHourlyRate;
+
+  const defaultBaselineMinutes = 90;
+  const baselineMinutesIsDefault = labourSettings?.baselineMinutes == null;
+  const baselineMinutes = labourSettings?.baselineMinutes ?? defaultBaselineMinutes;
 
   async function doSignOut() {
     try {
@@ -682,6 +741,117 @@ export default function SettingsScreen() {
               </Text>
               {isOwner ? (
                 <TouchableOpacity onPress={() => { setVenueCountryInput(venueCountry === 'AU' ? 'AU' : 'NZ'); setEditingVenueCountry(true); }}>
+                  <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        </View>
+
+        {/* Stocktake staff hourly rate — used for Hosti Health labour efficiency tracking */}
+        <View style={styles.card}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+            Stocktake staff hourly rate
+          </Text>
+          {isOwner && editingHourlyRate ? (
+            <View>
+              <TextInput
+                value={hourlyRateInput}
+                onChangeText={setHourlyRateInput}
+                autoFocus
+                keyboardType="decimal-pad"
+                placeholder="e.g. 26.00"
+                placeholderTextColor={themeColours.textSecondary}
+                style={{
+                  borderWidth: 1, borderColor: themeColours.primary, borderRadius: 8,
+                  paddingHorizontal: 10, paddingVertical: 8,
+                  fontSize: 15, color: themeColours.text,
+                  backgroundColor: themeColours.background,
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={saveHourlyRate}
+                  disabled={savingHourlyRate}
+                  style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                >
+                  {savingHourlyRate
+                    ? <ActivityIndicator color={themeColours.primaryText} size="small" />
+                    : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setEditingHourlyRate(false)}
+                  style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                >
+                  <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                {hourlyRateIsDefault
+                  ? `$${defaultHourlyRate.toFixed(2)} / hour · ${venueCountry === 'AU' ? 'AU' : 'NZ'} industry average`
+                  : `$${hourlyRate.toFixed(2)} / hour`}
+              </Text>
+              {isOwner ? (
+                <TouchableOpacity onPress={() => { setHourlyRateInput(hourlyRate.toFixed(2)); setEditingHourlyRate(true); }}>
+                  <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        </View>
+
+        {/* Manual stocktake baseline — used for Hosti Health labour efficiency tracking */}
+        <View style={styles.card}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+            Manual stocktake baseline
+          </Text>
+          <Text style={{ fontSize: 12, color: themeColours.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+            How long your stocktake took before Hosti (for efficiency tracking)
+          </Text>
+          {isOwner && editingBaselineMinutes ? (
+            <View>
+              <TextInput
+                value={baselineMinutesInput}
+                onChangeText={setBaselineMinutesInput}
+                autoFocus
+                keyboardType="number-pad"
+                placeholder="e.g. 90"
+                placeholderTextColor={themeColours.textSecondary}
+                style={{
+                  borderWidth: 1, borderColor: themeColours.primary, borderRadius: 8,
+                  paddingHorizontal: 10, paddingVertical: 8,
+                  fontSize: 15, color: themeColours.text,
+                  backgroundColor: themeColours.background,
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={saveBaselineMinutes}
+                  disabled={savingBaselineMinutes}
+                  style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                >
+                  {savingBaselineMinutes
+                    ? <ActivityIndicator color={themeColours.primaryText} size="small" />
+                    : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setEditingBaselineMinutes(false)}
+                  style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                >
+                  <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                {baselineMinutesIsDefault ? `${defaultBaselineMinutes} min · estimated` : `${baselineMinutes} min`}
+              </Text>
+              {isOwner ? (
+                <TouchableOpacity onPress={() => { setBaselineMinutesInput(String(baselineMinutes)); setEditingBaselineMinutes(true); }}>
                   <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
                 </TouchableOpacity>
               ) : null}
