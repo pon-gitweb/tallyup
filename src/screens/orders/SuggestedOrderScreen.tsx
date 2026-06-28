@@ -462,8 +462,14 @@ export default function SuggestedOrderScreen(){
             ? { ...l, qty: lineQtyOverrides[l.productId], qtyDept: lineQtyOverrides[l.productId] }
             : l)
           .filter((l: any) => (lineQtyOverrides[l.productId] !== undefined ? lineQtyOverrides[l.productId] : (l.qty ?? 1)) > 0);
+        // Original suggested quantities, before any user override — for Hosti Health
+        // Ordering Intelligence compliance comparison (Phase 3).
+        const suggestedQtyMap: Record<string, number> = {};
+        for (const l of rawLines) {
+          if (l?.productId) suggestedQtyMap[String(l.productId)] = Math.max(1, Math.round(Number(l.qty) || 1));
+        }
         const legacyMap = {
-          [key]: { supplierName: supplierPreview.supplierName ?? null, lines: effectiveLines },
+          [key]: { supplierName: supplierPreview.supplierName ?? null, lines: effectiveLines, suggestedQtyMap },
         };
         const res = await OrdersService.createDraftsFromSuggestions(venueId, legacyMap, {
           createdBy: uid,

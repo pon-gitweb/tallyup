@@ -5,7 +5,7 @@
  * Stage 2 (after the first stocktake): an honest, wide estimated score range
  * while confidence builds. Real variance-driven scoring lands in Phase 2.
  */
-import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export interface HostiHealthStage1 {
@@ -228,9 +228,32 @@ async function calculateFullScore(
     // Non-fatal — inventoryHealth stays null below
   }
 
-  // ── Ordering Intelligence — needs order-tagging infra not built yet ──────
-  // Simple version for now: always null. UI shows "Needs 3 stocktakes".
-  const orderingIntelligence: number | null = null;
+  // ── Ordering Intelligence — acceptance rate of suggested orders ──────────
+  // Orders created via the Suggested Orders screen already carry source:'suggestions'
+  // (used for draft de-dupe in createFromSuggestions.ts) — reused here rather than
+  // introducing a second, inconsistent value alongside it.
+  let orderingIntelligence: number | null = null;
+  if (totalStocktakesCompleted >= 3) {
+    try {
+      const ninetyDaysAgo = Date.now() - 90 * 86400000;
+      const ordersSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'orders'),
+          where('source', '==', 'suggestions'),
+          where('createdAt', '>=', new Date(ninetyDaysAgo)),
+        ),
+      );
+      // Acceptance rate: orders placed from suggestions / expected cycles in window.
+      // A venue doing 1 stocktake/month should place ~3 suggested orders in 90 days.
+      const placed = ordersSnap.size;
+      const expectedCycles = Math.min(totalStocktakesCompleted, 3);
+      const acceptanceRate = Math.min(1, placed / expectedCycles);
+      orderingIntelligence = Math.round(acceptanceRate * 90); // max 90 — 100% blind acceptance isn't ideal
+    } catch {
+      // Non-fatal — stays null. Also covers the case where Firestore needs a
+      // composite index (source ==, createdAt >=) that hasn't been created yet.
+    }
+  }
 
   // ── Waste Control — not yet built ────────────────────────────────────────
   const wasteControl: null = null;

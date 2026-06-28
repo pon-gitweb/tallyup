@@ -541,17 +541,20 @@ export default function DashboardScreen() {
                 <View style={{ backgroundColor: colours.amber, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>Building</Text>
                 </View>
-              ) : (
-                <View style={{
-                  backgroundColor: hostiHealthData.label === 'Excellent' ? colours.success
-                    : hostiHealthData.label === 'Strong' ? colours.deepBlue
-                    : hostiHealthData.label === 'Developing' ? colours.amber
-                    : colours.error,
-                  borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2,
-                }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>{hostiHealthData.label}</Text>
-                </View>
-              )}
+              ) : (() => {
+                const labelColour = hostiHealthData.label === 'Excellent' ? colours.success
+                  : hostiHealthData.label === 'Strong' ? colours.deepBlue
+                  : hostiHealthData.label === 'Developing' ? colours.amber
+                  : colours.error; // Needs attention / At risk
+                return (
+                  <View style={{
+                    backgroundColor: `${labelColour}22`,
+                    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
+                  }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: labelColour }}>{hostiHealthData.label}</Text>
+                  </View>
+                );
+              })()}
             </View>
 
             {hostiHealthData.stage === 1 ? (

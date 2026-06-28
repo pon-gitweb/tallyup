@@ -178,6 +178,12 @@ export async function createDraftsFromSuggestions(
       return sum + qty * unit;
     }, 0);
 
+    // Quantities as originally suggested, before any user override — lets Hosti
+    // Health compare what was acted on vs what was recommended (Phase 3).
+    const suggestedQtyMap: Record<string, number> = bucket?.suggestedQtyMap && typeof bucket.suggestedQtyMap === 'object'
+      ? bucket.suggestedQtyMap
+      : Object.fromEntries(lines.map(l => [String((l as any).productId), safeQty((l as any).qty)]));
+
     const orderRef = await addDoc(ordersCol, {
       deptScope: deptScopeField,               // 'ALL' or dept name
       displayStatus: 'draft',
@@ -185,6 +191,7 @@ export async function createDraftsFromSuggestions(
       supplierId: supplierId ?? null,
       supplierName: supplierName ?? null,
       source: 'suggestions',
+      suggestedQtyMap,
       suggestionKey,
       needsSupplierReview: isUnassigned ? true : false,
       createdAt: serverTimestamp(),

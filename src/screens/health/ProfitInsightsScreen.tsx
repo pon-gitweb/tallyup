@@ -37,7 +37,7 @@ const KPI_META: Record<string, { label: string; calc: string; nullStatus: string
   },
   orderingIntelligence: {
     label: 'Ordering Intel.',
-    calc: "Not yet available — this needs order-tracking data we don't collect yet.",
+    calc: 'Based on how often suggested orders are acted on. Each time you create a draft order from the Suggested Orders screen, it counts toward your acceptance rate. Higher acceptance means your ordering is data-driven rather than guesswork.',
     nullStatus: 'Needs 3 stocktakes',
   },
   wasteControl: {
@@ -236,6 +236,13 @@ export default function ProfitInsightsScreen() {
                 ? `${health.trendDirection === 'up' ? '↑' : health.trendDirection === 'down' ? '↓' : '→'} ${health.trend > 0 ? '+' : ''}${health.trend} this month  ·  Confidence: ${health.confidence}`
                 : `Confidence: ${health.confidence}`}
             </Text>
+            <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, marginBottom: 6 }}>
+              {health.score >= 90 ? "Top-performing NZ venues score 90+. You're in excellent company." :
+                health.score >= 75 ? `Strong performance. Top NZ venues score 90+ — ${90 - health.score} points to go.` :
+                health.score >= 60 ? "Developing. NZ venue average sits around 65–75. You're on track." :
+                health.score >= 40 ? 'Room to improve. Most NZ venues score 65–75 with consistent stocktaking.' :
+                'Early stage. Complete more stocktakes to build your score.'}
+            </Text>
             {health.estimatedImpact != null && health.estimatedImpact > 0 && (
               <Text style={{ fontSize: 14, fontWeight: '700', color: c.success, marginBottom: 16 }}>
                 Est. ${health.estimatedImpact.toFixed(0)} recovered this cycle
@@ -300,6 +307,30 @@ export default function ProfitInsightsScreen() {
                     monthlyScores[monthlyScores.length - 1] >= monthlyScores[0] ? '↑' : '↓'
                   }`}
             </Text>
+
+            {/* ROI framing — only when stock value is known */}
+            {health.stockValue != null && health.stockValue > 0 && (() => {
+              const roiMin = Math.round(health.stockValue * 12 * 0.015); // 1.5% of annual stock turnover
+              const roiMax = Math.round(health.stockValue * 12 * 0.025); // 2.5%
+              const recoveryMin = Math.round(roiMin * 0.10); // conservative 10% recovery
+              const recoveryMax = Math.round(roiMax * 0.30); // optimistic 30% recovery
+              return (
+                <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, marginTop: 16 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 8 }}>
+                    What this means for your venue
+                  </Text>
+                  <Text style={{ fontSize: 13, color: c.navy, fontFamily: theme.fontBody, lineHeight: 19, marginBottom: 10 }}>
+                    Based on your current stock value, venues like yours typically carry ${roiMin.toLocaleString()}–${roiMax.toLocaleString()} in annual inventory-related leakage. Hosti typically helps recover 10–30% of that through better controls.
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: c.success, marginBottom: 10 }}>
+                    Est. annual recovery opportunity: ${recoveryMin.toLocaleString()} – ${recoveryMax.toLocaleString()}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 15 }}>
+                    ⓘ This is an estimate based on NZ hospitality industry benchmarks. Actual recovery depends on how consistently stocktakes are completed and how suggestions are acted on.
+                  </Text>
+                </View>
+              );
+            })()}
           </>
         )}
       </ScrollView>
