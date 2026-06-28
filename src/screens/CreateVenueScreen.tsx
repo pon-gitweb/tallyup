@@ -16,23 +16,16 @@ export default function CreateVenueScreen() {
   const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
   const [country, setCountry] = useState<'NZ' | 'AU'>('NZ');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const navigation = useNavigation<any>();
 
   async function handleCreate() {
+    setError(null);
     const auth = getAuth();
     const uid = auth.currentUser?.uid || null;
-    if (!uid) {
-      Alert.alert('Not signed in', 'Please sign in first.');
-      return;
-    }
-    if (!name.trim()) {
-      Alert.alert('Name required', 'Please enter a name.');
-      return;
-    }
-    if (!projectType) {
-      Alert.alert('Choose a type', 'Please choose whether this is a venue or a festival.');
-      return;
-    }
+    if (!uid) { setError('Not signed in — please restart the app.'); return; }
+    if (!name.trim()) { setError('Please enter a project name.'); return; }
+    if (!projectType) { setError('Please choose whether this is a venue or a festival.'); return; }
 
     setBusy(true);
     console.log('[CreateVenue] start', JSON.stringify({ name }));
@@ -163,7 +156,7 @@ export default function CreateVenueScreen() {
 
       <View style={styles.typeRow}>
         <TouchableOpacity
-          onPress={() => setProjectType('venue')}
+          onPress={() => { setProjectType('venue'); setError(null); }}
           disabled={busy}
           style={[
             styles.typeCard,
@@ -189,7 +182,7 @@ export default function CreateVenueScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={() => setProjectType('festival')}
+          onPress={() => { setProjectType('festival'); setError(null); }}
           disabled={busy}
           style={[
             styles.typeCard,
@@ -265,7 +258,7 @@ export default function CreateVenueScreen() {
         }
         placeholderTextColor={c.slateMid}
         value={name}
-        onChangeText={setName}
+        onChangeText={(t) => { setName(t); setError(null); }}
         style={{
           backgroundColor: c.surface,
           color: c.navy,
@@ -282,6 +275,12 @@ export default function CreateVenueScreen() {
         autoFocus
         editable={!busy}
       />
+
+      {error && (
+        <Text style={{ color: c.error, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
+          {error}
+        </Text>
+      )}
 
       <TouchableOpacity
         onPress={handleCreate}

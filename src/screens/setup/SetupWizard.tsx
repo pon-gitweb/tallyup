@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth, signOut } from 'firebase/auth';
 
@@ -43,13 +43,9 @@ export default function SetupWizard() {
         <Text style={styles.stubTitle}>Coming soon</Text>
         <View style={styles.pillGrid}>
           {futurePills.map((label) => (
-            <Pressable
-              key={label}
-              style={styles.pillDisabled}
-              onPress={() => Alert.alert('Coming soon', `${label} is on the roadmap.`)}
-            >
+            <View key={label} style={styles.pillDisabled}>
               <Text style={styles.pillText}>{label}</Text>
-            </Pressable>
+            </View>
           ))}
         </View>
       </View>
