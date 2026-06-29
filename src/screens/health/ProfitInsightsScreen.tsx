@@ -473,14 +473,22 @@ function InsightCard({
 
   return (
     <View style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
-        <View style={{ backgroundColor: `${severityColour}22`, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8, marginTop: 1 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+        <View style={{ backgroundColor: `${severityColour}22`, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8 }}>
           <Text style={{ fontSize: 11, fontWeight: '700', color: severityColour }}>{severityLabel}</Text>
         </View>
-        <Text style={{ flex: 1, color: c.navy, fontWeight: '600', fontSize: 14, fontFamily: theme.fontBodySemiBold }}>
-          {insight.pattern}
-        </Text>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: c.textSecondary }}>{insight.confidence}%</Text>
       </View>
+
+      {insight.confidenceRationale ? (
+        <Text style={{ fontSize: 11, color: c.textSecondary, fontStyle: 'italic', fontFamily: theme.fontBody, marginBottom: 8 }}>
+          {insight.confidenceRationale}
+        </Text>
+      ) : null}
+
+      <Text style={{ color: c.navy, fontWeight: '600', fontSize: 14, fontFamily: theme.fontBodySemiBold, marginBottom: 8 }}>
+        {insight.pattern}
+      </Text>
 
       <Text style={{ fontSize: 13, fontFamily: theme.fontBody, lineHeight: 18, marginBottom: 8 }}>
         <Text style={{ color: c.textSecondary }}>Most likely: </Text>
@@ -505,6 +513,11 @@ function InsightCard({
 
       {expanded && (
         <View style={{ marginTop: 8 }}>
+          {insight.confidenceRationale ? (
+            <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 18, marginBottom: 6 }}>
+              {insight.confidenceRationale}
+            </Text>
+          ) : null}
           {insight.evidencePoints.map((point, i) => (
             <Text key={i} style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginBottom: 4 }}>
               • {point}
