@@ -51,6 +51,16 @@ export interface HostiHealthStage3 {
   daysOfCover: number | null;            // operational stock value ÷ daily consumption
   operationalStockValue: number | null;  // stock value excluding cellar/premium layers
   cellarStockValue: number | null;       // cellar + premium stock value, excluded from Days of Cover
+  paretoItems: Array<{
+    name: string;
+    areaName: string | null;
+    categoryName: string | null;
+    varianceDollars: number;  // negative = shortage, positive = excess
+    varianceQty: number;
+    contributionPct: number;  // this item's share of total absolute variance
+  }>;
+  paretoTotalVariance: number;  // total absolute variance across all items
+  paretoCoverageByTop3: number; // % of total variance covered by top 3 items (0–100)
   calculatedAt: number;  // Date.now()
 }
 
@@ -176,6 +186,58 @@ async function calculateFullScore(
   if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
     const variancePct = Math.abs(totalVarianceDollars) / totalStockValueAgg * 100;
     stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
+  }
+
+  // ── Pareto Analysis — which items drive the most variance ─────────────────
+  let paretoItems: HostiHealthStage3['paretoItems'] = [];
+  let paretoTotalVariance = 0;
+  let paretoCoverageByTop3 = 0;
+  try {
+    const allVarianceItems: Array<{
+      name: string; areaName: string | null; categoryName: string | null;
+      varianceDollars: number; varianceQty: number;
+    }> = [];
+
+    // Reuse the department snapshots already fetched above
+    for (const deptDoc of deptsSnap.docs) {
+      const latestSnap = (await getDocs(query(
+        collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+        orderBy('cycleNumber', 'desc'),
+        limit(1),
+      ))).docs[0];
+      if (!latestSnap) continue;
+      const snapData = latestSnap.data() as any;
+      for (const item of (snapData.items || [])) {
+        if (item.totalVarianceDollars == null) continue;
+        if (item.totalVarianceDollars === 0) continue;
+        allVarianceItems.push({
+          name: item.name || 'Unknown product',
+          areaName: item.areaName || null,
+          categoryName: item.categoryName || null,
+          varianceDollars: item.totalVarianceDollars,
+          varianceQty: item.totalVarianceQty ?? 0,
+        });
+      }
+    }
+
+    // Sort by absolute variance descending — biggest impact first
+    allVarianceItems.sort((a, b) => Math.abs(b.varianceDollars) - Math.abs(a.varianceDollars));
+
+    const totalAbsVariance = allVarianceItems.reduce((s, i) => s + Math.abs(i.varianceDollars), 0);
+
+    paretoItems = allVarianceItems.slice(0, 3).map(item => ({
+      ...item,
+      contributionPct: totalAbsVariance > 0
+        ? Math.round(Math.abs(item.varianceDollars) / totalAbsVariance * 100)
+        : 0,
+    }));
+
+    paretoTotalVariance = totalAbsVariance;
+    paretoCoverageByTop3 = totalAbsVariance > 0
+      ? Math.round(paretoItems.reduce((s, i) => s + Math.abs(i.varianceDollars), 0) / totalAbsVariance * 100)
+      : 0;
+  } catch {
+    // Non-fatal — paretoItems stays empty below
   }
 
   // ── Labour Efficiency — sum activeCountingMinutes across all areas ───────
@@ -414,6 +476,9 @@ async function calculateFullScore(
     daysOfCover,
     operationalStockValue,
     cellarStockValue,
+    paretoItems,
+    paretoTotalVariance,
+    paretoCoverageByTop3,
     calculatedAt: Date.now(),
   };
 }

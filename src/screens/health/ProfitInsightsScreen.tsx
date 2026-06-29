@@ -49,8 +49,21 @@ const KPI_META: Record<string, { label: string; calc: string; nullStatus: string
 
 const KPI_ORDER = ['stockAccuracy', 'labourEfficiency', 'inventoryHealth', 'orderingIntelligence', 'wasteControl'];
 
-/** One recommendation, derived from the lowest-scoring available KPI. */
-function buildRecommendation(kpis: Record<string, number | null>): string | null {
+/** One recommendation, derived from the lowest-scoring available KPI — or, when
+ * Pareto data is available, naming the single biggest variance driver instead. */
+function buildRecommendation(
+  kpis: Record<string, number | null>,
+  paretoItems?: Array<{ name: string; varianceDollars: number; areaName: string | null }>,
+): string | null {
+  // If we have Pareto data, lead with the specific product
+  if (paretoItems?.length) {
+    const top = paretoItems[0];
+    const direction = top.varianceDollars < 0 ? 'short' : 'excess';
+    const area = top.areaName ? ` in ${top.areaName}` : '';
+    const dollars = Math.abs(top.varianceDollars).toFixed(0);
+    return `${top.name}${area} shows the highest variance ($${dollars} ${direction}). Check counts and pour records for this product first.`;
+  }
+
   const candidates: { score: number; message: string }[] = [];
   if (kpis.stockAccuracy != null) {
     candidates.push({ score: kpis.stockAccuracy, message: 'Your variance has increased this cycle — review your departments for discrepancies.' });
@@ -251,7 +264,7 @@ export default function ProfitInsightsScreen() {
 
             {/* Top recommendation — derived from the lowest-scoring available KPI */}
             {(() => {
-              const recommendation = buildRecommendation(health.kpis);
+              const recommendation = buildRecommendation(health.kpis, health.paretoItems);
               return recommendation ? (
                 <View style={{ backgroundColor: c.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.amber, marginBottom: 16 }}>
                   <Text style={{ fontSize: 13, color: c.navy, fontFamily: theme.fontBody, lineHeight: 18 }}>
@@ -261,6 +274,41 @@ export default function ProfitInsightsScreen() {
               ) : null;
             })()}
           </>
+        )}
+
+        {/* Focus List — top 3 variance drivers. No variance = good news, stays hidden. */}
+        {!loading && health && health.stage === 3 && health.paretoItems.length > 0 && health.paretoTotalVariance > 0 && (
+          <View style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+            <Text style={{ color: c.navy, fontWeight: '700', fontSize: 15, fontFamily: theme.fontTitleBold, marginBottom: 4 }}>
+              Focus List
+            </Text>
+            <Text style={{ color: c.textSecondary, fontSize: 12, fontFamily: theme.fontBody, marginBottom: 12 }}>
+              These {health.paretoItems.length} item{health.paretoItems.length === 1 ? '' : 's'} account for {health.paretoCoverageByTop3}% of your total variance this cycle.
+            </Text>
+            {health.paretoItems.map((item, i) => {
+              const isShortage = item.varianceDollars < 0;
+              return (
+                <View key={`${item.name}-${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}>
+                  <Text style={{ color: c.amber, fontWeight: '700', fontSize: 13, width: 20 }}>{i + 1}.</Text>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ color: c.navy, fontSize: 14, fontFamily: theme.fontBody }}>{item.name}</Text>
+                    {item.areaName && (
+                      <Text style={{ color: c.slateMid, fontSize: 12, fontFamily: theme.fontBody }}>{item.areaName}</Text>
+                    )}
+                  </View>
+                  <Text style={{ color: isShortage ? c.error : c.success, fontWeight: '700', fontSize: 13, marginRight: 8 }}>
+                    {isShortage ? '−' : '+'}${Math.abs(item.varianceDollars).toFixed(0)}
+                  </Text>
+                  <Text style={{ color: c.slateMid, fontSize: 11, width: 32, textAlign: 'right' }}>
+                    {item.contributionPct}%
+                  </Text>
+                </View>
+              );
+            })}
+            <Text style={{ color: c.textSecondary, fontSize: 12, fontStyle: 'italic', fontFamily: theme.fontBody, marginTop: 10 }}>
+              Fix these first. Everything else is secondary.
+            </Text>
+          </View>
         )}
 
         {/* Stage 1/2 — static KPI previews (no real scores yet) */}
