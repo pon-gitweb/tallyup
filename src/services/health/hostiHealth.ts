@@ -48,6 +48,9 @@ export interface HostiHealthStage3 {
   completedStocktakes: number;
   stockValue: number | null;
   varianceDollars: number | null;
+  daysOfCover: number | null;            // operational stock value ÷ daily consumption
+  operationalStockValue: number | null;  // stock value excluding cellar/premium layers
+  cellarStockValue: number | null;       // cellar + premium stock value, excluded from Days of Cover
   calculatedAt: number;  // Date.now()
 }
 
@@ -206,26 +209,88 @@ async function calculateFullScore(
     // Non-fatal — labourEfficiency stays null below
   }
 
-  // ── Inventory Health — last 2 monthly snapshots, stockValue month-over-month ──
+  // ── Inventory Health — Days of Cover ──────────────────────────────────────
   let inventoryHealth: number | null = null;
+  let daysOfCover: number | null = null;
+  let operationalStockValue: number | null = null;
+  let cellarStockValue: number | null = null;
+
   try {
-    const recentSnaps = await getDocs(query(
-      collection(db, 'venues', venueId, 'profitRecoverySnapshots'),
-      orderBy('calculatedAt', 'desc'),
-      limit(2),
-    ));
-    if (recentSnaps.docs.length >= 2) {
-      const currentValue = (recentSnaps.docs[0].data() as any)?.stockValue;
-      const prevValue = (recentSnaps.docs[1].data() as any)?.stockValue;
-      if (typeof currentValue === 'number' && typeof prevValue === 'number' && prevValue !== 0) {
-        // Healthy = stock value stable or slightly decreasing (not over-stocking).
-        // Unhealthy = dramatic increase (over-ordering) or decrease (stockouts).
-        const changePct = (currentValue - prevValue) / prevValue * 100;
-        inventoryHealth = changePct > -5 && changePct < 15 ? 85 : changePct < -20 ? 50 : 70;
+    // Step 1 — Classify products to separate operational vs cellar stock
+    const { classifyVenueProducts, separateStockLayers } = await import('./classifyProducts');
+    const classifications = await classifyVenueProducts(venueId);
+    const layers = separateStockLayers(classifications);
+    operationalStockValue = layers.operationalStockValue;
+    cellarStockValue = layers.cellarStockValue + layers.premiumStockValue;
+
+    // Step 2 — Get latest department snapshots for cycle duration and stock movement
+    // Aggregate across all departments
+    let totalCycledays = 0;
+    let deptCount = 0;
+    let prevCycleStockValue: number | null = null;
+
+    for (const deptDoc of deptsSnap.docs) {
+      const latestSnap = (await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+          orderBy('cycleNumber', 'desc'),
+          limit(1),
+        ),
+      )).docs[0];
+
+      if (!latestSnap) continue;
+      const snapData = latestSnap.data() as any;
+      const days = snapData.daysSinceLastCycle;
+      if (typeof days === 'number' && days > 0) {
+        totalCycledays += days;
+        deptCount++;
+      }
+
+      // Get previous cycle for opening stock value
+      const cycleNum = snapData.cycleNumber;
+      if (cycleNum > 1) {
+        const prevSnap = await getDoc(
+          doc(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', `cycle-${cycleNum - 1}`),
+        );
+        if (prevSnap.exists()) {
+          const prev = prevSnap.data() as any;
+          prevCycleStockValue = (prevCycleStockValue ?? 0) + (prev.summary?.totalStockValue ?? 0);
+        }
       }
     }
-  } catch {
-    // Non-fatal — inventoryHealth stays null below
+
+    if (deptCount === 0 || operationalStockValue === 0) {
+      // Not enough data — stay null
+    } else {
+      const avgCycleDays = totalCycledays / deptCount;
+
+      // Step 3 — Estimate daily consumption rate
+      // consumption = openingValue - closingValue + impliedPurchases
+      // impliedPurchases approximated as max(0, closingValue - openingValue) when closing > opening
+      const openingValue = prevCycleStockValue ?? operationalStockValue;
+      const closingValue = operationalStockValue;
+      const impliedPurchases = Math.max(0, closingValue - openingValue);
+      const totalConsumed = openingValue - closingValue + impliedPurchases;
+      const dailyConsumption = avgCycleDays > 0 ? totalConsumed / avgCycleDays : 0;
+
+      if (dailyConsumption > 0) {
+        daysOfCover = Math.round(closingValue / dailyConsumption);
+
+        // Step 4 — Score against Days of Cover benchmarks
+        // NZ hospitality healthy range: 7–14 days
+        inventoryHealth =
+          daysOfCover < 3  ? 20 :
+          daysOfCover < 5  ? 45 :
+          daysOfCover < 7  ? 65 :
+          daysOfCover <= 14 ? Math.min(95, 70 + (daysOfCover - 7) * 3.5) : // 70–94.5 in healthy range
+          daysOfCover <= 21 ? 65 :
+          daysOfCover <= 30 ? 45 :
+          20; // > 30 days: significantly over-stocked
+      }
+    }
+  } catch (e: any) {
+    console.log('[hostiHealth] inventoryHealth calculation error:', e?.message);
+    // Non-fatal — stays null
   }
 
   // ── Ordering Intelligence — acceptance rate of suggested orders ──────────
@@ -346,6 +411,9 @@ async function calculateFullScore(
     completedStocktakes: totalStocktakesCompleted,
     stockValue: stockValueResolved,
     varianceDollars: totalVarianceDollars,
+    daysOfCover,
+    operationalStockValue,
+    cellarStockValue,
     calculatedAt: Date.now(),
   };
 }

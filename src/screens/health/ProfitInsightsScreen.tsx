@@ -32,7 +32,7 @@ const KPI_META: Record<string, { label: string; calc: string; nullStatus: string
   },
   inventoryHealth: {
     label: 'Inventory Health',
-    calc: 'Compares your total stock value month-over-month. Stable or slightly decreasing value scores highest; large swings up or down score lower.',
+    calc: 'Based on Days of Cover — how many days your current operational stock would last at your current consumption rate. The healthy range for NZ hospitality is 7–14 days. Cellar and premium stock (identified automatically by cost and velocity patterns) is excluded from this calculation so it doesn\'t distort your working inventory picture.',
     nullStatus: 'Limited data',
   },
   orderingIntelligence: {
@@ -294,7 +294,10 @@ export default function ProfitInsightsScreen() {
             <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, marginBottom: 16 }}>
               {KPI_ORDER.map((key, i) => (
                 <View key={key} style={{ borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}>
-                  <KpiCard c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]} />
+                  <KpiCard
+                    c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]}
+                    daysOfCover={key === 'inventoryHealth' ? health.daysOfCover : undefined}
+                  />
                 </View>
               ))}
             </View>
@@ -339,9 +342,9 @@ export default function ProfitInsightsScreen() {
 }
 
 function KpiCard({
-  c, theme, kpiKey, score,
+  c, theme, kpiKey, score, daysOfCover,
 }: {
-  c: any; theme: any; kpiKey: string; score: number | null;
+  c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = KPI_META[kpiKey];
@@ -364,6 +367,11 @@ function KpiCard({
           {score != null ? `${Math.round(score)} / 100` : meta.nullStatus}
         </Text>
       </View>
+      {kpiKey === 'inventoryHealth' && daysOfCover != null && (
+        <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
+          {daysOfCover} days of cover · healthy range: 7–14 days
+        </Text>
+      )}
       <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>
         {expanded ? 'Hide calculation ▲' : 'How is this calculated? ▼'}
       </Text>
