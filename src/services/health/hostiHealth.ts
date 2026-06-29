@@ -61,6 +61,17 @@ export interface HostiHealthStage3 {
   }>;
   paretoTotalVariance: number;  // total absolute variance across all items
   paretoCoverageByTop3: number; // % of total variance covered by top 3 items (0–100)
+  constraint: {
+    type: 'frequency' | 'cost_completeness' | 'single_department' | null;
+    description: string;           // one sentence, plain English
+    impact: 'high' | 'medium' | 'low';
+    fixAction: string;             // one sentence, what to do
+  } | null;
+  counterfactual: {
+    scenario: string;              // "if you'd counted every 14 days instead of X..."
+    estimatedAdditionalRecovery: number | null;  // dollars
+    confidenceLabel: string;       // "Based on your last 2 cycles"
+  } | null;
   calculatedAt: number;  // Date.now()
 }
 
@@ -145,6 +156,7 @@ async function calculateFullScore(
   totalStocktakesCompleted: number,
 ): Promise<HostiHealthStage3> {
   const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  let avgCycleDays: number = 0; // lifted to function scope — populated by Inventory Health below, read by Constraint Analysis
 
   // ── Stock Accuracy — latest snapshot per department, aggregated ──────────
   let totalVarianceDollars: number | null = null;
@@ -324,7 +336,7 @@ async function calculateFullScore(
     if (deptCount === 0 || operationalStockValue === 0) {
       // Not enough data — stay null
     } else {
-      const avgCycleDays = totalCycledays / deptCount;
+      avgCycleDays = totalCycledays / deptCount;
 
       // Step 3 — Estimate daily consumption rate
       // consumption = openingValue - closingValue + impliedPurchases
@@ -444,6 +456,72 @@ async function calculateFullScore(
   const confidenceLabel: HostiHealthStage3['confidence'] =
     confidence >= 80 ? 'High' : confidence >= 60 ? 'Medium' : confidence >= 30 ? 'Building' : 'Very Low';
 
+  // ── Constraint Analysis — identify the primary operational bottleneck ────────
+  // Placed here (rather than right after Pareto) because it depends on avgCycleDays
+  // (populated by Inventory Health, above) and pricedItemFraction (populated by
+  // Confidence, just above) — both are only available by this point in the function.
+  let constraint: HostiHealthStage3['constraint'] = null;
+  let counterfactual: HostiHealthStage3['counterfactual'] = null;
+
+  try {
+    // Rank constraints by impact — find the biggest single lever
+
+    // Constraint 1 — Stocktake frequency (most common constraint)
+    // Healthy = every 7–14 days. Over 21 days = meaningful gap.
+    if (avgCycleDays > 21) {
+      const impact: 'high' | 'medium' | 'low' = avgCycleDays > 45 ? 'high' : avgCycleDays > 28 ? 'medium' : 'low';
+      constraint = {
+        type: 'frequency',
+        description: `Your stocktakes are happening every ${Math.round(avgCycleDays)} days on average. The optimal range for NZ hospitality is 7–14 days.`,
+        impact,
+        fixAction: `Increase your stocktake frequency to at least every ${avgCycleDays > 45 ? '14' : '21'} days to catch variance earlier.`,
+      };
+
+      // Counterfactual: if you'd counted every 14 days instead...
+      // Variance detected later = more time for leakage to accumulate.
+      // Conservative estimate: variance scales linearly with detection lag.
+      // Always set when frequency is the constraint — estimatedAdditionalRecovery
+      // stays null (rather than skipping the card) when there's no cost-price data.
+      if (avgCycleDays > 14) {
+        let estimatedAdditionalRecovery: number | null = null;
+        if (totalVarianceDollars != null) {
+          const lagFactor = 14 / avgCycleDays; // proportion of cycle if counted more frequently
+          estimatedAdditionalRecovery = Math.round(Math.abs(totalVarianceDollars) * (1 - lagFactor));
+        }
+        counterfactual = {
+          scenario: `If you'd counted every 14 days instead of every ${Math.round(avgCycleDays)} days`,
+          estimatedAdditionalRecovery,
+          confidenceLabel: `Based on your last ${totalStocktakesCompleted} stocktake${totalStocktakesCompleted !== 1 ? 's' : ''}`,
+        };
+      }
+    }
+
+    // Constraint 2 — Cost price completeness (if frequency is fine)
+    // If frequency is OK but scores are low-confidence, missing prices are the bottleneck
+    if (constraint === null && pricedItemFraction < 0.5) {
+      constraint = {
+        type: 'cost_completeness',
+        description: `Less than half your products have cost prices — your financial impact calculations are estimates only.`,
+        impact: 'medium',
+        fixAction: 'Add cost prices to your products to unlock accurate stock value, variance dollar amounts, and ROI calculations.',
+      };
+      // No counterfactual for this constraint — hard to estimate dollar impact of missing prices
+    }
+
+    // Constraint 3 — Only one department (limits cross-department insights)
+    if (constraint === null && deptsSnap.docs.length === 1) {
+      constraint = {
+        type: 'single_department',
+        description: 'You have one department. Adding separate departments (e.g. Bar, Kitchen, Cellar) gives you area-specific variance tracking.',
+        impact: 'low',
+        fixAction: 'Add departments in Settings to track variance by area and identify where leakage is occurring.',
+      };
+    }
+  } catch (e: any) {
+    console.log('[hostiHealth] constraint analysis error:', e?.message);
+    // Non-fatal
+  }
+
   const stockValueResolved = totalStockValueAgg;
 
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
@@ -479,6 +557,8 @@ async function calculateFullScore(
     paretoItems,
     paretoTotalVariance,
     paretoCoverageByTop3,
+    constraint,
+    counterfactual,
     calculatedAt: Date.now(),
   };
 }

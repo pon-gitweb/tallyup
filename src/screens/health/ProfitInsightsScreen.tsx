@@ -359,6 +359,63 @@ export default function ProfitInsightsScreen() {
                   }`}
             </Text>
 
+            {/* Primary Constraint — only when a bottleneck has been identified */}
+            {health.constraint !== null && (
+              <View style={{
+                backgroundColor: c.surface,
+                borderWidth: 1,
+                borderColor: health.constraint.impact === 'high' ? `${c.amber}4D` : c.border,
+                borderRadius: 12,
+                padding: 16,
+                marginTop: 16,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={{ color: c.navy, fontWeight: '700', fontSize: 15, fontFamily: theme.fontTitleBold }}>
+                    Primary Constraint
+                  </Text>
+                  <View style={{
+                    backgroundColor: `${
+                      health.constraint.impact === 'high' ? c.error : health.constraint.impact === 'medium' ? c.amber : c.textSecondary
+                    }22`,
+                    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
+                  }}>
+                    <Text style={{
+                      fontSize: 11, fontWeight: '700', textTransform: 'capitalize',
+                      color: health.constraint.impact === 'high' ? c.error : health.constraint.impact === 'medium' ? c.amber : c.textSecondary,
+                    }}>
+                      {health.constraint.impact}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color: c.navy, fontSize: 13, fontFamily: theme.fontBody, lineHeight: 19, marginBottom: 10 }}>
+                  {health.constraint.description}
+                </Text>
+                <Text style={{ color: c.deepBlue, fontSize: 13, fontFamily: theme.fontBody, lineHeight: 19, fontWeight: '600' }}>
+                  → {health.constraint.fixAction}
+                </Text>
+              </View>
+            )}
+
+            {/* Counterfactual — what earlier counting would likely have recovered */}
+            {health.counterfactual !== null && (
+              <View style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 16, marginTop: 16 }}>
+                <Text style={{ color: c.navy, fontWeight: '700', fontSize: 15, fontFamily: theme.fontTitleBold, marginBottom: 10 }}>
+                  What if?
+                </Text>
+                <Text style={{ color: c.navy, fontSize: 13, fontFamily: theme.fontBody, lineHeight: 19, marginBottom: 10 }}>
+                  {health.counterfactual.estimatedAdditionalRecovery != null
+                    ? `${health.counterfactual.scenario}, you could have caught an estimated $${Math.round(health.counterfactual.estimatedAdditionalRecovery).toLocaleString()} more in variance earlier this cycle.`
+                    : "If you'd counted more frequently, variance would have been detected earlier — but we need cost prices to estimate the financial impact."}
+                </Text>
+                <Text style={{ color: c.textSecondary, fontSize: 12, fontFamily: theme.fontBody, marginBottom: 4 }}>
+                  {health.counterfactual.confidenceLabel}.
+                </Text>
+                <Text style={{ color: c.textSecondary, fontSize: 11, fontFamily: theme.fontBody }}>
+                  ⓘ This is a conservative estimate.
+                </Text>
+              </View>
+            )}
+
             {/* ROI framing — only when stock value is known */}
             {health.stockValue != null && health.stockValue > 0 && (() => {
               const roiMin = Math.round(health.stockValue * 12 * 0.015); // 1.5% of annual stock turnover
