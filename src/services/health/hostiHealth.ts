@@ -8,6 +8,7 @@
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
+import { generateStockoutPredictions, PredictionSummary } from './predictions';
 
 export interface HostiHealthStage1 {
   stage: 1;
@@ -74,6 +75,7 @@ export interface HostiHealthStage3 {
     confidenceLabel: string;       // "Based on your last 2 cycles"
   } | null;
   abductiveInsights: AbductiveInsight[];
+  predictions: PredictionSummary | null;
   calculatedAt: number;  // Date.now()
 }
 
@@ -547,6 +549,17 @@ async function calculateFullScore(
     abductiveInsights = [];
   }
 
+  // ── Stockout Predictions — pure arithmetic, needs real velocity data ──────
+  let predictions: HostiHealthStage3['predictions'] = null;
+  try {
+    if (totalStocktakesCompleted >= 2) {
+      predictions = await generateStockoutPredictions(venueId, avgCycleDays);
+    }
+  } catch (e: any) {
+    console.log('[hostiHealth] predictions error:', e?.message);
+    // Non-fatal
+  }
+
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
@@ -583,6 +596,7 @@ async function calculateFullScore(
     constraint,
     counterfactual,
     abductiveInsights,
+    predictions,
     calculatedAt: Date.now(),
   };
 }

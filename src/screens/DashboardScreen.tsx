@@ -599,9 +599,14 @@ export default function DashboardScreen() {
               </>
             )}
 
-            <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>
-              {hostiHealthData.stage === 3 ? 'View Performance →' : 'View Profit Insights →'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>
+                {hostiHealthData.stage === 3 ? 'View Performance →' : 'View Profit Insights →'}
+              </Text>
+              {hostiHealthData.stage === 3 && hostiHealthData.predictions && hostiHealthData.predictions.criticalCount > 0 && (
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colours.error, marginLeft: 6 }} />
+              )}
+            </View>
           </TouchableOpacity>
         )}
 

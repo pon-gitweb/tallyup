@@ -276,6 +276,55 @@ export default function ProfitInsightsScreen() {
           </>
         )}
 
+        {/* Stock Predictions — more urgent and actionable than pattern insights, shown first */}
+        {!loading && health && health.stage === 3 && health.predictions && health.predictions.stockoutPredictions.length > 0 && (
+          <View style={{ marginBottom: 16 }}>
+            <Text style={{ color: c.navy, fontWeight: '700', fontSize: 15, fontFamily: theme.fontTitleBold, marginBottom: 4 }}>
+              Stock Predictions
+            </Text>
+            {health.predictions.criticalCount > 0 && (
+              <Text style={{ color: c.error, fontWeight: '600', fontSize: 13, marginBottom: 8 }}>
+                {health.predictions.criticalCount} product{health.predictions.criticalCount !== 1 ? 's' : ''} at critical risk of running out
+              </Text>
+            )}
+            {health.predictions.stockoutPredictions.slice(0, 3).map((p, i) => {
+              const urgencyColour = p.urgency === 'critical' ? c.error : p.urgency === 'warning' ? c.amber : c.textSecondary;
+              const rowBg = p.urgency === 'critical' ? `${c.error}14` : p.urgency === 'warning' ? `${c.amber}14` : c.surface;
+              const dateLabel = new Date(p.stockoutDate + 'T00:00:00').toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
+              return (
+                <View
+                  key={p.productId}
+                  style={{
+                    flexDirection: 'row', backgroundColor: rowBg, borderWidth: 1, borderColor: c.border,
+                    borderRadius: 10, padding: 12, marginTop: i > 0 ? 8 : 0,
+                  }}
+                >
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: urgencyColour, marginTop: 4, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.navy, fontWeight: '600', fontSize: 14, fontFamily: theme.fontBodySemiBold }}>
+                      {p.name}{p.areaName ? ` · ${p.areaName}` : ''}
+                    </Text>
+                    <Text style={{ color: urgencyColour, fontSize: 13, fontFamily: theme.fontBody, marginTop: 2 }}>
+                      Runs out in {p.daysUntilStockout} day{p.daysUntilStockout !== 1 ? 's' : ''} · {dateLabel}
+                    </Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 12, fontFamily: theme.fontBody, marginTop: 2 }}>
+                      Current: {p.currentStock} units · {p.velocityPerDay}/day
+                    </Text>
+                    {p.daysUntilBelowPAR != null && p.daysUntilBelowPAR < p.daysUntilStockout && (
+                      <Text style={{ color: c.amber, fontSize: 11, fontFamily: theme.fontBody, marginTop: 2 }}>
+                        Drops below PAR in {p.daysUntilBelowPAR} day{p.daysUntilBelowPAR !== 1 ? 's' : ''}
+                      </Text>
+                    )}
+                    <Text style={{ color: c.textSecondary, fontSize: 10, fontStyle: 'italic', fontFamily: theme.fontBody, marginTop: 2 }}>
+                      {p.confidenceLabel} confidence
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* Insights — abductive, pattern-based, max 2 shown (highest severity/confidence first) */}
         {!loading && health && health.stage === 3 && health.abductiveInsights.length > 0 && (
           <View style={{ marginBottom: 16 }}>
