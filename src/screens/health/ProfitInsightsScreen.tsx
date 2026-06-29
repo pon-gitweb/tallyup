@@ -276,6 +276,18 @@ export default function ProfitInsightsScreen() {
           </>
         )}
 
+        {/* Insights — abductive, pattern-based, max 2 shown (highest severity/confidence first) */}
+        {!loading && health && health.stage === 3 && health.abductiveInsights.length > 0 && (
+          <View style={{ marginBottom: 16 }}>
+            <Text style={{ color: c.navy, fontWeight: '700', fontSize: 15, fontFamily: theme.fontTitleBold, marginBottom: 8 }}>
+              Insights
+            </Text>
+            {health.abductiveInsights.slice(0, 2).map(insight => (
+              <InsightCard key={insight.id} c={c} theme={theme} insight={insight} />
+            ))}
+          </View>
+        )}
+
         {/* Focus List — top 3 variance drivers. No variance = good news, stays hidden. */}
         {!loading && health && health.stage === 3 && health.paretoItems.length > 0 && health.paretoTotalVariance > 0 && (
           <View style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 16, marginBottom: 16 }}>
@@ -442,6 +454,69 @@ export default function ProfitInsightsScreen() {
           </>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+function InsightCard({
+  c, theme, insight,
+}: {
+  c: any; theme: any; insight: import('../../services/health/abductiveInsights').AbductiveInsight;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const severityColour = insight.severity === 'high' ? c.error
+    : insight.severity === 'medium' ? c.amber
+    : insight.severity === 'positive' ? c.success
+    : c.border; // low
+  const severityLabel = insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1);
+  const financialColour = insight.severity === 'positive' ? c.success : c.error;
+
+  return (
+    <View style={{ backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+        <View style={{ backgroundColor: `${severityColour}22`, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8, marginTop: 1 }}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: severityColour }}>{severityLabel}</Text>
+        </View>
+        <Text style={{ flex: 1, color: c.navy, fontWeight: '600', fontSize: 14, fontFamily: theme.fontBodySemiBold }}>
+          {insight.pattern}
+        </Text>
+      </View>
+
+      <Text style={{ fontSize: 13, fontFamily: theme.fontBody, lineHeight: 18, marginBottom: 8 }}>
+        <Text style={{ color: c.textSecondary }}>Most likely: </Text>
+        <Text style={{ color: c.navy }}>{insight.mostLikelyExplanation}</Text>
+      </Text>
+
+      <Text style={{ color: c.deepBlue, fontSize: 13, fontFamily: theme.fontBody, lineHeight: 18, marginBottom: 8 }}>
+        → {insight.actionable}
+      </Text>
+
+      {insight.financialFrame && (
+        <Text style={{ color: financialColour, fontSize: 12, fontWeight: '600', marginBottom: 8 }}>
+          {insight.financialFrame}
+        </Text>
+      )}
+
+      <TouchableOpacity onPress={() => setExpanded(prev => !prev)}>
+        <Text style={{ fontSize: 11, color: c.deepBlue }}>
+          {expanded ? 'Hide reasoning ▴' : 'Show reasoning ▾'}
+        </Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={{ marginTop: 8 }}>
+          {insight.evidencePoints.map((point, i) => (
+            <Text key={i} style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginBottom: 4 }}>
+              • {point}
+            </Text>
+          ))}
+          {insight.alternativeExplanations.length > 0 && (
+            <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginTop: 4 }}>
+              Other possibilities: {insight.alternativeExplanations.join('; ')}
+            </Text>
+          )}
+        </View>
+      )}
     </View>
   );
 }

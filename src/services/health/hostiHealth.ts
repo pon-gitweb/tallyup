@@ -7,6 +7,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 
 export interface HostiHealthStage1 {
   stage: 1;
@@ -72,6 +73,7 @@ export interface HostiHealthStage3 {
     estimatedAdditionalRecovery: number | null;  // dollars
     confidenceLabel: string;       // "Based on your last 2 cycles"
   } | null;
+  abductiveInsights: AbductiveInsight[];
   calculatedAt: number;  // Date.now()
 }
 
@@ -524,6 +526,27 @@ async function calculateFullScore(
 
   const stockValueResolved = totalStockValueAgg;
 
+  // ── Abductive Insights — pattern matching over the values computed above ──
+  let abductiveInsights: AbductiveInsight[] = [];
+  try {
+    abductiveInsights = generateAbductiveInsights({
+      totalVarianceDollars,
+      prevVarianceDollars,
+      stockAccuracy,
+      labourEfficiency,
+      inventoryHealth,
+      avgCycleDays,
+      totalStocktakesCompleted,
+      pricedItemFraction,
+      paretoItems,
+      daysOfCover,
+      operationalStockValue,
+    });
+  } catch (e: any) {
+    console.log('[hostiHealth] abductive insights error:', e?.message);
+    abductiveInsights = [];
+  }
+
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
@@ -559,6 +582,7 @@ async function calculateFullScore(
     paretoCoverageByTop3,
     constraint,
     counterfactual,
+    abductiveInsights,
     calculatedAt: Date.now(),
   };
 }
