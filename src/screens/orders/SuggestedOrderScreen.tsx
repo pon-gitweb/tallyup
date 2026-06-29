@@ -20,7 +20,19 @@ const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
 const m1=(v:any)=>{const x=Number(v);return Number.isFinite(x)?Math.max(1,Math.round(x)):1;};
 
-type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number };
+type BucketRow = { id:string; supplierId:string; supplierName:string; itemsCount:number; confSummary?:string };
+
+function computeConfSummary(rawLines:any[]):string{
+  const lines = Array.isArray(rawLines)?rawLines:[];
+  const highConf = lines.filter((l:any)=>l.confidence==='high').length;
+  const medConf = lines.filter((l:any)=>l.confidence==='medium').length;
+  const lowConf = lines.filter((l:any)=>!l.confidence||l.confidence==='low').length;
+  return highConf>0
+    ? `${highConf} high confidence`
+    : medConf>0
+    ? `${medConf} medium confidence`
+    : `${lowConf} low confidence`;
+}
 type Dept = { id:string; name:string };
 type SupplierLite = { id:string; name:string };
 
@@ -220,9 +232,10 @@ export default function SuggestedOrderScreen(){
     };
 
     const tmp:BucketRow[]=[];
-    const unLines = projectLines(Array.isArray(unassigned?.lines)?unassigned.lines:[]);
+    const rawUnLines = Array.isArray(unassigned?.lines)?unassigned.lines:[];
+    const unLines = projectLines(rawUnLines);
     if(unLines.length>0){
-      tmp.push({ id:'unassigned',supplierId:'unassigned',supplierName:'Unassigned',itemsCount:unLines.length });
+      tmp.push({ id:'unassigned',supplierId:'unassigned',supplierName:'Unassigned',itemsCount:unLines.length,confSummary:computeConfSummary(rawUnLines) });
     }
 
     Object.entries(buckets||{}).forEach(([sid,b]:any)=>{
@@ -230,7 +243,7 @@ export default function SuggestedOrderScreen(){
       const lines = projectLines(baseLines);
       if(lines.length<=0)return;
       const label=b?.supplierName||supMap[sid]||`#${String(sid).slice(-4)}`;
-      tmp.push({ id:sid,supplierId:sid,supplierName:label,itemsCount:lines.length });
+      tmp.push({ id:sid,supplierId:sid,supplierName:label,itemsCount:lines.length,confSummary:computeConfSummary(baseLines) });
     });
 
     const uIdx=tmp.findIndex(r=>r.id==='unassigned');
@@ -587,6 +600,9 @@ export default function SuggestedOrderScreen(){
       <View style={{flex:1}}>
         <Text style={S.rowTitle}>{row.supplierName}</Text>
         <Text style={S.rowSub}>{row.itemsCount} item{row.itemsCount===1?'':'s'}</Text>
+        {row.confSummary && (
+          <Text style={[S.rowSub, { fontSize: 11, marginTop: 2 }]}>{row.confSummary}</Text>
+        )}
       </View>
       <Text style={S.chev}>›</Text>
     </TouchableOpacity>
@@ -731,16 +747,43 @@ export default function SuggestedOrderScreen(){
                     <Text style={S.lineName}>{l.productName || l.productId}</Text>
                     {/* Velocity reason line */}
                     {l.reason === 'velocity-driven' && l.velocityPerWeek != null ? (
-                      <Text style={S.rowSub}>
-                        Order {l.qty} · {l.velocityPerWeek}/week velocity · {l.confidence} confidence
-                        {l.trendNote ? ` · ${l.trendNote}` : ''}
-                        {l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+                        <Text style={S.rowSub}>
+                          Order {l.qty} · {l.velocityPerWeek}/week
+                          {l.trendNote ? ` · ${l.trendNote}` : ''}
+                          {l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
+                        </Text>
+                        {l.confidence && (
+                          <View style={{
+                            paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999,
+                            backgroundColor:
+                              l.confidence === 'high' ? '#dcfce7' :   // green tint
+                              l.confidence === 'medium' ? '#fef9c3' :  // yellow tint
+                              '#f3f4f6',                               // grey for low
+                          }}>
+                            <Text style={{
+                              fontSize: 10, fontWeight: '600',
+                              color:
+                                l.confidence === 'high' ? '#15803d' :
+                                l.confidence === 'medium' ? '#854d0e' :
+                                '#6b7280',
+                            }}>
+                              {l.confidence === 'high' ? 'High confidence' :
+                               l.confidence === 'medium' ? 'Medium confidence' :
+                               'Low confidence'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                     ) : l.reason === 'par-based' ? (
-                      <Text style={S.rowSub}>
-                        Order {l.qty} · Below PAR · No velocity data yet
-                        {l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Text style={S.rowSub}>
+                          Order {l.qty} · Below PAR{l.currentStock != null ? ` · Stock: ${l.currentStock}` : ''}
+                        </Text>
+                        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: '#f3f4f6' }}>
+                          <Text style={{ fontSize: 10, fontWeight: '600', color: '#6b7280' }}>Based on PAR only</Text>
+                        </View>
+                      </View>
                     ) : (
                       <Text style={S.rowSub}>
                         Qty {l.qty}
