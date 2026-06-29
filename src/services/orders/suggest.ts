@@ -158,7 +158,7 @@ export async function buildSuggestedOrdersInMemory(
 
       // Velocity lookup (by product name, lowercased)
       const velData = velocityMap.get(name.toLowerCase().trim());
-      const velocityPerWeek = velData?.unitsPerWeek ?? null;
+      const velocityPerWeek = velData?.emaVelocityPerWeek ?? velData?.unitsPerWeek ?? null;
       const velocityTrend = velData?.trend ?? null;
       const trendPercent = velData?.trendPercent ?? 0;
       const confidence = velData?.confidence ?? null;

@@ -9,6 +9,8 @@ export interface VelocityData {
   // Velocity
   unitsPerWeek: number;
   unitsPerDay: number;
+  emaVelocityPerWeek: number;   // exponentially weighted — handles seasonal drift better
+  emaVelocityPerDay: number;    // emaVelocityPerWeek / 7
   trend: 'rising' | 'falling' | 'stable';
   trendPercent: number;
   confidence: 'high' | 'medium' | 'low';
@@ -148,6 +150,19 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
       ? validEntries.reduce((s, e) => s + e.velocity, 0) / validEntries.length
       : 0;
 
+    // Exponential Moving Average velocity — weights recent cycles more heavily
+    // α = 0.35: recent cycles matter more but one event week doesn't dominate
+    // With 6 cycles: most recent = 35%, 2nd = 23%, 3rd = 15%, 4th = 10%, rest = 17%
+    const EMA_ALPHA = 0.35;
+    let emaVelocity = avgVelocity; // start from simple average as initial estimate
+    if (validEntries.length >= 2) {
+      // Walk oldest to newest — EMA accumulates toward recent
+      emaVelocity = validEntries[0].velocity; // seed with oldest
+      for (let i = 1; i < validEntries.length; i++) {
+        emaVelocity = EMA_ALPHA * validEntries[i].velocity + (1 - EMA_ALPHA) * emaVelocity;
+      }
+    }
+
     // Trend: compare last 2 cycles vs previous 2 cycles
     let trend: 'rising' | 'falling' | 'stable' = 'stable';
     let trendPercent = 0;
@@ -224,6 +239,8 @@ export function calculateVelocity(snapshots: any[]): Map<string, VelocityData> {
       productName: last.productName,
       unitsPerWeek: Math.max(0, avgVelocity),
       unitsPerDay: Math.max(0, avgVelocity / 7),
+      emaVelocityPerWeek: Math.max(0, emaVelocity),
+      emaVelocityPerDay: Math.max(0, emaVelocity / 7),
       trend,
       trendPercent: Math.round(trendPercent),
       confidence,

@@ -1,12 +1,13 @@
 // @ts-nocheck
 /**
  * Predictive Modelling — pure arithmetic stockout predictions. No AI.
- * Derives a simple 2-cycle velocity directly from snapshot items (deliberately
- * simpler than velocityService.ts's multi-cycle calculateVelocity — this only
- * needs a near-term run-rate, not trend/confidence/expiry analysis).
+ * Velocity comes from velocityService.ts's multi-cycle calculateVelocity (the
+ * same function suggest.ts uses), preferring its EMA-weighted rate so recent
+ * cycles matter more than a stale 6-month-old reading.
  */
-import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
+import { calculateVelocity } from '../reports/velocityService';
 
 export interface StockoutPrediction {
   productId: string;
@@ -42,49 +43,45 @@ export async function generateStockoutPredictions(
   const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
 
   for (const deptDoc of deptsSnap.docs) {
-    // Get latest snapshot for velocity data
-    const latestSnaps = await getDocs(
+    // Load ALL snapshots for this department — more cycles = better velocity
+    const allSnapshotsSnap = await getDocs(
       query(
         collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
-        orderBy('cycleNumber', 'desc'),
-        limit(2)  // need 2 for velocity calculation
-      )
+        orderBy('cycleNumber', 'asc'), // oldest first — calculateVelocity expects any order but sorts internally
+      ),
     );
-    if (latestSnaps.docs.length < 2) continue; // need at least 2 cycles for velocity
 
-    const latest = latestSnaps.docs[0].data() as any;
-    const previous = latestSnaps.docs[1].data() as any;
+    if (allSnapshotsSnap.docs.length < 2) continue; // need at least 2 for velocity
 
-    const latestItems = (latest.items || []) as any[];
-    const prevItemMap = new Map<string, number>();
-    for (const item of (previous.items || [])) {
-      const key = (item.name || '').toLowerCase().trim();
-      prevItemMap.set(key, item.actualClosing ?? 0);
-    }
+    // calculateVelocity takes raw snapshot docs — pass them directly
+    const velocityMap = calculateVelocity(
+      allSnapshotsSnap.docs.map(d => d.data()),
+    );
 
-    const cycleDays = latest.daysSinceLastCycle ?? avgCycleDays;
-    if (cycleDays <= 0) continue;
+    // Latest snapshot for current stock levels
+    const latestSnap = allSnapshotsSnap.docs[allSnapshotsSnap.docs.length - 1].data() as any;
 
-    for (const item of latestItems) {
+    for (const item of (latestSnap.items || [])) {
       const name = item.name || 'Unknown';
       const key = name.toLowerCase().trim();
       const currentStock = item.actualClosing ?? 0;
-      const prevStock = prevItemMap.get(key);
 
-      if (prevStock == null || currentStock <= 0) continue;
-      if (item.costPrice == null) continue; // skip products without prices — unreliable
+      if (currentStock <= 0) continue;
+      if (item.costPrice == null) continue;
 
-      // Calculate velocity: units consumed between cycles / days in cycle
-      // Consumption = prevStock - currentStock (negative variance = consumed)
-      // Also account for deliveries: if currentStock > prevStock, deliveries happened
-      // Use abs of variance as proxy for consumption rate
-      const consumed = prevStock - currentStock;
-      if (consumed <= 0) continue; // not consuming this product — skip
+      // Look up velocity from the multi-cycle service
+      const velData = velocityMap.get(key);
+      if (!velData || velData.unitsPerDay <= 0) continue;
+      if (velData.needsMoreData) continue; // not enough cycles for reliable velocity
 
-      const velocityPerDay = consumed / cycleDays;
+      // Prefer EMA velocity — handles seasonal patterns and event week outliers better
+      // Fall back to simple average if EMA not available (older data)
+      const velocityPerDay = velData.emaVelocityPerDay > 0
+        ? velData.emaVelocityPerDay
+        : velData.unitsPerDay;
       const daysUntilStockout = Math.floor(currentStock / velocityPerDay);
 
-      if (daysUntilStockout > 14) continue; // only surface near-term predictions
+      if (daysUntilStockout > 14) continue;
 
       const stockoutDate = new Date(Date.now() + daysUntilStockout * 86400000)
         .toISOString().slice(0, 10);
@@ -99,12 +96,10 @@ export async function generateStockoutPredictions(
         ? Math.floor((currentStock - parLevel) / velocityPerDay)
         : null;
 
-      // Confidence based on cycle count and velocity consistency
-      // More cycles = more reliable velocity estimate
-      const cycleCount = latest.cycleNumber ?? 1;
+      // Use velocityService's confidence directly
       const confidenceLabel: 'High' | 'Medium' | 'Low' =
-        cycleCount >= 4 ? 'High' :
-        cycleCount >= 2 ? 'Medium' :
+        velData.confidence === 'high' ? 'High' :
+        velData.confidence === 'medium' ? 'Medium' :
         'Low';
 
       predictions.push({
