@@ -53,6 +53,7 @@ export interface HostiHealthStage3 {
   daysOfCover: number | null;            // operational stock value ÷ daily consumption
   operationalStockValue: number | null;  // stock value excluding cellar/premium layers
   cellarStockValue: number | null;       // cellar + premium stock value, excluded from Days of Cover
+  inventoryHealthUsedInvoiceData: boolean; // true if Days of Cover used real invoice totals, false if estimated from stock movement
   paretoItems: Array<{
     name: string;
     areaName: string | null;
@@ -163,7 +164,7 @@ async function calculateFullScore(
   let avgCycleDays: number = 0; // lifted to function scope — populated by Inventory Health below, read by Constraint Analysis
 
   // ── Stock Accuracy — latest snapshot per department, aggregated ──────────
-  let totalVarianceDollars: number | null = null;
+  let totalVarianceDollars: number | null = null; // sum of absolute values per department — shortages and excesses both count
   let totalStockValueAgg: number | null = null;
   let pricedItemPercentSum = 0;
   let pricedItemPercentCount = 0;
@@ -181,7 +182,8 @@ async function calculateFullScore(
       const snap = snapsSnap.docs[0].data() as any;
       if (snap?.dataCompleteness?.hasPrices) {
         anyHasPrices = true;
-        sumVariance += snap.summary?.totalVarianceDollars ?? 0;
+        // Sum absolute variance — shortages and excesses both count, don't cancel
+        sumVariance += Math.abs(snap.summary?.totalVarianceDollars ?? 0);
         sumStockValue += snap.summary?.totalStockValue ?? 0;
       }
       // pricedItemPercent is stored 0–100 on the snapshot; average across depts for confidence.
@@ -200,7 +202,8 @@ async function calculateFullScore(
 
   let stockAccuracy: number | null = null;
   if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
-    const variancePct = Math.abs(totalVarianceDollars) / totalStockValueAgg * 100;
+    // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed here.
+    const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
     stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
   }
 
@@ -292,6 +295,7 @@ async function calculateFullScore(
   let daysOfCover: number | null = null;
   let operationalStockValue: number | null = null;
   let cellarStockValue: number | null = null;
+  let inventoryHealthUsedInvoiceData = false;
 
   try {
     // Step 1 — Classify products to separate operational vs cellar stock
@@ -306,6 +310,8 @@ async function calculateFullScore(
     let totalCycledays = 0;
     let deptCount = 0;
     let prevCycleStockValue: number | null = null;
+    let earliestCycleStart: Date | null = null;
+    let latestCycleEnd: Date | null = null;
 
     for (const deptDoc of deptsSnap.docs) {
       const latestSnap = (await getDocs(
@@ -323,6 +329,13 @@ async function calculateFullScore(
         totalCycledays += days;
         deptCount++;
       }
+
+      // Track the union of cycle windows across departments — used below to
+      // look up actual invoices received during this cycle.
+      const deptCycleStart = typeof snapData.cycleStart?.toDate === 'function' ? snapData.cycleStart.toDate() : null;
+      const deptCycleEnd = typeof snapData.cycleEnd?.toDate === 'function' ? snapData.cycleEnd.toDate() : null;
+      if (deptCycleStart && (earliestCycleStart == null || deptCycleStart < earliestCycleStart)) earliestCycleStart = deptCycleStart;
+      if (deptCycleEnd && (latestCycleEnd == null || deptCycleEnd > latestCycleEnd)) latestCycleEnd = deptCycleEnd;
 
       // Get previous cycle for opening stock value
       const cycleNum = snapData.cycleNumber;
@@ -343,12 +356,41 @@ async function calculateFullScore(
       avgCycleDays = totalCycledays / deptCount;
 
       // Step 3 — Estimate daily consumption rate
-      // consumption = openingValue - closingValue + impliedPurchases
-      // impliedPurchases approximated as max(0, closingValue - openingValue) when closing > opening
+      // consumption = openingValue - closingValue + purchasesValue
       const openingValue = prevCycleStockValue ?? operationalStockValue;
       const closingValue = operationalStockValue;
-      const impliedPurchases = Math.max(0, closingValue - openingValue);
-      const totalConsumed = openingValue - closingValue + impliedPurchases;
+
+      // Attempt to get actual purchase value from invoice data for this cycle window
+      let purchasesValue = 0;
+      try {
+        if (earliestCycleStart != null && latestCycleEnd != null) {
+          const invoiceSnap = await getDocs(
+            query(
+              collection(db, 'venues', venueId, 'invoices'),
+              where('invoiceDate', '>=', earliestCycleStart),
+              where('invoiceDate', '<=', latestCycleEnd),
+              limit(50),
+            ),
+          );
+          if (!invoiceSnap.empty) {
+            purchasesValue = invoiceSnap.docs.reduce((sum, d) => {
+              const total = (d.data() as any)?.totalAmount;
+              return sum + (typeof total === 'number' ? total : 0);
+            }, 0);
+            inventoryHealthUsedInvoiceData = purchasesValue > 0;
+          }
+        }
+      } catch {
+        // Non-fatal — fall through to implied purchases below
+      }
+
+      // Fall back to implied purchases if no invoice data
+      // impliedPurchases approximated as max(0, closingValue - openingValue) when closing > opening
+      if (!inventoryHealthUsedInvoiceData) {
+        purchasesValue = Math.max(0, closingValue - openingValue);
+      }
+
+      const totalConsumed = openingValue - closingValue + purchasesValue;
       const dailyConsumption = avgCycleDays > 0 ? totalConsumed / avgCycleDays : 0;
 
       if (dailyConsumption > 0) {
@@ -371,28 +413,68 @@ async function calculateFullScore(
     // Non-fatal — stays null
   }
 
-  // ── Ordering Intelligence — acceptance rate of suggested orders ──────────
+  // ── Ordering Intelligence — line-level compliance rate, not binary acceptance ──
   // Orders created via the Suggested Orders screen already carry source:'suggestions'
   // (used for draft de-dupe in createFromSuggestions.ts) — reused here rather than
-  // introducing a second, inconsistent value alongside it.
+  // introducing a second, inconsistent value alongside it. Order lines always live
+  // in the venues/{id}/orders/{orderId}/lines subcollection — confirmed there is no
+  // parent-doc `lines` array in any live write path (createFromSuggestions.ts and
+  // every reader use the subcollection; an old drafts.ts variant with an array field
+  // is dead code, unreferenced from src/services/orders/index.ts).
   let orderingIntelligence: number | null = null;
   if (totalStocktakesCompleted >= 3) {
     try {
-      const ninetyDaysAgo = Date.now() - 90 * 86400000;
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000);
       const ordersSnap = await getDocs(
         query(
           collection(db, 'venues', venueId, 'orders'),
           where('source', '==', 'suggestions'),
-          where('createdAt', '>=', new Date(ninetyDaysAgo)),
+          where('createdAt', '>=', ninetyDaysAgo),
         ),
       );
-      // Acceptance rate: orders placed from suggestions / expected cycles in window.
-      // A venue doing 1 stocktake/month should place ~3 suggested orders in 90 days.
-      const placed = ordersSnap.size;
-      const expectedCycles = Math.min(totalStocktakesCompleted, 3);
-      const acceptanceRate = Math.min(1, placed / expectedCycles);
-      orderingIntelligence = Math.round(acceptanceRate * 90); // max 90 — 100% blind acceptance isn't ideal
-    } catch {
+
+      if (!ordersSnap.empty) {
+        const complianceRates: number[] = [];
+
+        for (const orderDoc of ordersSnap.docs) {
+          const order = orderDoc.data() as any;
+          const suggestedQtyMap = order.suggestedQtyMap as Record<string, number> | undefined;
+
+          if (!suggestedQtyMap || Object.keys(suggestedQtyMap).length === 0) {
+            // Old order without suggestedQtyMap — treat as 100% compliance (binary: they placed it)
+            complianceRates.push(1.0);
+            continue;
+          }
+
+          const linesSnap = await getDocs(
+            collection(db, 'venues', venueId, 'orders', orderDoc.id, 'lines'),
+          );
+          const lines = linesSnap.docs.map(d => d.data() as { productId: string; qty: number });
+
+          // Compute per-line compliance: min(orderedQty / suggestedQty, 1)
+          // Ordering more than suggested = 1.0 (compliant), not penalised
+          const lineCompliances: number[] = [];
+          for (const [productId, suggestedQty] of Object.entries(suggestedQtyMap)) {
+            if (suggestedQty <= 0) continue;
+            const orderedLine = lines.find(l => l.productId === productId);
+            const orderedQty = orderedLine?.qty ?? 0;
+            lineCompliances.push(Math.min(1.0, orderedQty / suggestedQty));
+          }
+
+          if (lineCompliances.length > 0) {
+            const avgCompliance = lineCompliances.reduce((s, c) => s + c, 0) / lineCompliances.length;
+            complianceRates.push(avgCompliance);
+          }
+        }
+
+        if (complianceRates.length > 0) {
+          const avgRate = complianceRates.reduce((s, r) => s + r, 0) / complianceRates.length;
+          // Max 90 — 100% blind compliance isn't ideal, leaves room for managerial judgment
+          orderingIntelligence = Math.round(avgRate * 90);
+        }
+      }
+    } catch (e: any) {
+      console.log('[hostiHealth] orderingIntelligence error:', e?.message);
       // Non-fatal — stays null. Also covers the case where Firestore needs a
       // composite index (source ==, createdAt >=) that hasn't been created yet.
     }
@@ -590,6 +672,7 @@ async function calculateFullScore(
     daysOfCover,
     operationalStockValue,
     cellarStockValue,
+    inventoryHealthUsedInvoiceData,
     paretoItems,
     paretoTotalVariance,
     paretoCoverageByTop3,

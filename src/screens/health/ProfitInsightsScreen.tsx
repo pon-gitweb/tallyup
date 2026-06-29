@@ -406,6 +406,7 @@ export default function ProfitInsightsScreen() {
                   <KpiCard
                     c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]}
                     daysOfCover={key === 'inventoryHealth' ? health.daysOfCover : undefined}
+                    usedInvoiceData={key === 'inventoryHealth' ? health.inventoryHealthUsedInvoiceData : undefined}
                   />
                 </View>
               ))}
@@ -584,9 +585,9 @@ function InsightCard({
 }
 
 function KpiCard({
-  c, theme, kpiKey, score, daysOfCover,
+  c, theme, kpiKey, score, daysOfCover, usedInvoiceData,
 }: {
-  c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null;
+  c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = KPI_META[kpiKey];
@@ -620,6 +621,11 @@ function KpiCard({
       {expanded && (
         <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 17, marginTop: 6 }}>
           {meta.calc}
+          {kpiKey === 'inventoryHealth' && usedInvoiceData != null
+            ? usedInvoiceData
+              ? ' Calculated using your actual invoice data for this cycle.'
+              : ' Estimated — scan your invoices to improve this calculation.'
+            : ''}
         </Text>
       )}
     </TouchableOpacity>
