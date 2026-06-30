@@ -632,6 +632,7 @@ function StockTakeAreaInventoryScreen() {
   const [venueProducts, setVenueProducts] = useState<any[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const bannerAnim = useRef(new Animated.Value(0)).current;
+  const [bottomBarHeight, setBottomBarHeight] = useState(64); // sensible default before first onLayout fires
 
   // Load venue products once for tier-2 search
   useEffect(() => {
@@ -3408,12 +3409,15 @@ const openHistory = throttleAction(async (item: Item) => {
       </Animated.View>
 
       {/* Anchored bottom bar */}
-      <View style={{
-        flexDirection: 'row', backgroundColor: '#f5f3ee',
-        borderTopWidth: 1, borderTopColor: '#e5e1d8',
-        paddingTop: 8, paddingBottom: (Platform.OS === 'ios' ? 8 : 12) + insets.bottom,
-        paddingHorizontal: 4,
-      }}>
+      <View
+        onLayout={(e) => setBottomBarHeight(e.nativeEvent.layout.height)}
+        style={{
+          flexDirection: 'row', backgroundColor: '#f5f3ee',
+          borderTopWidth: 1, borderTopColor: '#e5e1d8',
+          paddingTop: 8, paddingBottom: (Platform.OS === 'ios' ? 8 : 12) + insets.bottom,
+          paddingHorizontal: 4,
+        }}
+      >
         {[
           { icon: '➕', label: 'Add', onPress: () => setAddSheetOpen(true) },
           { icon: '📷', label: 'Barcode', onPress: () => setBarcodeScanOpen(true) },
@@ -3871,7 +3875,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Keyboard Accessory */}
       {showSteppers && focusedInputId ? (
-        <View style={{ position:'absolute', left:12, right:12, bottom:16 + insets.bottom, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
+        <View style={{ position:'absolute', left:12, right:12, bottom: bottomBarHeight + 8, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
           <TouchableOpacity onPress={() => {
             setLocalQty(prev => {
               const raw = (prev[focusedInputId] ?? '').trim();
@@ -3909,7 +3913,7 @@ const openHistory = throttleAction(async (item: Item) => {
       {/* Next Uncounted FAB */}
       <TouchableOpacity
         onPress={() => focusNext()}
-        style={{ position:'absolute', right:16, bottom: (showSteppers && focusedInputId ? 72 : 16) + insets.bottom, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
+        style={{ position:'absolute', right:16, bottom: bottomBarHeight + (showSteppers && focusedInputId ? 64 : 0) + 12, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
         activeOpacity={0.9}
       >
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
