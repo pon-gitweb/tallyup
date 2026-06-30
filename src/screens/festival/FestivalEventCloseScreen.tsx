@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -11,6 +11,8 @@ import {
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,8 @@ export default function FestivalEventCloseScreen() {
   ]);
   const [loading,  setLoading]  = useState(FESTIVAL_BETA);
   const [closing,  setClosing]  = useState(false);
+  const { showSuccess, showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -119,24 +123,22 @@ export default function FestivalEventCloseScreen() {
   async function confirmClose() {
     const incomplete = checks.filter(c => !c.done);
     if (incomplete.length > 0) {
-      Alert.alert(
-        'Incomplete checklist',
-        `${incomplete.length} item${incomplete.length !== 1 ? 's' : ''} not confirmed. You can still close, but unresolved items may cause issues.\n\nClose anyway?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Close event', style: 'destructive', onPress: doClose },
-        ],
-      );
+      confirm({
+        title: 'Incomplete checklist',
+        message: `${incomplete.length} item${incomplete.length !== 1 ? 's' : ''} not confirmed. You can still close, but unresolved items may cause issues.\n\nClose anyway?`,
+        confirmLabel: 'Close anyway',
+        destructive: true,
+        onConfirm: doClose,
+      });
       return;
     }
-    Alert.alert(
-      'Close this event?',
-      'This marks the event as closed and archives it to history. You can still view it but not reopen it.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Close event', style: 'destructive', onPress: doClose },
-      ],
-    );
+    confirm({
+      title: 'Close this event?',
+      message: 'This marks the event as closed and archives it to history. You can still view it but not reopen it.',
+      confirmLabel: 'Close event',
+      destructive: true,
+      onConfirm: doClose,
+    });
   }
 
   async function doClose() {
@@ -161,13 +163,10 @@ export default function FestivalEventCloseScreen() {
       // Archive to eventHistory
       await setDoc(doc(db, 'venues', venueId, 'eventHistory', eventId), closedPayload);
 
-      Alert.alert(
-        'Event closed',
-        `${event.eventName || 'Event'} has been closed and archived to history.`,
-        [{ text: 'OK', onPress: () => nav.navigate('FestivalDashboard') }],
-      );
+      showSuccess('Event closed and archived to history.');
+      nav.navigate('FestivalDashboard');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not close event.');
+      showError(e?.message || 'Could not close event.');
     } finally {
       setClosing(false);
     }
@@ -254,6 +253,7 @@ export default function FestivalEventCloseScreen() {
         </TouchableOpacity>
 
       </ScrollView>
+      {modal}
     </View>
   );
 }

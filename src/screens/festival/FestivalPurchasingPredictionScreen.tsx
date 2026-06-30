@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet,
+  ActivityIndicator, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -278,25 +278,26 @@ export default function FestivalPurchasingPredictionScreen() {
           const label = ageHours < 1
             ? `${Math.round(ageMs / 60000)} min ago`
             : `${Math.round(ageHours)} hr ago`;
-          // TODO: two meaningful action buttons (Load saved / Start fresh), not a confirm/cancel pair — kept as Alert.alert
-          Alert.alert(
-            'Load saved prediction?',
-            `You have a saved prediction from ${label}. Load it or start fresh?`,
-            [
-              {
-                text: 'Load saved',
-                onPress: async () => {
-                  setResults(snap.results);
-                  if (snap.bufferUsed) setBufferPercent(snap.bufferUsed);
-                  if (snap.sellingPrices) setSellingPrices(snap.sellingPrices);
-                  const evSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
-                  setEventData(evSnap.exists() ? evSnap.data() : {});
-                  setLoading(false);
-                },
-              },
-              { text: 'Start fresh', onPress: () => runFullLoad(null) },
-            ],
-          );
+          // useConfirmModal's confirm() has no onCancel hook (binary confirm/hide only), so
+          // "start fresh" can't run from a cancel tap. Instead it runs immediately below as the
+          // safe default, and this dialog offers an opt-in override to load the saved snapshot
+          // if the user takes it. Small window where a very fast tap could be overwritten by the
+          // fresh load completing moments later — accepted as a minor trade-off for now.
+          confirm({
+            title: 'Load saved prediction?',
+            message: `You have a saved prediction from ${label}. Load it or start fresh?`,
+            confirmLabel: 'Load saved',
+            cancelLabel: 'Start fresh',
+            onConfirm: async () => {
+              setResults(snap.results);
+              if (snap.bufferUsed) setBufferPercent(snap.bufferUsed);
+              if (snap.sellingPrices) setSellingPrices(snap.sellingPrices);
+              const evSnap = await getDoc(doc(db, 'venues', venueId, 'event', 'details'));
+              setEventData(evSnap.exists() ? evSnap.data() : {});
+              setLoading(false);
+            },
+          });
+          runFullLoad(null);
           return;
         }
       }

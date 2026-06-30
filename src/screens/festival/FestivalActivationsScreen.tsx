@@ -2,13 +2,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert, Modal, Switch,
+  ScrollView, TextInput, Modal, Switch,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, onSnapshot, setDoc, updateDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
   const [displayNote,  setDisplayNote]  = useState('');
   const [saving,       setSaving]       = useState(false);
   const [bars,         setBars]         = useState<any[]>([]);
+  const { showError } = useToast();
 
   useEffect(() => {
     if (!venueId) return;
@@ -71,8 +73,8 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
   }
 
   async function save() {
-    if (!brandName.trim()) { Alert.alert('Required', 'Brand name is required.'); return; }
-    if (!barId) { Alert.alert('Required', 'Select a bar.'); return; }
+    if (!brandName.trim()) { showError('Brand name is required.'); return; }
+    if (!barId) { showError('Please select a bar.'); return; }
     if (!venueId) return;
 
     setSaving(true);
@@ -113,7 +115,7 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
 
       onClose();
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save activation.');
+      showError(e?.message || 'Could not save activation.');
     } finally {
       setSaving(false);
     }
@@ -243,6 +245,7 @@ export default function FestivalActivationsScreen() {
   const [showModal,   setShowModal]   = useState(false);
   const [showPrep,    setShowPrep]    = useState<string | null>(null);
   const [marking,     setMarking]     = useState<string | null>(null);
+  const { showError } = useToast();
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -278,7 +281,7 @@ export default function FestivalActivationsScreen() {
       });
       setShowPrep(null);
     } catch (e: any) {
-      Alert.alert('Error', e?.message);
+      showError(e?.message);
     } finally {
       setMarking(null);
     }

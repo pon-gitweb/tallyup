@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert,
+  ScrollView, TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Sharing from 'expo-sharing';
@@ -12,6 +12,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { generatePackingSlipPDF } from '../../services/festival/packingSlip';
 import { reconcileChepPallets } from '../../services/festival/chepReconciliation';
+import { useToast } from '../../components/common/Toast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ export default function FestivalPackingSlipScreen() {
   const [pallets,     setPallets]     = useState<Pallet[]>([]);
   const [loading,     setLoading]     = useState(FESTIVAL_BETA);
   const [generating,  setGenerating]  = useState(false);
+  const { showError, showInfo } = useToast();
   // CHEP tracking
   const [chepReceived,   setChepReceived]   = useState('');
   const [chepReturning,  setChepReturning]  = useState('');
@@ -166,7 +168,7 @@ export default function FestivalPackingSlipScreen() {
         );
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not generate PDF.');
+      showError(e?.message || 'Could not generate PDF.');
     } finally {
       setGenerating(false);
     }
@@ -174,7 +176,7 @@ export default function FestivalPackingSlipScreen() {
 
   async function sharePallet(uri: string) {
     const canShare = await Sharing.isAvailableAsync();
-    if (!canShare) { Alert.alert('Sharing not available'); return; }
+    if (!canShare) { showInfo('Sharing is not available on this device.'); return; }
     await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Share packing slip' });
   }
 

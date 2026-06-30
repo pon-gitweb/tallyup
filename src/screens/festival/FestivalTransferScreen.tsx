@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert, Modal,
+  ScrollView, TextInput, Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDocs, query, where, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
@@ -212,19 +212,19 @@ export default function FestivalTransferScreen() {
 
     if (check.level === 'caution') {
       const safeQty = product.velocity ? Math.floor((product.currentStock - product.velocity * 4)) : null;
-      // TODO: replace with branded modal — multi-action alert (Cancel / Transfer reduced / Transfer anyway)
-      Alert.alert(
-        '⚠️ Caution',
-        `${fromName} will have approximately ${hrs} hours of ${product.label} remaining after this transfer.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          ...(safeQty != null && safeQty > 0 ? [{
-            text: `Transfer ${safeQty} instead`,
-            onPress: () => { setQty(String(safeQty)); doTransfer('caution_reduced'); },
-          }] : []),
-          { text: `Transfer ${q} anyway`, onPress: () => doTransfer('caution_override') },
-        ],
-      );
+      const hasSafeQty = safeQty != null && safeQty > 0;
+      // Binary confirm — branded multi-action modal (Cancel / Transfer reduced / Transfer anyway) is the future state.
+      // Cancel is handled automatically by the modal; the single confirm action prefers the safer reduced
+      // quantity when one exists, otherwise falls back to transferring the full amount.
+      confirm({
+        title: '⚠️ Caution',
+        message: `${fromName} will have approximately ${hrs} hours of ${product.label} remaining after this transfer.`,
+        confirmLabel: hasSafeQty ? `Transfer ${safeQty} instead` : `Transfer ${q} anyway`,
+        onConfirm: () => {
+          if (hasSafeQty) { setQty(String(safeQty)); doTransfer('caution_reduced'); }
+          else { doTransfer('caution_override'); }
+        },
+      });
       return;
     }
 
@@ -232,19 +232,18 @@ export default function FestivalTransferScreen() {
     const velocity = product.velocity ?? 1;
     const hoursNeeded = velocity > 0 ? (product.currentStock / velocity).toFixed(1) : '?';
     const safeQty = product.velocity ? Math.max(0, Math.floor(product.currentStock - product.velocity * 2)) : null;
-    // TODO: replace with branded modal — multi-action alert (Cancel / Transfer reduced / Transfer anyway)
-    Alert.alert(
-      '🚫 High Risk',
-      `Transferring ${q} may leave ${fromName} short before close.\n\nAt current pace ${fromName} needs approximately ${hoursNeeded} units for the remaining time.\n\nGiving away ${q} leaves only ${remaining} units — about ${hrs} hours supply.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        ...(safeQty != null && safeQty > 0 ? [{
-          text: `Transfer ${safeQty} (safer)`,
-          onPress: () => { setQty(String(safeQty)); doTransfer('risk_reduced'); },
-        }] : []),
-        { text: `Transfer ${q} anyway — I'll manage it`, style: 'destructive', onPress: () => doTransfer('risk_override') },
-      ],
-    );
+    const hasSafeQty = safeQty != null && safeQty > 0;
+    // Same simplification as above — binary confirm, prefers the safer reduced quantity when available.
+    confirm({
+      title: '🚫 High Risk',
+      message: `Transferring ${q} may leave ${fromName} short before close.\n\nAt current pace ${fromName} needs approximately ${hoursNeeded} units for the remaining time.\n\nGiving away ${q} leaves only ${remaining} units — about ${hrs} hours supply.`,
+      confirmLabel: hasSafeQty ? `Transfer ${safeQty} (safer)` : `Transfer ${q} anyway`,
+      destructive: true,
+      onConfirm: () => {
+        if (hasSafeQty) { setQty(String(safeQty)); doTransfer('risk_reduced'); }
+        else { doTransfer('risk_override'); }
+      },
+    });
   }
 
   const q = parseFloat(qty);
