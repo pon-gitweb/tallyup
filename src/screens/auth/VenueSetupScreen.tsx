@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Switch, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Switch, ActivityIndicator } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { collection, doc, serverTimestamp, setDoc, getFirestore } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
+import { useToast } from '../../components/common/Toast';
 
 export default function VenueSetupScreen() {
   const auth = getAuth();
   const db = getFirestore();
+  const { showError, showSuccess } = useToast();
 
   const [name, setName] = useState('');
   const [openSignup, setOpenSignup] = useState(true);
@@ -15,11 +17,11 @@ export default function VenueSetupScreen() {
   const onCreate = async () => {
     const user = auth.currentUser;
     if (!user) {
-      Alert.alert('Not signed in', 'Please log in first.');
+      showError('Please log in first.');
       return;
     }
     if (!name.trim()) {
-      Alert.alert('Missing info', 'Please enter a venue name.');
+      showError('Please enter a venue name.');
       return;
     }
 
@@ -48,10 +50,10 @@ export default function VenueSetupScreen() {
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      Alert.alert('Venue created', 'You are ready to start.');
+      showSuccess("Your venue is ready — let's go!");
       // Root gate will detect defaultVenueId and send to Dashboard
     } catch (e: any) {
-      Alert.alert('Failed to create venue', e?.message ?? 'Unknown error');
+      showError('Failed to create venue: ' + (e?.message ?? 'Unknown error'));
     } finally {
       setBusy(false);
     }

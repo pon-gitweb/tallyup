@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   ScrollView,
   KeyboardAvoidingView,
@@ -15,6 +14,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { useColours, useTheme } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 
 function mapRegisterError(e: any): string {
   const code = (e?.code || '').toString();
@@ -30,6 +30,7 @@ export default function RegisterScreen() {
   const colours = useColours();
   const { fontsLoaded } = useTheme();
   const navigation = useNavigation<any>();
+  const { showError, showInfo } = useToast();
 
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
@@ -44,11 +45,11 @@ export default function RegisterScreen() {
     const pw = pass;
 
     if (!em || !pw) {
-      Alert.alert('Missing info', 'Enter email and password.');
+      showInfo('Enter your email and password.');
       return;
     }
     if (pw.length < 6) {
-      Alert.alert('Password too short', 'Password must be at least 6 characters.');
+      showInfo('Password must be at least 6 characters.');
       return;
     }
 
@@ -85,9 +86,9 @@ export default function RegisterScreen() {
       navigation.navigate('EmailVerification');
     } catch (e: any) {
       if (e?.message === 'auth-timeout') {
-        Alert.alert('Connection is slow', 'Please check your network and try again.');
+        showError('Connection is slow — please check your network and try again.');
       } else if (e?.code) {
-        Alert.alert('Registration failed', mapRegisterError(e));
+        showError(mapRegisterError(e));
       }
     } finally {
       setBusy(false);

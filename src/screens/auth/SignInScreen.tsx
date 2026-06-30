@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { DEV_DEFAULT_EMAIL, DEV_DEFAULT_PASSWORD } from '../../config/devAuth';
+import { useToast } from '../../components/common/Toast';
 
 function mapAuthError(e: any): string {
   const code = e?.code || '';
@@ -17,6 +18,7 @@ function mapAuthError(e: any): string {
 
 export default function SignInScreen() {
   const nav = useNavigation();
+  const { showError } = useToast();
   const [email, setEmail] = useState(DEV_DEFAULT_EMAIL);
   const [password, setPassword] = useState(DEV_DEFAULT_PASSWORD);
   const [busy, setBusy] = useState(false);
@@ -29,7 +31,7 @@ export default function SignInScreen() {
       // Authed stack initial route is ExistingVenueDashboard
     } catch (e: any) {
       console.warn('[SignIn] error', e);
-      Alert.alert('Sign-in failed', mapAuthError(e));
+      showError(mapAuthError(e));
     } finally {
       setBusy(false);
     }

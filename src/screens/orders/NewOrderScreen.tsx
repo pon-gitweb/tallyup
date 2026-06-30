@@ -1,12 +1,13 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, Alert, TouchableOpacity, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, TextInput,
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { listProducts, Product } from '../../services/products'; // keeps existing API
 import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
@@ -19,6 +20,7 @@ export default function NewOrderScreen() {
   const insets = useSafeAreaInsets();
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showInfo, showSuccess } = useToast();
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
   const nav = useNavigation<any>();
 
@@ -54,7 +56,7 @@ export default function NewOrderScreen() {
         // Only auto-select if no param provided
         if (!supplierIdParam && !supplierId && ss.length > 0) setSupplierId(ss[0].id);
       } catch (e: any) {
-        Alert.alert('Load failed', e?.message || 'Unknown error');
+        showError(e?.message || 'Could not load order data.');
       } finally {
         if (mounted) setLoading(false);
       }
@@ -122,20 +124,21 @@ export default function NewOrderScreen() {
   }, [lines]);
 
   async function saveDraft() {
-    if (!venueId) return Alert.alert('No venue', 'You are not attached to a venue.');
-    if (!supplierId) return Alert.alert('Choose supplier', 'Please select a supplier first.');
+    if (!venueId) { showError('You are not attached to a venue.'); return; }
+    if (!supplierId) { showInfo('Please select a supplier first.'); return; }
     const nonZero = lines.filter(l => Number(l.qty) > 0);
     if (nonZero.length === 0) {
-      return Alert.alert('Nothing to save', 'Add at least one product with a quantity.');
+      showInfo('Add at least one product with a quantity.');
+      return;
     }
     try {
       const { id } = await createDraftOrderWithLines(venueId, supplierId, nonZero, note || null, supplierNameParam ?? null);
-      Alert.alert('Draft created', 'Your order was saved as a draft.');
+      showSuccess('Order saved as a draft.');
       // Optionally jump to editor
       // nav.navigate('OrderEditor', { orderId: id, supplierName: supplierNameParam ?? 'Supplier' });
       nav.navigate('Orders');
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Could not save order.');
     }
   }
 

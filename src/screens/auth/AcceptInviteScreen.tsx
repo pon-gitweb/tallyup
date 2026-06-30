@@ -5,7 +5,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   ScrollView,
   TextInput,
@@ -16,6 +15,7 @@ import { db } from '../../services/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Owner',
@@ -32,6 +32,7 @@ type InviteDetails = {
 
 export default function AcceptInviteScreen() {
   const colours = useColours();
+  const { showError, showInfo } = useToast();
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const { venueId, inviteId } = (route.params || {}) as { venueId: string; inviteId: string };
@@ -107,7 +108,7 @@ export default function AcceptInviteScreen() {
   const doAuth = async () => {
     const em = email.trim().toLowerCase();
     if (!em || !password) {
-      Alert.alert('Missing info', 'Enter email and password.');
+      showInfo('Enter your email and password.');
       return;
     }
     setAuthBusy(true);
@@ -125,7 +126,7 @@ export default function AcceptInviteScreen() {
       if (code.includes('user-not-found')) msg = 'No account found. Try creating one.';
       if (code.includes('email-already-in-use')) msg = 'An account with this email already exists. Sign in instead.';
       if (code.includes('weak-password')) msg = 'Password must be at least 6 characters.';
-      Alert.alert('Error', msg);
+      showError(msg);
     } finally {
       setAuthBusy(false);
     }
@@ -144,14 +145,11 @@ export default function AcceptInviteScreen() {
     } catch (e: any) {
       const msg = e?.message || String(e);
       if (msg.includes('different email')) {
-        Alert.alert(
-          'Wrong account',
-          `This invite was sent to ${invite?.email}. Please sign in with that email address.`
-        );
+        showError(`This invite was sent to ${invite?.email}. Please sign in with that email address.`);
       } else if (msg.includes('expired')) {
-        Alert.alert('Invite expired', 'This invite has expired. Ask your manager to send a new one.');
+        showError('This invite has expired. Ask your manager to send a new one.');
       } else {
-        Alert.alert('Could not accept invite', msg);
+        showError('Could not accept invite: ' + msg);
       }
     } finally {
       setAccepting(false);
