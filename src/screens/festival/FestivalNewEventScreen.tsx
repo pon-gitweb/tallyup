@@ -9,6 +9,7 @@ import { collection, doc, getDoc, getDocs, setDoc, serverTimestamp } from 'fireb
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
 
 type PriorProduct = {
   id: string;
@@ -37,6 +38,7 @@ export default function FestivalNewEventScreen() {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { showError } = useToast();
 
   const [priorEvents, setPriorEvents] = useState<PriorEvent[]>([]);
   const [selectedPriorId, setSelectedPriorId] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export default function FestivalNewEventScreen() {
       prods.sort((a, b) => b.avgVelocity - a.avgVelocity);
       setProducts(prods);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not load prior event data.');
+      showError(e?.message || 'Could not load prior event data.');
     }
     setLoading(false);
   }

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert, Image,
+  ScrollView, TextInput, Image,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,6 +12,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth, storage } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
 
 type Condition = 'sealed' | 'partial' | 'damaged';
 
@@ -29,6 +30,7 @@ export default function FestivalReturnPhotoScreen() {
   const [notes,      setNotes]      = useState('');
   const [uploading,  setUploading]  = useState(false);
   const [saved,      setSaved]      = useState(false);
+  const { showError, showInfo } = useToast();
 
   // ── Coming-soon gate ──────────────────────────────────────────────────────
   if (!FESTIVAL_BETA) {
@@ -48,14 +50,14 @@ export default function FestivalReturnPhotoScreen() {
       if (useCamera) {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission needed', 'Camera permission is required to take photos.');
+          showInfo('Camera permission is required to take photos.');
           return;
         }
         result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
       } else {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission needed', 'Photo library permission is required.');
+          showInfo('Photo library permission is required.');
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({ quality: 0.7 });
@@ -64,7 +66,7 @@ export default function FestivalReturnPhotoScreen() {
         setPhotos(prev => [...prev, result.assets[0].uri]);
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not access camera or library.');
+      showError(e?.message || 'Could not access camera or library.');
     }
   }
 
@@ -99,7 +101,7 @@ export default function FestivalReturnPhotoScreen() {
 
       setSaved(true);
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save photos.');
+      showError(e?.message || 'Could not save photos.');
     } finally {
       setUploading(false);
     }

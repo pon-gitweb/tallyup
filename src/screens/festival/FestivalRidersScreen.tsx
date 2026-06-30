@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, TextInput, Alert, Modal,
+  ScrollView, TextInput, Modal,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -13,6 +13,7 @@ import { db, auth, storage } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { apiBase } from '../../services/apiBase';
+import { useToast } from '../../components/common/Toast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ function AddRiderModal({ visible, onClose, venueId, onAdded }: any) {
   const [stageArea,    setStageArea]    = useState<ProductReq[]>([{ product: '', quantity: '', unit: '', notes: '' }]);
   const [saving,       setSaving]       = useState(false);
   const [pendingFile,  setPendingFile]  = useState<{ name: string; uri: string } | null>(null);
+  const { showError } = useToast();
 
   function addRow(list: ProductReq[], setter: any) {
     setter([...list, { product: '', quantity: '', unit: '', notes: '' }]);
@@ -67,7 +69,7 @@ function AddRiderModal({ visible, onClose, venueId, onAdded }: any) {
   }
 
   async function save() {
-    if (!artistName.trim() && mode === 'manual') { Alert.alert('Required', 'Artist name is required.'); return; }
+    if (!artistName.trim() && mode === 'manual') { showError('Artist name is required.'); return; }
     if (!venueId) return;
     setSaving(true);
     try {
@@ -132,7 +134,7 @@ function AddRiderModal({ visible, onClose, venueId, onAdded }: any) {
       onAdded?.();
       onClose();
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not save rider.');
+      showError(e?.message || 'Could not save rider.');
     } finally {
       setSaving(false);
     }
