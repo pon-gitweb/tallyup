@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import OriginalOrderDetailScreen from './OrderDetailScreen';
 
@@ -16,12 +16,14 @@ import {
 } from 'firebase/firestore';
 import { useVenue } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 
 export default function OrderDetailWithHeader(props: any) {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { venueId, user } = useVenue() as any;
   const colours = useColours();
+  const { showSuccess, showError, showInfo } = useToast();
 
   const p = (route?.params as any) || {};
   const orderId: string | undefined = p?.orderId || p?.id || p?.order?.id;
@@ -66,7 +68,7 @@ export default function OrderDetailWithHeader(props: any) {
       // Guard: don't submit an empty draft
       const linesSnap = await getDocs(collection(orderRef, 'lines'));
       if (linesSnap.empty) {
-        Alert.alert('Submit', 'This draft has no lines to submit.');
+        showInfo('This draft has no lines to submit.');
         return;
       }
 
@@ -81,10 +83,10 @@ export default function OrderDetailWithHeader(props: any) {
 
       // Optimistic; onSnapshot will confirm
       setLiveStatus('submitted');
-      Alert.alert('Order', 'Order submitted.');
+      showSuccess('Order submitted.');
     } catch (e: any) {
       console.warn('[OrderDetailHeader v7] submit error', e);
-      Alert.alert('Order', e?.message || 'Failed to submit order.');
+      showError(e?.message || 'Failed to submit order.');
     }
   }, [venueId, orderId, user?.uid]);
 
@@ -101,7 +103,7 @@ export default function OrderDetailWithHeader(props: any) {
           {showReceive && (
             <TouchableOpacity
               onPress={() => {
-                if (!orderId) return Alert.alert('Receive', 'Missing order id.');
+                if (!orderId) { showError('Missing order ID.'); return; }
                 navigation.navigate('Receive' as never, { orderId } as never);
               }}
               style={{ paddingHorizontal: 12 }}
@@ -112,7 +114,7 @@ export default function OrderDetailWithHeader(props: any) {
           {showInvoice && (
             <TouchableOpacity
               onPress={() => {
-                if (!orderId) return Alert.alert('Invoice', 'Missing order id.');
+                if (!orderId) { showError('Missing order ID.'); return; }
                 navigation.navigate('InvoiceEdit' as never, { orderId, status } as never);
               }}
               style={{ paddingHorizontal: 12 }}

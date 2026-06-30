@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFirestore, updateDoc, getDocs, collection, doc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { OrdersService } from '../../domain/orders';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput } from 'react-native';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../context/VenueProvider';
 
@@ -10,6 +10,7 @@ import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attach
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
 
 import FastReceiveDetailModal from './FastReceiveDetailModal';
+import { useToast } from '../../components/common/Toast';
 
 type FastRec = {
   id: string;
@@ -26,6 +27,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
   const db = getFirestore(getApp());
   const [rows, setRows] = useState<FastRec[]>([]);
   const [busyId, setBusyId] = useState<string|null>(null);
+  const { showSuccess, showError, showInfo } = useToast();
 
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -88,13 +90,13 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
       });
 
       if (result.attached && result.orderId) {
-        Alert.alert('Attached', `Linked to order ${result.orderId} and sent for reconciliation.`);
+        showSuccess(`Linked to order ${result.orderId} and sent for reconciliation.`);
         await load();
       } else {
-        Alert.alert('Not Found', 'No submitted order matched this PO yet. You can edit the PO, or attach to a specific order.');
+        showInfo('No submitted order matched this PO yet. You can edit the PO, or attach to a specific order.');
       }
     } catch (e:any) {
-      Alert.alert('Attach failed', String(e?.message||e));
+      showError(e?.message || 'Attach failed.');
     } finally {
       setBusyId(null);
     }
@@ -136,11 +138,11 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
       setEditBusy(true);
       const ref = doc(db, 'venues', venueId, 'fastReceives', editItem.id);
       await updateDoc(ref, { parsedPo: cleaned || null, updatedAt: serverTimestamp() });
-      Alert.alert('Saved', `PO updated to "${cleaned || '—'}". You can now Try Attach.`);
+      showSuccess(`PO updated to "${cleaned || '—'}". You can now Try Attach.`);
       closeEditPo();
       await load();
     } catch (e:any) {
-      Alert.alert('Save failed', String(e?.message||e));
+      showError(e?.message || 'Save failed.');
     } finally {
       setEditBusy(false);
     }
@@ -155,7 +157,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
       const list = await OrdersService.listSubmittedOrders(venueId, 200);
       setOrders(list);
     } catch(e:any){
-      Alert.alert('Load orders failed', String(e?.message||e));
+      showError(e?.message || 'Load orders failed.');
     } finally {
       setOrdersBusy(false);
     }
@@ -176,11 +178,11 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: ()=>void
         orderId,
       });
       if (!res?.ok) throw new Error(res?.error || 'attach failed');
-      Alert.alert('Attached', 'Invoice attached and sent for reconciliation.');
+      showSuccess('Invoice attached and sent for reconciliation.');
       closeChooser();
       await load();
     } catch(e:any){
-      Alert.alert('Attach failed', String(e?.message||e));
+      showError(e?.message || 'Attach failed.');
     }
   }, [venueId, chooserFor, load, closeChooser]);
 

@@ -1,8 +1,9 @@
 /* @ts-nocheck */
 import React, { useMemo, useState, useCallback } from 'react';
-import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import { useToast } from '../../components/common/Toast';
 
 type FastRec = {
   id: string;
@@ -32,6 +33,7 @@ export default function FastReceiveDetailModal({
 }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
+  const { showSuccess, showError, showInfo } = useToast();
 
   const po = useMemo(() => item?.parsedPo ?? item?.payload?.invoice?.poNumber ?? '—', [item]);
   const when = useMemo(
@@ -77,13 +79,13 @@ export default function FastReceiveDetailModal({
       });
 
       if (result.attached && result.orderId) {
-        Alert.alert('Attached', `Linked to order ${result.orderId} and sent for reconciliation.`);
+        showSuccess(`Linked to order ${result.orderId} and sent for reconciliation.`);
         onAttached(result.orderId);
       } else {
-        Alert.alert('Not Found', 'No submitted order matched this PO yet.');
+        showInfo('No submitted order matched this PO yet.');
       }
     } catch (e:any) {
-      Alert.alert('Attach failed', String(e?.message||e));
+      showError(e?.message || 'Attach failed.');
     } finally {
       setBusy(false);
     }

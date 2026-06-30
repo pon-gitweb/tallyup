@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useVenueId } from '../../context/VenueProvider';
@@ -9,10 +9,12 @@ import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import { useToast } from '../../components/common/Toast';
 
 export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
+  const { showSuccess, showError, showInfo } = useToast();
 
   const uploadPhoto = useCallback(async (uri: string) => {
     if (!venueId) throw new Error('Not ready: no venue selected');
@@ -36,7 +38,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         const msg = (save && save.error) ? String(save.error) : 'unknown error';
         throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
-      Alert.alert('Photo Saved', 'Captured image saved as a Pending Fast Receive.');
+      showSuccess('Captured image saved as a Pending Fast Receive.');
       onClose();
     } finally {
       setBusy(false);
@@ -47,14 +49,14 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Camera access required', 'Please allow camera access in Settings to photograph invoices.');
+        showInfo('Camera permission is required. Please allow access in Settings.');
         return;
       }
       const res = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85, exif: false, allowsEditing: false });
       if (res.canceled || !res.assets?.[0]?.uri) return;
       await uploadPhoto(res.assets[0].uri);
     } catch(e:any) {
-      Alert.alert('Photo capture failed', String(e?.message||e));
+      showError(e?.message || 'Photo capture failed.');
     }
   }, [uploadPhoto]);
 
@@ -62,14 +64,14 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Photo library access required', 'Please allow photo access in Settings.');
+        showInfo('Photo library permission is required. Please allow access in Settings.');
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
       if (res.canceled || !res.assets?.[0]?.uri) return;
       await uploadPhoto(res.assets[0].uri);
     } catch(e:any) {
-      Alert.alert('Photo upload failed', String(e?.message||e));
+      showError(e?.message || 'Photo upload failed.');
     }
   }, [uploadPhoto]);
 
@@ -121,15 +123,15 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       });
 
       if (result.attached) {
-        Alert.alert('Fast Receive', `Attached to order ${result.orderId} and sent for reconciliation.`);
+        showSuccess(`Attached to order ${result.orderId} and sent for reconciliation.`);
         onClose();
       } else {
         const nLines = Array.isArray(parsed?.lines) ? parsed.lines.length : 0;
-        Alert.alert('Saved for Review', `No submitted PO found. Saved as Pending Fast Receive (${nLines} lines).`);
+        showInfo(`No submitted PO found. Saved as Pending Fast Receive (${nLines} lines).`);
         onClose();
       }
     }catch(e:any){
-      Alert.alert('Fast Receive failed', String(e?.message||e));
+      showError(e?.message || 'Fast Receive failed.');
     } finally {
       setBusy(false);
     }
