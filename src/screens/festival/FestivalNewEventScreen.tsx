@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput,
+  ActivityIndicator, ScrollView, StyleSheet, Text, TextInput,
   TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -38,7 +38,7 @@ export default function FestivalNewEventScreen() {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const { showError } = useToast();
+  const { showError, showSuccess, showInfo } = useToast();
 
   const [priorEvents, setPriorEvents] = useState<PriorEvent[]>([]);
   const [selectedPriorId, setSelectedPriorId] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export default function FestivalNewEventScreen() {
 
   async function handleCreate() {
     if (!venueId || !newEventName.trim()) {
-      Alert.alert('Required', 'Event name is required.');
+      showInfo('Event name is required.');
       return;
     }
     setSaving(true);
@@ -149,11 +149,10 @@ export default function FestivalNewEventScreen() {
         updatedAt: serverTimestamp(),
       }, { merge: false });
 
-      Alert.alert('Event created', 'Your new event has been set up. Complete the setup wizard to configure bars, suppliers, and more.', [
-        { text: 'Go to Setup', onPress: () => nav.navigate('FestivalEventSetup') },
-      ]);
+      showSuccess('Event created — complete the setup wizard to configure bars, suppliers, and more.');
+      nav.navigate('FestivalEventSetup');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not create event.');
+      showError(e?.message || 'Could not create event.');
     } finally {
       setSaving(false);
     }

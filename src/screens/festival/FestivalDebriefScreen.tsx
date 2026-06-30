@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View,
+  ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDocs, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -9,6 +9,7 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { apiBase } from '../../services/apiBase';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
 
 type DebriefRec = {
   id: string;
@@ -26,6 +27,7 @@ export default function FestivalDebriefScreen() {
   const route = useRoute<any>();
   const { eventId, eventName: routeEventName } = route.params ?? {};
   const venueId = useVenueId();
+  const { showError } = useToast();
 
   const [recs, setRecs] = useState<DebriefRec[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,10 +70,10 @@ export default function FestivalDebriefScreen() {
       });
       const data = await res.json();
       if (!data.ok) {
-        Alert.alert('Error', data.error || 'Could not generate debrief.');
+        showError(data.error || 'Could not generate debrief.');
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not generate debrief.');
+      showError(e?.message || 'Could not generate debrief.');
     } finally {
       setGenerating(false);
     }

@@ -2,13 +2,15 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
@@ -24,6 +26,8 @@ export default function FestivalRiderDetailScreen() {
   const [loading,    setLoading]    = useState(FESTIVAL_BETA);
   const [marking,    setMarking]    = useState(false);
   const [generating, setGenerating] = useState(false);
+  const { showError, showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !riderId) { setLoading(false); return; }
@@ -80,27 +84,27 @@ export default function FestivalRiderDetailScreen() {
 
   async function markDelivered() {
     if (!venueId || marking) return;
-    Alert.alert('Mark delivered?', 'This will record the rider as fully delivered.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Mark delivered', onPress: async () => {
-          setMarking(true);
-          try {
-            await updateDoc(doc(db, 'venues', venueId, 'riders', riderId), {
-              status:      'delivered',
-              deliveredBy: uid ?? 'unknown',
-              deliveredAt: serverTimestamp(),
-              updatedAt:   serverTimestamp(),
-            });
-            nav.goBack();
-          } catch (e: any) {
-            Alert.alert('Error', e?.message);
-          } finally {
-            setMarking(false);
-          }
-        },
+    confirm({
+      title: 'Mark as delivered?',
+      message: 'This will record the rider as fully delivered.',
+      confirmLabel: 'Mark delivered',
+      onConfirm: async () => {
+        setMarking(true);
+        try {
+          await updateDoc(doc(db, 'venues', venueId, 'riders', riderId), {
+            status:      'delivered',
+            deliveredBy: uid ?? 'unknown',
+            deliveredAt: serverTimestamp(),
+            updatedAt:   serverTimestamp(),
+          });
+          nav.goBack();
+        } catch (e: any) {
+          showError(e?.message || 'Could not mark as delivered.');
+        } finally {
+          setMarking(false);
+        }
       },
-    ]);
+    });
   }
 
   async function generateDeliveryTask() {
@@ -142,9 +146,9 @@ export default function FestivalRiderDetailScreen() {
         createdAt:       serverTimestamp(),
       });
 
-      Alert.alert('Task created', 'Delivery task added to the task queue. Rider stock will be drawn from central store.');
+      showSuccess('Delivery task added to the task queue. Rider stock will be drawn from central store.');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Could not create delivery task.');
+      showError(e?.message || 'Could not create delivery task.');
     } finally {
       setGenerating(false);
     }
@@ -278,6 +282,7 @@ export default function FestivalRiderDetailScreen() {
         )}
 
       </ScrollView>
+      {modal}
     </View>
   );
 }
