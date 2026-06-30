@@ -682,6 +682,34 @@ async function calculateFullScore(
       stockValue: stockValueResolved,
       varianceDollars: totalVarianceDollars,
       calculatedAt: Date.now(),
+      // NEW — Pareto top 3 variance drivers for Suitee context
+      paretoTop3: paretoItems.slice(0, 3).map(p => ({
+        name: p.name,
+        varianceDollars: p.varianceDollars,
+        contributionPct: p.contributionPct,
+        areaName: p.areaName || null,
+        categoryName: p.categoryName || null,
+      })),
+      paretoTotalVariance: paretoTotalVariance ?? null,
+      // NEW — top abductive insight for Suitee context
+      topInsight: abductiveInsights[0] ? {
+        pattern: abductiveInsights[0].pattern,
+        mostLikelyExplanation: abductiveInsights[0].mostLikelyExplanation,
+        confidence: abductiveInsights[0].confidence,
+        confidenceLabel: abductiveInsights[0].confidenceLabel,
+        actionable: abductiveInsights[0].actionable,
+        severity: abductiveInsights[0].severity,
+      } : null,
+      // NEW — primary operational constraint for Suitee context
+      constraintType: constraint?.type ?? null,
+      constraintDescription: constraint?.description ?? null,
+      constraintFixAction: constraint?.fixAction ?? null,
+      constraintImpact: constraint?.impact ?? null,
+      // NEW — Days of Cover for Suitee context
+      daysOfCover: daysOfCover ?? null,
+      targetDaysOfCover: targetDaysOfCover ?? null,
+      operationalStockValue: operationalStockValue ?? null,
+      cellarStockValue: cellarStockValue ?? null,
     }, { merge: true });
   } catch {
     // Non-fatal — score still returns if write fails

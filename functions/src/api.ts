@@ -3707,6 +3707,28 @@ app.post("/suitee", async (req, res) => {
           if (h.stockValue != null) {
             lines.push(`  Operational stock value: $${Math.round(h.stockValue)}`);
           }
+          if (h.paretoTop3?.length) {
+            lines.push('  Top variance drivers (Focus List):');
+            h.paretoTop3.forEach((p: any, i: number) => {
+              const dir = p.varianceDollars < 0 ? 'short' : 'excess';
+              const area = p.areaName ? ` (${p.areaName})` : '';
+              lines.push(`    ${i + 1}. ${p.name}${area}: $${Math.abs(Math.round(p.varianceDollars))} ${dir} — ${p.contributionPct}% of total variance`);
+            });
+          }
+          if (h.topInsight) {
+            lines.push(`  Primary insight: ${h.topInsight.pattern}`);
+            lines.push(`    Most likely cause: ${h.topInsight.mostLikelyExplanation} (${h.topInsight.confidenceLabel} confidence, ${h.topInsight.confidence}%)`);
+            lines.push(`    Recommended action: ${h.topInsight.actionable}`);
+          }
+          if (h.constraintDescription) {
+            lines.push(`  Primary operational constraint: ${h.constraintDescription}`);
+            lines.push(`    Fix: ${h.constraintFixAction} (${h.constraintImpact} impact)`);
+          }
+          if (h.daysOfCover != null) {
+            lines.push(`  Days of cover: ${h.daysOfCover} days (target: ${h.targetDaysOfCover ?? 10} days, healthy range: 7–14)`);
+            if (h.operationalStockValue != null) lines.push(`  Operational stock value: $${Math.round(h.operationalStockValue)}`);
+            if (h.cellarStockValue != null && h.cellarStockValue > 0) lines.push(`  Cellar/premium stock (excluded from DoC): $${Math.round(h.cellarStockValue)}`);
+          }
         } else {
           lines.push('  Score not yet calculated — insufficient data (needs 2+ completed stocktakes)');
         }
