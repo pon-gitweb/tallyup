@@ -1263,6 +1263,7 @@ function SuiteeModal({
           </View>
 
           <FlatList
+            keyboardShouldPersistTaps="handled"
             ref={flatRef}
             data={displayMessages}
             keyExtractor={(_, i) => String(i)}

@@ -553,6 +553,7 @@ function DepartmentSelectionScreen() {
         )
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={filtered}
           keyExtractor={(x) => x.id}
           renderItem={renderDept}

@@ -542,6 +542,7 @@ export default function SuppliersScreen() {
       </View>
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={filtered}
         keyExtractor={(s) => s.id!}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -621,6 +622,7 @@ export default function SuppliersScreen() {
                 </View>
               ) : (
                 <FlatList
+                  keyboardShouldPersistTaps="handled"
                   data={directoryRows.filter(r => !directorySearch.trim() || (r.name || '').toLowerCase().includes(directorySearch.toLowerCase()))}
                   keyExtractor={(r, i) => r.id || String(i)}
                   ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -932,6 +934,7 @@ export default function SuppliersScreen() {
                   </View>
                 </View>
                 <FlatList
+                  keyboardShouldPersistTaps="handled"
                   style={{ flex: 1 }}
                   data={detailProducts}
                   keyExtractor={(p) => p.id}

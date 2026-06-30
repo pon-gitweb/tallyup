@@ -392,6 +392,7 @@ function AreaSelectionInner() {
         </View>
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={filtered}
           keyExtractor={(x) => x.id}
           renderItem={({ item }) => <Item item={item} />}

@@ -342,6 +342,7 @@ export default function OrderEditorScreen() {
           <HintBubble id="orders_longpress" />
           <Text style={[styles.label, { marginTop: 12 }]}>Lines</Text>
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={lines}
             keyExtractor={(l) => l.id}
             ListEmptyComponent={<Text style={styles.muted}>No lines yet.</Text>}
@@ -396,6 +397,7 @@ export default function OrderEditorScreen() {
           )}
 
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={items}
             keyExtractor={(i)=>String(i.id)}
             renderItem={renderProduct}

@@ -465,6 +465,7 @@ export default function OrdersScreen(){
       </View>
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={rows}
         keyExtractor={(x)=>x.id}
         renderItem={renderItem}

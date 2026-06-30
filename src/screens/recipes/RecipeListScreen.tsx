@@ -95,6 +95,7 @@ export default function RecipeListScreen({ onOpen }: Props) {
         <View style={{ padding:16 }}><ActivityIndicator /></View>
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={rows}
           keyExtractor={(x) => x.id}
           renderItem={renderItem}

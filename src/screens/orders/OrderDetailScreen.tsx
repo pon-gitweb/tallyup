@@ -701,6 +701,7 @@ export default function OrderDetailScreen() {
       ) : (
         <View style={{flex:1}}>
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={lines}
             keyExtractor={(it)=>it.id}
             contentContainerStyle={{padding:16}}

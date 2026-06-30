@@ -696,6 +696,7 @@ export default function SuggestedOrderScreen(){
     <View style={S.wrap}>
       {DeptChips}
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={rows}
         keyExtractor={keyExtractor}
         renderItem={renderRow}

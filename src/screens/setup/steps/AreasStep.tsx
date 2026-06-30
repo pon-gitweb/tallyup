@@ -47,6 +47,7 @@ export default function AreasStep() {
     <View style={{ flex: 1, gap: 12 }}>
       <Text>Select a department, then manage its areas.</Text>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         horizontal
         data={departments}
         keyExtractor={(id) => id}
@@ -63,6 +64,7 @@ export default function AreasStep() {
             <Button title="Add" onPress={addArea} />
           </View>
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={areas}
             keyExtractor={(id) => id}
             renderItem={({ item }) => (
