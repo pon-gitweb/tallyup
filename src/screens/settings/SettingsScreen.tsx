@@ -99,13 +99,16 @@ export default function SettingsScreen() {
   const [savingVenueCountry, setSavingVenueCountry] = useState(false);
 
   // Stocktake labour settings (venues/{venueId}/settings/labour) — used by Hosti Health
-  const [labourSettings, setLabourSettings] = useState<{ hourlyRate?: number; baselineMinutes?: number } | null>(null);
+  const [labourSettings, setLabourSettings] = useState<{ hourlyRate?: number; baselineMinutes?: number; targetDaysOfCover?: number } | null>(null);
   const [editingHourlyRate, setEditingHourlyRate] = useState(false);
   const [hourlyRateInput, setHourlyRateInput] = useState('');
   const [savingHourlyRate, setSavingHourlyRate] = useState(false);
   const [editingBaselineMinutes, setEditingBaselineMinutes] = useState(false);
   const [baselineMinutesInput, setBaselineMinutesInput] = useState('');
   const [savingBaselineMinutes, setSavingBaselineMinutes] = useState(false);
+  const [editingTargetDaysOfCover, setEditingTargetDaysOfCover] = useState(false);
+  const [targetDaysOfCoverInput, setTargetDaysOfCoverInput] = useState('');
+  const [savingTargetDaysOfCover, setSavingTargetDaysOfCover] = useState(false);
 
   // Success toast
   const [toast, setToast] = React.useState<string | null>(null);
@@ -323,6 +326,25 @@ export default function SettingsScreen() {
     }
   }
 
+  async function saveTargetDaysOfCover() {
+    if (!venueId) return;
+    let val = parseInt(targetDaysOfCoverInput, 10);
+    if (!Number.isFinite(val)) { showInfo('Enter a valid number of days.'); return; }
+    if (val < 1) { val = 1; showInfo('Minimum 1 day.'); }
+    else if (val > 60) { val = 60; showInfo('Maximum 60 days.'); }
+    setSavingTargetDaysOfCover(true);
+    try {
+      await setDoc(doc(db, 'venues', venueId, 'settings', 'labour'), { targetDaysOfCover: val }, { merge: true });
+      setLabourSettings(prev => ({ ...(prev || {}), targetDaysOfCover: val }));
+      setEditingTargetDaysOfCover(false);
+      showToast('Target days of cover updated ✓');
+    } catch (e: any) {
+      showError('Could not save target.');
+    } finally {
+      setSavingTargetDaysOfCover(false);
+    }
+  }
+
   const defaultHourlyRate = venueCountry === 'AU' ? 32.0 : 26.0;
   const hourlyRateIsDefault = labourSettings?.hourlyRate == null;
   const hourlyRate = labourSettings?.hourlyRate ?? defaultHourlyRate;
@@ -330,6 +352,10 @@ export default function SettingsScreen() {
   const defaultBaselineMinutes = 90;
   const baselineMinutesIsDefault = labourSettings?.baselineMinutes == null;
   const baselineMinutes = labourSettings?.baselineMinutes ?? defaultBaselineMinutes;
+
+  const defaultTargetDaysOfCover = 10;
+  const targetDaysOfCoverIsDefault = labourSettings?.targetDaysOfCover == null;
+  const targetDaysOfCover = labourSettings?.targetDaysOfCover ?? defaultTargetDaysOfCover;
 
   async function doSignOut() {
     try {
@@ -852,6 +878,62 @@ export default function SettingsScreen() {
               </Text>
               {isOwner ? (
                 <TouchableOpacity onPress={() => { setBaselineMinutesInput(String(baselineMinutes)); setEditingBaselineMinutes(true); }}>
+                  <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        </View>
+
+        {/* Target days of cover — used for Hosti Health Inventory Health scoring */}
+        <View style={styles.card}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, textTransform: 'uppercase', marginBottom: 4 }}>
+            Target days of cover
+          </Text>
+          <Text style={{ fontSize: 12, color: themeColours.textSecondary, marginBottom: 8, lineHeight: 16 }}>
+            How many days of stock you prefer to hold. Default is 10 days (NZ industry standard).
+          </Text>
+          {isOwner && editingTargetDaysOfCover ? (
+            <View>
+              <TextInput
+                value={targetDaysOfCoverInput}
+                onChangeText={setTargetDaysOfCoverInput}
+                autoFocus
+                keyboardType="number-pad"
+                placeholder="e.g. 10"
+                placeholderTextColor={themeColours.textSecondary}
+                style={{
+                  borderWidth: 1, borderColor: themeColours.primary, borderRadius: 8,
+                  paddingHorizontal: 10, paddingVertical: 8,
+                  fontSize: 15, color: themeColours.text,
+                  backgroundColor: themeColours.background,
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={saveTargetDaysOfCover}
+                  disabled={savingTargetDaysOfCover}
+                  style={{ flex: 1, backgroundColor: themeColours.primary, borderRadius: 999, paddingVertical: 9, alignItems: 'center' }}
+                >
+                  {savingTargetDaysOfCover
+                    ? <ActivityIndicator color={themeColours.primaryText} size="small" />
+                    : <Text style={{ color: themeColours.primaryText, fontWeight: '700', fontSize: 13 }}>Save</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setEditingTargetDaysOfCover(false)}
+                  style={{ flex: 1, backgroundColor: themeColours.surface, borderRadius: 999, paddingVertical: 9, alignItems: 'center', borderWidth: 1, borderColor: themeColours.border }}
+                >
+                  <Text style={{ color: themeColours.textSecondary, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15, color: themeColours.navy, fontWeight: '600', flex: 1 }}>
+                {targetDaysOfCoverIsDefault ? `${defaultTargetDaysOfCover} days · NZ industry default` : `${targetDaysOfCover} days`}
+              </Text>
+              {isOwner ? (
+                <TouchableOpacity onPress={() => { setTargetDaysOfCoverInput(String(targetDaysOfCover)); setEditingTargetDaysOfCover(true); }}>
                   <Text style={{ color: themeColours.primary, fontSize: 13, fontWeight: '700' }}>Edit</Text>
                 </TouchableOpacity>
               ) : null}

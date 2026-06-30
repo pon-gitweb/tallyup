@@ -37,7 +37,7 @@ const KPI_META: Record<string, { label: string; calc: string; nullStatus: string
   },
   orderingIntelligence: {
     label: 'Ordering Intel.',
-    calc: 'Based on how often suggested orders are acted on. Each time you create a draft order from the Suggested Orders screen, it counts toward your acceptance rate. Higher acceptance means your ordering is data-driven rather than guesswork.',
+    calc: 'Measures how often suggested orders are acted on, compared against what was actually suggested by velocity data.',
     nullStatus: 'Needs 3 stocktakes',
   },
   wasteControl: {
@@ -407,6 +407,8 @@ export default function ProfitInsightsScreen() {
                     c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]}
                     daysOfCover={key === 'inventoryHealth' ? health.daysOfCover : undefined}
                     usedInvoiceData={key === 'inventoryHealth' ? health.inventoryHealthUsedInvoiceData : undefined}
+                    targetDaysOfCover={key === 'inventoryHealth' ? health.targetDaysOfCover : undefined}
+                    orderingWeight={key === 'orderingIntelligence' ? health.orderingIntelligenceWeight : undefined}
                   />
                 </View>
               ))}
@@ -585,9 +587,10 @@ function InsightCard({
 }
 
 function KpiCard({
-  c, theme, kpiKey, score, daysOfCover, usedInvoiceData,
+  c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight,
 }: {
   c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
+  targetDaysOfCover?: number; orderingWeight?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = KPI_META[kpiKey];
@@ -612,7 +615,7 @@ function KpiCard({
       </View>
       {kpiKey === 'inventoryHealth' && daysOfCover != null && (
         <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
-          {daysOfCover} days of cover · healthy range: 7–14 days
+          {daysOfCover} days of cover · your target: {targetDaysOfCover ?? 10} days
         </Text>
       )}
       <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>
@@ -625,6 +628,9 @@ function KpiCard({
             ? usedInvoiceData
               ? ' Calculated using your actual invoice data for this cycle.'
               : ' Estimated — scan your invoices to improve this calculation.'
+            : ''}
+          {kpiKey === 'orderingIntelligence' && orderingWeight != null
+            ? ` Weight increases as suggestion confidence improves — currently weighted at ${Math.round(orderingWeight * 100)}% (increases to 15% at 6+ stocktakes as velocity data becomes reliable).`
             : ''}
         </Text>
       )}

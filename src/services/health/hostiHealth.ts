@@ -54,6 +54,8 @@ export interface HostiHealthStage3 {
   operationalStockValue: number | null;  // stock value excluding cellar/premium layers
   cellarStockValue: number | null;       // cellar + premium stock value, excluded from Days of Cover
   inventoryHealthUsedInvoiceData: boolean; // true if Days of Cover used real invoice totals, false if estimated from stock movement
+  targetDaysOfCover: number;             // venue-configurable target, default 10
+  orderingIntelligenceWeight: number;    // 0.05 / 0.10 / 0.15 depending on confidence
   paretoItems: Array<{
     name: string;
     areaName: string | null;
@@ -162,6 +164,7 @@ async function calculateFullScore(
 ): Promise<HostiHealthStage3> {
   const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
   let avgCycleDays: number = 0; // lifted to function scope — populated by Inventory Health below, read by Constraint Analysis
+  let targetDaysOfCover = 10; // lifted to function scope — populated by Labour Efficiency's labourSnap read, used by Inventory Health and Constraint Analysis
 
   // ── Stock Accuracy — latest snapshot per department, aggregated ──────────
   let totalVarianceDollars: number | null = null; // sum of absolute values per department — shortages and excesses both count
@@ -268,6 +271,9 @@ async function calculateFullScore(
     const hourlyRate = typeof labourData?.hourlyRate === 'number' ? labourData.hourlyRate : null;
     const baselineMinutes = typeof labourData?.baselineMinutes === 'number' ? labourData.baselineMinutes : null;
     hasHourlyRate = hourlyRate != null;
+    targetDaysOfCover = typeof labourData?.targetDaysOfCover === 'number'
+      ? labourData.targetDaysOfCover
+      : 10; // default: midpoint of 7–14 day NZ industry range
 
     let anySegmentData = false;
     let sumActiveMinutes = 0;
@@ -396,16 +402,18 @@ async function calculateFullScore(
       if (dailyConsumption > 0) {
         daysOfCover = Math.round(closingValue / dailyConsumption);
 
-        // Step 4 — Score against Days of Cover benchmarks
-        // NZ hospitality healthy range: 7–14 days
+        // Step 4 — Score relative to the venue's target days of cover (default 10 days)
+        // The healthy range is target ± 40% (so default 10 days = healthy range 6–14 days)
+        const targetMin = Math.round(targetDaysOfCover * 0.6);
+        const targetMax = Math.round(targetDaysOfCover * 1.4);
+
         inventoryHealth =
-          daysOfCover < 3  ? 20 :
-          daysOfCover < 5  ? 45 :
-          daysOfCover < 7  ? 65 :
-          daysOfCover <= 14 ? Math.min(95, 70 + (daysOfCover - 7) * 3.5) : // 70–94.5 in healthy range
-          daysOfCover <= 21 ? 65 :
-          daysOfCover <= 30 ? 45 :
-          20; // > 30 days: significantly over-stocked
+          daysOfCover < Math.round(targetMin * 0.6) ? 20 :  // critically lean
+          daysOfCover < targetMin ? 45 + Math.round((daysOfCover / targetMin) * 20) : // lean
+          daysOfCover <= targetMax ? Math.min(95, 70 + Math.round((1 - Math.abs(daysOfCover - targetDaysOfCover) / (targetMax - targetMin)) * 25)) : // healthy range scores 70–95
+          daysOfCover <= Math.round(targetMax * 1.5) ? 65 : // moderately over-stocked
+          daysOfCover <= Math.round(targetMax * 2) ? 45 : // over-stocked
+          20; // significantly over-stocked
       }
     }
   } catch (e: any) {
@@ -480,6 +488,22 @@ async function calculateFullScore(
     }
   }
 
+  // ── Confidence-aware Ordering Intelligence weight ─────────────────────────
+  // If our velocity data is Low or Medium confidence, we shouldn't weight
+  // this KPI heavily — our suggestions may not be reliable enough to penalise
+  // a venue for not following them.
+  // Low confidence (< 3 cycles): weight reduced to 5% effective
+  // Medium confidence (3–5 cycles): weight reduced to 10% effective
+  // High confidence (6+ cycles): full 15% weight
+  let orderingIntelligenceWeight = 0.15;
+  if (totalStocktakesCompleted < 3) {
+    orderingIntelligenceWeight = 0.05;
+  } else if (totalStocktakesCompleted < 6) {
+    orderingIntelligenceWeight = 0.10;
+  }
+  // Redistribute the weight reduction to Stock Accuracy (most reliable KPI)
+  const orderingWeightReduction = 0.15 - orderingIntelligenceWeight;
+
   // ── Waste Control — not yet built ────────────────────────────────────────
   const wasteControl: null = null;
 
@@ -487,8 +511,11 @@ async function calculateFullScore(
 
   // ── Weighted score with redistribution across whichever KPIs are available ──
   const weights: Record<string, number> = {
-    stockAccuracy: 0.30, labourEfficiency: 0.20, inventoryHealth: 0.20,
-    orderingIntelligence: 0.15, wasteControl: 0.15,
+    stockAccuracy: 0.30 + orderingWeightReduction, // absorbs the ordering shortfall
+    labourEfficiency: 0.20,
+    inventoryHealth: 0.20,
+    orderingIntelligence: orderingIntelligenceWeight,
+    wasteControl: 0.15,
   };
   const available = Object.entries(kpis).filter(([, v]) => v !== null) as [string, number][];
   const totalWeight = available.reduce((s, [k]) => s + weights[k], 0);
@@ -553,29 +580,32 @@ async function calculateFullScore(
     // Rank constraints by impact — find the biggest single lever
 
     // Constraint 1 — Stocktake frequency (most common constraint)
-    // Healthy = every 7–14 days. Over 21 days = meaningful gap.
+    // Healthy = every 7–14 days by default. Over 21 days = meaningful gap.
+    // Use targetDaysOfCover as context for constraint messaging — a venue
+    // targeting 5 days of cover should count more frequently than one targeting 14.
     if (avgCycleDays > 21) {
       const impact: 'high' | 'medium' | 'low' = avgCycleDays > 45 ? 'high' : avgCycleDays > 28 ? 'medium' : 'low';
+      const recommendedCycleFrequency = targetDaysOfCover <= 7 ? 7 : targetDaysOfCover <= 14 ? 14 : 21;
       constraint = {
         type: 'frequency',
-        description: `Your stocktakes are happening every ${Math.round(avgCycleDays)} days on average. The optimal range for NZ hospitality is 7–14 days.`,
+        description: `Your stocktakes are happening every ${Math.round(avgCycleDays)} days. Based on your ${targetDaysOfCover}-day stock target, counting every ${recommendedCycleFrequency} days would give you better visibility.`,
         impact,
-        fixAction: `Increase your stocktake frequency to at least every ${avgCycleDays > 45 ? '14' : '21'} days to catch variance earlier.`,
+        fixAction: `Increase stocktake frequency to every ${recommendedCycleFrequency} days to match your stock holding target.`,
       };
 
-      // Counterfactual: if you'd counted every 14 days instead...
+      // Counterfactual: if you'd counted every recommendedCycleFrequency days instead...
       // Variance detected later = more time for leakage to accumulate.
       // Conservative estimate: variance scales linearly with detection lag.
       // Always set when frequency is the constraint — estimatedAdditionalRecovery
       // stays null (rather than skipping the card) when there's no cost-price data.
-      if (avgCycleDays > 14) {
+      if (avgCycleDays > recommendedCycleFrequency) {
         let estimatedAdditionalRecovery: number | null = null;
         if (totalVarianceDollars != null) {
-          const lagFactor = 14 / avgCycleDays; // proportion of cycle if counted more frequently
+          const lagFactor = recommendedCycleFrequency / avgCycleDays; // proportion of cycle if counted more frequently
           estimatedAdditionalRecovery = Math.round(Math.abs(totalVarianceDollars) * (1 - lagFactor));
         }
         counterfactual = {
-          scenario: `If you'd counted every 14 days instead of every ${Math.round(avgCycleDays)} days`,
+          scenario: `If you'd counted every ${recommendedCycleFrequency} days instead of every ${Math.round(avgCycleDays)} days`,
           estimatedAdditionalRecovery,
           confidenceLabel: `Based on your last ${totalStocktakesCompleted} stocktake${totalStocktakesCompleted !== 1 ? 's' : ''}`,
         };
@@ -673,6 +703,8 @@ async function calculateFullScore(
     operationalStockValue,
     cellarStockValue,
     inventoryHealthUsedInvoiceData,
+    targetDaysOfCover,
+    orderingIntelligenceWeight,
     paretoItems,
     paretoTotalVariance,
     paretoCoverageByTop3,
