@@ -3680,6 +3680,42 @@ app.post("/suitee", async (req, res) => {
       console.log("[api/suitee] pour variance calc error", e?.message);
     }
 
+    // Add Hosti Health summary to context
+    try {
+      const now = new Date();
+      const monthKey = now.toISOString().slice(0, 7);
+      const healthSnap = await db.doc(`venues/${venueId}/profitRecoverySnapshots/${monthKey}`).get();
+      if (healthSnap.exists) {
+        const h = healthSnap.data() as any;
+        lines.push('', 'HOSTI HEALTH SCORE (current month):');
+        if (h.score != null) {
+          lines.push(`  Score: ${h.score}/100 (${h.confidence || 'Building'})`);
+          lines.push(`  Label: ${h.score >= 90 ? 'Excellent' : h.score >= 75 ? 'Strong' : h.score >= 60 ? 'Developing' : h.score >= 40 ? 'Needs attention' : 'At risk'}`);
+          if (h.kpiScores) {
+            lines.push('  KPI breakdown:');
+            if (h.kpiScores.stockAccuracy != null) lines.push(`    - Stock Accuracy: ${Math.round(h.kpiScores.stockAccuracy)}/100`);
+            if (h.kpiScores.labourEfficiency != null) lines.push(`    - Labour Efficiency: ${Math.round(h.kpiScores.labourEfficiency)}/100`);
+            if (h.kpiScores.inventoryHealth != null) lines.push(`    - Inventory Health: ${Math.round(h.kpiScores.inventoryHealth)}/100`);
+            if (h.kpiScores.orderingIntelligence != null) lines.push(`    - Ordering Intelligence: ${Math.round(h.kpiScores.orderingIntelligence)}/100`);
+          }
+          if (h.estimatedImpact != null && h.estimatedImpact > 0) {
+            lines.push(`  Estimated financial impact: $${Math.round(h.estimatedImpact)} recovered this cycle`);
+          }
+          if (h.varianceDollars != null) {
+            lines.push(`  Total variance: $${Math.abs(Math.round(h.varianceDollars))} (absolute, all departments)`);
+          }
+          if (h.stockValue != null) {
+            lines.push(`  Operational stock value: $${Math.round(h.stockValue)}`);
+          }
+        } else {
+          lines.push('  Score not yet calculated — insufficient data (needs 2+ completed stocktakes)');
+        }
+      }
+    } catch (e: any) {
+      console.log('[api/suitee] health context error', e?.message);
+      // Non-fatal
+    }
+
     const context = lines.join("\n");
 
     const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti.
@@ -3699,12 +3735,73 @@ You answer questions like:
 - Which supplier should I order beer from?
 - Are my staff over-pouring?
 - Why is my Kahlua usage so high?
+- Why is my Hosti Health score low?
+- How do I improve my Stock Accuracy?
+- What's my Days of Cover and is it healthy?
+- What are my biggest variance drivers?
+- What should I focus on to improve my score?
 
-Your tone is direct, analytical, and honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
+## Hosti Health — your primary guide for improvement
+
+Hosti Health is the venue's overall operational score (0–100), calculated from five KPIs:
+
+1. STOCK ACCURACY (30% weight) — measures variance as a percentage of total stock value. Healthy venues score 80+. Lower scores mean product is going missing faster than expected. Improvement: count more frequently, investigate the Focus List (top 3 variance products), check pour specs on high-variance spirits.
+
+2. LABOUR EFFICIENCY (20% weight) — measures how efficiently stocktakes are run compared to the venue's baseline. Improvement: consistent counting rhythm, voice counting, multiple staff counting simultaneously.
+
+3. INVENTORY HEALTH (20% weight) — measures Days of Cover (how many days of stock you're holding at current consumption). Healthy range: 7–14 days (or the venue's configured target). Too high = over-ordering, capital tied up. Too low = stockout risk. Improvement: align order quantities with the Suggested Orders feature.
+
+4. ORDERING INTELLIGENCE (15% weight, confidence-adjusted) — measures how often Suggested Orders are acted on. Weight increases as more stocktakes complete and velocity data improves. Improvement: use Suggested Orders after each stocktake, adjust quantities, place orders promptly.
+
+5. WASTE CONTROL (15% weight) — coming soon. Will track wastage logs once that feature is built.
+
+## Score benchmarks (NZ/AU hospitality)
+- 90–100: Excellent — top-tier operational discipline
+- 75–89: Strong — well-run with minor opportunities
+- 60–74: Developing — specific KPIs need attention
+- 40–59: Needs attention — meaningful leakage occurring
+- 0–39: At risk — significant operational gaps
+
+## Abductive insights — what the data suggests
+When the data shows a pattern, Hosti Health generates an insight about the most likely cause. For example:
+- Concentrated variance in one product → most likely systematic overpouring, wastage, or theft
+- Variance improving trend → controls are working, something changed for the better
+- Variance worsening trend → something changed since the last stocktake (staff, menu, supplier)
+- Days of Cover > 21 → ordering is outpacing consumption
+- Days of Cover < 5 → stockout risk within days
+
+When a user asks about their score or insights, explain the specific pattern and what it most likely means for their venue, using the data in context.
+
+## Constraint analysis — the primary bottleneck
+The system identifies the single biggest constraint on score improvement:
+- Stocktake frequency too low (most common) — counting every 45 days means variance runs undetected for weeks
+- Missing cost prices — without prices, financial impact can't be calculated
+- Single department — area-specific variance can't be identified
+
+When asked how to improve, start with the constraint — fixing the biggest bottleneck has more impact than fixing secondary issues.
+
+## Days of Cover guidance
+Days of Cover = how many days of operational stock the venue currently holds.
+Formula: operational stock value ÷ daily consumption rate (from cycle data).
+Cellar and premium stock (high-cost, low-velocity products) is excluded from this calculation automatically.
+Healthy: 7–14 days for most NZ/AU hospitality venues. Venues with daily deliveries can run 3–5 days. Remote venues may need 14–21 days.
+
+## Predictive stockout warnings
+When the system detects a product will run out within 14 days at current consumption:
+- Critical (< 3 days): immediate action needed
+- Warning (3–7 days): order soon
+- Watch (7–14 days): monitor
+These are based on EMA velocity (exponentially weighted average across all cycles — a single event week doesn't distort the prediction).
+
+## Confidence on insights
+All insights carry a confidence percentage based on how many stocktakes have been completed and how consistent the pattern is. 6+ stocktakes = High confidence. 3–5 = Medium. Fewer = Low. Always mention confidence when it's relevant to how much action a user should take.
+
+## Tone and style
+Direct, analytical, honest — like a trusted CFO who respects the operator's time. No fluff. Give the number first, then the context.
 
 If the data doesn't contain enough information to answer confidently, say so clearly: "I don't have enough data to answer that yet. Complete X more stocktakes to unlock this insight."
 
-For pour variance questions: state the spec, the implied actual, and the confidence level. Always note whether the variance is more consistent with over-pouring, under-pouring, spillage, or measurement error — never accuse staff. Frame it as "the data suggests", not "your staff are". Note that without POS data broken down by staff member, individual attribution isn't possible.
+For pour variance questions: state the spec, the implied actual, and the confidence level. Always note whether the variance is more consistent with over-pouring, under-pouring, spillage, or measurement error — never accuse staff. Frame it as "the data suggests", not "your staff are".
 
 Never answer questions about how to use the app — direct those to Izzy.
 

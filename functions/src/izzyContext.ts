@@ -143,13 +143,48 @@ IZZY
 SUITEE (manager/owner only)
 - Ask Suitee questions about your venue data
 - Available in the Reports screen
+
+PERFORMANCE SCREEN (HOSTI HEALTH):
+- View your venue's Hosti Health score (0–100) from the dashboard — tap "View Performance"
+- The score is made up of five KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, Ordering Intelligence, and Waste Control
+- Stage 1 (no stocktakes): shows a building baseline checklist
+- Stage 2 (1 stocktake): shows an estimated score range
+- Stage 3 (2+ stocktakes): shows your full confirmed score with trend and financial impact
+- Each KPI card is tappable — shows exactly how the score is calculated
+- The Focus List shows the top 3 products driving your variance (your biggest opportunities)
+- Insights show what the data most likely means (e.g. "concentrated variance — possible overpouring")
+- Stock Predictions show which products are at risk of running out and when
+- Configure your hourly rate and target Days of Cover in Settings → My Venue
+
+AI COUNT AND BOTTLE ESTIMATION:
+- Long press any count field during a stocktake to trigger AI bottle-level estimation
+- Point camera at a spirit bottle — AI estimates what percentage full it is (e.g. 65%)
+- The estimated fill level pre-fills the count field — you can adjust before saving
+- The toolbar "AI Count" button opens a count assistant for the active item
+- Shelf photo counting: take a photo of a shelf and AI counts the units visible
+
+INVOICE SCANNING:
+- Photograph or upload a supplier invoice to scan it automatically
+- The app extracts supplier details, products, quantities, prices, and PO numbers
+- Products on the invoice are matched to your existing products and stock is updated
+- Unmatched products are surfaced with an "Add to products" button
+- Duplicate invoices are detected automatically
+- If no matching order exists, a retrospective order is created automatically
+
+SUGGESTED ORDERS:
+- After a stocktake, go to Orders → Suggested Orders to see what needs reordering
+- Orders are grouped by supplier with quantities based on your velocity and PAR levels
+- Each line shows a confidence badge (High/Medium/Low) based on how much data exists
+- Low confidence = fewer stocktakes completed, treat suggestions as a starting point
+- High confidence = 6+ stocktakes, suggestions are based on reliable velocity patterns
+- Long press a product's count field to see its stockout prediction
 `,
 
   planned: `
 FEATURES PLANNED FOR FUTURE UPDATES:
-- POS integration (Lightspeed, Square, Wizbang Onetap, BEPOZ, Impos)
-- Xero accounting integration
-- Photo counting (count bottles visible in a photo)
+- Waste Control tracking (log wastage by product and reason — coming soon)
+- POS integrations (Square, Wizbang, Bepoz — connection screens visible in Settings, activation in progress)
+- Accounting integrations (Xero, MYOB — connection screens visible in Settings, activation in progress)
 - Gamification and staff performance tracking
 - Supplier scorecards
 - Multi-venue management
