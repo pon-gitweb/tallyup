@@ -1,9 +1,10 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, ScrollView } from 'react-native';
 import { getFirestore, doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { duplicateRecipe } from '../../services/recipes/duplicateRecipe';
+import { useToast } from '../../components/common/Toast';
 
 type Props = {
   recipeId: string;
@@ -16,6 +17,7 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
   const [busy, setBusy] = useState(false);
   const [docData, setDocData] = useState<any>(null);
   const [livePrices, setLivePrices] = useState<Record<string, number | null>>({});
+  const { showSuccess, showError } = useToast();
 
   useEffect(() => {
     let alive = true;
@@ -45,7 +47,7 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
         }
       } catch (e:any) {
         console.warn('[RecipeDetailScreen] load error', e);
-        Alert.alert('Load failed', String(e?.message || e));
+        showError(e?.message || 'Could not load recipe.');
       } finally {
         alive && setBusy(false);
       }
@@ -99,10 +101,10 @@ export default function RecipeDetailScreen({ recipeId, onBack, onOpenDraft }: Pr
       if (!venueId || !docData?.id) return;
       setBusy(true);
       const res = await duplicateRecipe(venueId, docData.id);
-      Alert.alert('Duplicated', 'A new draft copy was created.');
+      showSuccess('A new draft copy was created.');
       onOpenDraft && onOpenDraft(res.id);
     } catch (e:any) {
-      Alert.alert('Duplicate failed', String(e?.message || e));
+      showError(e?.message || 'Could not duplicate recipe.');
     } finally {
       setBusy(false);
     }

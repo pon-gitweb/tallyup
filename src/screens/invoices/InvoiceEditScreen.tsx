@@ -1,12 +1,13 @@
 // @ts-nocheck
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { fetchOrderWithLines, upsertInvoiceFromOrder, InvoiceLineInput } from '../../services/invoices';
 import { useVenue } from '../../context/VenueProvider'; // Assumes this exists and provides { venueId, user }
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useToast } from '../../components/common/Toast';
 
 type RootStackParamList = {
   InvoiceEdit: { orderId: string; status?: string; existingInvoiceId?: string };
@@ -18,6 +19,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'InvoiceEdit'>;
 export default function InvoiceEditScreen({ route, navigation }: Props) {
   const { venueId, user } = useVenue() as any;
   const { orderId } = route.params;
+  const { showSuccess, showError, showInfo } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [supplierName, setSupplierName] = useState<string>('');
@@ -60,7 +62,7 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
         // (kept conservative; no hard assumptions)
       } catch (e: any) {
         console.error('[Invoices] prefill error', e);
-        Alert.alert('Invoice', e?.message || 'Failed to load order lines.');
+        showError(e?.message || 'Failed to load order lines.');
         navigation.goBack();
       } finally {
         if (mounted) setLoading(false);
@@ -80,15 +82,15 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
       if (!venueId) throw new Error('No venue');
       if (!user?.uid) throw new Error('No user');
       if (!invoiceNumber.trim()) {
-        Alert.alert('Invoice', 'Please enter an invoice number.');
+        showError('Please enter an invoice number.');
         return;
       }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDateISO)) {
-        Alert.alert('Invoice', 'Please enter a date as YYYY-MM-DD.');
+        showError('Please enter a date as YYYY-MM-DD.');
         return;
       }
       if (!lines.length) {
-        Alert.alert('Invoice', 'There are no lines to post.');
+        showInfo('There are no lines to post.');
         return;
       }
       const result = await upsertInvoiceFromOrder(venueId, user.uid, {
@@ -97,12 +99,11 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
         invoiceDateISO,
         lines,
       });
-      Alert.alert('Invoice', 'Invoice posted.', [
-        { text: 'OK', onPress: () => navigation.navigate('OrderDetail' as any, { orderId, status: route.params?.status }) },
-      ]);
+      showSuccess('Invoice posted.');
+      navigation.navigate('OrderDetail' as any, { orderId, status: route.params?.status });
     } catch (e: any) {
       console.error('[Invoices] post error', e);
-      Alert.alert('Invoice', e?.message || 'Failed to post invoice.');
+      showError(e?.message || 'Failed to post invoice.');
     }
   }, [venueId, user?.uid, orderId, invoiceNumber, invoiceDateISO, lines]);
 

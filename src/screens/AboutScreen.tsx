@@ -1,5 +1,5 @@
 import React from 'react';
-import { SafeAreaView, ScrollView, Alert } from 'react-native';
+import { SafeAreaView, ScrollView } from 'react-native';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { tokens } from '../theme/tokens';
 import { ENABLE_V2_THEME } from '../flags/v2Brand';
@@ -8,12 +8,14 @@ import TView from '../components/themed/TView';
 import TText from '../components/themed/TText';
 import TButton from '../components/themed/TButton';
 import LegalFooter from '../components/LegalFooter';
+import { useToast } from '../components/common/Toast';
 
 export default function AboutScreen() {
   const nav = useNavigation<any>();
+  const { showInfo } = useToast();
   const go = (name: string) => {
     if (__DEV__ && ENABLE_V2_THEME) nav.navigate(name);
-    else Alert.alert('Unavailable', 'Enable ENABLE_V2_THEME in dev to preview.');
+    else showInfo('Enable ENABLE_V2_THEME in dev to preview.');
   };
 
   return (

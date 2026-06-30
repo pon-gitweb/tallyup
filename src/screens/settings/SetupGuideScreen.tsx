@@ -1,15 +1,17 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { GuideState, GuideStep, resetGuide, dismissGuide, getCompletedCount, loadGuideState, markStepComplete } from '../../services/guide/SetupGuideService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useColours } from '../../context/ThemeContext';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 function SetupGuideScreen() {
   const nav = useNavigation<any>();
   const colours = useColours();
   const [state, setState] = useState<GuideState | null>(null);
+  const { confirm, modal } = useConfirmModal();
 
   const load = useCallback(async () => { setState(await loadGuideState()); }, []);
   useEffect(() => { load(); }, []);
@@ -21,11 +23,14 @@ function SetupGuideScreen() {
   }, [nav, load]);
 
   const onReset = useCallback(() => {
-    Alert.alert('Reset guide', 'This will reset all progress and show the guide again from the start.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: async () => { await resetGuide(); load(); } },
-    ]);
-  }, [load]);
+    confirm({
+      title: 'Reset guide',
+      message: 'This will reset all progress and show the guide again from the start.',
+      confirmLabel: 'Reset',
+      destructive: true,
+      onConfirm: async () => { await resetGuide(); load(); },
+    });
+  }, [load, confirm]);
 
   const onRestore = useCallback(async () => { await resetGuide(); load(); }, [load]);
 
@@ -86,6 +91,7 @@ function SetupGuideScreen() {
       <TouchableOpacity onPress={onReset} style={{ alignItems: 'center', padding: 12 }}>
         <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Reset guide progress</Text>
       </TouchableOpacity>
+      {modal}
     </ScrollView>
   );
 }

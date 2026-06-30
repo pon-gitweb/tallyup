@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Modal, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getFirestore, collection, query, where, orderBy, onSnapshot, getDocs, limit } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -15,7 +15,7 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
   const c = useColours();
   const { theme } = useTheme();
   const venueId = useVenueId();
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showInfo } = useToast();
   const [deliveries, setDeliveries] = useState<PendingDelivery[]>([]);
   const [loading, setLoading] = useState(true);
   const [pickerFor, setPickerFor] = useState<PendingDelivery | null>(null);
@@ -152,7 +152,7 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionBtnOutline, { borderColor: c.border || '#e5e7eb' }]}
-                onPress={() => Alert.alert('Enter manually', 'Record this delivery against an order or invoice when it arrives.')}
+                onPress={() => showInfo('Record this delivery against an order or invoice when it arrives.')}
               >
                 <Text style={[styles.actionBtnOutlineText, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
                   Enter manually

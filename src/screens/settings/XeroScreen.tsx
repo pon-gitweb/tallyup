@@ -6,11 +6,13 @@
  * Register at developer.xero.com
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking, ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
+import { Linking, ScrollView, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { XeroService, XeroConnection } from '../../services/integrations/xero/XeroService';
 import { useVenueId } from '../../context/VenueProvider';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 function XeroScreen() {
   const venueId = useVenueId();
@@ -18,6 +20,8 @@ function XeroScreen() {
   const [connection, setConnection] = useState<XeroConnection>({ status: 'not_connected' });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const load = useCallback(async () => {
     if (!venueId) return;
@@ -29,42 +33,39 @@ function XeroScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onConnect = useCallback(async () => {
+  const onConnect = useCallback(() => {
     if (!venueId) return;
-    Alert.alert(
-      'Connect to Xero',
-      'You will be taken to Xero to authorise Hosti. Once connected, purchase orders and invoices will sync automatically.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Connect', onPress: async () => {
-          setBusy(true);
-          try {
-            await XeroService.startOAuthFlow(venueId);
-          } catch (e: any) {
-            Alert.alert('Connection failed', e?.message || 'Could not open Xero. Please try again.');
-          }
-          setBusy(false);
-        }},
-      ]
-    );
-  }, [venueId]);
+    confirm({
+      title: 'Connect to Xero',
+      message: 'You will be taken to Xero to authorise Hosti. Once connected, purchase orders and invoices will sync automatically.',
+      confirmLabel: 'Connect',
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await XeroService.startOAuthFlow(venueId);
+        } catch (e: any) {
+          showError(e?.message || 'Could not open Xero. Please try again.');
+        }
+        setBusy(false);
+      },
+    });
+  }, [venueId, confirm]);
 
-  const onDisconnect = useCallback(async () => {
+  const onDisconnect = useCallback(() => {
     if (!venueId) return;
-    Alert.alert(
-      'Disconnect Xero',
-      'This will stop syncing with Xero. Your existing Xero data will not be affected.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Disconnect', style: 'destructive', onPress: async () => {
-          setBusy(true);
-          await XeroService.disconnect(venueId);
-          await load();
-          setBusy(false);
-        }},
-      ]
-    );
-  }, [venueId, load]);
+    confirm({
+      title: 'Disconnect Xero',
+      message: 'This will stop syncing with Xero. Your existing Xero data will not be affected.',
+      confirmLabel: 'Disconnect',
+      destructive: true,
+      onConfirm: async () => {
+        setBusy(true);
+        await XeroService.disconnect(venueId);
+        await load();
+        setBusy(false);
+      },
+    });
+  }, [venueId, load, confirm]);
 
   const isConnected = connection.status === 'connected';
 
@@ -170,6 +171,7 @@ function XeroScreen() {
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />
+      {modal}
     </ScrollView>
   );
 }

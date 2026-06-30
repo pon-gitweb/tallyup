@@ -6,21 +6,23 @@ import { FEATURES } from '../../config/features';
  * LOCKED — only accessible when FEATURES.SUPPLIER_PORTAL = true
  */
 import React, { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
 
 function SupplierLoginScreen({ onLogin }: { onLogin: (supplierId: string) => void }) {
   const themeColours = useColours();
+  const { showError } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
   const onSubmit = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Required', 'Enter your email and password.');
+      showError('Enter your email and password.');
       return;
     }
     setBusy(true);
@@ -32,13 +34,13 @@ function SupplierLoginScreen({ onLogin }: { onLogin: (supplierId: string) => voi
       const snap = await getDoc(doc(db, 'supplierUsers', cred.user.uid));
       if (!snap.exists()) {
         await auth.signOut();
-        Alert.alert('Not a supplier account', 'This account is not registered as a supplier. Please use the venue login instead.');
+        showError('This account is not registered as a supplier. Please use the venue login instead.');
         return;
       }
       const supplierId = snap.data()?.supplierId;
       onLogin(supplierId);
     } catch (e: any) {
-      Alert.alert('Login failed', e?.message || 'Please check your credentials.');
+      showError(e?.message || 'Please check your credentials.');
     } finally {
       setBusy(false);
     }

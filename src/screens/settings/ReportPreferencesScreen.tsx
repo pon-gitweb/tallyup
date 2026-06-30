@@ -6,7 +6,7 @@
  * Changes apply to all future exports and prints.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import {
@@ -14,6 +14,8 @@ import {
   loadReportPreferences, saveReportPreferences,
 } from '../../services/reportPreferences/ReportPreferencesService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type ToggleRowProps = {
   label: string;
@@ -76,6 +78,8 @@ function ReportPreferencesScreen() {
   const themeColours = useColours();
   const [prefs, setPrefs] = useState<ReportPreferences>(DEFAULT_REPORT_PREFS);
   const [saving, setSaving] = useState(false);
+  const { showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   useEffect(() => {
     if (venueId) loadReportPreferences(venueId).then(setPrefs);
@@ -94,18 +98,20 @@ function ReportPreferencesScreen() {
     setSaving(true);
     await saveReportPreferences(venueId, prefs);
     setSaving(false);
-    Alert.alert('Saved', 'Report preferences updated.');
+    showSuccess('Report preferences updated.');
   }, [venueId, prefs]);
 
-  const onReset = useCallback(async () => {
-    Alert.alert('Reset preferences', 'Restore default report settings?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', onPress: async () => {
+  const onReset = useCallback(() => {
+    confirm({
+      title: 'Reset preferences',
+      message: 'Restore default report settings?',
+      confirmLabel: 'Reset',
+      onConfirm: async () => {
         setPrefs(DEFAULT_REPORT_PREFS);
         if (venueId) await saveReportPreferences(venueId, DEFAULT_REPORT_PREFS);
-      }},
-    ]);
-  }, [venueId]);
+      },
+    });
+  }, [venueId, confirm]);
 
   const S = prefs.stocktake;
   const O = prefs.order;
@@ -184,6 +190,7 @@ function ReportPreferencesScreen() {
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />
+      {modal}
     </ScrollView>
   );
 }

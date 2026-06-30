@@ -8,11 +8,13 @@ import { useColours } from '../../context/ThemeContext';
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../../config/ai';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
 
 function SupplierCatalogueScreen() {
   const route = useRoute<any>();
   const { supplierId } = route.params;
   const themeColours = useColours();
+  const { showSuccess, showError } = useToast();
   const [products, setProducts] = useState<CatalogueProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -58,11 +60,11 @@ function SupplierCatalogueScreen() {
             category: p.category || null, sku: null, available: true,
           });
         }
-        Alert.alert('Catalogue updated', `${data.products.length} products imported.`);
+        showSuccess(`${data.products.length} products imported.`);
         await load();
       }
     } catch (e: any) {
-      Alert.alert('Upload failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
@@ -71,9 +73,9 @@ function SupplierCatalogueScreen() {
   const onUpdatePrice = useCallback((product: CatalogueProduct) => {
     Alert.prompt('Update price', `Current: $${product.price.toFixed(2)}\nEnter new price:`, async (val) => {
       const price = parseFloat(val);
-      if (isNaN(price) || price < 0) { Alert.alert('Invalid price'); return; }
+      if (isNaN(price) || price < 0) { showError('Invalid price.'); return; }
       await SupplierPortalService.updatePrice(supplierId, product.id, price);
-      Alert.alert('Price updated', 'Connected venues will be notified.');
+      showSuccess('Price updated. Connected venues will be notified.');
       await load();
     }, 'plain-text', String(product.price));
   }, [supplierId, load]);

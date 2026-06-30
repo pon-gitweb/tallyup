@@ -1,15 +1,17 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { SupplierPortalService, SupplierSpecial } from '../../services/supplier/SupplierPortalService';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
 
 function SupplierSpecialsScreen() {
   const route = useRoute<any>();
   const { supplierId } = route.params;
   const themeColours = useColours();
+  const { showError } = useToast();
   const [specials, setSpecials] = useState<SupplierSpecial[]>([]);
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
@@ -23,7 +25,7 @@ function SupplierSpecialsScreen() {
   useEffect(() => { load(); }, [load]);
 
   const onAdd = useCallback(async () => {
-    if (!title.trim()) { Alert.alert('Title required'); return; }
+    if (!title.trim()) { showError('Title is required.'); return; }
     await SupplierPortalService.addSpecial(supplierId, {
       title: title.trim(), description: description.trim() || null,
       discountPct: discount ? parseFloat(discount) : null,

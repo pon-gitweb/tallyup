@@ -1,14 +1,18 @@
 // @ts-nocheck
 import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View, StyleSheet, Alert } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { Sentry } from '../../services/crashReporting';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 function AdvancedSettingsScreen() {
   const nav = useNavigation<any>();
   const themeColours = useColours();
+  const { showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const btn = (label: string, route: string, colour?: string) => (
     <TouchableOpacity
       style={[{ backgroundColor: colour || themeColours.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }]}
@@ -33,20 +37,15 @@ function AdvancedSettingsScreen() {
           <TouchableOpacity
             style={{ backgroundColor: themeColours.error, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
             onPress={() => {
-              Alert.alert(
-                'Send test error to Sentry?',
-                'This captures a test exception in the development environment.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Send',
-                    onPress: () => {
-                      Sentry.captureException(new Error('TallyUp dev test — Sentry is working'));
-                      Alert.alert('Sent', 'Check your Sentry dashboard under the development environment.');
-                    },
-                  },
-                ]
-              );
+              confirm({
+                title: 'Send test error to Sentry?',
+                message: 'This captures a test exception in the development environment.',
+                confirmLabel: 'Send',
+                onConfirm: () => {
+                  Sentry.captureException(new Error('TallyUp dev test — Sentry is working'));
+                  showSuccess('Sent. Check your Sentry dashboard under the development environment.');
+                },
+              });
             }}
           >
             <Text style={{ color: themeColours.primaryText, fontWeight: '800' }}>Test Sentry capture</Text>
@@ -61,6 +60,7 @@ function AdvancedSettingsScreen() {
           </TouchableOpacity>
         </>
       )}
+      {modal}
     </ScrollView>
   );
 }

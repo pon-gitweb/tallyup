@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import {
-  Alert, ScrollView, Text, TouchableOpacity, View,
+  ScrollView, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
@@ -10,6 +10,7 @@ import { db } from '../../services/firebase';
 import { useColours } from '../../context/ThemeContext';
 import { useVenueId } from '../../context/VenueProvider';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
 
 export type InvoiceSummaryParams = {
   supplierName: string | null;
@@ -72,6 +73,7 @@ function InvoiceSummaryScreen() {
   const route = useRoute<any>();
   const colours = useColours();
   const venueId = useVenueId();
+  const { showError } = useToast();
   const params: InvoiceSummaryParams = route.params || {};
 
   const {
@@ -127,7 +129,7 @@ function InvoiceSummaryScreen() {
       });
       setDisputed(prev => [...prev, pc.name]);
     } catch (e: any) {
-      Alert.alert('Error', 'Could not flag dispute: ' + (e?.message || 'unknown error'));
+      showError('Could not flag dispute: ' + (e?.message || 'unknown error'));
     }
   }
 
@@ -142,7 +144,7 @@ function InvoiceSummaryScreen() {
       });
       setAccepted(prev => [...prev, pc.name]);
     } catch (e: any) {
-      Alert.alert('Error', 'Could not accept price: ' + (e?.message || 'unknown error'));
+      showError('Could not accept price: ' + (e?.message || 'unknown error'));
     }
   }
 

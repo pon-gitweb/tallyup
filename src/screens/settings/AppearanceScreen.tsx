@@ -7,12 +7,14 @@
  */
 import React, { useCallback, useState } from 'react';
 import {
-  Alert, Image, ScrollView, Text,
+  Image, ScrollView, Text,
   TouchableOpacity, View, ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme, PRESET_THEMES, DEFAULT_THEME, ThemeColours } from '../../context/ThemeContext';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 const COLOUR_SWATCHES = [
   '#0F172A', '#1E3A5F', '#14532D', '#7F1D1D',
@@ -39,6 +41,8 @@ function AppearanceScreen() {
   const { theme, updateTheme, updateColours, resetTheme } = useTheme();
   const { colours } = theme;
   const [busy, setBusy] = useState(false);
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   const onPickLogo = useCallback(async () => {
     try {
@@ -54,7 +58,7 @@ function AppearanceScreen() {
         setBusy(false);
       }
     } catch (e) {
-      Alert.alert('Could not upload logo', 'Please try again.');
+      showError('Could not upload logo. Please try again.');
       setBusy(false);
     }
   }, [updateTheme]);
@@ -73,11 +77,14 @@ function AppearanceScreen() {
   }, [updateColours]);
 
   const onReset = useCallback(() => {
-    Alert.alert('Reset appearance', 'This will restore the default Hosti theme.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reset', style: 'destructive', onPress: async () => { await resetTheme(); } },
-    ]);
-  }, [resetTheme]);
+    confirm({
+      title: 'Reset appearance',
+      message: 'This will restore the default Hosti theme.',
+      confirmLabel: 'Reset',
+      destructive: true,
+      onConfirm: async () => { await resetTheme(); },
+    });
+  }, [resetTheme, confirm]);
 
   // colours already declared
 
@@ -200,6 +207,7 @@ function AppearanceScreen() {
       </TouchableOpacity>
 
       <View style={{ height: 20 }} />
+      {modal}
     </ScrollView>
   );
 }

@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Alert, Modal, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Modal, Pressable, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type Dept = { id: string; name: string };
 
@@ -11,6 +13,8 @@ export default function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const [loading, setLoading] = useState(true);
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [list, setList] = useState<Dept[]>([]);
   const [q, setQ] = useState('');
 
@@ -46,7 +50,7 @@ export default function DepartmentSelectionScreen() {
   function openRename(d: Dept) { setEditId(d.id); setEditName(d.name); setShowEdit(true); }
   async function onSave() {
     const name = editName.trim();
-    if (!venueId || !name) { Alert.alert('Missing name', 'Enter a department name'); return; }
+    if (!venueId || !name) { showError('Enter a department name.'); return; }
     try {
       if (editId) {
         // rename (update)
@@ -61,27 +65,27 @@ export default function DepartmentSelectionScreen() {
       setShowEdit(false);
       await reload();
     } catch (e) {
-      Alert.alert('Save failed', (e as any)?.message ?? 'Unknown error');
+      showError((e as any)?.message ?? 'Could not save department.');
     }
   }
 
   async function onDelete(d: Dept) {
     if (!venueId) return;
-    let confirmed = false;
-    await new Promise<void>(resolve => {
-      Alert.alert('Delete department', `Delete “${d.name}”?`, [
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve() },
-        { text: 'Delete', style: 'destructive', onPress: () => { confirmed = true; resolve(); } },
-      ]);
+    confirm({
+      title: 'Delete department',
+      message: `Delete “${d.name}”?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const dRef = doc(db, 'venues', venueId, 'departments', d.id);
+          await deleteDoc(dRef);
+          await reload();
+        } catch (e) {
+          showError((e as any)?.message ?? 'Could not delete department.');
+        }
+      },
     });
-    if (!confirmed) return;
-    try {
-      const dRef = doc(db, 'venues', venueId, 'departments', d.id);
-      await deleteDoc(dRef);
-      await reload();
-    } catch (e) {
-      Alert.alert('Delete failed', (e as any)?.message ?? 'Unknown error');
-    }
   }
 
   function goAreas(d: Dept) {
@@ -132,6 +136,7 @@ export default function DepartmentSelectionScreen() {
           </View>
         </View>
       </Modal>
+      {modal}
     </View>
   );
 }

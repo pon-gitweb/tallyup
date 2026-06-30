@@ -7,7 +7,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList,
-  ActivityIndicator, Alert, ScrollView,
+  ActivityIndicator, ScrollView,
 } from 'react-native';
 import { ScaleService, ScaleType, ScaleInfo, ScaleStatus, LastKnownScaleDevice } from '../../services/scale/ScaleService';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
@@ -93,7 +93,7 @@ function ScaleSettingsScreen() {
 
   const onScan = useCallback(async () => {
     if (!selectedType) {
-      Alert.alert('Select a scale type', 'Choose which scale you have before scanning.');
+      showError('Choose which scale you have before scanning.');
       return;
     }
     setFoundScales([]);
@@ -106,7 +106,7 @@ function ScaleSettingsScreen() {
         });
       }, 8000);
     } catch (e: any) {
-      Alert.alert('Scan failed', e?.message || 'Could not scan for scales.');
+      showError(e?.message || 'Could not scan for scales.');
     } finally {
       setScanning(false);
     }
@@ -117,7 +117,7 @@ function ScaleSettingsScreen() {
       await ScaleService.connect(scale.id, selectedType);
       setLastKnownDevice(ScaleService.getLastKnownDevice());
     } catch (e: any) {
-      Alert.alert('Connection failed', e?.message || 'Could not connect to scale.');
+      showError(e?.message || 'Could not connect to scale.');
     }
   }, [selectedType]);
 
