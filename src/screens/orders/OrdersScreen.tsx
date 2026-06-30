@@ -2,7 +2,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { OrdersService } from '../../domain/orders';
-import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -56,9 +56,9 @@ const S = StyleSheet.create({
   wrap:{flex:1,backgroundColor:'#fff'},
   top:{paddingHorizontal:16,paddingTop:12,paddingBottom:8,borderBottomWidth:StyleSheet.hairlineWidth,borderColor:'#E5E7EB'},
   title:{fontSize:22,fontWeight:'800',marginBottom:8},
-  segWrap:{flexDirection:'row',borderWidth:1,borderColor:'#E5E7EB',borderRadius:999,overflow:'hidden'},
-  segBtn:{paddingVertical:8,paddingHorizontal:12,backgroundColor:'#fff'},
-  segActive:{backgroundColor:'#111827'},
+  segWrap:{flexDirection:'row',alignItems:'center',paddingVertical:2},
+  segBtn:{paddingVertical:7,paddingHorizontal:14,backgroundColor:'#fff',borderWidth:1,borderColor:'#E5E7EB',borderRadius:999,marginRight:6},
+  segActive:{backgroundColor:'#111827',borderColor:'#111827'},
   segText:{fontSize:13,fontWeight:'800',color:'#111827'},
   segTextActive:{color:'#fff'},
 
@@ -449,14 +449,19 @@ export default function OrdersScreen(){
             <Text style={{ color: '#0A84FF', fontWeight: '700', fontSize: 13 }}>Record credit note</Text>
           </TouchableOpacity>
         </View>
-        <View style={S.segWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={S.segWrap}
+          style={{ marginTop: 8 }}
+        >
           <SegBtn label={`Drafts (${counts.drafts})`} active={tab==='drafts'} onPress={()=>setTab('drafts')} />
           {(isManager || counts.pending > 0) && (
             <SegBtn label={`Pending (${counts.pending})`} active={tab==='pending'} onPress={()=>setTab('pending')} />
           )}
           <SegBtn label={`Submitted (${counts.submitted})`} active={tab==='submitted'} onPress={()=>setTab('submitted')} />
           <SegBtn label={`Received (${counts.received})`} active={tab==='received'} onPress={()=>setTab('received')} />
-        </View>
+        </ScrollView>
       </View>
 
       <FlatList
