@@ -213,6 +213,19 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['manager', 'owner']);
       }
 
+      match /settings/{settingId} {
+        // Venue operational settings (hourly rate, stocktake baseline, days of cover, etc.)
+        // Any venue member can read; managers and owners can write.
+        allow read: if isVenueMember(venueId);
+        allow write: if hasVenueRole(venueId, ['manager', 'owner']);
+      }
+
+      match /profitRecoverySnapshots/{snapshotId} {
+        // Monthly Hosti Health snapshots — written by client on score calculation.
+        allow read: if isVenueMember(venueId);
+        allow write: if hasVenueRole(venueId, ['manager', 'owner']);
+      }
+
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);
