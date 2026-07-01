@@ -825,10 +825,10 @@ export default function DashboardScreen() {
             <Text style={styles.gridLabel}>Orders</Text>
             <Text style={styles.gridSub}>Manage deliveries</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.gridCard} onPress={onOpenReports} activeOpacity={0.75}>
-            <Text style={styles.gridIcon}>📊</Text>
-            <Text style={styles.gridLabel}>Reports</Text>
-            <Text style={styles.gridSub}>Variance & trends</Text>
+          <TouchableOpacity style={styles.gridCard} onPress={() => nav.navigate('Invoices')} activeOpacity={0.75}>
+            <Text style={styles.gridIcon}>🧾</Text>
+            <Text style={styles.gridLabel}>Invoices</Text>
+            <Text style={styles.gridSub}>Scan & receive</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.gridCard} onPress={() => nav.navigate('Products')} activeOpacity={0.75}>
             <Text style={styles.gridIcon}>🏪</Text>

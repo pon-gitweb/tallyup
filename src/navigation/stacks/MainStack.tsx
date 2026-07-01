@@ -67,6 +67,7 @@ import POSMappingScreen from '../../screens/pos/POSMappingScreen';
 import POSConnectionScreen from '../../screens/pos/POSConnectionScreen';
 
 // Invoices
+import InvoicesScreen from '../../screens/invoices/InvoicesScreen';
 import InvoiceSummaryScreen from '../../screens/invoices/InvoiceSummaryScreen';
 import PriceChangeFlagsScreen from '../../screens/invoices/PriceChangeFlagsScreen';
 import CreditNoteFormScreen from '../../screens/invoices/CreditNoteFormScreen';
@@ -262,6 +263,7 @@ export default function MainStack() {
       <Stack.Screen name="ProductPerformance" component={ProductPerformanceScreen} options={{ title: 'Product Performance' }} />
       <Stack.Screen name="SupplierSpend" component={SupplierSpendScreen} options={{ title: 'Supplier Spend' }} />
       <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
+      <Stack.Screen name="Invoices" component={InvoicesScreen} options={{ headerShown: false }} />
       <Stack.Screen name="InvoiceSummary" component={InvoiceSummaryScreen} options={{ title: 'Invoice Processed' }} />
       <Stack.Screen name="PriceChangeFlags" component={PriceChangeFlagsScreen} options={{ title: 'Price Changes', headerShown: true }} />
       <Stack.Screen name="PendingDeliveries" component={PendingDeliveriesScreen} options={{ title: 'Pending Deliveries', headerShown: true }} />
