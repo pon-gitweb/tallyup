@@ -519,16 +519,46 @@ export default function DashboardScreen() {
 
         <OfflineBanner />
 
-        {/* ── Hosti Health card (Phase 1/2) ─────────────────────────────── */}
-        {hostiHealthData && (
+        {/* ── Unified dashboard hero ────────────────────────────────────── */}
+        {primaryState === 'inProgress' && lastArea ? (
+          /* RESUME — highest priority, shown whenever a stocktake is active */
+          <View style={{
+            backgroundColor: colours.missionSlate,
+            borderRadius: 16,
+            padding: 22,
+            marginBottom: 12,
+          }}>
+            <Text style={{ fontSize: 11, fontWeight: '500', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.88, marginBottom: 8 }}>
+              Stocktake in progress
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colours.stellarAmber }} />
+              <Text style={{ fontSize: 18, fontWeight: '600', color: colours.oat }}>
+                {lastArea.deptName} · {lastArea.areaName}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 6, lineHeight: 19.5, marginBottom: 16 }}>
+              {lastArea.startedAt
+                ? `Started ${new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
+                : 'In progress'}
+            </Text>
+            <TouchableOpacity
+              style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, alignItems: 'center', justifyContent: 'center' }}
+              onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+            >
+              <Text style={{ color: colours.missionSlate, fontWeight: '700', fontSize: 15 }}>Continue →</Text>
+            </TouchableOpacity>
+          </View>
+        ) : hostiHealthData ? (
+          /* HEALTH HERO — stage 1 / 2 / 3, shown when no stocktake is active */
           <TouchableOpacity
             onPress={() => nav.navigate('ProfitInsights')}
             activeOpacity={0.85}
             style={{
               backgroundColor: colours.oat,
               borderRadius: 16,
-              padding: 16,
-              marginBottom: 10,
+              padding: 22,
+              marginBottom: 12,
               borderWidth: 1.5,
               borderColor: colours.amber,
             }}
@@ -545,12 +575,9 @@ export default function DashboardScreen() {
                 const labelColour = hostiHealthData.label === 'Excellent' ? colours.success
                   : hostiHealthData.label === 'Strong' ? colours.deepBlue
                   : hostiHealthData.label === 'Developing' ? colours.amber
-                  : colours.error; // Needs attention / At risk
+                  : colours.error;
                 return (
-                  <View style={{
-                    backgroundColor: `${labelColour}22`,
-                    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
-                  }}>
+                  <View style={{ backgroundColor: `${labelColour}22`, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: labelColour }}>{hostiHealthData.label}</Text>
                   </View>
                 );
@@ -608,7 +635,7 @@ export default function DashboardScreen() {
               )}
             </View>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         {/* ── KPI pills — real dot counts once Stage 3 lands, else building ── */}
         {hostiHealthData && (
@@ -653,122 +680,22 @@ export default function DashboardScreen() {
           </ScrollView>
         )}
 
-        {/* ── Primary action card ───────────────────────────────────────── */}
-        <View style={{
-          backgroundColor: colours.missionSlate,
-          borderRadius: 18,
-          padding: 22,
-          paddingHorizontal: 24,
-          marginBottom: 12,
-          shadowColor: colours.missionSlate,
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.3,
-          shadowRadius: 8,
-          elevation: 8,
-        }}>
-          <Text style={{ fontSize: 11, fontWeight: '500', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.88, marginBottom: 8 }}>
-            {primaryState === 'none'
-              ? 'Your first stocktake'
-              : primaryState === 'inProgress'
-              ? 'Stocktake in progress'
-              : 'Stock on hand at your last count'}
-          </Text>
-
-          {primaryState === 'none' && (
-            <>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: colours.oat }}>
-                Takes about 20 minutes.
-              </Text>
-              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 6, lineHeight: 19.5 }}>
-                We'll show you exactly what to do.
-              </Text>
-            </>
-          )}
-
-          {primaryState === 'inProgress' && lastArea && (
-            <>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colours.stellarAmber }} />
-                <Text style={{ fontSize: 18, fontWeight: '600', color: colours.oat }}>
-                  {lastArea.deptName} · {lastArea.areaName}
-                </Text>
-              </View>
-              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 6, lineHeight: 19.5 }}>
-                {lastArea.startedAt
-                  ? `Started ${new Date(lastArea.startedAt).toLocaleString('en-NZ', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
-                  : 'In progress'}
-              </Text>
-            </>
-          )}
-
-          {primaryState === 'done' && (
-            <>
-              <Text style={{
-                fontSize: 52,
-                color: colours.oat,
-                fontFamily: theme.fontTitleBold,
-                fontWeight: fontsLoaded ? '700' : '600',
-                letterSpacing: -0.78,
-                marginTop: 14,
-                lineHeight: 60,
-                fontVariant: ['tabular-nums'],
-              }}>
-                {stockValue !== null && stockValue > 0
-                  ? formatCurrency(stockValue)
-                  : `${stocktakeCount} stocktakes`}
-              </Text>
-              <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.55)', marginTop: 10, lineHeight: 19.5 }}>
-                {stockValue !== null && stockValue > 0
-                  ? `${stocktakeCount} count${stocktakeCount !== 1 ? 's' : ''} completed`
-                  : 'Add product costs to see stock value'}
-              </Text>
-              {stockValue !== null && stockValue > 0 && snapshotUpdatedAt && (
-                <Text style={{ fontSize: 11, color: 'rgba(245,243,238,0.3)', marginTop: 3 }}>
-                  {'Updated ' + formatTimeAgo(snapshotUpdatedAt)}
-                </Text>
-              )}
-            </>
-          )}
-        </View>
-
-        {/* ── CTA button ───────────────────────────────────────────────── */}
-        {primaryState === 'none' && (
-          <>
-            <TouchableOpacity
-              style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: deptNames.length > 0 ? 6 : 16 }}
-              onPress={onOpenStockTake}
-              disabled={busy}
-            >
-              {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start now →</Text>}
-            </TouchableOpacity>
-            {deptNames.length > 0 && (
-              <Text style={{ fontSize: 12, color: colours.textSecondary, textAlign: 'center', marginBottom: 16 }}>
-                {deptNames.join(' · ')}
-              </Text>
-            )}
-          </>
-        )}
-        {primaryState === 'inProgress' && lastArea && (
+        {/* ── Start new stocktake — slim pill, hidden when already counting ── */}
+        {primaryState !== 'inProgress' && (
           <TouchableOpacity
-            style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}
-            onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+            style={{ height: 44, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
+            onPress={onOpenStockTake}
+            disabled={busy}
           >
-            <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Continue →</Text>
+            {busy
+              ? <ActivityIndicator color={colours.oat} />
+              : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start new stocktake →</Text>}
           </TouchableOpacity>
         )}
-        {primaryState === 'done' && (
-          <>
-            <TouchableOpacity
-              style={{ height: 54, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
-              onPress={onOpenStockTake}
-              disabled={busy}
-            >
-              {busy ? <ActivityIndicator color={colours.oat} /> : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start new stocktake →</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 10, marginBottom: 8 }} onPress={onOpenReports}>
-              <Text style={{ color: colours.textSecondary, fontWeight: '600', fontSize: 14 }}>View reports</Text>
-            </TouchableOpacity>
-          </>
+        {primaryState === 'done' && hostiHealthData?.stage === 3 && (
+          <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 10, marginBottom: 8 }} onPress={onOpenReports}>
+            <Text style={{ color: colours.textSecondary, fontWeight: '600', fontSize: 14 }}>View reports</Text>
+          </TouchableOpacity>
         )}
 
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
