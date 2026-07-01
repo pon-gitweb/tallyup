@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TextInput, Button, Alert, FlatList } from 'react-native';
+import { View, Text, TextInput, Button, FlatList } from 'react-native';
+import { useToast } from '../../../components/common/Toast';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../../services/firebase';
 import { doc, setDoc, collection } from 'firebase/firestore';
@@ -35,22 +36,23 @@ export default function ProductsStep() {
   const [csv, setCsv] = useState('');
   const preview = useMemo(() => parseCSV(csv).slice(0, 50), [csv]);
   const [busy, setBusy] = useState(false);
+  const { showError, showInfo, showSuccess } = useToast();
 
   async function importRows() {
     const user = getAuth().currentUser;
     if (!user) {
-      Alert.alert('Not signed in', 'Please sign in again.');
+      showError('Please sign in again.');
       return;
     }
     const venueId = await getCurrentVenueForUser();
     if (!venueId) {
-      Alert.alert('No Venue', 'Please create a venue first.');
+      showError('Please create a venue first.');
       return;
     }
 
     const rows = parseCSV(csv);
     if (rows.length === 0) {
-      Alert.alert('Empty CSV', 'Paste CSV text first.');
+      showInfo('Paste CSV text first.');
       return;
     }
 
@@ -72,11 +74,11 @@ export default function ProductsStep() {
         await setDoc(ref, payload, { merge: true });
         count++;
       }
-      Alert.alert('Import complete', `Imported ${count} products.`);
+      showSuccess(`Imported ${count} products.`);
       console.log('[TallyUp Setup] products imported', JSON.stringify({ count }));
     } catch (e: any) {
       console.log('[TallyUp Setup] products import error', JSON.stringify({ code: e?.code, message: e?.message }));
-      Alert.alert('Import failed', e?.message ?? 'Unknown error.');
+      showError(e?.message ?? 'Unknown error.');
     } finally {
       setBusy(false);
     }

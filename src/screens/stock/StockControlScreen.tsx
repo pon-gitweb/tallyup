@@ -7,11 +7,11 @@ import {
   StyleSheet,
   SafeAreaView,
   Modal,
-  Alert,
   ScrollView,
   ActivityIndicator,
   TextInput,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
@@ -68,6 +68,7 @@ export default function StockControlScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const { name: venueName } = useVenueInfo(venueId);
+  const { showError, showInfo } = useToast();
 
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
@@ -133,9 +134,9 @@ export default function StockControlScreen() {
           email: user.email ?? null,
         });
       }
-      Alert.alert('Membership OK', `You are a member of venue ${venueId}.`);
+      showInfo(`You are a member of venue ${venueId}.`);
     } catch (e: any) {
-      Alert.alert('Failed to set membership', String(e?.message || e));
+      showError(String(e?.message || e));
     }
   }, [venueId, user?.uid, user?.email]);
 
@@ -203,7 +204,7 @@ export default function StockControlScreen() {
       setResolverProducts(rows);
       setResolverCount(rows.length);
     } catch (e: any) {
-      Alert.alert('Load failed', e?.message || 'Could not load products needing setup.');
+      showError(e?.message || 'Could not load products needing setup.');
       setResolverProducts([]);
       setResolverCount(0);
     } finally {
@@ -234,7 +235,7 @@ export default function StockControlScreen() {
       rows.sort((a, b) => a.name.localeCompare(b.name));
       setResolverSuppliers(rows);
     } catch (e: any) {
-      Alert.alert('Load failed', e?.message || 'Could not load suppliers.');
+      showError(e?.message || 'Could not load suppliers.');
       setResolverSuppliers([]);
     } finally {
       setResolverSuppliersLoading(false);
@@ -254,7 +255,7 @@ export default function StockControlScreen() {
   const openSupplierPickerForProduct = useCallback(
     async (productId: string) => {
       if (!venueId) {
-        Alert.alert('Missing venue', 'Please select a venue first.');
+        showInfo('Please select a venue first.');
         return;
       }
       if (!resolverSuppliers.length) {
@@ -294,7 +295,7 @@ export default function StockControlScreen() {
         await loadResolverProducts();
       } catch (e: any) {
         setResolverAssigningId(null);
-        Alert.alert('Assign failed', e?.message || 'Could not assign supplier.');
+        showError(e?.message || 'Could not assign supplier.');
       }
     },
     [venueId, resolverPickerProductId, resolverSuppliers, loadResolverProducts],
@@ -366,7 +367,7 @@ export default function StockControlScreen() {
       await loadResolverProducts();
       setEditProduct(null);
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Could not update product.');
+      showError(e?.message || 'Could not update product.');
     } finally {
       setEditBusy(false);
     }

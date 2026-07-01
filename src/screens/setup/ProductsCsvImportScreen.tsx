@@ -4,7 +4,8 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp, writeBatch, doc, setDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
@@ -38,6 +39,7 @@ function slugId(s:string){
 export default function ProductsCsvImportScreen(){
   const venueId = useVenueId();
   const db = getFirestore(getApp());
+  const { showError, showSuccess } = useToast();
 
   const [csvText,setCsvText] = useState('');
   const [headers,setHeaders] = useState<string[]>([]);
@@ -66,7 +68,7 @@ export default function ProductsCsvImportScreen(){
       setMap(m);
       setStage('map');
     }catch(e:any){
-      Alert.alert('Parse failed', e?.message || 'Could not parse CSV.');
+      showError(e?.message || 'Could not parse CSV.');
     }
   },[csvText]);
 
@@ -108,7 +110,7 @@ export default function ProductsCsvImportScreen(){
         setStage('map');
       } catch { /* will parse manually */ }
     } catch (e) {
-      Alert.alert('File pick failed', (e as any)?.message || 'Could not read file');
+      showError((e as any)?.message || 'Could not read file');
     } finally {
       setLoadingMessage(null); // FIX 7
     }
@@ -128,7 +130,7 @@ export default function ProductsCsvImportScreen(){
   },[map, parsedRows, busy, venueId]);
 
   const onUpload = useCallback(async()=>{
-    if(!venueId) { Alert.alert('Missing venue','No venue selected.'); return; }
+    if(!venueId) { showError('No venue selected.'); return; }
     if(!canUpload) return;
 
     setBusy(true);
@@ -219,11 +221,11 @@ export default function ProductsCsvImportScreen(){
       }, { merge: true });
 
       setStage('done');
-      Alert.alert('Import complete', errs>0
+      showSuccess(errs>0
         ? `Imported ${done} item(s) with ${errs} error(s).`
         : `Imported ${done} item(s).`);
     }catch(e:any){
-      Alert.alert('Import failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Please try again.');
     }finally{
       setBusy(false);
       setLoadingMessage(null); // FIX 7

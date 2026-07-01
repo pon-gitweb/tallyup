@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { createSupplier, updateSupplier, Supplier } from '../../services/suppliers';
@@ -32,17 +33,18 @@ export default function SupplierEditScreen() {
   );
 
   const [busy, setBusy] = useState(false);
+  const { showError } = useToast();
 
   async function onSave() {
-    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
-    if (!name.trim()) { Alert.alert('Name required', 'Enter supplier name.'); return; }
+    if (!venueId) { showError('Attach or create a venue first.'); return; }
+    if (!name.trim()) { showError('Enter supplier name.'); return; }
     if (!isValidHHmm(orderCutoffLocalTime)) {
-      Alert.alert('Invalid cutoff', 'Use HH:mm in 24-hour format (e.g., 16:00).');
+      showError('Use HH:mm in 24-hour format (e.g., 16:00).');
       return;
     }
     const mergeNum = mergeWindowHours.trim() ? Number(mergeWindowHours) : null;
     if (mergeNum != null && !Number.isFinite(mergeNum)) {
-      Alert.alert('Invalid merge hours', 'Enter a whole number of hours or leave blank.');
+      showError('Enter a whole number of hours or leave blank.');
       return;
     }
 
@@ -65,7 +67,7 @@ export default function SupplierEditScreen() {
       }
       nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save Failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Unknown error');
     } finally {
       setBusy(false);
     }

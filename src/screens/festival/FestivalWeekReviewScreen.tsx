@@ -1,8 +1,10 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View,
+  ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
@@ -21,6 +23,8 @@ export default function FestivalWeekReviewScreen() {
   const [closing, setClosing] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const uid = auth.currentUser?.uid;
+  const { showError, showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
 
   useEffect(() => {
     if (!venueId || !weekNumber) { setLoading(false); return; }
@@ -37,45 +41,39 @@ export default function FestivalWeekReviewScreen() {
       .catch(() => setLoading(false));
   }, [venueId, weekNumber]);
 
-  async function handleCloseWeek() {
+  function handleCloseWeek() {
     if (!venueId || !weekNumber) return;
-    Alert.alert(
-      `Close Week ${weekNumber}`,
-      'This will mark Week ' + weekNumber + ' as closed and snapshot the current state. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Close Week',
-          style: 'destructive',
-          onPress: async () => {
-            setClosing(true);
-            try {
-              const token = await auth.currentUser?.getIdToken();
-              const res = await fetch(`${apiBase()}/closeEventWeek`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({ venueId, weekNumber }),
-              });
-              const data = await res.json();
-              if (data.ok) {
-                Alert.alert('Week closed', `Week ${weekNumber} has been closed.`, [
-                  { text: 'OK', onPress: () => nav.goBack() },
-                ]);
-              } else {
-                Alert.alert('Error', data.error || 'Could not close week.');
-              }
-            } catch (e: any) {
-              Alert.alert('Error', e?.message || 'Could not close week.');
-            } finally {
-              setClosing(false);
-            }
-          },
-        },
-      ],
-    );
+    confirm({
+      title: `Close Week ${weekNumber}`,
+      message: 'This will mark Week ' + weekNumber + ' as closed and snapshot the current state. Continue?',
+      confirmLabel: 'Close Week',
+      destructive: true,
+      onConfirm: async () => {
+        setClosing(true);
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          const res = await fetch(`${apiBase()}/closeEventWeek`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ venueId, weekNumber }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            showSuccess(`Week ${weekNumber} has been closed.`);
+            nav.goBack();
+          } else {
+            showError(data.error || 'Could not close week.');
+          }
+        } catch (e: any) {
+          showError(e?.message || 'Could not close week.');
+        } finally {
+          setClosing(false);
+        }
+      },
+    });
   }
 
   if (!FESTIVAL_BETA) {
@@ -176,6 +174,7 @@ export default function FestivalWeekReviewScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
+      {modal}
     </View>
   );
 }
