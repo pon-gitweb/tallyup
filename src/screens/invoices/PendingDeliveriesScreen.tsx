@@ -176,6 +176,7 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]} edges={['top', 'left', 'right']}>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={deliveries}
         keyExtractor={d => d.id}
         renderItem={renderItem}
@@ -207,6 +208,7 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
               </Text>
             ) : (
               <FlatList
+                keyboardShouldPersistTaps="handled"
                 data={invoiceOptions}
                 keyExtractor={i => i.id}
                 renderItem={({ item }) => (

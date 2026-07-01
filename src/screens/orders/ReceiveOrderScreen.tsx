@@ -78,6 +78,7 @@ export default function ReceiveOrderScreen() {
       </View>
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         style={{marginTop:8}}
         data={lines}
         keyExtractor={(l:any) => l.id}

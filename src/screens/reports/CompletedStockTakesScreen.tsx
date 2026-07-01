@@ -225,6 +225,7 @@ export default function CompletedStockTakesScreen() {
 
         <View style={{ flex: 1, padding: 16 }}>
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={rows}
             keyExtractor={(r) => `${r.departmentId}-${r.id}`}
             renderItem={renderItem}

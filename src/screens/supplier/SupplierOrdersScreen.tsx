@@ -41,7 +41,7 @@ function SupplierOrdersScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: themeColours.background }}>
       {loading ? <ActivityIndicator style={{ flex: 1 }} color={themeColours.accent} /> : (
-        <FlatList data={orders} keyExtractor={o => o.id}
+        <FlatList keyboardShouldPersistTaps="handled" data={orders} keyExtractor={o => o.id}
           renderItem={({ item }) => (
             <TouchableOpacity onPress={() => onUpdateStatus(item)}
               style={{ backgroundColor: themeColours.surface, margin: 8, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>

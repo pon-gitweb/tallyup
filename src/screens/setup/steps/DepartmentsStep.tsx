@@ -43,6 +43,7 @@ export default function DepartmentsStep() {
         <Button title="Add" onPress={addDepartment} />
       </View>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={items}
         keyExtractor={(id) => id}
         renderItem={({ item }) => (

@@ -179,6 +179,7 @@ export default function BudgetsScreen() {
       )}
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={rows}
         keyExtractor={(r) => r.id!}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}

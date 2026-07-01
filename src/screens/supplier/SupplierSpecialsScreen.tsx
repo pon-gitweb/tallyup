@@ -56,7 +56,7 @@ function SupplierSpecialsScreen() {
         </View>
       )}
 
-      <FlatList data={specials} keyExtractor={s => s.id}
+      <FlatList keyboardShouldPersistTaps="handled" data={specials} keyExtractor={s => s.id}
         renderItem={({ item }) => (
           <View style={{ backgroundColor: themeColours.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: item.active ? '#BBF7D0' : themeColours.border }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

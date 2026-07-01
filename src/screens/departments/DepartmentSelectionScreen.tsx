@@ -104,6 +104,7 @@ export default function DepartmentSelectionScreen() {
         <View style={styles.center}><ActivityIndicator /><Text>Loading…</Text></View>
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={filtered}
           keyExtractor={d => d.id}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}

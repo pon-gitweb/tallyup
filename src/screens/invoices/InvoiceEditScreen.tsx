@@ -143,6 +143,7 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
 
       <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Lines</Text>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={lines}
         keyExtractor={(l) => l.lineId}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}

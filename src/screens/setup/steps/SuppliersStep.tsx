@@ -40,6 +40,7 @@ export default function SuppliersStep() {
         <Button title="Add" onPress={addSupplier} />
       </View>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={suppliers}
         keyExtractor={(s) => s.id}
         renderItem={({ item }) => (

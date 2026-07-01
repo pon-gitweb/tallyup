@@ -220,6 +220,7 @@ export default function ReceiveApproveScreen({
                 />
                 {loading ? <ActivityIndicator style={{marginVertical:6}}/> : null}
                 <FlatList
+                  keyboardShouldPersistTaps="handled"
                   data={options}
                   keyExtractor={(o)=>String(o.id)}
                   renderItem={({item})=><ProductOpt it={item} />}
@@ -237,6 +238,7 @@ export default function ReceiveApproveScreen({
 
           {/* Lines */}
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={lines}
             keyExtractor={(_,i)=>String(i)}
             renderItem={Row}

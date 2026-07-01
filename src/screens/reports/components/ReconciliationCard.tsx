@@ -194,6 +194,7 @@ export default function ReconciliationCard({ venueId: propVenueId, onOpenOrder, 
         </View>
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={grouped}
           keyExtractor={g => `${g.supplierId || ''}:${g.supplierName}`}
           renderItem={({ item: group }) => (

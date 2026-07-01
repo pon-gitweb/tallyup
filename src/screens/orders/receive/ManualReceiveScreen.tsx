@@ -358,6 +358,7 @@ export default function ManualReceiveScreen({
 
       {/* Existing order lines */}
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={lines || []}
         keyExtractor={(l) => String(l.id || l.productId || Math.random())}
         renderItem={ExistingLine}
@@ -400,7 +401,7 @@ export default function ManualReceiveScreen({
       {extras.length > 0 ? (
         <View style={{ marginTop: 8 }}>
           <Text style={S.addH}>Added items</Text>
-          <FlatList data={extras} keyExtractor={(x) => x.id} renderItem={ExtraRow} />
+          <FlatList keyboardShouldPersistTaps="handled" data={extras} keyExtractor={(x) => x.id} renderItem={ExtraRow} />
         </View>
       ) : null}
 

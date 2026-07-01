@@ -205,6 +205,7 @@ function AdjustmentInboxScreen() {
         </View>
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled"
           data={filteredRows}
           keyExtractor={(r) => r.id}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}

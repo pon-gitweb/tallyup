@@ -186,6 +186,7 @@ export default function PriceChangeFlagsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]} edges={['top', 'left', 'right']}>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={flags}
         keyExtractor={f => f.id}
         renderItem={renderFlag}

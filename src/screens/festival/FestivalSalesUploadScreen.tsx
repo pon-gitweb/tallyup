@@ -1041,6 +1041,7 @@ export default function FestivalSalesUploadScreen() {
             autoFocus
           />
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={pickerType === 'product' ? pickerProducts : pickerBars}
             keyExtractor={item => item.id}
             renderItem={({ item }) => (

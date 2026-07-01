@@ -95,6 +95,7 @@ export default function ProductsStep() {
       <Button title={busy ? 'Importing…' : 'Import Products'} onPress={importRows} disabled={busy} />
       <Text style={{ marginTop: 8, fontWeight: '600' }}>Preview (first 50 rows)</Text>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={preview}
         keyExtractor={(it, i) => it.sku + ':' + i}
         renderItem={({ item }) => (

@@ -173,6 +173,7 @@ export default function DepartmentVarianceScreen() {
       </TouchableOpacity>
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={data}
         keyExtractor={(r) => String(r.productId)}
         renderItem={renderRow}

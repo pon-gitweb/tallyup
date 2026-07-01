@@ -180,6 +180,7 @@ export default function ReceiveAlias() {
 
       {/* Lines */}
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={lines}
         keyExtractor={(l) => l.productId}
         contentContainerStyle={{ padding: 12 }}

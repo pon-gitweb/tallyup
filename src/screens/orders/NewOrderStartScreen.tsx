@@ -63,6 +63,7 @@ export default function NewOrderStartScreen() {
   return (
     <View style={styles.container}>
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={suppliers}
         keyExtractor={(s) => s.id}
         renderItem={({ item }) => (

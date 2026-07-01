@@ -94,7 +94,7 @@ function SupplierCatalogueScreen() {
           style={{ backgroundColor: themeColours.surface, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: themeColours.border, color: themeColours.text }} />
       </View>
       {loading ? <ActivityIndicator color={themeColours.accent} /> : (
-        <FlatList data={filtered} keyExtractor={i => i.id}
+        <FlatList keyboardShouldPersistTaps="handled" data={filtered} keyExtractor={i => i.id}
           renderItem={({ item }) => (
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderBottomColor: themeColours.border, backgroundColor: themeColours.surface }}>
               <View style={{ flex: 1 }}>

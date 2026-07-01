@@ -192,6 +192,7 @@ export default function CreditNoteFormScreen() {
           <View style={[styles.modalCard, { backgroundColor: c.surface }]}>
             <Text style={[styles.section, { color: c.navy, marginBottom: 8 }]}>Select supplier</Text>
             <FlatList
+              keyboardShouldPersistTaps="handled"
               data={suppliers}
               keyExtractor={(s) => s.id}
               renderItem={({ item }) => (

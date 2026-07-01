@@ -260,6 +260,7 @@ function BudgetApprovalInboxScreen() {
       </Text>
 
       <FlatList
+        keyboardShouldPersistTaps="handled"
         data={rows}
         keyExtractor={r => r.id}
         scrollEnabled={false}

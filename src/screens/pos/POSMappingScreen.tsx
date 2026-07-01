@@ -296,6 +296,7 @@ export default function POSMappingScreen() {
             />
           </View>
           <FlatList
+            keyboardShouldPersistTaps="handled"
             data={pickerEntries}
             keyExtractor={it => `${it.type}-${it.id}`}
             renderItem={({ item }) => (
