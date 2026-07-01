@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { addQuickItem } from '../../../services/areaInventory';
+import { useToast } from '../../../components/common/Toast';
 
 type Props = {
   venueId: string;
@@ -14,13 +15,14 @@ export default function FastAddInline({ venueId, departmentId, areaId, onAdded }
   const [unit, setUnit] = useState('');
   const [qty, setQty] = useState('');
   const [busy, setBusy] = useState(false);
+  const { showError, showSuccess } = useToast();
 
   async function onAdd() {
     const n = name.trim();
-    if (!n) { Alert.alert('Missing name', 'Please enter an item name.'); return; }
+    if (!n) { showError('Please enter an item name.'); return; }
     const initialQty = qty.trim() === '' ? null : Number(qty);
     if (qty.trim() !== '' && Number.isNaN(initialQty)) {
-      Alert.alert('Invalid qty', 'Quantity must be a number.'); return;
+      showError('Quantity must be a number.'); return;
     }
     try {
       setBusy(true);
@@ -31,9 +33,9 @@ export default function FastAddInline({ venueId, departmentId, areaId, onAdded }
       });
       setName(''); setUnit(''); setQty('');
       onAdded?.();
-      Alert.alert('Added', 'Item created.');
+      showSuccess('Item created.');
     } catch (e: any) {
-      Alert.alert('Add failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Unknown error');
     } finally {
       setBusy(false);
     }

@@ -12,10 +12,10 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Alert,
   TextInput,
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useToast } from '../../components/common/Toast';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 
 type FastRec = {
@@ -45,6 +45,7 @@ export default function FastReceiveDetailModal({
   onAttached: (orderId: string) => void;
 }) {
   const venueId = useVenueId();
+  const { showSuccess, showInfo, showError } = useToast();
   const [busy, setBusy] = useState(false);
 
   // Editable copy of the OCR lines
@@ -141,13 +142,13 @@ export default function FastReceiveDetailModal({
       });
 
       if (result.attached && result.orderId) {
-        Alert.alert('Attached', `Linked to order ${result.orderId} and sent for reconciliation.`);
+        showSuccess(`Linked to order ${result.orderId} and sent for reconciliation.`);
         onAttached(result.orderId);
       } else {
-        Alert.alert('Not Found', 'No submitted order matched this PO yet.');
+        showInfo('No submitted order matched this PO yet.');
       }
     } catch (e:any) {
-      Alert.alert('Attach failed', String(e?.message||e));
+      showError(String(e?.message||e));
     } finally {
       setBusy(false);
     }

@@ -2,12 +2,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity,
-  SafeAreaView, ActivityIndicator, Alert,
+  SafeAreaView, ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 
 type Product = { id: string; name: string; unit?: string | null; category?: string | null };
 
@@ -15,6 +16,7 @@ export default function BatchPriceEntryScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const c = useColours();
+  const { showSuccess, showError } = useToast();
   const db = getFirestore();
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -68,13 +70,10 @@ export default function BatchPriceEntryScreen() {
         count++;
       }
       await batch.commit();
-      Alert.alert(
-        '✓ Prices saved',
-        `${count} price${count !== 1 ? 's' : ''} added to your products.`,
-        [{ text: 'Done', onPress: () => nav.goBack() }]
-      );
+      showSuccess(`${count} price${count !== 1 ? 's' : ''} added to your products.`);
+      nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message || 'Please try again.');
+      showError(e?.message || 'Please try again.');
     }
     setSaving(false);
   };

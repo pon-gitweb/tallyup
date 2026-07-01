@@ -8,9 +8,11 @@
  * When autoSuggestPar is enabled: shows PAR review for items below their level.
  */
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { resetAllDepartmentsStockTake } from '../../services/reset';
 import { useVenueId } from '../../context/VenueProvider';
@@ -51,27 +53,27 @@ function StocktakeSummaryScreen() {
   const route = useRoute<any>();
   const themeColours = useColours();
   const venueId = useVenueId();
+  const { showError } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [resetting, setResetting] = React.useState(false);
   const [baseline, setBaseline] = useState<BaselineData | null>(null);
   const [baselineLoading, setBaselineLoading] = useState(true);
 
   const handleNewCycle = () => {
-    Alert.alert(
-      'Start new stocktake?',
-      'This will reset all areas so you can begin a fresh count. Your completed data is saved.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Start new cycle', onPress: async () => {
-          setResetting(true);
-          try {
-            await resetAllDepartmentsStockTake(venueId);
-            nav.navigate('Dashboard' as never);
-          } catch (e) {
-            Alert.alert('Error', 'Could not reset stocktake. Please try again.');
-          } finally { setResetting(false); }
-        }},
-      ]
-    );
+    confirm({
+      title: 'Start new stocktake?',
+      message: 'This will reset all areas so you can begin a fresh count. Your completed data is saved.',
+      confirmLabel: 'Start new cycle',
+      onConfirm: async () => {
+        setResetting(true);
+        try {
+          await resetAllDepartmentsStockTake(venueId);
+          nav.navigate('Dashboard' as never);
+        } catch (e) {
+          showError('Could not reset stocktake. Please try again.');
+        } finally { setResetting(false); }
+      },
+    });
   };
 
   const {
@@ -182,7 +184,9 @@ function StocktakeSummaryScreen() {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#f5f3ee' }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <>
+      {modal}
+      <ScrollView style={{ flex: 1, backgroundColor: '#f5f3ee' }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Hero */}
       <View style={{ backgroundColor: isFirst ? '#1b4f72' : '#0B132B', borderRadius: 16, padding: 24, alignItems: 'center', gap: 8 }}>
@@ -394,6 +398,7 @@ function StocktakeSummaryScreen() {
 
       <View style={{ height: 20 }} />
     </ScrollView>
+    </>
   );
 }
 

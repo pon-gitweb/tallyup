@@ -1,8 +1,9 @@
 // @ts-nocheck
 import React from 'react';
-import { Alert, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, Text, TouchableOpacity } from 'react-native';
 import { explainVariance } from '../../../services/aiVariance';
 import { attributeVarianceToRecipes } from '../../../services/sales/matchSalesToRecipes';
+import { useToast } from '../../../components/common/Toast';
 
 type Props = {
   venueId: string | null | undefined;
@@ -14,6 +15,7 @@ const pct = (v: any) => (typeof v === 'number' && isFinite(v) ? `${Math.round(Ma
 
 export default function VarianceExplainButton({ venueId, departmentId, row }: Props) {
   const [busy, setBusy] = React.useState(false);
+  const { showInfo, showError } = useToast();
 
   const onPress = React.useCallback(async () => {
     if (busy) return;
@@ -81,9 +83,9 @@ export default function VarianceExplainButton({ venueId, departmentId, row }: Pr
         !summary || summary === 'No specific insight.' ? '\n(Insufficient recent context — conservative explanation.)' : null,
       ].filter(Boolean);
 
-      Alert.alert('AI Insight', lines.join('\n'));
+      showInfo(lines.join('\n'));
     } catch (e: any) {
-      Alert.alert('AI Insight', e?.message || 'Failed to get explanation.');
+      showError(e?.message || 'Failed to get explanation.');
     } finally {
       setBusy(false);
     }

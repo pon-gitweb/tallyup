@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useToast } from '../../components/common/Toast';
 import { createSupplier, updateSupplier, Supplier } from '../../services/suppliers';
 
 export default function EditSupplierScreen() {
@@ -9,6 +10,7 @@ export default function EditSupplierScreen() {
   const route = useRoute<any>();
   const venueId = useVenueId();
   const { supplierId, supplier }: { supplierId?: string|null; supplier?: Supplier } = route.params || {};
+  const { showError } = useToast();
 
   const [name, setName] = useState(supplier?.name || '');
   const [email, setEmail] = useState(supplier?.email || '');
@@ -19,8 +21,8 @@ export default function EditSupplierScreen() {
   const [busy, setBusy] = useState(false);
 
   async function onSave() {
-    if (!venueId) { Alert.alert('No Venue', 'Attach or create a venue first.'); return; }
-    if (!name.trim()) { Alert.alert('Name required', 'Enter supplier name.'); return; }
+    if (!venueId) { showError('Attach or create a venue first.'); return; }
+    if (!name.trim()) { showError('Enter supplier name.'); return; }
     setBusy(true);
     try {
       if (supplierId) {
@@ -44,7 +46,7 @@ export default function EditSupplierScreen() {
       }
       nav.goBack();
     } catch (e: any) {
-      Alert.alert('Save Failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Unknown error');
     } finally {
       setBusy(false);
     }

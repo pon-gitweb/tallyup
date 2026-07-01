@@ -7,9 +7,9 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { useVenueId } from '../../context/VenueProvider';
+import { useToast } from '../../components/common/Toast';
 import { buildVariance } from '../../services/reports/variance';
 import VarianceExplainButton from './components/VarianceExplainButton';
 import IdentityBadge from '../../components/IdentityBadge';
@@ -19,6 +19,7 @@ import { doc, getDoc } from 'firebase/firestore';
 
 export default function DepartmentVarianceScreen() {
   const venueId = useVenueId();
+  const { showError, showInfo } = useToast();
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [rows, setRows] = React.useState<any[]>([]);
@@ -70,15 +71,12 @@ export default function DepartmentVarianceScreen() {
 
   const onExportPdf = React.useCallback(async () => {
     if (!venueId) {
-      Alert.alert('Not ready', 'Select a venue first.');
+      showError('Select a venue first.');
       return;
     }
     const hasRows = (rows && rows.length) || (minor && minor.length);
     if (!hasRows) {
-      Alert.alert(
-        'Nothing to export',
-        'There are no material variances to export yet. Run a stock take first.',
-      );
+      showInfo('There are no material variances to export yet. Run a stock take first.');
       return;
     }
     try {
@@ -92,13 +90,10 @@ export default function DepartmentVarianceScreen() {
       );
       const out = await exportPdf('Department Variance', html);
       if (!out.ok) {
-        Alert.alert(
-          'PDF generated',
-          'Sharing may be unavailable on this device, but the PDF was written to storage if supported.',
-        );
+        showInfo('PDF generated. Sharing may be unavailable on this device, but the PDF was written to storage if supported.');
       }
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message || 'Could not export department variance.');
+      showError(e?.message || 'Could not export department variance.');
     }
   }, [venueId, rows, minor, summary, showMinor]);
 

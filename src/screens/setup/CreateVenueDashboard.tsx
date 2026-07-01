@@ -1,11 +1,13 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useNavigation } from '@react-navigation/native';
+import { useToast } from '../../components/common/Toast';
 
 export default function CreateVenueDashboard() {
   const nav = useNavigation();
+  const { showSuccess, showError } = useToast();
 
   const onCreateVenue = async () => {
     try {
@@ -16,11 +18,11 @@ export default function CreateVenueDashboard() {
         createdAt: serverTimestamp(),
         config: { openSignup: true }
       });
-      Alert.alert('Venue created', 'Venue is ready. Heading to the dashboard.');
+      showSuccess('Venue is ready. Heading to the dashboard.');
       nav.reset({ index: 0, routes: [{ name: 'Dashboard' as never }] });
     } catch (e: any) {
       console.warn('[CreateVenueDashboard] create error', e);
-      Alert.alert('Failed to create venue', e?.message ?? 'Please try again.');
+      showError(e?.message ?? 'Please try again.');
     }
   };
 
