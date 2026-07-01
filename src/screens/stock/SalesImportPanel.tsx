@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
@@ -8,6 +9,7 @@ import { storeSalesReport } from '../../services/sales/storeSalesReport';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 
 export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
+  const { showError, showSuccess, showInfo } = useToast();
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
 
@@ -27,10 +29,7 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         /\.csv$/i.test(a.name || '');
 
       if (!isCsv) {
-        Alert.alert(
-          'Sales import',
-          'Sales PDF imports are not enabled yet on this project. Please export a CSV from your POS and upload that instead.'
-        );
+        showInfo('Sales PDF imports are not enabled yet on this project. Please export a CSV from your POS instead.');
         return;
       }
 
@@ -57,13 +56,10 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         });
       }
 
-      Alert.alert(
-        'Sales report saved',
-        'CSV imported and stored. Analytics will use this when a POS API is not connected.'
-      );
+      showSuccess('CSV imported and stored. Analytics will use this when a POS API is not connected.');
       onClose();
     }catch(e:any){
-      Alert.alert('Sales import failed', String(e?.message||e));
+      showError(String(e?.message||e));
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,7 @@
 /* @ts-nocheck */
 import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
@@ -25,6 +26,7 @@ const EXPECTED_HEADERS = [
 export default function SalesReportUploadPanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showSuccess, showInfo } = useToast();
   const [busy, setBusy] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
 
@@ -40,10 +42,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       const a = res.assets[0];
       const isCsv = (a.mimeType || '').includes('csv') || /\.csv$/i.test(a.name || '');
       if (!isCsv) {
-        Alert.alert(
-          'CSV only for now',
-          'Sales PDF imports are not enabled yet. Please export a CSV from your POS and upload that instead.'
-        );
+        showInfo('Sales PDF imports are not enabled yet. Please export a CSV from your POS instead.');
         return;
       }
       if (!venueId) throw new Error('Not ready: no venue selected');
@@ -62,10 +61,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
 
       if (lineCount === 0) {
         // handled below — don't dedup empty reports
-        Alert.alert(
-          'Nothing parsed',
-          'No lines were found in this CSV.\n\nMake sure your file has the required column headers — tap "Expected format" to see what we need.',
-        );
+        showInfo('No lines were found in this CSV. Make sure your file has the required column headers — tap Expected format to see what is needed.');
         return;
       }
 
@@ -106,13 +102,10 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         refreshAIContext(venueId).catch(() => {});
       }
 
-      Alert.alert(
-        'Sales report saved',
-        `${lineCount} line${lineCount === 1 ? '' : 's'} imported, ${matchable} matchable to products.\n\nAnalytics will use this data automatically.`
-      );
+      showSuccess(`${lineCount} line${lineCount === 1 ? '' : 's'} imported, ${matchable} matchable to products. Analytics will use this data automatically.`);
       onClose();
     } catch (e: any) {
-      Alert.alert('Sales import failed', String(e?.message || e));
+      showError(String(e?.message || e));
     } finally {
       setBusy(false);
     }

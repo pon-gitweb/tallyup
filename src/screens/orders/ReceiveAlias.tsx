@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert, ActivityIndicator, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, FlatList } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
 import {
@@ -22,6 +23,7 @@ export default function ReceiveAlias() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showSuccess, showInfo } = useToast();
 
   const orderId: string | undefined = route?.params?.orderId;
   const [loading, setLoading] = useState(true);
@@ -65,7 +67,7 @@ export default function ReceiveAlias() {
         out.sort((a, b) => (a.name || a.productId).localeCompare(b.name || b.productId));
         setLines(out);
       } catch (e) {
-        Alert.alert('Receive', (e as any)?.message ?? 'Failed to load lines.');
+        showError((e as any)?.message ?? 'Failed to load lines.');
       } finally {
         setLoading(false);
       }
@@ -134,11 +136,11 @@ export default function ReceiveAlias() {
 
       await batch.commit();
 
-      Alert.alert('Receive', finalize ? 'Order marked as Received.' : 'Saved.');
+      showSuccess(finalize ? 'Order marked as Received.' : 'Saved.');
       nav.goBack(); // back to OrderDetail -> header will refresh
     } catch (e) {
       console.warn('[Receive] save error', e);
-      Alert.alert('Receive', (e as any)?.message ?? 'Failed to save.');
+      showError((e as any)?.message ?? 'Failed to save.');
     } finally {
       setSaving(false);
     }
@@ -168,7 +170,7 @@ export default function ReceiveAlias() {
 
         {/* Actions row */}
         <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap' }}>
-          <Button onPress={() => Alert.alert('Scan Invoice', 'Invoice OCR (coming soon).')} text="Scan Invoice (coming soon)" />
+          <Button onPress={() => showInfo('Invoice scanning coming soon.')} text="Scan Invoice (coming soon)" />
           <View style={{ width: 8 }} />
           <Button onPress={receiveAll} text="Receive All" />
           <View style={{ width: 8 }} />

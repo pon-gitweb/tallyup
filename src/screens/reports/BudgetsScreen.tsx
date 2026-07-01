@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable, DimensionValue } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable, DimensionValue } from 'react-native';
+import { useToast } from '../../components/common/Toast';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { listBudgets, createBudget, computeBudgetProgress, isoToTs, tsToIso, Budget } from '../../services/budgets';
@@ -13,6 +14,7 @@ type Row = Budget & { progress?: { spent: number; remaining: number; pct: number
 export default function BudgetsScreen() {
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showInfo } = useToast();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -51,7 +53,7 @@ export default function BudgetsScreen() {
       }
       setRows(withProg);
     } catch (e: any) {
-      Alert.alert('Load failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Could not load budgets.');
     } finally {
       setLoading(false);
     }
@@ -63,7 +65,7 @@ export default function BudgetsScreen() {
     if (!venueId) return;
     const amt = Number(amount);
     if (!amt || !startIso || !endIso) {
-      Alert.alert('Missing fields', 'Amount, start and end are required.');
+      showError('Amount, start and end dates are required.');
       return;
     }
     try {
@@ -78,17 +80,17 @@ export default function BudgetsScreen() {
       setIsCreating(false);
       await load();
     } catch (e: any) {
-      Alert.alert('Create failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Could not create budget.');
     }
   }
 
   const onExportPdf = async () => {
     if (!venueId) {
-      Alert.alert('Not ready', 'Select a venue first.');
+      showError('Select a venue first.');
       return;
     }
     if (!rows.length) {
-      Alert.alert('Nothing to export', 'No budgets defined yet.');
+      showInfo('No budgets defined yet.');
       return;
     }
     try {
@@ -96,13 +98,10 @@ export default function BudgetsScreen() {
       const html = buildBudgetsHtml(venueName, rows, supplierMap);
       const out = await exportPdf('Budgets', html);
       if (!out.ok) {
-        Alert.alert(
-          'PDF generated',
-          'Sharing may be unavailable or failed on this device, but the PDF was written to storage if supported.',
-        );
+        showInfo('PDF generated. Sharing may be unavailable on this device.');
       }
     } catch (e: any) {
-      Alert.alert('Export failed', e?.message || 'Could not export budgets.');
+      showError(e?.message || 'Could not export budgets.');
     }
   };
 

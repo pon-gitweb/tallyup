@@ -1,10 +1,12 @@
 // @ts-nocheck
 import React, { useCallback, useState } from 'react';
-import { Alert, Image, Modal, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, Text, TouchableOpacity, View } from 'react-native';
+import { useToast } from '../../../components/common/Toast';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
   const [busy, setBusy] = useState(false);
+  const { showError, showInfo } = useToast();
 
   const capture = useCallback(async (source: 'camera' | 'library') => {
     try {
@@ -13,14 +15,14 @@ export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
       if (source === 'camera') {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
         if (!perm.granted) {
-          Alert.alert('Camera access required', 'Please allow camera access in Settings.');
+          showInfo('Please allow camera access in Settings to use this feature.');
           return;
         }
         res = await ImagePicker.launchCameraAsync({ quality: 0.85, allowsEditing: false });
       } else {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) {
-          Alert.alert('Photo library access required', 'Please allow photo access in Settings.');
+          showInfo('Please allow photo library access in Settings.');
           return;
         }
         res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.85 });
@@ -28,7 +30,7 @@ export default function ShelfPhotoModal({ visible, onClose, onCapture }: any) {
       if (res.canceled || !res.assets?.[0]) return;
       onCapture?.(res.assets[0].uri);
     } catch (e: any) {
-      Alert.alert('Could not capture photo', e?.message || 'Please try again.');
+      showError(e?.message || 'Could not capture photo. Please try again.');
     } finally {
       setBusy(false);
     }

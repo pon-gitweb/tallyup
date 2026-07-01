@@ -1,9 +1,11 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, ScrollView, Text,
+  ActivityIndicator, FlatList, ScrollView, Text,
   TextInput, TouchableOpacity, View, Modal
 } from 'react-native';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { collection, onSnapshot, orderBy, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -30,6 +32,8 @@ function BudgetApprovalInboxScreen() {
   const venueId = useVenueId();
   const colours = useColours();
   const nav = useNavigation<any>();
+  const { showError, showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BudgetOverrideRequest[]>([]);
   const [rejectFor, setRejectFor] = useState<BudgetOverrideRequest | null>(null);
@@ -100,7 +104,7 @@ function BudgetApprovalInboxScreen() {
     if (!venueId || !budgetAmount.trim() || !budgetSupplierId) return;
     const amount = parseFloat(budgetAmount);
     if (!isFinite(amount) || amount <= 0) {
-      Alert.alert('Invalid amount', 'Enter a valid budget amount.');
+      showError('Enter a valid budget amount.');
       return;
     }
     setSavingBudget(true);
@@ -141,7 +145,7 @@ function BudgetApprovalInboxScreen() {
       }
       setSupplierBudgets(withProgress);
     } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not save budget.');
+      showError(e?.message || 'Could not save budget.');
     } finally {
       setSavingBudget(false);
       setBudgetsLoading(false);
@@ -156,25 +160,21 @@ function BudgetApprovalInboxScreen() {
     setNewBudgetOpen(true);
   }
 
-  const onApprove = async (req: BudgetOverrideRequest) => {
-    Alert.alert(
-      'Approve override?',
-      'This will submit the order and exceed the budget by $' + req.overBy.toFixed(2) + '.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve', onPress: async () => {
-            try {
-              setBusy(true);
-              await approveBudgetOverride(venueId, req);
-              Alert.alert('Approved', 'Order has been submitted.');
-            } catch (e: any) {
-              Alert.alert('Failed', e?.message || 'Could not approve.');
-            } finally { setBusy(false); }
-          }
-        }
-      ]
-    );
+  const onApprove = (req: BudgetOverrideRequest) => {
+    confirm({
+      title: 'Approve override?',
+      message: 'This will submit the order and exceed the budget by $' + req.overBy.toFixed(2) + '.',
+      confirmLabel: 'Approve',
+      onConfirm: async () => {
+        try {
+          setBusy(true);
+          await approveBudgetOverride(venueId, req);
+          showSuccess('Order has been submitted.');
+        } catch (e: any) {
+          showError(e?.message || 'Could not approve.');
+        } finally { setBusy(false); }
+      },
+    });
   };
 
   const onReject = async () => {
@@ -184,9 +184,9 @@ function BudgetApprovalInboxScreen() {
       await rejectBudgetOverride(venueId, rejectFor, rejectNote);
       setRejectFor(null);
       setRejectNote('');
-      Alert.alert('Rejected', 'Order returned to draft.');
+      showSuccess('Order returned to draft.');
     } catch (e: any) {
-      Alert.alert('Failed', e?.message || 'Could not reject.');
+      showError(e?.message || 'Could not reject.');
     } finally { setBusy(false); }
   };
 
@@ -417,6 +417,7 @@ function BudgetApprovalInboxScreen() {
           </View>
         </View>
       </Modal>
+      {modal}
     </ScrollView>
   );
 }

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useToast } from '../../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
 import { uploadInvoiceCsv } from '../../../services/invoices/invoiceUpload';
 import { processInvoicesCsv } from '../../../services/invoices/processInvoicesCsv';
@@ -21,13 +22,14 @@ export default function GenericCsvProcessorScreen({
   onDone,
   embed,
 }: Props) {
+  const { showError } = useToast();
   const colours = useColours();
   const [busy, setBusy] = useState(false);
 
   const pickAndProcess = async () => {
     try {
       if (!venueId || !orderId) {
-        Alert.alert('Invoice CSV', 'Missing venue or order ID – cannot process CSV.');
+        showError('Missing venue or order ID — cannot process CSV.');
         return;
       }
 
@@ -47,7 +49,7 @@ export default function GenericCsvProcessorScreen({
       const fileName = asset?.name || 'invoice.csv';
 
       if (!fileUri || !fileUri.startsWith('file')) {
-        Alert.alert('Invoice CSV', 'Please choose a local CSV file.');
+        showError('Please choose a local CSV file.');
         return;
       }
 
@@ -79,13 +81,13 @@ export default function GenericCsvProcessorScreen({
         msg += `\n\nWarnings:\n- ${warnings.slice(0, 5).join('\n- ')}`;
       }
 
-      Alert.alert('Invoice CSV', msg);
+      showError(msg);
 
       // TODO (next step): open ReceiveApproveScreen with parsed lines for manual review
       onDone?.();
     } catch (e: any) {
       console.warn('[GenericCsvProcessorScreen] error', e);
-      Alert.alert('CSV failed', String(e?.message || e));
+      showError(String(e?.message || e));
     } finally {
       setBusy(false);
     }

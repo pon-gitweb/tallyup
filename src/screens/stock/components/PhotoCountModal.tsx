@@ -8,9 +8,10 @@
  */
 import React, { useState, useCallback } from 'react';
 import {
-  ActivityIndicator, Alert, Image, Modal, ScrollView,
+  ActivityIndicator, Image, Modal, ScrollView,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
+import { useToast } from '../../../components/common/Toast';
 import * as ImagePicker from 'expo-image-picker';
 import { analyzePhotoForCount, recordPhotoCountCorrection } from '../../../services/vision/photoCount';
 import { useVenueId } from '../../../context/VenueProvider';
@@ -30,6 +31,7 @@ type Stage = 'camera' | 'analysing' | 'confirm' | 'error';
 export default function PhotoCountModal({ visible, onClose, productName, productId, unit, onConfirm }: Props) {
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showInfo } = useToast();
   const [stage, setStage] = useState<Stage>('camera');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -67,7 +69,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (perm.status !== 'granted') {
-        Alert.alert('Camera access required', 'Please allow camera access in Settings.');
+        showInfo('Please allow camera access in Settings to use this feature.');
         return;
       }
       const res = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.7 });
@@ -83,7 +85,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
-        Alert.alert('Photo library access required', 'Please allow photo access in Settings.');
+        showInfo('Please allow photo library access in Settings.');
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
@@ -98,7 +100,7 @@ export default function PhotoCountModal({ visible, onClose, productName, product
   const onConfirmCount = useCallback(async () => {
     const count = parseFloat(userCount);
     if (!userCount || isNaN(count) || count < 0) {
-      Alert.alert('Invalid count', 'Please enter a valid count.');
+      showError('Please enter a valid count.');
       return;
     }
     // Record correction for learning
