@@ -1,25 +1,42 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Modal, SafeAreaView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
+import FastReceivePanel from '../stock/FastReceivePanel';
+import FastReceivesReviewPanel from '../stock/FastReceivesReviewPanel';
 
 export default function InvoicesScreen() {
   const nav = useNavigation<any>();
   const colours = useColours();
   const insets = useSafeAreaInsets();
 
+  const [showFastReceive, setShowFastReceive] = useState(false);
+  const [showFastReview, setShowFastReview] = useState(false);
+
   const actions = [
     {
       icon: '📷',
-      label: 'Scan an invoice',
-      sub: 'Photograph or upload a supplier invoice',
-      onPress: () => nav.navigate('PendingDeliveries'),
+      label: 'Scan or upload invoice',
+      sub: 'Camera, photo library, or PDF from email',
+      onPress: () => setShowFastReceive(true),
+    },
+    {
+      icon: '🕐',
+      label: 'Fast receives pending',
+      sub: 'Review invoices awaiting reconciliation',
+      onPress: () => setShowFastReview(true),
     },
     {
       icon: '📦',
       label: 'Pending deliveries',
-      sub: 'Stock received — awaiting invoice match',
+      sub: 'Submitted orders awaiting arrival',
+      onPress: () => nav.navigate('PendingDeliveries'),
+    },
+    {
+      icon: '🔁',
+      label: 'Invoice reconciliations',
+      sub: 'Match deliveries to invoices',
       onPress: () => nav.navigate('PendingDeliveries'),
     },
     {
@@ -37,46 +54,81 @@ export default function InvoicesScreen() {
   ];
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colours.cream }}
-      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={{ paddingHorizontal: 16, paddingTop: (insets.top || 0) + 16, paddingBottom: 8 }}>
-        <Text style={{ fontSize: 26, fontWeight: '700', color: colours.navy, letterSpacing: -0.5 }}>
-          Invoices
-        </Text>
-        <Text style={{ fontSize: 14, color: colours.textSecondary, marginTop: 4 }}>
-          Scan deliveries, review pending stock, manage credits
-        </Text>
-      </View>
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colours.cream }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={{ paddingHorizontal: 16, paddingTop: (insets.top || 0) + 16, paddingBottom: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+            <TouchableOpacity onPress={() => nav.goBack()} style={{ marginRight: 8, padding: 4 }}>
+              <Text style={{ fontSize: 20, color: colours.deepBlue, fontWeight: '300' }}>‹</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 26, fontWeight: '700', color: colours.navy, letterSpacing: -0.5 }}>
+              Invoices
+            </Text>
+          </View>
+          <Text style={{ fontSize: 14, color: colours.textSecondary, marginTop: 4 }}>
+            Scan deliveries, review pending stock, manage credits
+          </Text>
+        </View>
 
-      <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-        {actions.map((action, i) => (
-          <TouchableOpacity
-            key={i}
-            onPress={action.onPress}
-            activeOpacity={0.75}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: colours.surface,
-              borderRadius: 12,
-              padding: 16,
-              marginBottom: 10,
-              borderWidth: 1,
-              borderColor: colours.border,
-            }}
-          >
-            <Text style={{ fontSize: 22, marginRight: 14 }}>{action.icon}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: colours.navy }}>{action.label}</Text>
-              <Text style={{ fontSize: 13, color: colours.textSecondary, marginTop: 2 }}>{action.sub}</Text>
-            </View>
-            <Text style={{ fontSize: 18, color: colours.deepBlue, fontWeight: '300' }}>›</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
+        <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+          {actions.map((action, i) => (
+            <TouchableOpacity
+              key={i}
+              onPress={action.onPress}
+              activeOpacity={0.75}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: colours.surface,
+                borderRadius: 12,
+                padding: 16,
+                marginBottom: 10,
+                borderWidth: 1,
+                borderColor: colours.border,
+              }}
+            >
+              <Text style={{ fontSize: 22, marginRight: 14 }}>{action.icon}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: colours.navy }}>{action.label}</Text>
+                <Text style={{ fontSize: 13, color: colours.textSecondary, marginTop: 2 }}>{action.sub}</Text>
+              </View>
+              <Text style={{ fontSize: 18, color: colours.deepBlue, fontWeight: '300' }}>›</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+
+      {/* Fast Receive (Scan/Upload) */}
+      <Modal visible={showFastReceive} animationType="slide" onRequestClose={() => setShowFastReceive(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderColor: '#E5E7EB' }}>
+            <TouchableOpacity onPress={() => setShowFastReceive(false)}>
+              <Text style={{ fontSize: 18, color: '#2563EB', width: 60 }}>‹ Back</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>Fast Receive</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <FastReceivePanel onClose={() => setShowFastReceive(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Fast Receives (Pending Review/Attach) */}
+      <Modal visible={showFastReview} animationType="slide" onRequestClose={() => setShowFastReview(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderColor: '#E5E7EB' }}>
+            <TouchableOpacity onPress={() => setShowFastReview(false)}>
+              <Text style={{ fontSize: 18, color: '#2563EB', width: 60 }}>‹ Back</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>Fast Receives (Pending)</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <FastReceivesReviewPanel onClose={() => setShowFastReview(false)} />
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }

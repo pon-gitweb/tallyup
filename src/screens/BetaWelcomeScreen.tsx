@@ -20,7 +20,7 @@ export default function BetaWelcomeScreen() {
 
   const goDashboard = () => navigation.navigate('Dashboard');
   const goStockTake = () => navigation.navigate('DepartmentSelection');
-  const goStockControl = () => navigation.navigate('StockControl');
+  const goStockControl = () => navigation.navigate('DepartmentSelection');
   const goSuggestedOrders = () => navigation.navigate('SuggestedOrders');
   const goOrders = () => navigation.navigate('Orders');
 

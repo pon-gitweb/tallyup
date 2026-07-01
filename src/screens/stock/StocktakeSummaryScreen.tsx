@@ -343,7 +343,7 @@ function StocktakeSummaryScreen() {
           )}
 
           <TouchableOpacity
-            onPress={() => nav.navigate('StockControl' as never)}
+            onPress={() => nav.navigate('Dashboard' as never)}
             style={{ backgroundColor: c.primaryLight, borderRadius: 10, padding: 10, alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: c.primary, fontWeight: '800', fontSize: 13 }}>Review & update PAR levels →</Text>
           </TouchableOpacity>

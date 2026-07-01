@@ -409,7 +409,6 @@ export default function DashboardScreen() {
 
   const onOpenSuggestedOrders = () => nav.navigate('SuggestedOrders');
   const onOpenOrders = () => nav.navigate('Orders');
-  const onOpenStockControl = () => nav.navigate('StockControl');
   const onOpenReports = () => nav.navigate('Reports');
   const onOpenSettings = () => nav.navigate('Settings');
 

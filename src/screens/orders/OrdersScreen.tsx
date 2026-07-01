@@ -449,6 +449,21 @@ export default function OrdersScreen(){
             <Text style={{ color: '#0A84FF', fontWeight: '700', fontSize: 13 }}>Record credit note</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Suggested Orders shortcut */}
+        <TouchableOpacity
+          onPress={() => nav.navigate('SuggestedOrders')}
+          activeOpacity={0.75}
+          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1, borderColor: '#BFDBFE' }}
+        >
+          <Text style={{ fontSize: 18, marginRight: 10 }}>🛒</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: '#1E3A8A' }}>Suggested Orders</Text>
+            <Text style={{ fontSize: 12, color: '#3B82F6', marginTop: 1 }}>Order what you need based on your stock levels</Text>
+          </View>
+          <Text style={{ fontSize: 18, color: '#3B82F6', fontWeight: '300' }}>›</Text>
+        </TouchableOpacity>
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
