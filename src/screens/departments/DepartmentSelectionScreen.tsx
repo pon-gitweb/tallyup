@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, Modal, Pressable, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { collection, getDocs, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -12,6 +13,7 @@ type Dept = { id: string; name: string };
 export default function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const { showError } = useToast();
   const { confirm, modal } = useConfirmModal();
@@ -93,7 +95,7 @@ export default function DepartmentSelectionScreen() {
   }
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingTop: (insets.top || 0) + 16 }]}>
       <Text style={styles.title}>Departments</Text>
       <View style={styles.searchRow}>
         <TextInput placeholder="Search…" value={q} onChangeText={setQ} style={styles.search} />

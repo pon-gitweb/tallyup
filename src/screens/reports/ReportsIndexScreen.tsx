@@ -412,7 +412,7 @@ export default function ReportsIndexScreen() {
       <LocalThemeGate>
         <View style={[S.root, { backgroundColor: c.background }]}>
           {modal}
-          <ScreenHeader S={S} />
+          <ScreenHeader S={S} insetsTop={insets.top || 0} />
           <View style={S.centred}>
             <Text style={S.emptyTitle}>No venue selected</Text>
             <Text style={S.emptyBody}>Select a venue to see your briefing.</Text>
@@ -428,7 +428,7 @@ export default function ReportsIndexScreen() {
         <View style={[S.root, { backgroundColor: c.background }]}>
           {modal}
           <OfflineBanner />
-          <ScreenHeader S={S} />
+          <ScreenHeader S={S} insetsTop={insets.top || 0} />
           <View style={S.centred}>
             {loadingTimeout && !isOnline ? (
               <Text style={{ color: c.stellarAmber, textAlign: 'center', fontWeight: '700' }}>
@@ -451,7 +451,7 @@ export default function ReportsIndexScreen() {
       <LocalThemeGate>
         <View style={[S.root, { backgroundColor: c.background }]}>
           {modal}
-          <ScreenHeader S={S} />
+          <ScreenHeader S={S} insetsTop={insets.top || 0} />
           <View style={S.centred}>
             <Text style={S.emptyTitle}>Couldn't load briefing</Text>
             <Text style={[S.emptyBody, { marginTop: 8 }]}>Check your connection and try again.</Text>
@@ -472,7 +472,7 @@ export default function ReportsIndexScreen() {
       <LocalThemeGate>
         <View style={[S.root, { backgroundColor: c.background }]}>
           {modal}
-          <ScreenHeader S={S} />
+          <ScreenHeader S={S} insetsTop={insets.top || 0} />
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
             <View style={S.emptyCard}>
               <Text style={S.emptyTitle}>Nothing to brief yet</Text>
@@ -534,7 +534,7 @@ export default function ReportsIndexScreen() {
       <View style={[S.root, { backgroundColor: c.background }]}>
         {modal}
         <OfflineBanner />
-        <ScreenHeader S={S} />
+        <ScreenHeader S={S} insetsTop={insets.top || 0} />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
 
           {/* ── REPORTS INTRO CARD (shown once, first visit after stocktake) ── */}
@@ -1079,9 +1079,9 @@ export default function ReportsIndexScreen() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ScreenHeader({ S }: { S: any }) {
+function ScreenHeader({ S, insetsTop }: { S: any; insetsTop: number }) {
   return (
-    <View style={S.header}>
+    <View style={[S.header, { paddingTop: insetsTop + 12 }]}>
       <View>
         <Text style={S.headerTitle}>Briefing</Text>
         <Text style={S.headerSub}>What happened. What it means. What to do.</Text>
