@@ -1332,21 +1332,6 @@ export default function SettingsScreen() {
           Hosti-Stock v{Constants.expoConfig?.version ?? '—'}
         </Text>
 
-        {/* APPEARANCE — temporarily hidden, not working.
-            Restore when implemented. */}
-        {false && (
-          <>
-            <View style={styles.sectionHeader}><Text style={styles.sectionHeaderText}>Appearance</Text></View>
-            <View style={styles.row}>
-              <TouchableOpacity
-                style={styles.btn}
-                onPress={() => nav.navigate('Appearance')}
-              >
-                <Text style={styles.btnText}>🎨 Appearance</Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
 
         {/* ─── DANGER ZONE ─── */}
         <View style={{ marginHorizontal: 4, marginTop: 16, marginBottom: 8, borderRadius: 12, borderWidth: 1.5, borderColor: '#dc2626', padding: 14 }}>

@@ -442,7 +442,7 @@ export default function OrdersScreen(){
 
   return(
     <View style={S.wrap}>
-      <View style={S.top}>
+      <View style={[S.top, { paddingTop: (insets.top || 0) + 12 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={S.title}>Orders</Text>
           <TouchableOpacity onPress={() => nav.navigate('CreditNoteForm')}>
