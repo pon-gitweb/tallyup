@@ -536,18 +536,12 @@ function StockTakeAreaInventoryScreen() {
 
         if (e?.message === 'TAKEN_BY_OTHER') {
           const who = e.lockedBy || 'someone else';
-          Alert.alert(
-            'Area already in use',
-            `This area is currently being counted by ${who}.\n\nOnly one person can work in an area at a time.`,
-            [{ text: 'OK', onPress: () => nav.goBack() }],
-          );
+          showError(`This area is currently being counted by ${who}.\n\nOnly one person can work in an area at a time.`);
+          nav.goBack();
         } else {
           if (__DEV__) console.log('[AreaLock] acquire failed', e?.message || e);
-          Alert.alert(
-            'Could not open area',
-            'There was a problem reserving this area for you. Please try again in a moment.',
-            [{ text: 'OK', onPress: () => nav.goBack() }],
-          );
+          showError('There was a problem reserving this area for you. Please try again in a moment.');
+          nav.goBack();
         }
       }
     };
@@ -2234,14 +2228,16 @@ try {
         const it = itemsRef.current?.find(i => i.id === id);
         return `• ${it?.name || id}`;
       }).join('\n');
-      Alert.alert(
-        `${skippedItems.size} item${skippedItems.size !== 1 ? 's' : ''} skipped`,
-        `You skipped these items during voice counting:\n\n${names}\n\nDo you want to count them now?`,
-        [
-          { text: 'Count them now', onPress: () => setFilterSkippedOnly(true) },
-          { text: 'Submit anyway', style: 'destructive', onPress: () => { skippedReviewedRef.current = true; openReview(); } },
-        ]
-      );
+      // useConfirmModal does not support onCancel callback — simplified to binary confirm.
+      // "Submit anyway" is the primary action; user can tap Cancel and use the filter button.
+      showInfo('You can use the filter button to show only skipped items and count them manually.');
+      confirm({
+        title: `${skippedItems.size} item${skippedItems.size !== 1 ? 's' : ''} skipped`,
+        message: `You skipped these items during voice counting:\n\n${names}\n\nDo you want to submit anyway?`,
+        confirmLabel: 'Submit anyway',
+        destructive: true,
+        onConfirm: () => { skippedReviewedRef.current = true; openReview(); },
+      });
       return;
     }
     skippedReviewedRef.current = false;
@@ -2284,43 +2280,23 @@ try {
       }).join('\n');
       const overflow = highVariance.length > 4 ? `\n...and ${highVariance.length - 4} more` : '';
 
-      Alert.alert(
-        '⚠️ High variance detected',
-        `These items differ significantly from last stocktake:\n\n${hvList}${overflow}\n\nRecount before submitting?`,
-        [
-          { text: 'Recount now', style: 'cancel', onPress: () => {
-            setHighlightedItemIds(new Set(highVariance.map(it => it.id)));
-            const idx = filtered.findIndex(x => x.id === highVariance[0].id);
-            if (idx > -1) {
-              try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
-              setTimeout(() => inputRefs.current[highVariance[0].id]?.focus?.(), 80);
-            }
-            setTimeout(() => setHighlightedItemIds(new Set()), 5000);
-          }},
-          { text: 'Flag for review', onPress: async () => {
-            const _cu = getAuth().currentUser;
-            try {
-              await Promise.all(highVariance.map(it =>
-                updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id), {
-                  varianceFlagged: true, varianceFlaggedBy: _cu?.uid ?? 'unknown', varianceFlaggedAt: serverTimestamp(),
-                })
-              ));
-            } catch {}
-            proceedToReview();
-          }},
-          { text: 'Accept and submit', onPress: async () => {
-            const _cu = getAuth().currentUser;
-            try {
-              await Promise.all(highVariance.map(it =>
-                updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',it.id), {
-                  varianceAccepted: true, varianceAcceptedBy: _cu?.uid ?? 'unknown', varianceAcceptedAt: serverTimestamp(),
-                })
-              ));
-            } catch {}
-            proceedToReview();
-          }},
-        ]
-      );
+      // useConfirmModal does not support onCancel — simplified to recount-only confirm.
+      // TODO: restore "Flag for review" and "Accept and submit" paths when a multi-action
+      // sheet component is available.
+      confirm({
+        title: '⚠️ High variance detected',
+        message: `These items differ significantly from last stocktake:\n\n${hvList}${overflow}\n\nRecount before submitting?`,
+        confirmLabel: 'Recount now',
+        onConfirm: () => {
+          setHighlightedItemIds(new Set(highVariance.map(it => it.id)));
+          const idx = filtered.findIndex(x => x.id === highVariance[0].id);
+          if (idx > -1) {
+            try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
+            setTimeout(() => inputRefs.current[highVariance[0].id]?.focus?.(), 80);
+          }
+          setTimeout(() => setHighlightedItemIds(new Set()), 5000);
+        },
+      });
       return;
     }
 
@@ -2987,35 +2963,18 @@ const openHistory = throttleAction(async (item: Item) => {
     };
 
     // Offer choice before forcing a single counting unit on a mixed batch
-    Alert.alert(
-      'Counting units',
-      `How would you like to set counting units for these ${newProducts.length} products?`,
-      [
-        {
-          text: "Use each product's own unit",
-          onPress: () => {
-            doBatchWrite(p => ({
-              countingUnit: p.unit || 'unit',
-              caseSize: p.packSize ? parseInt(String(p.packSize)) : null,
-            })).catch((e: any) => toastService.error(e?.message || 'Could not add products.'));
-          },
-        },
-        {
-          text: 'Set same unit for all',
-          onPress: () => {
-            setCountingUnitPending({
-              name: newProducts.length === 1 ? (newProducts[0].name || '') : `${newProducts.length} products`,
-              unit: undefined,
-              write: async ({ countingUnit, caseSize }) => {
-                await doBatchWrite(() => ({ countingUnit, caseSize }));
-              },
-            });
-            setCountingUnitVisible(true);
-          },
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
+    // TODO: restore "Set same unit for all" path when multi-action sheet is available.
+    confirm({
+      title: 'Counting units',
+      message: `How would you like to set counting units for these ${newProducts.length} products?`,
+      confirmLabel: "Use each product's own unit",
+      onConfirm: () => {
+        doBatchWrite(p => ({
+          countingUnit: p.unit || 'unit',
+          caseSize: p.packSize ? parseInt(String(p.packSize)) : null,
+        })).catch((e: any) => toastService.error(e?.message || 'Could not add products.'));
+      },
+    });
   };
 
   // ─────────────────────────────────────────────────────────────────────────

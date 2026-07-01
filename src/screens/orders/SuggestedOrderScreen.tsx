@@ -15,6 +15,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import IdentityBadge from '../../components/IdentityBadge';
 import { OrdersService } from '../../domain/orders';
 import { showToast } from './_toast';
+import { useToast } from '../../components/common/Toast';
 
 const dlog = __DEV__ ? (...a:any[]) => console.log('[Suggested]', ...a) : (..._a:any[])=>{};
 const NO_SUPPLIER_KEYS = new Set(['unassigned','__no_supplier__','no_supplier','none','null','undefined','']);
@@ -60,9 +61,7 @@ function sumByProduct(lines:any[]){
 export function __showSuggestToast(msg:string){
   try{
     require("react-native").ToastAndroid.show(msg,require("react-native").ToastAndroid.SHORT);
-  }catch{
-    try{require("react-native").Alert.alert("Notice",msg);}catch{}
-  }
+  }catch{ /* silent on iOS */ }
 }
 
 export default function SuggestedOrderScreen(){
@@ -70,6 +69,7 @@ export default function SuggestedOrderScreen(){
   const venueId=useVenueId();
   const db=getFirestore();
   const uid=getAuth()?.currentUser?.uid||'dev';
+  const { showSuccess, showError } = useToast();
 
   const [refreshing,setRefreshing]=useState(false);
   const [loadError,setLoadError]=useState(false);
@@ -500,7 +500,7 @@ export default function SuggestedOrderScreen(){
           setExistingKeys(prev=>{ const next=new Set(prev); next.add(supplierPreview.suggestionKey); return next; });
         }
         setSupplierOpen(false);
-        Alert.alert('Draft saved',`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
+        showSuccess(`Draft saved — find it in Orders. (${supplierPreview.supplierName||'supplier'}, ${supplierPreview.lines.length} line${supplierPreview.lines.length===1?'':'s'})`);
         if (Platform.OS==='android') ToastAndroid.show('Draft saved in Orders', ToastAndroid.SHORT);
       };
 
@@ -514,7 +514,7 @@ export default function SuggestedOrderScreen(){
             { text:'Merge', style:'default', onPress: async()=>{
                 await mergeIntoExistingDraft(existingId, supplierPreview.lines||[]);
                 setSupplierOpen(false);
-                Alert.alert('Merged', 'Lines merged into the existing draft.');
+                showSuccess('Lines merged into the existing draft.');
                 if (Platform.OS==='android') ToastAndroid.show('Merged into existing draft', ToastAndroid.SHORT);
               }
             },
@@ -525,7 +525,7 @@ export default function SuggestedOrderScreen(){
 
       await doCreateSeparate();
     }catch(e:any){
-      Alert.alert('Could not create draft',e?.message||'Please try again.');
+      showError(e?.message||'Could not create draft. Please try again.');
     }
   },[venueId,supplierPreview,uid,findExistingDraftForSupplier,mergeIntoExistingDraft,snapshot,selectedDeptId,existingKeys]);
 
@@ -554,7 +554,7 @@ export default function SuggestedOrderScreen(){
       // Refresh suggestions so this product moves from Unassigned to that supplier
       await doRefreshRaw();
     }catch(e:any){
-      Alert.alert('Assign failed', e?.message || 'Could not assign supplier');
+      showError(e?.message || 'Could not assign supplier');
     }
   },[db,venueId,assignForProductId,doRefreshRaw]);
 

@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { useToast } from '../../components/common/Toast';
 import { db } from '../../services/firebase';
 import {
   doc, getDoc, getDocs, collection, addDoc, writeBatch, serverTimestamp, setDoc, updateDoc, Timestamp,
@@ -38,6 +39,7 @@ export default function InvoiceScreen() {
   const navigation = useNavigation<any>();
   const venueId = useVenueId();
   const colours = useColours();
+  const { showError, showSuccess } = useToast();
   const orderId: string = route.params?.orderId;
 
   const [loading, setLoading] = useState(true);
@@ -49,7 +51,7 @@ export default function InvoiceScreen() {
   useEffect(() => {
     (async () => {
       if (!venueId || !orderId) {
-        Alert.alert('Missing context', 'No venue/order found');
+        showError('No venue or order found.');
         navigation.goBack();
         return;
       }
@@ -66,7 +68,7 @@ export default function InvoiceScreen() {
         setLines(arr);
       } catch (e: any) {
         console.log('[Invoice] load error', e?.message);
-        Alert.alert('Load failed', e?.message || 'Unknown error');
+        showError(e?.message || 'Could not load invoice data.');
         navigation.goBack();
       } finally {
         setLoading(false);
@@ -110,7 +112,7 @@ export default function InvoiceScreen() {
   async function saveInvoice() {
     if (!venueId || !orderId || !order) return;
     if (!invoiceNo.trim()) {
-      Alert.alert('Missing invoice number', 'Please enter an invoice number.');
+      showError('Please enter an invoice number.');
       return;
     }
     try {
@@ -157,12 +159,11 @@ export default function InvoiceScreen() {
       await batch.commit();
 
       console.log('[Invoice] saved', JSON.stringify({ invoiceId: invRef.id, orderId, total }));
-      Alert.alert('Invoice saved', `Invoice ${invoiceNo.trim()} posted.`, [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      showSuccess(`Invoice ${invoiceNo.trim()} posted.`);
+      navigation.goBack();
     } catch (e: any) {
       console.log('[Invoice] save error', e?.message);
-      Alert.alert('Save failed', e?.message || 'Unknown error');
+      showError(e?.message || 'Could not save invoice.');
     } finally {
       setLoading(false);
     }

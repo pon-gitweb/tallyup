@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   FlatList,
   TextInput,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import {
@@ -21,6 +20,7 @@ import {
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../../context/VenueProvider';
 import { useColours } from '../../../context/ThemeContext';
+import { useToast } from '../../../components/common/Toast';
 
 type Line = {
   id: string;
@@ -51,6 +51,7 @@ export default function ManualReceiveScreen({
   const venueIdFromHook = useVenueId();
   const venueId = propVenueId || venueIdFromHook;
   const colours = useColours();
+  const { showError } = useToast();
 
   // Local copy of lines (either from props or Firestore)
   const [lines, setLines] = useState<Line[]>(orderLines || []);
@@ -199,15 +200,15 @@ export default function ManualReceiveScreen({
     const p = newUnitPrice === '' ? null : Number(newUnitPrice);
 
     if (!name) {
-      Alert.alert('Missing name', 'Enter a product name.');
+      showError('Enter a product name.');
       return;
     }
     if (!Number.isFinite(q) || q <= 0) {
-      Alert.alert('Invalid qty', 'Enter a quantity > 0.');
+      showError('Enter a quantity greater than 0.');
       return;
     }
     if (!(p === null || Number.isFinite(p))) {
-      Alert.alert('Invalid price', 'Leave blank or enter a valid number.');
+      showError('Leave blank or enter a valid price.');
       return;
     }
 
@@ -226,7 +227,7 @@ export default function ManualReceiveScreen({
   const submit = async () => {
     try {
       if (!venueId) {
-        Alert.alert('No venue', 'Attach a venue first.');
+        showError('Attach a venue first.');
         return;
       }
       const db = getFirestore(getApp());
@@ -277,7 +278,7 @@ export default function ManualReceiveScreen({
       await batch.commit();
       close();
     } catch (e) {
-      Alert.alert('Receive failed', String(e?.message || e));
+      showError(String(e?.message || e));
     }
   };
 

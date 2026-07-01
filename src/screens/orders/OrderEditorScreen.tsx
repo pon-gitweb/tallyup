@@ -17,6 +17,8 @@ import { refreshAIContext } from '../../services/aiContext';
 import { useVenueId } from '../../context/VenueProvider';
 import { ProductRow, listProductsBySupplierPage, searchProductsBySupplierPrefixPage } from '../../services/products';
 import { savedToast } from '../../utils/toast';
+import { useToast } from '../../components/common/Toast';
+import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 type LineRow = { id: string; name: string; qty: number };
 type RouteParams = { orderId: string; supplierName?: string };
@@ -25,6 +27,8 @@ export default function OrderEditorScreen() {
   const venueId = useVenueId();
   const colours = useColours();
   const nav = useNavigation<any>();
+  const { showError, showInfo, showSuccess } = useToast();
+  const { confirm, modal } = useConfirmModal();
   const route = useRoute<RouteProp<Record<string, RouteParams>, string>>();
   const orderId = route.params?.orderId;
   const supplierName = route.params?.supplierName ?? 'Supplier';
@@ -196,7 +200,7 @@ export default function OrderEditorScreen() {
       }, { merge: true });
       savedToast('Added to draft');
     } catch (e:any) {
-      Alert.alert('Error', e?.message ?? 'Failed adding line.');
+      showError(e?.message ?? 'Failed adding line.');
     }
   }, [db, venueId, orderId, defaultQty]);
 
@@ -206,7 +210,7 @@ export default function OrderEditorScreen() {
       if (!venueId || !orderId) return;
       const name = (nameRaw || '').trim();
       const qty = Math.max(1, parseInt(((qtyRaw ?? defaultQty) || '1'), 10) || 1);
-      if (!name) { Alert.alert('Missing name', 'Pick or type a product name.'); return; }
+      if (!name) { showError('Pick or type a product name.'); return; }
       const orderRef = doc(db, 'venues', venueId, 'orders', orderId);
       // create a line doc keyed by name (so edits overwrite)
       const lineRef = doc(orderRef, 'lines', name);
@@ -223,7 +227,7 @@ export default function OrderEditorScreen() {
       }, { merge: true });
       savedToast('Added to draft');
     } catch (e:any) {
-      Alert.alert('Error', e?.message ?? 'Failed adding line.');
+      showError(e?.message ?? 'Failed adding line.');
     }
   }, [db, venueId, orderId, defaultQty]);
 
@@ -255,7 +259,7 @@ export default function OrderEditorScreen() {
   try {
     if (!venueId || !orderId) return;
     if (!lines.some(l => (l.qty||0) > 0)) {
-      Alert.alert('No lines', 'Add at least one line before submitting.');
+      showInfo('Add at least one line before submitting.');
       return;
     }
         // Budget guardrail
@@ -290,7 +294,7 @@ export default function OrderEditorScreen() {
                 'This order will exceed your ' + label + ' budget by ' + over + '. Projected: ' + projected.toFixed(2) + ' / ' + cap.toFixed(2),
                 [
                   { text: 'Cancel', style: 'cancel', onPress: () => reject(new Error('cancelled')) },
-                  { text: 'Submit anyway', style: 'destructive', onPress: async () => { try { await requestBudgetOverride(venueId, orderId, supplierId, null, orderTotal, budget.id || '', cap, over); Alert.alert('Sent for approval', 'Your order has been sent to a manager for approval.'); nav.navigate('Orders'); } catch(e) { resolve(); } } },
+                  { text: 'Submit anyway', style: 'destructive', onPress: async () => { try { await requestBudgetOverride(venueId, orderId, supplierId, null, orderTotal, budget.id || '', cap, over); showSuccess('Your order has been sent to a manager for approval.'); nav.navigate('Orders'); } catch(e) { resolve(); } } },
                 ]
               );
             });
@@ -306,7 +310,7 @@ export default function OrderEditorScreen() {
     setSubmittedOrderId(orderId);
     setDispatchVisible(true);
   } catch (e:any) {
-    Alert.alert('Error', e?.message ?? 'Failed to submit order.');
+    showError(e?.message ?? 'Failed to submit order.');
   }
 }, [venueId, orderId, lines, nav, supplierId]);
 
@@ -440,6 +444,7 @@ export default function OrderEditorScreen() {
       lines={lines.map(l => ({ name: l.productName || l.name || 'Item', qty: l.qty || 0, unit: l.unit, unitCost: l.unitCost }))}
       totalCost={lines.reduce((sum, l) => sum + ((l.qty || 0) * (l.unitCost || 0)), 0)}
     />
+    {modal}
     </View>
   );
 }
