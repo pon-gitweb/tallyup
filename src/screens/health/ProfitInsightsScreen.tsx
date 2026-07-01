@@ -89,7 +89,11 @@ export default function ProfitInsightsScreen() {
   const [monthlyScores, setMonthlyScores] = useState<number[] | null>(null);
 
   useEffect(() => {
-    if (!venueId) { setLoading(false); return; }
+    if (!venueId) {
+      // Stay in loading state if venueId is briefly null — VenueProvider will
+      // update the context when it resolves, triggering a re-run of this effect.
+      return; // keep loading=true, don't setLoading(false)
+    }
     let alive = true;
     (async () => {
       try {

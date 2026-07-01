@@ -173,8 +173,17 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (lastVenueIdRef.current !== currentVenue) {
-          lastVenueIdRef.current = currentVenue;
-          setVenueId(currentVenue ?? null);
+          // Only downgrade to null if we're certain the user has no venue:
+          // - currentVenue is null AND
+          // - user has no venueIds at all (not just no active one)
+          // This prevents network flickers or intermediate Firestore states from
+          // clearing the venue while the user is actively using the app.
+          const shouldClearVenue = currentVenue === null && currentVenueIds.length === 0;
+          const nextVenueId = currentVenue ?? (shouldClearVenue ? null : lastVenueIdRef.current);
+
+          lastVenueIdRef.current = currentVenue; // track what Firestore says
+          setVenueId(nextVenueId);              // but hold existing venueId if user still has venues
+
           if (currentVenue) {
             AsyncStorage.setItem('lastKnownVenueId', currentVenue).catch(() => {});
           }
