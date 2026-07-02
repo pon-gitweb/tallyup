@@ -11,7 +11,7 @@ const NAV_ITEMS: { key: Page; label: string; enabled: boolean }[] = [
   { key: 'suppliers', label: 'Suppliers', enabled: true },
   { key: 'reports', label: 'Reports', enabled: true },
   { key: 'craftit', label: 'CraftIt', enabled: false },
-  { key: 'orders', label: 'Orders', enabled: false },
+  { key: 'orders', label: 'Orders', enabled: true },
   { key: 'settings', label: 'Settings', enabled: false },
 ]
 
