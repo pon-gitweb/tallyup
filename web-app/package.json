@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:hosting": "tsc -b && vite build --outDir ../web/app --emptyOutDir",
+    "build:copy": "npm run build && cp -r dist/* ../web/app/",
+    "deploy": "npm run build && cp -r dist/* ../web/app/ && cd .. && firebase deploy --only hosting",
     "lint": "oxlint",
     "preview": "vite preview"
   },
