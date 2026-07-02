@@ -138,7 +138,7 @@ export default function MoreScreen() {
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            onPress={() => nav.navigate('StockControl')}
+            onPress={() => nav.navigate('SalesImport')}
             activeOpacity={0.7}
             style={{
               flexDirection: 'row', alignItems: 'center',
