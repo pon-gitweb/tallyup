@@ -14,6 +14,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AutoFillFromCatalog from '../../components/products/AutoFillFromCatalog';
@@ -54,6 +55,20 @@ const PAR_DEFAULTS: Record<string, number> = {
   produce: 1,
   dairy: 1,
 };
+
+function yyyymmddToDate(s: string): Date {
+  if (!s) return new Date();
+  const parts = s.split('-');
+  if (parts.length !== 3) return new Date();
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYyyymmdd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 function defaultParForCategory(cat: string | null | undefined): number | null {
   if (!cat) return null;
@@ -125,6 +140,7 @@ export default function EditProductScreen() {
 
   const [saving, setSaving] = useState(false);
   const [inductionMissing, setInductionMissing] = useState<string[] | null>(null);
+  const [showExpiryDatePicker, setShowExpiryDatePicker] = useState(false);
 
   // Background catalogue matching — best-effort suggestion banner while typing the name
   const [catalogSuggestion, setCatalogSuggestion] = useState<CatalogHit | null>(null);
@@ -609,14 +625,38 @@ export default function EditProductScreen() {
           </FieldRow>
 
           <Field label="Expiry date (optional)">
-            <TextInput
-              value={form.expiryDate ?? ''}
-              onChangeText={(v) => setForm((p: any) => ({ ...p, expiryDate: v }))}
-              placeholder="YYYY-MM-DD — set if product expires"
-              autoCapitalize="none"
-              keyboardType="numbers-and-punctuation"
-              style={styles.input}
-            />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.input, { justifyContent: 'center', flex: 1 }]}
+                onPress={() => setShowExpiryDatePicker(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 14, color: form.expiryDate ? colours.navy : colours.textSecondary }}>
+                  {form.expiryDate || 'Select expiry date'}
+                </Text>
+              </TouchableOpacity>
+              {!!form.expiryDate && (
+                <TouchableOpacity
+                  onPress={() => setForm((p: any) => ({ ...p, expiryDate: '' }))}
+                  style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ fontSize: 18, color: colours.textSecondary }}>×</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {showExpiryDatePicker && (
+              <DateTimePicker
+                value={yyyymmddToDate(form.expiryDate)}
+                mode="date"
+                display="default"
+                onChange={(event: any, selectedDate?: Date) => {
+                  setShowExpiryDatePicker(false);
+                  if (event?.type === 'dismissed' || !selectedDate) return;
+                  setForm((p: any) => ({ ...p, expiryDate: dateToYyyymmdd(selectedDate) }));
+                }}
+              />
+            )}
             <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 3 }]}>
               Used to detect expiry risk in Product Performance report
             </Text>

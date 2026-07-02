@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal, FlatList, ActivityIndicator,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation } from '@react-navigation/native';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -10,6 +11,20 @@ import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { createCreditNote, type CreditNoteLineInput } from '../../services/invoices/creditNotes';
+
+function yyyymmddToDate(s: string): Date {
+  if (!s) return new Date();
+  const parts = s.split('-');
+  if (parts.length !== 3) return new Date();
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYyyymmdd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 type Supplier = { id: string; name: string };
 
@@ -30,6 +45,7 @@ export default function CreditNoteFormScreen() {
 
   const [originalInvoiceId, setOriginalInvoiceId] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [saving, setSaving] = useState(false);
@@ -113,14 +129,28 @@ export default function CreditNoteFormScreen() {
           placeholderTextColor={c.textSecondary}
         />
 
-        <Text style={[styles.label, { color: c.navy }]}>Date (YYYY-MM-DD)</Text>
-        <TextInput
-          value={date}
-          onChangeText={setDate}
-          autoCapitalize="none"
-          style={[styles.input, { borderColor: c.border, color: c.navy }]}
-          placeholderTextColor={c.textSecondary}
-        />
+        <Text style={[styles.label, { color: c.navy }]}>Date</Text>
+        <TouchableOpacity
+          style={[styles.input, { borderColor: c.border, justifyContent: 'center' }]}
+          onPress={() => setShowDatePicker(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={{ fontSize: 14, color: date ? c.navy : c.textSecondary }}>
+            {date || 'Select date'}
+          </Text>
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker
+            value={yyyymmddToDate(date)}
+            mode="date"
+            display="default"
+            onChange={(event: any, selectedDate?: Date) => {
+              setShowDatePicker(false);
+              if (event?.type === 'dismissed' || !selectedDate) return;
+              setDate(dateToYyyymmdd(selectedDate));
+            }}
+          />
+        )}
       </View>
 
       <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>

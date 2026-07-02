@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TextInput, TouchableOpacity, FlatList, Modal, ScrollView, Pressable, DimensionValue } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useToast } from '../../components/common/Toast';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
@@ -8,6 +9,20 @@ import { listSuppliers, Supplier } from '../../services/suppliers';
 import { exportPdf } from '../../utils/exporters';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+
+function yyyymmddToDate(s: string): Date {
+  if (!s) return new Date();
+  const parts = s.split('-');
+  if (parts.length !== 3) return new Date();
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYyyymmdd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 type Row = Budget & { progress?: { spent: number; remaining: number; pct: number } };
 
@@ -26,6 +41,8 @@ export default function BudgetsScreen() {
   const [supplierId, setSupplierId] = useState<string>('');
   const [startIso, setStartIso] = useState<string>(''); // YYYY-MM-DD
   const [endIso, setEndIso] = useState<string>('');
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
   const [notes, setNotes] = useState<string>('');
 
   const supplierMap = useMemo(() => {
@@ -157,12 +174,53 @@ export default function BudgetsScreen() {
 
           <View style={styles.row}>
             <View style={[styles.col, {flex:1}]}>
-              <Text style={styles.label}>Start (YYYY-MM-DD)</Text>
-              <TextInput placeholder="2025-09-01" value={startIso} onChangeText={setStartIso} style={styles.input} />
+              <Text style={styles.label}>Start</Text>
+              <TouchableOpacity
+                style={[styles.input, { justifyContent: 'center' }]}
+                onPress={() => setShowStartPicker(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 14, color: startIso ? '#111' : '#9CA3AF' }}>
+                  {startIso || 'Select date'}
+                </Text>
+              </TouchableOpacity>
+              {showStartPicker && (
+                <DateTimePicker
+                  value={yyyymmddToDate(startIso)}
+                  mode="date"
+                  display="default"
+                  onChange={(event: any, selectedDate?: Date) => {
+                    setShowStartPicker(false);
+                    if (event?.type === 'dismissed' || !selectedDate) return;
+                    setStartIso(dateToYyyymmdd(selectedDate));
+                  }}
+                />
+              )}
             </View>
             <View style={[styles.col, {flex:1}]}>
-              <Text style={styles.label}>End (YYYY-MM-DD)</Text>
-              <TextInput placeholder="2025-09-30" value={endIso} onChangeText={setEndIso} style={styles.input} />
+              <Text style={styles.label}>End</Text>
+              <TouchableOpacity
+                style={[styles.input, { justifyContent: 'center' }]}
+                onPress={() => setShowEndPicker(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 14, color: endIso ? '#111' : '#9CA3AF' }}>
+                  {endIso || 'Select date'}
+                </Text>
+              </TouchableOpacity>
+              {showEndPicker && (
+                <DateTimePicker
+                  value={yyyymmddToDate(endIso)}
+                  mode="date"
+                  display="default"
+                  minimumDate={yyyymmddToDate(startIso)}
+                  onChange={(event: any, selectedDate?: Date) => {
+                    setShowEndPicker(false);
+                    if (event?.type === 'dismissed' || !selectedDate) return;
+                    setEndIso(dateToYyyymmdd(selectedDate));
+                  }}
+                />
+              )}
             </View>
           </View>
 

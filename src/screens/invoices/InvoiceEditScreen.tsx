@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { fetchOrderWithLines, upsertInvoiceFromOrder, InvoiceLineInput } from '../../services/invoices';
@@ -8,6 +9,20 @@ import { useVenue } from '../../context/VenueProvider'; // Assumes this exists a
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useToast } from '../../components/common/Toast';
+
+function yyyymmddToDate(s: string): Date {
+  if (!s) return new Date();
+  const parts = s.split('-');
+  if (parts.length !== 3) return new Date();
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYyyymmdd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 type RootStackParamList = {
   InvoiceEdit: { orderId: string; status?: string; existingInvoiceId?: string };
@@ -25,6 +40,7 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
   const [supplierName, setSupplierName] = useState<string>('');
   const [invoiceNumber, setInvoiceNumber] = useState<string>('');
   const [invoiceDateISO, setInvoiceDateISO] = useState<string>(() => new Date().toISOString().slice(0,10)); // YYYY-MM-DD
+  const [showInvoiceDatePicker, setShowInvoiceDatePicker] = useState(false);
   const [lines, setLines] = useState<InvoiceLineInput[]>([]);
 
   useLayoutEffect(() => {
@@ -85,10 +101,6 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
         showError('Please enter an invoice number.');
         return;
       }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDateISO)) {
-        showError('Please enter a date as YYYY-MM-DD.');
-        return;
-      }
       if (!lines.length) {
         showInfo('There are no lines to post.');
         return;
@@ -130,14 +142,28 @@ export default function InvoiceEditScreen({ route, navigation }: Props) {
           />
         </View>
         <View style={{ width: 140 }}>
-          <Text style={{ fontSize: 12, opacity: 0.7 }}>Date (YYYY-MM-DD)</Text>
-          <TextInput
-            value={invoiceDateISO}
-            onChangeText={setInvoiceDateISO}
-            placeholder="YYYY-MM-DD"
-            style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 }}
-            autoCapitalize="none"
-          />
+          <Text style={{ fontSize: 12, opacity: 0.7 }}>Date</Text>
+          <TouchableOpacity
+            style={[{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 }, { justifyContent: 'center' }]}
+            onPress={() => setShowInvoiceDatePicker(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 14, color: invoiceDateISO ? '#000' : '#aaa' }}>
+              {invoiceDateISO || 'Select date'}
+            </Text>
+          </TouchableOpacity>
+          {showInvoiceDatePicker && (
+            <DateTimePicker
+              value={yyyymmddToDate(invoiceDateISO)}
+              mode="date"
+              display="default"
+              onChange={(event: any, selectedDate?: Date) => {
+                setShowInvoiceDatePicker(false);
+                if (event?.type === 'dismissed' || !selectedDate) return;
+                setInvoiceDateISO(dateToYyyymmdd(selectedDate));
+              }}
+            />
+          )}
         </View>
       </View>
 

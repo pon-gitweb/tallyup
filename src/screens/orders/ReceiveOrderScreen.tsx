@@ -1,10 +1,25 @@
 // @ts-nocheck
 import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TextInput, FlatList, TouchableOpacity, Alert } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { getOrderWithLines, calcTotal, markOrderReceived } from '../../services/orders';
+
+function yyyymmddToDate(s: string): Date {
+  if (!s) return new Date();
+  const parts = s.split('-');
+  if (parts.length !== 3) return new Date();
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function dateToYyyymmdd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function ReceiveOrderScreen() {
   const venueId = useVenueId();
@@ -19,6 +34,7 @@ export default function ReceiveOrderScreen() {
   const [lines, setLines] = useState<any[]>([]);
   const [invoiceNumber, setInvoiceNumber] = useState<string>('');
   const [invoiceDate, setInvoiceDate] = useState<string>(''); // YYYY-MM-DD
+  const [showInvoiceDatePicker, setShowInvoiceDatePicker] = useState(false);
   const [notes, setNotes] = useState<string>('');
 
   async function load() {
@@ -73,7 +89,27 @@ export default function ReceiveOrderScreen() {
         </View>
         <View style={[s.card, {flex:1}]}>
           <Text style={s.label}>Invoice date</Text>
-          <TextInput style={s.input} value={invoiceDate} onChangeText={setInvoiceDate} placeholder="YYYY-MM-DD" />
+          <TouchableOpacity
+            style={[s.input, { justifyContent: 'center' }]}
+            onPress={() => setShowInvoiceDatePicker(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 14, color: invoiceDate ? '#000' : '#aaa' }}>
+              {invoiceDate || 'Select date'}
+            </Text>
+          </TouchableOpacity>
+          {showInvoiceDatePicker && (
+            <DateTimePicker
+              value={yyyymmddToDate(invoiceDate)}
+              mode="date"
+              display="default"
+              onChange={(event: any, selectedDate?: Date) => {
+                setShowInvoiceDatePicker(false);
+                if (event?.type === 'dismissed' || !selectedDate) return;
+                setInvoiceDate(dateToYyyymmdd(selectedDate));
+              }}
+            />
+          )}
         </View>
       </View>
 
