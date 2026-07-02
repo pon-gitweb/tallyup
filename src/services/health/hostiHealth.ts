@@ -526,7 +526,7 @@ async function calculateFullScore(
   const label: HostiHealthStage3['label'] =
     score >= 90 ? 'Excellent' : score >= 75 ? 'Strong' : score >= 60 ? 'Developing' : score >= 40 ? 'Needs attention' : 'At risk';
 
-  // ── Trend + previous-cycle variance — explicit previous calendar month ──
+  // ── Trend — from previous calendar month snapshot ──
   const now = new Date();
   const monthKey = now.toISOString().slice(0, 7); // "2026-06"
   const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -534,20 +534,59 @@ async function calculateFullScore(
 
   let trend: number | null = null;
   let trendDirection: 'up' | 'down' | 'stable' | null = null;
-  let prevVarianceDollars: number | null = null;
   try {
     const prevSnap = await getDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', prevMonthKey));
     if (prevSnap.exists()) {
       const prevData = prevSnap.data() as any;
       const prevScore = typeof prevData?.score === 'number' ? prevData.score : null;
-      prevVarianceDollars = typeof prevData?.varianceDollars === 'number' ? prevData.varianceDollars : null;
       if (prevScore != null) {
         trend = score - prevScore;
         trendDirection = trend > 0 ? 'up' : trend < 0 ? 'down' : 'stable';
       }
     }
   } catch {
-    // Non-fatal — trend stays null below
+    // Non-fatal — trend stays null
+  }
+
+  // ── Previous cycle variance — from department snapshots, not calendar month ──
+  // estimatedImpact appears after the 2nd stocktake regardless of whether both
+  // happened in the same calendar month.
+  let prevVarianceDollars: number | null = null;
+  try {
+    let prevCycleVarianceSum = 0;
+    let prevCycleFound = false;
+
+    for (const deptDoc of deptsSnap.docs) {
+      const latestSnaps = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+          orderBy('cycleNumber', 'desc'),
+          limit(1)
+        )
+      );
+      if (latestSnaps.empty) continue;
+      const latestData = latestSnaps.docs[0].data() as any;
+      const currentCycleNumber = latestData.cycleNumber;
+      if (!currentCycleNumber || currentCycleNumber < 2) continue;
+
+      const prevCycleSnap = await getDoc(
+        doc(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots', `cycle-${currentCycleNumber - 1}`)
+      );
+      if (!prevCycleSnap.exists()) continue;
+      const prevCycleData = prevCycleSnap.data() as any;
+      const prevVariance = prevCycleData?.summary?.totalVarianceDollars;
+      if (typeof prevVariance === 'number') {
+        prevCycleVarianceSum += Math.abs(prevVariance);
+        prevCycleFound = true;
+      }
+    }
+
+    if (prevCycleFound) {
+      prevVarianceDollars = prevCycleVarianceSum;
+    }
+  } catch (e: any) {
+    console.log('[hostiHealth] prevVarianceDollars error:', e?.message);
+    // Non-fatal — stays null
   }
 
   // ── Estimated impact — reduction in variance dollars vs previous cycle ──
