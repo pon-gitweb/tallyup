@@ -39,13 +39,19 @@ function generateCodeVerifier(): string {
   return base64UrlEncode(bytes).slice(0, 128);
 }
 
-// PKCE code_challenge = base64url(SHA-256(code_verifier)) — needs a SHA-256
-// primitive. expo-crypto is the obvious one but isn't installed yet (flagged
-// rather than installed silently, per instruction). Returns null until that's
-// resolved; the caller treats null as "not ready" rather than opening a
-// broken OAuth URL with a missing/incorrect challenge.
-async function generateCodeChallenge(_verifier: string): Promise<string | null> {
-  return null;
+// PKCE code_challenge = base64url(SHA-256(code_verifier)) using Web Crypto API
+// (available in Hermes since Expo SDK 48+, no extra package needed).
+async function generateCodeChallenge(verifier: string): Promise<string | null> {
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(verifier);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const bytes = new Uint8Array(digest);
+    const base64 = btoa(Array.from(bytes).map(b => String.fromCharCode(b)).join(''));
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  } catch {
+    return null;
+  }
 }
 
 function useManagerAccess(venueId: string | null) {
