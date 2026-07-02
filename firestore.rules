@@ -333,7 +333,7 @@ service cloud.firestore {
           // Edit window fields written on completion
           allow update: if isVenueMember(venueId)
             && request.resource.data.diff(resource.data).changedKeys()
-                 .hasOnly(['completedAt','editWindowClosesAt','editWindowOpen','edits']);
+                 .hasOnly(['completedAt','editWindowClosesAt','editWindowOpen','edits','countSessionSegments','activeCountingMinutes']);
 
           // Edit log appended within window
           allow update: if isVenueMember(venueId)
