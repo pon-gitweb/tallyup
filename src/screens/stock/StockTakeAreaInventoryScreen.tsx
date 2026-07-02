@@ -2391,7 +2391,7 @@ try {
 
           // Split into segments where gap > 5 minutes = new segment
           countTimestamps.sort((a, b) => a - b);
-          const GAP_MS = 5 * 60 * 1000;
+          const GAP_MS = 3 * 60 * 1000; // 3 minutes — more accurate threshold for genuine counting gaps
           if (countTimestamps.length > 0) {
             let segStart = countTimestamps[0];
             let segEnd = countTimestamps[0];

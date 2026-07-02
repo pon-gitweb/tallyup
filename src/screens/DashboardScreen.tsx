@@ -144,26 +144,37 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
-    getDocs(collection(db, 'venues', venueId, 'departments')).then(async deptSnap => {
-        let best: any = null;
-        for (const deptDoc of deptSnap.docs) {
-          const areasSnap = await getDocs(
-            query(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
-              orderBy('startedAt', 'desc'), limit(3))
-          );
-          for (const areaDoc of areasSnap.docs) {
-            const data = areaDoc.data();
-            if (data.startedAt && !data.completedAt) {
-              if (!best || data.startedAt.toMillis() > best.startedAt) {
-                best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis(), lockedBy: data.currentLock?.uid || null };
+    let unsubscribers: (() => void)[] = [];
+
+    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments'), async deptSnap => {
+      unsubscribers.forEach(u => u());
+      unsubscribers = [];
+      let best: any = null;
+
+      for (const deptDoc of deptSnap.docs) {
+        const areaUnsub = onSnapshot(
+          query(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+            orderBy('startedAt', 'desc'), limit(3)),
+          areaSnap => {
+            for (const areaDoc of areaSnap.docs) {
+              const data = areaDoc.data();
+              if (data.startedAt && !data.completedAt) {
+                if (!best || data.startedAt.toMillis() > best.startedAt) {
+                  best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis(), lockedBy: data.currentLock?.uid || null };
+                }
               }
             }
+            setLastArea(best || null);
           }
-        }
-        if (best) {
-          setLastArea(best);
-        }
-    }).catch(() => {});
+        );
+        unsubscribers.push(areaUnsub);
+      }
+    });
+
+    return () => {
+      unsub();
+      unsubscribers.forEach(u => u());
+    };
   }, [venueId]);
 
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
