@@ -149,12 +149,16 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           // A previous cycle exists if confirmedCountAt is set — even if the value was zero.
           if (confirmedCountAtMs != null) hasPrevCycleData = true;
 
-          // Variance only for items counted in the current cycle (lastCountAt newer than confirmedCountAt)
+          // Variance only for items counted in the current cycle.
+          // Third condition: if both lastCountAt and confirmedCountAt are at or before
+          // the area's completedAt, the item was counted in this cycle — handles the case
+          // where completeArea writes confirmedCountAt (T2) after lastCountAt (T1).
           const countedInCycle =
-            lastCountAtMs != null &&
-            (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
-
-          console.log('[briefing] item', name, { lastCountAtMs, confirmedCountAtMs, countedInCycle, lastCount });
+            lastCountAtMs != null && (
+              confirmedCountAtMs == null ||
+              lastCountAtMs > confirmedCountAtMs ||
+              (completedAtMs != null && lastCountAtMs <= completedAtMs && confirmedCountAtMs <= completedAtMs)
+            );
 
           if (!countedInCycle || lastCount === null || lastCount === undefined) continue;
 
@@ -222,8 +226,6 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
   } catch (e) {
     console.log('[briefing] fetch error', (e as any)?.message);
   }
-
-  console.log('[briefing] result:', { hasCountData, totalItemsCounted, totalAreasCompleted, totalAreas, hasPrevCycleData });
 
   // Sort by dollar impact descending
   allShortages.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
