@@ -1,0 +1,491 @@
+.page {
+  padding: 32px 0;
+  max-width: 1100px;
+}
+
+.heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 28px;
+}
+
+.loading {
+  font-size: 14px;
+  color: #6B7280;
+  text-align: center;
+  padding: 60px 0;
+}
+
+/* ── Two-column grid ── */
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .twoCol {
+    grid-template-columns: 1fr;
+  }
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rightCol {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Card ── */
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.cardHeading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 20px;
+}
+
+.cardHeadingRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.cardHeadingRow .cardHeading {
+  margin-bottom: 0;
+}
+
+.memberCount {
+  font-size: 13px;
+  color: #6B7280;
+}
+
+/* ── Field rows (label + value) ── */
+.fieldRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1efe9;
+}
+
+.fieldRow:last-of-type {
+  border-bottom: none;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B7280;
+  min-width: 140px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.fieldValue {
+  font-size: 14px;
+  color: #0B132B;
+  flex: 1;
+}
+
+.fieldValueRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+/* ── Inline edit ── */
+.pencilBtn {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.pencilBtn:hover {
+  color: #1b4f72;
+  background: #eff6ff;
+}
+
+.editRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.editInput {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 14px;
+  border: 1.5px solid #1b4f72;
+  border-radius: 6px;
+  outline: none;
+  color: #0B132B;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.editSave {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.editSave:disabled {
+  opacity: 0.6;
+}
+
+.editCancel {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e3de;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* ── Mobile note ── */
+.mobileNote {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 16px 0 0;
+  font-style: italic;
+}
+
+/* ── Members table ── */
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.table th {
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  background: #f5f3ee;
+  border-bottom: 1.5px solid #e5e3de;
+  white-space: nowrap;
+}
+
+.dataRow:hover > td {
+  background: #f9f8f6;
+}
+
+.td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.actionCell {
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1efe9;
+  text-align: right;
+}
+
+/* ── Role badge ── */
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+/* ── Role select (in member row) ── */
+.roleSelect {
+  font-size: 12px;
+  font-family: Inter, system-ui, sans-serif;
+  padding: 3px 8px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 6px;
+  color: #0B132B;
+  background: #ffffff;
+  cursor: pointer;
+  outline: none;
+}
+
+.roleSelect:focus {
+  border-color: #1b4f72;
+}
+
+/* ── "you" pill ── */
+.youBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #6B7280;
+  background: #f3f4f6;
+  border-radius: 999px;
+}
+
+/* ── Remove button ── */
+.removeBtn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dc2626;
+  background: none;
+  border: 1.5px solid #fca5a5;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.removeBtn:hover {
+  background: #fef2f2;
+}
+
+/* ── Inline confirm row ── */
+.confirmRow td {
+  padding: 0;
+  border-bottom: 1px solid #fee2e2;
+  background: #fff5f5;
+}
+
+.confirmCell {
+  padding: 10px 12px !important;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.confirmText {
+  font-size: 13px;
+  color: #991b1b;
+  flex: 1;
+}
+
+.confirmYes {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #dc2626;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.confirmNo {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e3de;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* ── Pending invites ── */
+.invitesSection {
+  margin-bottom: 20px;
+  padding-top: 4px;
+}
+
+.invitesSectionHeading {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 10px;
+}
+
+.inviteRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1efe9;
+}
+
+.inviteRow:last-child {
+  border-bottom: none;
+}
+
+.inviteEmail {
+  flex: 1;
+  font-size: 13px;
+  color: #0B132B;
+}
+
+/* ── Revoke button ── */
+.revokeBtn {
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e3de;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.revokeBtn:hover {
+  color: #dc2626;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+/* ── Invite form ── */
+.inviteForm {
+  border-top: 1.5px solid #e5e3de;
+  padding-top: 20px;
+}
+
+.inviteFormHeading {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 12px;
+}
+
+.inviteFields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.inviteEmailInput {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 8px;
+  color: #0B132B;
+  outline: none;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.inviteEmailInput:focus {
+  border-color: #1b4f72;
+}
+
+.roleSelectWrap {
+  flex-shrink: 0;
+}
+
+.inviteRoleSelect {
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: Inter, system-ui, sans-serif;
+  border: 1.5px solid #e5e3de;
+  border-radius: 8px;
+  color: #0B132B;
+  background: #ffffff;
+  cursor: pointer;
+  outline: none;
+}
+
+.inviteRoleSelect:focus {
+  border-color: #1b4f72;
+}
+
+.inviteBtn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.inviteBtn:disabled {
+  opacity: 0.6;
+}
+
+.roleDesc {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 4px 0 0;
+}
+
+.inviteError {
+  font-size: 12px;
+  color: #dc2626;
+  margin: 6px 0 0;
+}
+
+.inviteSuccess {
+  font-size: 13px;
+  color: #16a34a;
+  font-weight: 600;
+  margin: 6px 0 0;
+}
+
+/* ── Empty / misc ── */
+.emptyNote {
+  font-size: 13px;
+  color: #9ca3af;
+  padding: 16px 0;
+}

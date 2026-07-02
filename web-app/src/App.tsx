@@ -8,6 +8,7 @@ import SuppliersPage from './pages/SuppliersPage'
 import ReportsPage from './pages/ReportsPage'
 import OrdersPage from './pages/OrdersPage'
 import CraftItPage from './pages/CraftItPage'
+import SettingsPage from './pages/SettingsPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import styles from './App.module.css'
 
@@ -59,7 +60,8 @@ function App() {
       {page === 'reports' && activeVenue && <ReportsPage venueId={activeVenue.id} />}
       {page === 'orders' && activeVenue && <OrdersPage venueId={activeVenue.id} />}
       {page === 'craftit' && activeVenue && <CraftItPage venueId={activeVenue.id} />}
-      {(page === 'setup-products' || page === 'suppliers' || page === 'reports' || page === 'orders' || page === 'craftit') && !activeVenue && (
+      {page === 'settings' && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
+      {(page === 'setup-products' || page === 'suppliers' || page === 'reports' || page === 'orders' || page === 'craftit' || page === 'settings') && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}
           <button type="button" className={styles.noVenueLink} onClick={() => setPage('projects')}>

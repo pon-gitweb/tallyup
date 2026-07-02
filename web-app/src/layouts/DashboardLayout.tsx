@@ -12,7 +12,7 @@ const NAV_ITEMS: { key: Page; label: string; enabled: boolean }[] = [
   { key: 'reports', label: 'Reports', enabled: true },
   { key: 'craftit', label: 'CraftIt', enabled: true },
   { key: 'orders', label: 'Orders', enabled: true },
-  { key: 'settings', label: 'Settings', enabled: false },
+  { key: 'settings', label: 'Settings', enabled: true },
 ]
 
 export default function DashboardLayout({
