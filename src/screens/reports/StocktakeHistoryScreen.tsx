@@ -289,7 +289,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       <View style={s.headerRow}>
         <View style={{ flex: 1 }}>
           <Text style={s.title}>Stocktake History</Text>
-          <Text style={s.subtitle}>{entries.length} cycle{entries.length !== 1 ? 's' : ''} recorded</Text>
+          <Text style={s.subtitle}>{entries.length} stocktake{entries.length !== 1 ? 's' : ''} recorded</Text>
         </View>
         <TouchableOpacity
           style={[s.compareBtn, compareMode && s.compareBtnActive]}
@@ -339,7 +339,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       {compareMode && (
         <View style={s.compareBar}>
           <Text style={s.compareBarText}>
-            {selectedIds.length === 0 ? 'Select 2 cycles to compare' : selectedIds.length === 1 ? 'Select 1 more' : 'Ready to compare'}
+            {selectedIds.length === 0 ? 'Select 2 stocktakes to compare' : selectedIds.length === 1 ? 'Select 1 more' : 'Ready to compare'}
           </Text>
           {selectedIds.length === 2 && (
             <TouchableOpacity style={s.compareGoBtn} onPress={navigateCompare}>

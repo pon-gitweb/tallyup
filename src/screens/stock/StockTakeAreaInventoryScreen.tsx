@@ -2715,7 +2715,7 @@ const openHistory = throttleAction(async (item: Item) => {
       showExportToast('Export ready');
       if (!areaStarted) { showInfo('Nothing to export — area not started yet.'); return; }
       const changed = filtered.filter(countedInThisCycle);
-      if (changed.length === 0) { showInfo('Nothing to export — no items counted this cycle.'); return; }
+      if (changed.length === 0) { showInfo('Nothing to export — no items counted this stocktake.'); return; }
       const rows = changed.map((it) => ({
         name: it.name || '', unit: it.unit || '',
         newCount: typeof it.lastCount === 'number' ? it.lastCount : '',

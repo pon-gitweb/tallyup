@@ -413,11 +413,11 @@ function DepartmentSelectionScreen() {
 
     const statusSubtext =
       status === 'done'
-        ? `✓ Cycle ${item.totalCyclesCompleted ?? 1} complete · ${fmtRelative(lastCycleMs)}`
+        ? `✓ Stocktake ${item.totalCyclesCompleted ?? 1} complete · ${fmtRelative(lastCycleMs)}`
         : status === 'inprog'
         ? `${item.areasCompleted ?? 0} of ${item.areasTotal ?? '?'} areas counted · In progress`
         : lastCycleMs
-        ? `Last counted ${fmtRelative(lastCycleMs)} · Cycle ${item.totalCyclesCompleted ?? 0}`
+        ? `Last counted ${fmtRelative(lastCycleMs)} · Stocktake ${item.totalCyclesCompleted ?? 0}`
         : 'Not started';
 
     const statusTextColor =
@@ -440,7 +440,7 @@ function DepartmentSelectionScreen() {
             </Text>
             {(item.itemsTotal ?? 0) > 0 && (
               <Text style={{ fontSize: 11, color: colours.textSecondary, marginTop: 2 }}>
-                {item.itemsCounted ?? 0} of {item.itemsTotal} items counted this cycle
+                {item.itemsCounted ?? 0} of {item.itemsTotal} items counted this stocktake
               </Text>
             )}
           </TouchableOpacity>

@@ -134,9 +134,9 @@ export async function getHostiHealthStage(
     };
   }
 
-  // Stage 2: exactly 1 completed stocktake — honest wide range. All venues
-  // start at 50–70; narrows into a real score once a 2nd stocktake lands.
-  if (totalStocktakesCompleted < 2) {
+  // Stage 2: fewer than 3 completed stocktakes — honest wide range. All venues
+  // start at 50–70; narrows into a real score once a 3rd stocktake lands.
+  if (totalStocktakesCompleted < 3) {
     return {
       stage: 2,
       scoreMin: 50,
@@ -147,7 +147,7 @@ export async function getHostiHealthStage(
     };
   }
 
-  // Stage 3: 2+ completed stocktakes — real weighted score.
+  // Stage 3: 3+ completed stocktakes — real weighted score.
   return await calculateFullScore(venueId, totalStocktakesCompleted);
 }
 

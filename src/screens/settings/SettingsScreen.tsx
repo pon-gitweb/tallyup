@@ -489,9 +489,9 @@ export default function SettingsScreen() {
       setResettingCycle(true);
       try {
         await resetAllDepartmentsStockTake(venueId);
-        showSuccess('✓ Cycle reset. Ready for new stocktake.');
+        showSuccess('Reset complete. Ready for new stocktake.');
       } catch (e: any) {
-        showError('Could not reset cycle.');
+        showError('Could not reset stocktake.');
       } finally {
         setResettingCycle(false);
       }
@@ -518,7 +518,7 @@ export default function SettingsScreen() {
       confirm({
         title: 'Start new stocktake?',
         message,
-        confirmLabel: inProgressUser ? 'Reset anyway' : 'Start new cycle',
+        confirmLabel: inProgressUser ? 'Reset anyway' : 'Start new stocktake',
         destructive: !!inProgressUser,
         onConfirm: performReset,
       });
@@ -526,7 +526,7 @@ export default function SettingsScreen() {
       confirm({
         title: 'Start new stocktake?',
         message: 'This resets all areas for a fresh count.',
-        confirmLabel: 'Start new cycle',
+        confirmLabel: 'Start new stocktake',
         onConfirm: performReset,
       });
     }
@@ -1145,9 +1145,9 @@ export default function SettingsScreen() {
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
                     <>
-                      <Text style={styles.btnText}>Reset Stocktake Cycle</Text>
+                      <Text style={styles.btnText}>Reset Stocktake</Text>
                       <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 3, textAlign: 'center' }}>
-                        Starts a new stocktake cycle for all areas. This cannot be undone.
+                        Starts a new stocktake for all areas. This cannot be undone.
                       </Text>
                     </>
                   )}
@@ -1176,11 +1176,11 @@ export default function SettingsScreen() {
                   paddingVertical: 10,
                 }]}>
                   <View style={{ flex: 1, marginRight: 12 }}>
-                    <Text style={{ color: themeColours.text, fontWeight: '800' }}>Auto-suggest PAR after each cycle</Text>
+                    <Text style={{ color: themeColours.text, fontWeight: '800' }}>Auto-suggest PAR after each stocktake</Text>
                     <Text style={{ color: themeColours.textSecondary, fontSize: 12, marginTop: 2 }}>
                       {autoSuggestPar
                         ? 'Enabled — PAR review shown after each stocktake'
-                        : 'Disabled — turn on to review PAR levels post-cycle'}
+                        : 'Disabled — turn on to review PAR levels post-stocktake'}
                     </Text>
                   </View>
                   <Switch

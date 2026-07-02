@@ -63,7 +63,7 @@ function StocktakeSummaryScreen() {
     confirm({
       title: 'Start new stocktake?',
       message: 'This will reset all areas so you can begin a fresh count. Your completed data is saved.',
-      confirmLabel: 'Start new cycle',
+      confirmLabel: 'Start new stocktake',
       onConfirm: async () => {
         setResetting(true);
         try {
@@ -258,7 +258,7 @@ function StocktakeSummaryScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ fontSize: 20 }}>📊</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: '900', color: c.text, fontSize: 16 }}>First cycle baseline</Text>
+              <Text style={{ fontWeight: '900', color: c.text, fontSize: 16 }}>First stocktake baseline</Text>
               <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>
                 Your opening stock position — use this as your benchmark.
               </Text>
