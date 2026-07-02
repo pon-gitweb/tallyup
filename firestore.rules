@@ -1264,7 +1264,7 @@ service cloud.firestore {
 
       match /eventHistory/{eventId} {
         allow read: if hasVenueRole(venueId, ['owner', 'manager']);
-        allow write: if hasVenueRole(venueId, ['owner']);
+        allow write: if hasVenueRole(venueId, ['owner', 'manager']);
         match /debriefRecommendations/{recId} {
           allow read: if isVenueMember(venueId);
           allow write: if hasVenueRole(venueId, ['owner', 'manager']);
