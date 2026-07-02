@@ -3,11 +3,12 @@ import { signOut, type User } from 'firebase/auth'
 import { auth } from '../firebase'
 import styles from './DashboardLayout.module.css'
 
-export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings' | 'suitee'
+export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings' | 'suitee' | 'hostihealth'
 
-const NAV_ITEMS: { key: Page; label: string; enabled: boolean; isAI?: boolean }[] = [
-  { key: 'projects',       label: 'Projects',      enabled: true },
-  { key: 'setup-products', label: 'Setup',          enabled: true },
+const NAV_ITEMS: { key: Page; label: string; enabled: boolean; isAI?: boolean; isHealth?: boolean }[] = [
+  { key: 'projects',       label: 'Projects',         enabled: true },
+  { key: 'hostihealth',    label: '⬡ Hosti Health',  enabled: true, isHealth: true },
+  { key: 'setup-products', label: 'Setup',             enabled: true },
   { key: 'suppliers',      label: 'Suppliers',      enabled: true },
   { key: 'reports',        label: 'Reports',        enabled: true },
   { key: 'suitee',         label: '✦ Ask Suitee',  enabled: true, isAI: true },
@@ -55,7 +56,11 @@ export default function DashboardLayout({
               page === item.key ? styles.navLinkActive : '',
               !item.enabled ? styles.navLinkDisabled : '',
             ].join(' ').trim()}
-            style={item.isAI ? { color: '#c47b2b', fontWeight: page === item.key ? 800 : 600 } : undefined}
+            style={
+              item.isAI ? { color: '#c47b2b', fontWeight: page === item.key ? 800 : 600 } :
+              item.isHealth ? { color: '#1b4f72', fontWeight: page === item.key ? 800 : 600 } :
+              undefined
+            }
             onClick={() => item.enabled && navigate(item.key)}
             disabled={!item.enabled}
           >
