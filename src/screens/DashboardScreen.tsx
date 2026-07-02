@@ -698,6 +698,17 @@ export default function DashboardScreen() {
           </ScrollView>
         )}
 
+        {/* ── View Performance pill ── */}
+        {hostiHealthData && (
+          <TouchableOpacity
+            style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, borderWidth: 1, borderColor: colours.deepBlue, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
+            onPress={() => nav.navigate('ProfitInsights')}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: colours.deepBlue, fontWeight: '600', fontSize: 15 }}>View Performance →</Text>
+          </TouchableOpacity>
+        )}
+
         {/* ── Start new stocktake — slim pill, hidden when already counting ── */}
         {primaryState !== 'inProgress' && (
           <TouchableOpacity
