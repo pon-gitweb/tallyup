@@ -2432,7 +2432,7 @@ try {
         } else {
           showSuccess(`${areaName || 'Area'} counted ✅`);
         }
-        if (!finalized) nav.goBack();
+        if (!finalized) nav.navigate('Areas' as never, { departmentId } as never);
       } catch (e: any) {
         toastService.error(e?.message ?? 'Could not complete area.');
       } finally {
