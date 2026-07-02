@@ -1,0 +1,280 @@
+.page {
+  padding: 32px 0;
+  max-width: 1200px;
+}
+
+.heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 32px;
+}
+
+.loading {
+  font-size: 14px;
+  color: #6B7280;
+  text-align: center;
+  padding: 60px 0;
+}
+
+.errorText {
+  font-size: 14px;
+  color: #dc2626;
+  text-align: center;
+  padding: 60px 0;
+}
+
+/* ── Sections ── */
+.section {
+  margin-bottom: 48px;
+}
+
+.sectionHeading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.sectionSubhead {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0 0 16px;
+}
+
+/* ── Summary cards ── */
+.cardRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 180px;
+  flex: 1 1 180px;
+  max-width: 300px;
+}
+
+.cardEmpty {
+  opacity: 0.65;
+}
+
+.cardName {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.cardDate {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 0 0 8px;
+}
+
+.cardMeta {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 0 0 4px;
+}
+
+.cardValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.cardVariance {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.cardNoData {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin: 4px 0 0;
+}
+
+/* ── Section toolbar ── */
+.sectionToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.filterGroup {
+  display: flex;
+  gap: 16px;
+}
+
+.filterBtn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+  padding: 4px 0;
+  text-decoration: none;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.filterBtn:hover {
+  color: #1b4f72;
+}
+
+.filterBtnActive {
+  color: #1b4f72;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.exportBtn {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b4f72;
+  background: #ffffff;
+  border: 1.5px solid #1b4f72;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.exportBtn:hover {
+  background: #f0f7ff;
+}
+
+/* ── Tables ── */
+.tableWrap {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 14px;
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  background: #f5f3ee;
+  border-bottom: 1.5px solid #e5e3de;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+
+.thSortable {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  background: #f5f3ee;
+  border-bottom: 1.5px solid #e5e3de;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+}
+
+.thSortable:hover {
+  color: #1b4f72;
+}
+
+.dataRow:hover td {
+  background: #f9f8f6;
+}
+
+.td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.tdNum {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.emptyCell {
+  padding: 32px;
+  text-align: center;
+  color: #6B7280;
+  font-size: 14px;
+}
+
+/* ── Empty state ── */
+.emptyState {
+  font-size: 14px;
+  color: #6B7280;
+  padding: 20px 24px;
+  background: #f5f3ee;
+  border-radius: 10px;
+  border: 1px solid #e5e3de;
+  line-height: 1.6;
+}
+
+/* ── Status badges ── */
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.badgePending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badgeAck {
+  background: #f3f4f6;
+  color: #6B7280;
+}

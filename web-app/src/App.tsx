@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import ProjectsPage, { type VenueRow } from './pages/ProjectsPage'
 import SetupProductsPage from './pages/SetupProductsPage'
 import SuppliersPage from './pages/SuppliersPage'
+import ReportsPage from './pages/ReportsPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import styles from './App.module.css'
 
@@ -53,7 +54,8 @@ function App() {
       )}
       {page === 'setup-products' && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
       {page === 'suppliers' && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
-      {(page === 'setup-products' || page === 'suppliers') && !activeVenue && (
+      {page === 'reports' && activeVenue && <ReportsPage venueId={activeVenue.id} />}
+      {(page === 'setup-products' || page === 'suppliers' || page === 'reports') && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}
           <button type="button" className={styles.noVenueLink} onClick={() => setPage('projects')}>
