@@ -1,7 +1,7 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -81,12 +81,17 @@ function buildRecommendation(
 
 export default function ProfitInsightsScreen() {
   const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const scrollToKpi = route.params?.scrollToKpi as string | undefined;
   const venueId = useVenueId();
   const c = useColours();
   const { theme } = useTheme();
+  const scrollRef = useRef<any>(null);
+  const kpiRefs = useRef<Record<string, number>>({});
   const [health, setHealth] = useState<HostiHealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [monthlyScores, setMonthlyScores] = useState<number[] | null>(null);
+  const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
 
   useEffect(() => {
     if (!venueId) {
@@ -146,6 +151,18 @@ export default function ProfitInsightsScreen() {
     return () => { alive = false; };
   }, [venueId]);
 
+  useEffect(() => {
+    if (!scrollToKpi) return;
+    const timer = setTimeout(() => {
+      const y = kpiRefs.current[scrollToKpi];
+      if (y != null && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: y - 16, animated: true });
+      }
+      setExpandedKpi(scrollToKpi);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [scrollToKpi]);
+
   const kpis: KpiPreview[] = health?.stage === 2
     ? [
         { label: 'Stock Accuracy', lit: 2, status: 'Available' },
@@ -164,7 +181,7 @@ export default function ProfitInsightsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.oat }}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 4 }}>
           Hosti Health
         </Text>
@@ -406,13 +423,18 @@ export default function ProfitInsightsScreen() {
           <>
             <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, marginBottom: 16 }}>
               {KPI_ORDER.map((key, i) => (
-                <View key={key} style={{ borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}>
+                <View
+                  key={key}
+                  style={{ borderTopWidth: i > 0 ? 1 : 0, borderTopColor: c.border }}
+                  onLayout={(e) => { kpiRefs.current[key] = e.nativeEvent.layout.y; }}
+                >
                   <KpiCard
                     c={c} theme={theme} kpiKey={key} score={(health.kpis as any)[key]}
                     daysOfCover={key === 'inventoryHealth' ? health.daysOfCover : undefined}
                     usedInvoiceData={key === 'inventoryHealth' ? health.inventoryHealthUsedInvoiceData : undefined}
                     targetDaysOfCover={key === 'inventoryHealth' ? health.targetDaysOfCover : undefined}
                     orderingWeight={key === 'orderingIntelligence' ? health.orderingIntelligenceWeight : undefined}
+                    externalExpanded={expandedKpi === key}
                   />
                 </View>
               ))}
@@ -591,12 +613,13 @@ function InsightCard({
 }
 
 function KpiCard({
-  c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight,
+  c, theme, kpiKey, score, daysOfCover, usedInvoiceData, targetDaysOfCover, orderingWeight, externalExpanded,
 }: {
   c: any; theme: any; kpiKey: string; score: number | null; daysOfCover?: number | null; usedInvoiceData?: boolean;
-  targetDaysOfCover?: number; orderingWeight?: number;
+  targetDaysOfCover?: number; orderingWeight?: number; externalExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => { if (externalExpanded) setExpanded(true); }, [externalExpanded]);
   const meta = KPI_META[kpiKey];
   const lit = score != null ? Math.round(score / 20) : 0;
 

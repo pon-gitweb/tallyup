@@ -657,7 +657,7 @@ export default function DashboardScreen() {
               return (
                 <TouchableOpacity
                   key={label}
-                  onPress={() => nav.navigate('ProfitInsights')}
+                  onPress={() => nav.navigate('ProfitInsights', { scrollToKpi: kpiKey })}
                   activeOpacity={0.75}
                   style={{
                     width: 80,
