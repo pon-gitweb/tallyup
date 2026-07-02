@@ -27,6 +27,7 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import OfflineBanner from '../../components/OfflineBanner';
 import { useNetworkState } from '../../hooks/useNetworkState';
 import { useColours, useTheme } from '../../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
@@ -142,6 +143,7 @@ function DepartmentSelectionScreen() {
   const venueId = useVenueId();
   const colours = useColours();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const styles = makeStyles(colours);
@@ -482,7 +484,7 @@ function DepartmentSelectionScreen() {
 
   if (venueMissing) {
     return (
-      <View style={styles.wrap}>
+      <View style={[styles.wrap, { paddingTop: (insets.top || 0) + 16 }]}>
         {modal}
         <View style={styles.headerRow}>
           <View>
@@ -498,7 +500,7 @@ function DepartmentSelectionScreen() {
   }
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingTop: (insets.top || 0) + 16 }]}>
       {modal}
       <OfflineBanner />
       {/* Header */}
