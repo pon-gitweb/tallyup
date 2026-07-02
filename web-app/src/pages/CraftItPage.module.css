@@ -1,0 +1,314 @@
+.page {
+  padding: 32px 0;
+  max-width: 1200px;
+}
+
+.heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 24px;
+}
+
+.loading {
+  font-size: 14px;
+  color: #6B7280;
+  text-align: center;
+  padding: 60px 0;
+}
+
+.errorText {
+  font-size: 14px;
+  color: #dc2626;
+  text-align: center;
+  padding: 60px 0;
+}
+
+/* ── Summary stats ── */
+.statsRow {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.statCard {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  padding: 12px 16px;
+  min-width: 160px;
+  flex: 1 1 160px;
+  max-width: 220px;
+}
+
+.statValue {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 2px;
+}
+
+.statLabel {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 0;
+}
+
+/* ── Filter row ── */
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filterGroup {
+  display: flex;
+  gap: 4px;
+}
+
+.filterChip {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6B7280;
+  background: none;
+  border: 1.5px solid #e5e3de;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.filterChip:hover {
+  border-color: #1b4f72;
+  color: #1b4f72;
+}
+
+.filterChipActive {
+  color: #1b4f72;
+  border-color: #1b4f72;
+  background: #eff6ff;
+  font-weight: 700;
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 7px 12px;
+  font-size: 13px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0B132B;
+  outline: none;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.searchInput:focus {
+  border-color: #1b4f72;
+}
+
+.filterSpacer {
+  flex: 1;
+}
+
+.exportBtn {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b4f72;
+  background: #ffffff;
+  border: 1.5px solid #1b4f72;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.exportBtn:hover {
+  background: #f0f7ff;
+}
+
+/* ── Table ── */
+.tableWrap {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 14px;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 560px;
+  margin-bottom: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  background: #f5f3ee;
+  border-bottom: 1.5px solid #e5e3de;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.dataRow {
+  cursor: pointer;
+}
+
+.dataRow:hover > td {
+  background: #f9f8f6;
+}
+
+.td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.tdNum {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── Status badge ── */
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.badgeConfirmed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badgeDraft {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* ── Expand panel ── */
+.expandRow td {
+  padding: 0;
+  background: #f9fafb;
+  border-bottom: 2px solid #e5e3de;
+}
+
+.expandCell {
+  padding: 16px 20px !important;
+}
+
+.partialNote {
+  font-size: 12px;
+  color: #c47b2b;
+  margin: 0 0 10px;
+}
+
+/* ── Ingredients table (nested) ── */
+.ingredientsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: Inter, system-ui, sans-serif;
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ingredientsTable th {
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6B7280;
+  background: #f5f3ee;
+  border-bottom: 1px solid #e5e3de;
+}
+
+.ingTd {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+}
+
+.ingTdNum {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1efe9;
+  color: #0B132B;
+  vertical-align: middle;
+  text-align: right;
+}
+
+.subtotalRow td {
+  background: #f5f3ee;
+  border-top: 1.5px solid #e5e3de;
+  border-bottom: none;
+}
+
+/* ── Benchmark note ── */
+.benchmarkNote {
+  font-size: 12px;
+  color: #6B7280;
+  font-style: italic;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* ── Empty state ── */
+.emptyState {
+  padding: 40px 24px;
+  text-align: center;
+  background: #f5f3ee;
+  border-radius: 12px;
+  border: 1px solid #e5e3de;
+}
+
+.emptyTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 6px;
+}
+
+.emptyNote {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0;
+}
