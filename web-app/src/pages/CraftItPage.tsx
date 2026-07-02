@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore'
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
 import styles from './CraftItPage.module.css'
@@ -183,6 +184,21 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
     return { total: recipes.length, confirmedCount: confirmed.length, avgGp }
   }, [recipes])
 
+  // ── Chart C: GP distribution ──────────────────────────────────────────────
+  const gpBuckets = useMemo(() => {
+    const conf = recipes.filter((r) => r.status === 'confirmed' && r.gpPercent != null)
+    return [
+      { bucket: 'Below 50%', count: conf.filter((r) => r.gpPercent! < 50).length,                       fill: theme.error },
+      { bucket: '50–59%',    count: conf.filter((r) => r.gpPercent! >= 50 && r.gpPercent! < 60).length, fill: '#f97316' },
+      { bucket: '60–69%',    count: conf.filter((r) => r.gpPercent! >= 60 && r.gpPercent! < 70).length, fill: theme.amber },
+      { bucket: '70–79%',    count: conf.filter((r) => r.gpPercent! >= 70 && r.gpPercent! < 80).length, fill: theme.success },
+      { bucket: '80%+',      count: conf.filter((r) => r.gpPercent! >= 80).length,                       fill: '#15803d' },
+    ]
+  }, [recipes])
+
+  const confirmedWithGp = recipes.filter((r) => r.status === 'confirmed' && r.gpPercent != null).length
+  const chartTooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
+
   function handleRowClick(id: string) {
     setExpandedId((prev) => (prev === id ? null : id))
   }
@@ -234,6 +250,34 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
           </p>
           <p className={styles.statLabel}>Avg GP % (confirmed)</p>
         </div>
+      </div>
+
+      {/* ── Chart C: GP distribution ── */}
+      <div className={styles.chartCard}>
+        <p className={styles.chartTitle}>GP % distribution</p>
+        <p className={styles.chartSubtitle}>Confirmed recipes only</p>
+        {confirmedWithGp < 3 ? (
+          <p className={styles.chartEmpty}>Confirm more recipes to see GP distribution.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={gpBuckets} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" vertical={false} />
+              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={32} />
+              <Tooltip
+                contentStyle={chartTooltipStyle}
+                formatter={((v: number, _name: string, props: any) => [`${v} recipe${v !== 1 ? 's' : ''}`, props?.payload?.bucket ?? '']) as any}
+                labelFormatter={(() => '') as any}
+              />
+              <Bar dataKey="count">
+                {gpBuckets.map((entry, i) => (
+                  <Cell key={i} fill={entry.fill} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+        <p className={styles.chartBenchmark}>Target: 70%+ for beverages · 65%+ for food dishes</p>
       </div>
 
       {/* ── Filter row ── */}

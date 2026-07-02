@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import {
   collection,
   doc,
@@ -273,6 +274,27 @@ export default function OrdersPage({ venueId }: { venueId: string }) {
     }
   }, [orders])
 
+  // ── Chart D: spend by supplier (received orders only) ─────────────────────
+  const supplierSpend = useMemo(() => {
+    const map: Record<string, { total: number; fullName: string }> = {}
+    for (const o of orders.filter((o) => o.status === 'received' && (o.estimatedTotal ?? 0) > 0)) {
+      const key = o.supplierName ?? 'Unassigned'
+      if (!map[key]) map[key] = { total: 0, fullName: key }
+      map[key].total += o.estimatedTotal ?? 0
+    }
+    return Object.entries(map)
+      .map(([, v]) => ({
+        supplier: v.fullName.length > 16 ? v.fullName.slice(0, 16) + '…' : v.fullName,
+        fullSupplier: v.fullName,
+        total: v.total,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+  }, [orders])
+
+  const chartTooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
+  const fmtAxisMoney = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
+
   function exportCsv() {
     const dateStr = new Date().toISOString().slice(0, 10)
     let csv =
@@ -357,6 +379,27 @@ export default function OrdersPage({ venueId }: { venueId: string }) {
           Export CSV
         </button>
       </div>
+
+      {/* ── Chart D: spend by supplier (received tab only) ── */}
+      {activeTab === 'received' && supplierSpend.length > 0 && (
+        <div className={styles.chartCard}>
+          <p className={styles.chartTitle}>Order spend by supplier</p>
+          <p className={styles.chartSubtitle}>Received orders only</p>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={supplierSpend} layout="vertical" margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
+              <YAxis type="category" dataKey="supplier" width={130} tick={{ fontSize: 11 }} />
+              <XAxis type="number" tickFormatter={fmtAxisMoney} tick={{ fontSize: 11 }} />
+              <Tooltip
+                contentStyle={chartTooltipStyle}
+                formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Total']) as any}
+                labelFormatter={((_: string, payload: any[]) => payload?.[0]?.payload?.fullSupplier ?? '') as any}
+              />
+              <Bar dataKey="total" fill={theme.deepBlue} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* ── Orders table ── */}
       {tabOrders.length === 0 ? (

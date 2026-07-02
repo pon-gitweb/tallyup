@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore'
+import {
+  BarChart, Bar, Cell, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
 import styles from './ReportsPage.module.css'
@@ -54,6 +58,10 @@ type SortConfig<K extends string> = { key: K; dir: 'asc' | 'desc' }
 type VarianceSortKey = keyof VarianceRow
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function truncate(s: string, len: number): string {
+  return s.length > len ? s.slice(0, len) + '…' : s
+}
 
 function fmtMoney(v: number | null): string {
   if (v == null) return '—'
@@ -234,6 +242,46 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
     }
   }
 
+  // ── Chart A: variance trend ──────────────────────────────────────────────────
+  const trendData = useMemo(() => {
+    const byLabel: Record<string, { cycleNum: number; date: Date | null; variance: number }> = {}
+    for (const row of historyRows) {
+      if (row.totalVarianceDollars == null) continue
+      const key = String(row.cycleNumber)
+      if (!byLabel[key]) byLabel[key] = { cycleNum: row.cycleNumber, date: row.completedAt, variance: 0 }
+      byLabel[key].variance += Math.abs(row.totalVarianceDollars)
+    }
+    return Object.values(byLabel)
+      .sort((a, b) => a.cycleNum - b.cycleNum)
+      .map((d) => ({
+        label: `S${d.cycleNum}`,
+        fullLabel: `Stocktake ${d.cycleNum}${d.date ? ' · ' + fmtDate(d.date) : ''}`,
+        variance: d.variance,
+      }))
+  }, [historyRows])
+
+  const trendLineColor =
+    trendData.length >= 2 && trendData[trendData.length - 1].variance > trendData[trendData.length - 2].variance
+      ? theme.error
+      : theme.success
+
+  // ── Chart B: top variance drivers ─────────────────────────────────────────
+  const topDrivers = useMemo(() =>
+    varianceRows
+      .filter((r) => r.varianceDollars != null)
+      .sort((a, b) => Math.abs(b.varianceDollars!) - Math.abs(a.varianceDollars!))
+      .slice(0, 10)
+      .map((r) => ({
+        name: truncate(r.name, 15),
+        fullName: r.name,
+        value: Math.abs(r.varianceDollars!),
+        shortage: r.varianceDollars! < 0,
+      })),
+  [varianceRows])
+
+  const tooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
+  const fmtAxis = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
+
   // Sorted + filtered variance rows
   const filteredVariance = useMemo(() => {
     let rows = varianceRows
@@ -379,6 +427,57 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
           )}
         </div>
       </section>
+
+      {/* ── CHARTS ── */}
+      <div className={styles.chartRow}>
+        {/* Chart A — Variance trend */}
+        <div className={styles.chartCard}>
+          <p className={styles.chartTitle}>Variance trend</p>
+          {trendData.length < 2 ? (
+            <p className={styles.chartEmpty}>Complete another stocktake to see your variance trend.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={trendData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11 }} width={56} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
+                  labelFormatter={((label: string) => trendData.find((d) => d.label === label)?.fullLabel ?? label) as any}
+                />
+                <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Chart B — Top variance drivers */}
+        <div className={styles.chartCard}>
+          <p className={styles.chartTitle}>Top variance drivers</p>
+          {topDrivers.length === 0 ? (
+            <p className={styles.chartEmpty}>Add cost prices to products to see dollar impact.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={topDrivers} layout="vertical" margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
+                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                <XAxis type="number" tickFormatter={fmtAxis} tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
+                  labelFormatter={((_: string, payload: any[]) => payload?.[0]?.payload?.fullName ?? '') as any}
+                />
+                <Bar dataKey="value">
+                  {topDrivers.map((entry, i) => (
+                    <Cell key={i} fill={entry.shortage ? theme.error : theme.success} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
 
       {/* ── SECTION 2: Variance Detail ── */}
       <section className={styles.section}>
