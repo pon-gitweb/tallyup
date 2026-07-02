@@ -554,7 +554,15 @@ export default function DashboardScreen() {
             </Text>
             <TouchableOpacity
               style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, alignItems: 'center', justifyContent: 'center' }}
-              onPress={() => nav.navigate('AreaInventory' as never, { venueId, departmentId: lastArea.deptId, areaId: lastArea.areaId } as never)}
+              onPress={() => {
+                if (!lastArea?.deptId || !lastArea?.areaId) return;
+                nav.navigate('AreaInventory' as never, {
+                  venueId: venueId ?? undefined,
+                  departmentId: lastArea.deptId,
+                  areaId: lastArea.areaId,
+                  areaName: lastArea.areaName,
+                } as never);
+              }}
             >
               <Text style={{ color: colours.missionSlate, fontWeight: '700', fontSize: 15 }}>Continue →</Text>
             </TouchableOpacity>
