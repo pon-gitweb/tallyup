@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, ScrollView, StyleSheet,
+  ActivityIndicator, ScrollView, Share, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -10,7 +10,7 @@ import { db, auth } from '../../services/firebase';
 import { apiBase } from '../../services/apiBase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
-import { generatePurchasingPrediction, guessCategory } from '../../services/festival/purchasingPrediction';
+import { generatePurchasingPrediction, guessCategory, fetchPriorYearActuals } from '../../services/festival/purchasingPrediction';
 import type { AiRefinement, AiAdjustment } from '../../services/festival/predictionRefinement';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
@@ -301,6 +301,7 @@ export default function FestivalPurchasingPredictionScreen() {
   const [refining,       setRefining]       = useState(false);
   const [refinementError,setRefinementError]= useState(null);
   const [useAiSuggestion,setUseAiSuggestion]= useState<Record<string, boolean>>({});
+  const [priorYearActuals, setPriorYearActuals] = useState(null);
   const snapshotTimer = useRef(null);
   // Guided setup card
   const [setupExpanded,       setSetupExpanded]       = useState(true);
@@ -373,6 +374,14 @@ export default function FestivalPurchasingPredictionScreen() {
       // 1. Event details
       const event  = evSnap.exists() ? evSnap.data() : {};
       setEventData(event);
+
+      // Fetch prior year actuals for year-on-year prediction
+      if (event.eventName) {
+        fetchPriorYearActuals(venueId, event.eventName).then(actuals => {
+          setPriorYearActuals(actuals);
+        }).catch(() => setPriorYearActuals(null));
+      }
+
       // Initialise setup card from Firestore on first load (functional form preserves user changes)
       setSetupEventType(prev => prev ?? (event.eventType || null));
       setSetupPricePositioning(prev => prev ?? (event.pricePositioning || null));
@@ -467,6 +476,8 @@ export default function FestivalPurchasingPredictionScreen() {
         productsForPrediction,
         [],
         buf,
+        priorYearActuals,
+        effectiveGrowthRate !== 0 ? effectiveGrowthRate : undefined,
       );
 
       // 9b. Apply growth rate to prior-year products
@@ -882,6 +893,16 @@ export default function FestivalPurchasingPredictionScreen() {
               </View>
             </ScrollView>
 
+            {priorYearActuals ? (
+              <Text style={{ fontSize: 13, color: c.success || '#16a34a', marginBottom: 12, fontWeight: '600' }}>
+                ✓ Prior event data found — using actuals as base
+              </Text>
+            ) : (
+              <Text style={{ fontSize: 13, color: c.slateMid, marginBottom: 12 }}>
+                No prior year data — using benchmarks
+              </Text>
+            )}
+
             <TouchableOpacity
               style={R.generateSetupBtn}
               onPress={() => runFullLoad(bufferPercent, {
@@ -1125,6 +1146,68 @@ export default function FestivalPurchasingPredictionScreen() {
 
         {results.length > 0 && (
           <>
+            {/* ── Purchase Order Summary ── */}
+            <View style={R.poSummaryCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <Text style={R.poSummaryTitle}>Purchase Order Summary</Text>
+                <TouchableOpacity
+                  style={R.shareBtn}
+                  onPress={() => {
+                    const dateStr = new Date().toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' });
+                    let text = `${eventData?.eventName || 'Event'} — Purchase Order\nGenerated: ${dateStr}\n`;
+                    let grandTotal = 0;
+                    for (const [sid, items] of Object.entries(bySupplier) as any) {
+                      const supplierName = items[0]?.supplierName || sid;
+                      let subtotal = 0;
+                      text += `\n${supplierName}\n`;
+                      for (const r of items) {
+                        const qty = r.totalQty ?? r.predictedQty ?? 0;
+                        const cost = r.unitCost != null ? r.unitCost * qty : null;
+                        subtotal += cost ?? 0;
+                        text += `  ${r.productName} × ${qty}${cost != null ? ` = $${Math.round(cost)}` : ''}\n`;
+                      }
+                      text += `  Subtotal: $${Math.round(subtotal)}\n`;
+                      grandTotal += subtotal;
+                    }
+                    text += `\nTOTAL: $${Math.round(grandTotal)}`;
+                    Share.share({ message: text, title: `${eventData?.eventName || 'Event'} Purchase Order` });
+                  }}
+                >
+                  <Text style={R.shareBtnText}>Share ↑</Text>
+                </TouchableOpacity>
+              </View>
+
+              {(Object.entries(bySupplier) as any).map(([sid, items]) => {
+                const supplierName = items[0]?.supplierName || sid;
+                const subtotal = items.reduce((s, r) => s + (r.unitCost != null ? r.unitCost * (r.totalQty ?? r.predictedQty ?? 0) : 0), 0);
+                return (
+                  <View key={sid} style={{ marginBottom: 14 }}>
+                    <Text style={R.poSupplierName}>{supplierName}</Text>
+                    {items.map(r => {
+                      const qty = r.totalQty ?? r.predictedQty ?? 0;
+                      const cost = r.unitCost != null ? r.unitCost * qty : null;
+                      return (
+                        <View key={r.productId} style={R.poLineRow}>
+                          <Text style={R.poLineName} numberOfLines={1}>{r.productName}</Text>
+                          <Text style={R.poLineQty}>× {qty}</Text>
+                          <Text style={R.poLineCost}>{cost != null ? formatCurrency(cost) : '—'}</Text>
+                        </View>
+                      );
+                    })}
+                    <View style={R.poSubtotalRow}>
+                      <Text style={R.poSubtotalLabel}>Subtotal</Text>
+                      <Text style={R.poSubtotalVal}>{formatCurrency(subtotal)}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <View style={R.poGrandTotalRow}>
+                <Text style={R.poGrandTotalLabel}>TOTAL</Text>
+                <Text style={R.poGrandTotalVal}>{formatCurrency(totalCost)}</Text>
+              </View>
+            </View>
+
             <TouchableOpacity
               style={[R.generateBtn, generating && R.generateBtnDisabled]}
               disabled={generating}
@@ -1292,6 +1375,23 @@ function makeStyles(c: any) {
   setupSummaryRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: c.surface, borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: c.border },
   setupSummaryText: { flex: 1, fontSize: 13, color: c.navy, fontWeight: '600', marginRight: 8 },
   setupSummaryEdit: { fontSize: 12, color: c.deepBlue, fontWeight: '600' },
+
+  // Purchase Order Summary
+  poSummaryCard:      { backgroundColor: c.surface, borderRadius: 14, padding: 16, marginTop: 20, marginBottom: 8, borderWidth: 1, borderColor: c.border },
+  poSummaryTitle:     { fontSize: 15, fontWeight: '800', color: c.navy },
+  poSupplierName:     { fontSize: 13, fontWeight: '800', color: c.text, marginBottom: 6, paddingBottom: 4, borderBottomWidth: 1, borderBottomColor: c.border },
+  poLineRow:          { flexDirection: 'row', alignItems: 'center', marginBottom: 3 },
+  poLineName:         { flex: 1, fontSize: 13, color: c.text, marginRight: 6 },
+  poLineQty:          { fontSize: 13, color: c.slateMid, marginRight: 8, minWidth: 36, textAlign: 'right' },
+  poLineCost:         { fontSize: 13, fontWeight: '600', color: c.navy, minWidth: 56, textAlign: 'right' },
+  poSubtotalRow:      { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: c.border },
+  poSubtotalLabel:    { fontSize: 12, color: c.slateMid, fontWeight: '600' },
+  poSubtotalVal:      { fontSize: 12, color: c.text, fontWeight: '700' },
+  poGrandTotalRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 12, borderTopWidth: 2, borderTopColor: c.navy, marginTop: 4 },
+  poGrandTotalLabel:  { fontSize: 15, fontWeight: '800', color: c.navy },
+  poGrandTotalVal:    { fontSize: 15, fontWeight: '800', color: c.deepBlue },
+  shareBtn:           { backgroundColor: c.deepBlue, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 14 },
+  shareBtnText:       { color: c.surface, fontWeight: '700', fontSize: 13 },
 
   // Paywall sticky CTA
   paywallCTA: { padding: 16, paddingBottom: 32 },

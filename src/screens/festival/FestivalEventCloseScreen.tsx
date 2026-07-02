@@ -146,11 +146,46 @@ export default function FestivalEventCloseScreen() {
     setClosing(true);
     try {
       const eventId = `${(event.eventName || 'event').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}_${Date.now()}`;
+
+      // Capture actual consumption across all sessions for year-on-year reference
+      let actualsPerProduct: Record<string, { name: string; consumed: number; unit: string | null }> = {};
+      try {
+        const sessionsSnap = await getDocs(collection(db, 'venues', venueId, 'sessions'));
+        for (const sessDoc of sessionsSnap.docs) {
+          const sess = sessDoc.data() as any;
+          for (const count of (sess.counts || [])) {
+            const { productId, productName, openingCount, actualCount, receivedQty, unit } = count;
+            if (!productId) continue;
+            const consumed = Math.max(0, (openingCount ?? 0) + (receivedQty ?? 0) - (actualCount ?? 0));
+            if (!actualsPerProduct[productId]) {
+              actualsPerProduct[productId] = { name: productName || productId, consumed: 0, unit: unit || null };
+            }
+            actualsPerProduct[productId].consumed += consumed;
+          }
+        }
+      } catch (e: any) {
+        console.log('[eventClose] actuals capture error:', e?.message);
+      }
+
+      // Compute eventDays from startDate/endDate if available
+      let eventDays: number | null = null;
+      if (event.startDate && event.endDate) {
+        try {
+          const [ds, ms, ys] = event.startDate.split('/').map(Number);
+          const [de, me, ye] = event.endDate.split('/').map(Number);
+          const diff = new Date(ye, me - 1, de).getTime() - new Date(ys, ms - 1, ds).getTime();
+          eventDays = Math.max(1, Math.round(diff / 86400000) + 1);
+        } catch {}
+      }
+
       const closedPayload = {
         ...event,
-        status:   'closed',
-        closedAt: serverTimestamp(),
-        closedBy: uid ?? 'unknown',
+        status:              'closed',
+        closedAt:            serverTimestamp(),
+        closedBy:            uid ?? 'unknown',
+        actualsPerProduct,
+        dailyAttendance:     event.dailyAttendance ?? null,
+        eventDays:           event.eventDays ?? eventDays,
       };
 
       // Update current event

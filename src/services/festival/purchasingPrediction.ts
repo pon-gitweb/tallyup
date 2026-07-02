@@ -94,6 +94,8 @@ export function generatePurchasingPrediction(
     lastYearAttendance: number;
   }[] = [],
   bufferPercent: number = 15,
+  priorYearActuals?: { actualsPerProduct: Record<string, { name: string; consumed: number; unit: string | null }> } | null,
+  growthRate?: number,
 ): PredictionResult[] {
   const results: PredictionResult[] = [];
 
@@ -167,6 +169,21 @@ export function generatePurchasingPrediction(
       }
     }
 
+    // Override with prior year actuals when available
+    if (priorYearActuals?.actualsPerProduct) {
+      const prior = priorYearActuals.actualsPerProduct[product.id];
+      if (prior && prior.consumed > 0) {
+        const baseQty = Math.ceil(prior.consumed * (1 + (growthRate ?? 0)));
+        predictedQty = baseQty;
+        notes.push(
+          `Based on ${prior.consumed} units consumed at prior event` +
+          (growthRate ? ` × ${growthRate >= 0 ? '+' : ''}${(growthRate * 100).toFixed(0)}% growth` : '')
+        );
+        confidence = 'HIGH';
+        basis = 'prior_year';
+      }
+    }
+
     // Apply buffer
     const bufferedQty = Math.ceil(predictedQty * (1 + bufferPercent / 100));
 
@@ -212,4 +229,39 @@ export function generatePurchasingPrediction(
   }
 
   return results;
+}
+
+export async function fetchPriorYearActuals(
+  venueId: string,
+  eventName: string
+): Promise<{
+  actualsPerProduct: Record<string, { name: string; consumed: number; unit: string | null }>;
+  priorAttendance: number | null;
+  priorEventDays: number | null;
+  eventId: string;
+  closedAt: any;
+} | null> {
+  try {
+    const { getDocs, collection } = await import('firebase/firestore');
+    const { db } = await import('../firebase');
+    const historySnap = await getDocs(
+      collection(db, 'venues', venueId, 'eventHistory')
+    );
+    const matches = historySnap.docs
+      .map(d => ({ id: d.id, ...(d.data() as any) }))
+      .filter(e => e.status === 'closed' && e.actualsPerProduct &&
+        (e.eventName || '').toLowerCase().trim() === (eventName || '').toLowerCase().trim())
+      .sort((a, b) => (b.closedAt?.toMillis?.() ?? 0) - (a.closedAt?.toMillis?.() ?? 0));
+    if (!matches.length) return null;
+    const prior = matches[0];
+    return {
+      actualsPerProduct: prior.actualsPerProduct,
+      priorAttendance: prior.dailyAttendance ?? null,
+      priorEventDays: prior.eventDays ?? null,
+      eventId: prior.id,
+      closedAt: prior.closedAt,
+    };
+  } catch {
+    return null;
+  }
 }
