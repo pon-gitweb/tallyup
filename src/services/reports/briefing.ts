@@ -38,6 +38,7 @@ export type BriefingData = {
   totalItemsCounted: number;
   totalAreasCompleted: number;
   totalAreas: number;
+  lastStocktakeDate: string | null;
   topShortages: VarianceLine[];
   topExcesses: VarianceLine[];
   trendItems: TrendItem[];
@@ -82,6 +83,7 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
   let hasCountData = false;
   let hasPrevCycleData = false;
   let dollarItemCount = 0;
+  let latestCompletedAtMs: number | null = null;
 
   try {
     const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
@@ -99,7 +101,12 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
 
         const completedAtMs = toMs(areaData?.completedAt);
         const startedAtMs = toMs(areaData?.startedAt);
-        if (completedAtMs) totalAreasCompleted++;
+        if (completedAtMs) {
+          totalAreasCompleted++;
+          if (latestCompletedAtMs == null || completedAtMs > latestCompletedAtMs) {
+            latestCompletedAtMs = completedAtMs;
+          }
+        }
 
         const durationMins =
           completedAtMs && startedAtMs
@@ -146,6 +153,8 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
           const countedInCycle =
             lastCountAtMs != null &&
             (confirmedCountAtMs == null || lastCountAtMs > confirmedCountAtMs);
+
+          console.log('[briefing] item', name, { lastCountAtMs, confirmedCountAtMs, countedInCycle, lastCount });
 
           if (!countedInCycle || lastCount === null || lastCount === undefined) continue;
 
@@ -214,12 +223,17 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
     console.log('[briefing] fetch error', (e as any)?.message);
   }
 
+  console.log('[briefing] result:', { hasCountData, totalItemsCounted, totalAreasCompleted, totalAreas, hasPrevCycleData });
+
   // Sort by dollar impact descending
   allShortages.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
   allExcesses.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
 
   const shortfallDollars = allShortages.reduce((s, r) => s + (r.dollarVariance ?? 0), 0);
   const excessDollars = allExcesses.reduce((s, r) => s + (r.dollarVariance ?? 0), 0);
+  const lastStocktakeDate = latestCompletedAtMs
+    ? new Date(latestCompletedAtMs).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
 
   return {
     role,
@@ -231,6 +245,7 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
     totalItemsCounted,
     totalAreasCompleted,
     totalAreas,
+    lastStocktakeDate,
     topShortages: allShortages.slice(0, 5),
     topExcesses: allExcesses.slice(0, 3),
     trendItems: trendItems.slice(0, 5),

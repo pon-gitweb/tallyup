@@ -213,7 +213,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
 </style></head><body>
 <div style="background:#0B132B;color:#fff;padding:16px;border-radius:8px;margin-bottom:16px;">
   <div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;">HOSTI STOCK — STOCKTAKE RECORD</div>
-  <h1>${e.departmentName} — Cycle ${e.cycleNumber}</h1>
+  <h1>${e.departmentName} — Stocktake ${e.cycleNumber}</h1>
   <div class="sub" style="color:#94a3b8;">Completed: ${dateStr}${e.completedByName ? ' · By: ' + e.completedByName : ''}${e.durationMinutes ? ' · Duration: ' + fmtDuration(e.durationMinutes) : ''}</div>
 </div>
 <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:16px;">
@@ -232,7 +232,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       await FileSystem.moveAsync({ from: uri, to: dest }).catch(() => {});
       await Sharing.shareAsync(dest.startsWith('file') ? dest : uri, {
         mimeType: 'application/pdf',
-        dialogTitle: `${e.departmentName} Cycle ${e.cycleNumber}`,
+        dialogTitle: `${e.departmentName} Stocktake ${e.cycleNumber}`,
       });
     } catch (err: any) {
       Alert.alert('Export failed', err?.message ?? 'Could not generate PDF');
@@ -267,7 +267,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       const safeDept = e.departmentName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 20);
       const path = FileSystem.cacheDirectory + `${safeDept}-cycle${e.cycleNumber}-${dateStr}.csv`;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
-      await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: `${e.departmentName} Cycle ${e.cycleNumber}` });
+      await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: `${e.departmentName} Stocktake ${e.cycleNumber}` });
     } catch (err: any) {
       Alert.alert('Export failed', err?.message ?? 'Could not generate CSV');
     } finally {

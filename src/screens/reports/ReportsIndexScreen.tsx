@@ -127,6 +127,8 @@ export default function ReportsIndexScreen() {
 
   const [latestSnapshots, setLatestSnapshots] = useState<any[]>([]);
   const [totalStocktakesCompleted, setTotalStocktakesCompleted] = useState(0);
+  const [onboardingRoad, setOnboardingRoad] = useState<string | null>(null);
+  const [onboardingLastStocktakeDate, setOnboardingLastStocktakeDate] = useState<string | null>(null);
   const [reportsIntroSeen, setReportsIntroSeen] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [recalcDismissed, setRecalcDismissed] = useState(false);
@@ -268,7 +270,16 @@ export default function ReportsIndexScreen() {
     getDoc(doc(db, 'venues', venueId))
       .then(snap => {
         if (cancelled) return;
-        setTotalStocktakesCompleted((snap.data() as any)?.totalStocktakesCompleted ?? 0);
+        const vd = snap.data() as any;
+        setTotalStocktakesCompleted(vd?.totalStocktakesCompleted ?? 0);
+        setOnboardingRoad(vd?.onboardingRoad ?? null);
+        const rawDate = vd?.onboardingLastStocktakeDate;
+        if (rawDate) {
+          try {
+            const d = typeof rawDate?.toDate === 'function' ? rawDate.toDate() : new Date(rawDate);
+            setOnboardingLastStocktakeDate(d.toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' }));
+          } catch { setOnboardingLastStocktakeDate(String(rawDate)); }
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -475,11 +486,24 @@ export default function ReportsIndexScreen() {
           <ScreenHeader S={S} insetsTop={insets.top || 0} />
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
             <View style={S.emptyCard}>
-              <Text style={S.emptyTitle}>Nothing to brief yet</Text>
-              <Text style={S.emptyBody}>
-                Complete a stocktake to see your first briefing — variance, trends, and what to act
-                on.
-              </Text>
+              {onboardingRoad === 'data' ? (
+                <>
+                  <Text style={S.emptyTitle}>Opening stock imported</Text>
+                  <Text style={S.emptyBody}>
+                    {onboardingLastStocktakeDate
+                      ? `Opening stock imported from ${onboardingLastStocktakeDate}. `
+                      : 'Your opening stock has been imported. '}
+                    Complete your first stocktake to see variance against your opening stock.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={S.emptyTitle}>Nothing to brief yet</Text>
+                  <Text style={S.emptyBody}>
+                    Complete a stocktake to see your first briefing — variance, trends, and what to act on.
+                  </Text>
+                </>
+              )}
               <TouchableOpacity
                 style={S.ctaBtn}
                 onPress={() => nav.navigate('DepartmentSelection')}
@@ -605,6 +629,9 @@ export default function ReportsIndexScreen() {
                     {data.dollarItemCount} of {data.totalItemsCounted} items have cost prices ·{' '}
                     {data.totalAreasCompleted}/{data.totalAreas} areas done
                   </Text>
+                  {data.lastStocktakeDate && (
+                    <Text style={[S.anchorMeta, { marginTop: 4, opacity: 0.7 }]}>As at {data.lastStocktakeDate}</Text>
+                  )}
                 </>
               ) : (
                 <>
@@ -614,6 +641,9 @@ export default function ReportsIndexScreen() {
                   <Text style={S.anchorMeta}>
                     Add cost prices to see stock value · {data.totalAreasCompleted}/{data.totalAreas} areas done
                   </Text>
+                  {data.lastStocktakeDate && (
+                    <Text style={[S.anchorMeta, { marginTop: 4, opacity: 0.7 }]}>As at {data.lastStocktakeDate}</Text>
+                  )}
                   <TouchableOpacity
                     style={{ marginTop: 10, backgroundColor: c.deepBlue, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: 'flex-start' }}
                     onPress={() => nav.navigate('BatchPriceEntry')}
@@ -636,6 +666,9 @@ export default function ReportsIndexScreen() {
               <Text style={S.anchorMeta}>
                 {data.totalItemsCounted} items counted this stocktake
               </Text>
+              {data.lastStocktakeDate && (
+                <Text style={[S.anchorMeta, { marginTop: 4, opacity: 0.7 }]}>As at {data.lastStocktakeDate}</Text>
+              )}
             </View>
           )}
 
