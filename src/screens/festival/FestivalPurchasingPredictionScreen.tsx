@@ -64,12 +64,56 @@ function formatShortDate(ddmmyyyy) {
   return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1] || ''} ${y}`;
 }
 
+// ─── Setup option lists ───────────────────────────────────────────────────────
+
+const EVENT_TYPE_OPTIONS = [
+  { label: 'Music Festival', value: 'music_festival' },
+  { label: 'Food & Wine',    value: 'food_wine' },
+  { label: 'Sports',         value: 'sports' },
+  { label: 'Corporate',      value: 'corporate' },
+  { label: 'Community',      value: 'community' },
+  { label: 'Other',          value: 'default' },
+];
+
+const PRICE_OPTIONS = [
+  { label: 'Budget (high vol)', value: 'budget' },
+  { label: 'Mid-range',         value: 'mid' },
+  { label: 'Premium',           value: 'premium' },
+  { label: 'Mixed',             value: 'mixed' },
+];
+
+const ATTENDANCE_OPTIONS = [
+  { label: 'Under 1,000', value: 800 },
+  { label: '1k–5k',       value: 3000 },
+  { label: '5k–15k',      value: 10000 },
+  { label: '15k–30k',     value: 22000 },
+  { label: '30k+',        value: 35000 },
+];
+
+const BUFFER_OPTIONS = [
+  { label: '5% tight', value: 5 },
+  { label: '10%',      value: 10 },
+  { label: '15% rec',  value: 15 },
+  { label: '20%',      value: 20 },
+  { label: '25%',      value: 25 },
+  { label: '30% gen',  value: 30 },
+];
+
+// Two entries deliberately share value 0 — tracked by index so both can be highlighted independently
+const GROWTH_OPTIONS = [
+  { label: 'First event', value: 0 },
+  { label: 'Same 0%',     value: 0 },
+  { label: '+5%',         value: 0.05 },
+  { label: '+10%',        value: 0.10 },
+  { label: '+15%',        value: 0.15 },
+  { label: '−5%',         value: -0.05 },
+];
+
 // ─── Per-product row ──────────────────────────────────────────────────────────
 
 function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAdjustment, mathQtyDisplay, aiQtyDisplay, useAi, onToggleAi, colours, R }) {
   const displayQty = result.totalQty ?? result.predictedQty;
   const [qtyText, setQtyText] = useState(String(displayQty));
-  const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
     setQtyText(String(result.totalQty ?? result.predictedQty));
@@ -222,14 +266,13 @@ function ProductRow({ result, sellingPrice, onQtyChange, onSellPriceChange, aiAd
         </View>
       )}
 
-      <TouchableOpacity onPress={() => setNotesOpen(v => !v)} style={R.notesToggle}>
-        <Text style={R.notesToggleText}>
-          {notesOpen ? '▲ Hide calculation' : '▼ How we calculated this'}
-        </Text>
-      </TouchableOpacity>
-      {notesOpen && result.notes.map((n, i) => (
-        <Text key={i} style={R.noteText}>• {n}</Text>
-      ))}
+      {result.notes.length > 0 && (
+        <View style={{ marginTop: 6 }}>
+          {result.notes.map((n, i) => (
+            <Text key={i} style={R.noteText}>• {n}</Text>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -259,6 +302,12 @@ export default function FestivalPurchasingPredictionScreen() {
   const [refinementError,setRefinementError]= useState(null);
   const [useAiSuggestion,setUseAiSuggestion]= useState<Record<string, boolean>>({});
   const snapshotTimer = useRef(null);
+  // Guided setup card
+  const [setupExpanded,       setSetupExpanded]       = useState(true);
+  const [setupEventType,      setSetupEventType]      = useState<string | null>(null);
+  const [setupPricePositioning,setSetupPricePositioning] = useState<string | null>(null);
+  const [setupAttendance,     setSetupAttendance]     = useState<number | null>(null);
+  const [growthIdx,           setGrowthIdx]           = useState(0);
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId) { setLoading(false); return; }
@@ -307,7 +356,7 @@ export default function FestivalPurchasingPredictionScreen() {
 
   // ── Full data load + prediction ───────────────────────────────────────────
 
-  async function runFullLoad(overrideBuffer) {
+  async function runFullLoad(overrideBuffer, opts: any = {}) {
     setLoading(true);
     setLoadError(null);
     try {
@@ -324,7 +373,16 @@ export default function FestivalPurchasingPredictionScreen() {
       // 1. Event details
       const event  = evSnap.exists() ? evSnap.data() : {};
       setEventData(event);
+      // Initialise setup card from Firestore on first load (functional form preserves user changes)
+      setSetupEventType(prev => prev ?? (event.eventType || null));
+      setSetupPricePositioning(prev => prev ?? (event.pricePositioning || null));
+      setSetupAttendance(prev => prev ?? (event.dailyAttendance ? parseInt(event.dailyAttendance, 10) || null : null));
       const buf = overrideBuffer ?? bufferPercent;
+      // Effective prediction params — opts override Firestore values when user changed setup card
+      const effectiveAttendance      = opts.attendance      ?? (parseInt(event.dailyAttendance ?? '500', 10) || 500);
+      const effectiveEventType       = opts.eventType       ?? event.eventType;
+      const effectivePricePositioning= opts.pricePositioning ?? event.pricePositioning;
+      const effectiveGrowthRate      = opts.growthRate      ?? 0;
 
       // 2. Products from venue catalogue
       const allProducts = prodSnap.docs
@@ -403,14 +461,28 @@ export default function FestivalPurchasingPredictionScreen() {
       }));
 
       // 9. Run prediction service
-      const attendance = parseInt(event.dailyAttendance ?? '500', 10) || 500;
       const eventDays  = calcEventDays(event.startDate, event.endDate);
       const rawPredictions = generatePurchasingPrediction(
-        { attendance, eventDays, eventType: event.eventType, pricePositioning: event.pricePositioning },
+        { attendance: effectiveAttendance, eventDays, eventType: effectiveEventType, pricePositioning: effectivePricePositioning },
         productsForPrediction,
         [],
         buf,
       );
+
+      // 9b. Apply growth rate to prior-year products
+      if (effectiveGrowthRate !== 0) {
+        rawPredictions.forEach(r => {
+          if (r.basis === 'prior_year') {
+            const factor = 1 + effectiveGrowthRate;
+            r.predictedQty = Math.ceil(r.predictedQty * factor);
+            r.bufferedQty  = Math.ceil(r.bufferedQty  * factor);
+            r.safeOrderQty = Math.ceil((r.safeOrderQty || r.predictedQty) * factor);
+            r.notes.push(`${effectiveGrowthRate > 0 ? '+' : ''}${Math.round(effectiveGrowthRate * 100)}% growth applied to prior year actuals.`);
+          } else {
+            r.notes.push('Growth rate not applied — benchmark basis (no prior year data to grow from).');
+          }
+        });
+      }
 
       // 10. Apply obligation minimums — proportionally scale up if total < minimum (FIX 3)
       Object.entries(obligationMins).forEach(([supplierName, minQty]) => {
@@ -450,6 +522,7 @@ export default function FestivalPurchasingPredictionScreen() {
       });
 
       setResults(enriched);
+      if (enriched.length > 0) setSetupExpanded(false);
     } catch (e) {
       console.error('[PurchasingPrediction]', e?.message);
       setLoadError('Could not load prediction data. Please check your connection and try again.');
@@ -522,7 +595,12 @@ export default function FestivalPurchasingPredictionScreen() {
   function adjustBuffer(delta) {
     const newBuf = Math.max(5, Math.min(30, bufferPercent + delta));
     setBufferPercent(newBuf);
-    runFullLoad(newBuf);
+    runFullLoad(newBuf, {
+      eventType: setupEventType,
+      pricePositioning: setupPricePositioning,
+      attendance: setupAttendance,
+      growthRate: GROWTH_OPTIONS[growthIdx]?.value ?? 0,
+    });
   }
 
   // ── AI refinement helpers ─────────────────────────────────────────────────
@@ -725,6 +803,108 @@ export default function FestivalPurchasingPredictionScreen() {
     <View style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
       <ScrollView contentContainerStyle={R.scroll} keyboardShouldPersistTaps="handled">
+
+        {/* ── Guided setup card ── */}
+        {(results.length === 0 || setupExpanded) ? (
+          <View style={R.setupCard}>
+            <Text style={R.setupTitle}>Prediction settings</Text>
+
+            <Text style={R.setupLabel}>Event type</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {EVENT_TYPE_OPTIONS.map(opt => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => setSetupEventType(opt.value)}
+                    style={[R.chip, setupEventType === opt.value && R.chipActive]}
+                  >
+                    <Text style={[R.chipText, setupEventType === opt.value && R.chipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={R.setupLabel}>Audience pricing</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {PRICE_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => setSetupPricePositioning(opt.value)}
+                  style={[R.chip, setupPricePositioning === opt.value && R.chipActive]}
+                >
+                  <Text style={[R.chipText, setupPricePositioning === opt.value && R.chipTextActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={R.setupLabel}>Expected attendance (per day)</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {ATTENDANCE_OPTIONS.map(opt => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => setSetupAttendance(opt.value)}
+                    style={[R.chip, setupAttendance === opt.value && R.chipActive]}
+                  >
+                    <Text style={[R.chipText, setupAttendance === opt.value && R.chipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={R.setupLabel}>Safety buffer</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {BUFFER_OPTIONS.map(opt => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => setBufferPercent(opt.value)}
+                    style={[R.chip, bufferPercent === opt.value && R.chipActive]}
+                  >
+                    <Text style={[R.chipText, bufferPercent === opt.value && R.chipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <Text style={R.setupLabel}>Growth vs last year</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {GROWTH_OPTIONS.map((opt, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => setGrowthIdx(i)}
+                    style={[R.chip, growthIdx === i && R.chipActive]}
+                  >
+                    <Text style={[R.chipText, growthIdx === i && R.chipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={R.generateSetupBtn}
+              onPress={() => runFullLoad(bufferPercent, {
+                eventType: setupEventType,
+                pricePositioning: setupPricePositioning,
+                attendance: setupAttendance,
+                growthRate: GROWTH_OPTIONS[growthIdx]?.value ?? 0,
+              })}
+            >
+              <Text style={R.generateSetupBtnText}>Generate order suggestion →</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity style={R.setupSummaryRow} onPress={() => setSetupExpanded(true)}>
+            <Text style={R.setupSummaryText} numberOfLines={1}>
+              {EVENT_TYPE_OPTIONS.find(o => o.value === setupEventType)?.label ?? 'Event'}{' · '}
+              {PRICE_OPTIONS.find(o => o.value === setupPricePositioning)?.label ?? 'Pricing'}{' · '}
+              {ATTENDANCE_OPTIONS.find(o => o.value === setupAttendance)?.label ?? (eventData?.dailyAttendance ? Number(eventData.dailyAttendance).toLocaleString() : '—')}{' · '}
+              {bufferPercent}% buffer
+            </Text>
+            <Text style={R.setupSummaryEdit}>tap to adjust ›</Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── Event header (FIX 7) ── */}
         {eventData?.eventName ? (
@@ -944,15 +1124,25 @@ export default function FestivalPurchasingPredictionScreen() {
         )}
 
         {results.length > 0 && (
-          <TouchableOpacity
-            style={[R.generateBtn, generating && R.generateBtnDisabled]}
-            disabled={generating}
-            onPress={confirmGenerateOrders}
-          >
-            {generating
-              ? <ActivityIndicator color={c.surface} size="small" />
-              : <Text style={R.generateBtnText}>Generate draft orders</Text>}
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={[R.generateBtn, generating && R.generateBtnDisabled]}
+              disabled={generating}
+              onPress={confirmGenerateOrders}
+            >
+              {generating
+                ? <ActivityIndicator color={c.surface} size="small" />
+                : <Text style={R.generateBtnText}>Generate draft orders</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ alignItems: 'center', paddingVertical: 12 }}
+              onPress={() => nav.navigate('NewOrderStart')}
+            >
+              <Text style={{ color: c.deepBlue, fontSize: 13, textDecorationLine: 'underline' }}>
+                Or create a manual order →
+              </Text>
+            </TouchableOpacity>
+          </>
         )}
 
       </ScrollView>
@@ -1088,6 +1278,20 @@ function makeStyles(c: any) {
   aiConfidence:     { fontSize: 11, color: c.slateMid },
   aiToggleBtn:      { backgroundColor: c.deepBlue, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 },
   aiToggleBtnText:  { color: c.surface, fontSize: 12, fontWeight: '700' },
+
+  // Guided setup card
+  setupCard:        { backgroundColor: c.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: c.border },
+  setupTitle:       { fontSize: 15, fontWeight: '800', color: c.navy, marginBottom: 12 },
+  setupLabel:       { fontSize: 12, fontWeight: '700', color: c.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  chip:             { borderRadius: 999, borderWidth: 1, borderColor: c.border, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: c.oat },
+  chipActive:       { borderColor: c.deepBlue, backgroundColor: c.deepBlue },
+  chipText:         { fontSize: 13, color: c.navy, fontWeight: '500' },
+  chipTextActive:   { color: c.surface, fontWeight: '700' },
+  generateSetupBtn: { backgroundColor: c.deepBlue, borderRadius: 999, paddingVertical: 13, alignItems: 'center' },
+  generateSetupBtnText: { color: c.surface, fontWeight: '700', fontSize: 15 },
+  setupSummaryRow:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: c.surface, borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: c.border },
+  setupSummaryText: { flex: 1, fontSize: 13, color: c.navy, fontWeight: '600', marginRight: 8 },
+  setupSummaryEdit: { fontSize: 12, color: c.deepBlue, fontWeight: '600' },
 
   // Paywall sticky CTA
   paywallCTA: { padding: 16, paddingBottom: 32 },
