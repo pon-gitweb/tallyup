@@ -3,16 +3,17 @@ import { signOut, type User } from 'firebase/auth'
 import { auth } from '../firebase'
 import styles from './DashboardLayout.module.css'
 
-export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings'
+export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings' | 'suitee'
 
-const NAV_ITEMS: { key: Page; label: string; enabled: boolean }[] = [
-  { key: 'projects', label: 'Projects', enabled: true },
-  { key: 'setup-products', label: 'Setup', enabled: true },
-  { key: 'suppliers', label: 'Suppliers', enabled: true },
-  { key: 'reports', label: 'Reports', enabled: true },
-  { key: 'craftit', label: 'CraftIt', enabled: true },
-  { key: 'orders', label: 'Orders', enabled: true },
-  { key: 'settings', label: 'Settings', enabled: true },
+const NAV_ITEMS: { key: Page; label: string; enabled: boolean; isAI?: boolean }[] = [
+  { key: 'projects',       label: 'Projects',      enabled: true },
+  { key: 'setup-products', label: 'Setup',          enabled: true },
+  { key: 'suppliers',      label: 'Suppliers',      enabled: true },
+  { key: 'reports',        label: 'Reports',        enabled: true },
+  { key: 'suitee',         label: '✦ Ask Suitee',  enabled: true, isAI: true },
+  { key: 'craftit',        label: 'CraftIt',        enabled: true },
+  { key: 'orders',         label: 'Orders',         enabled: true },
+  { key: 'settings',       label: 'Settings',       enabled: true },
 ]
 
 export default function DashboardLayout({
@@ -54,6 +55,7 @@ export default function DashboardLayout({
               page === item.key ? styles.navLinkActive : '',
               !item.enabled ? styles.navLinkDisabled : '',
             ].join(' ').trim()}
+            style={item.isAI ? { color: '#c47b2b', fontWeight: page === item.key ? 800 : 600 } : undefined}
             onClick={() => item.enabled && navigate(item.key)}
             disabled={!item.enabled}
           >
