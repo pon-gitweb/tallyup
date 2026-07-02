@@ -186,7 +186,6 @@ export default function MoreScreen() {
           <Row icon="✦"  label="Ask Izzy"     onPress={openIzzy} />
           <Row icon="ℹ️" label="Setup Guide"  onPress={() => nav.navigate('SetupGuide')} />
           <Row icon="⚖️" label="Bluetooth Scale" onPress={() => nav.navigate('ScaleSettings')} />
-          <Row icon="🎨" label="Appearance"   onPress={() => nav.navigate('Appearance')} />
         </View>
       </ScrollView>
     </SafeAreaView>
