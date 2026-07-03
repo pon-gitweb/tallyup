@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
-import { auth } from './firebase'
+import { doc, getDoc } from 'firebase/firestore'
+import { auth, db } from './firebase'
+import SupplierPortalPage from './pages/SupplierPortalPage'
 import LoginPage from './pages/LoginPage'
 import ProjectsPage, { type VenueRow } from './pages/ProjectsPage'
 import SetupProductsPage from './pages/SetupProductsPage'
@@ -27,18 +29,37 @@ function App() {
   const [activeVenue, setActiveVenue] = useState<VenueRow | null>(null)
   const [page, setPage] = useState<Page>('hostihealth')
   const [festivalPage, setFestivalPage] = useState<FestivalPage>('festival-setup')
+  const [accountType, setAccountType] = useState<'venue' | 'supplier' | null>(null)
+  const [supplierId, setSupplierId] = useState<string | null>(null)
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
+    return onAuthStateChanged(auth, async (u) => {
       setUser(u)
       if (!u) {
         setActiveVenue(null)
         setPage('hostihealth')
+        setAccountType(null)
+        setSupplierId(null)
+        return
+      }
+      try {
+        const userDoc = await getDoc(doc(db, 'users', u.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data() as any
+          if (data?.supplierId) {
+            setAccountType('supplier')
+            setSupplierId(data.supplierId)
+            return
+          }
+        }
+        setAccountType('venue')
+      } catch {
+        setAccountType('venue')
       }
     })
   }, [])
 
-  if (user === undefined) {
+  if (user === undefined || (user !== null && accountType === null)) {
     return (
       <div className={styles.loadingScreen}>
         <div className={styles.spinner} />
@@ -48,6 +69,10 @@ function App() {
 
   if (user === null) {
     return <LoginPage />
+  }
+
+  if (user && accountType === 'supplier' && supplierId) {
+    return <SupplierPortalPage supplierId={supplierId} user={user} />
   }
 
   function openVenue(venue: VenueRow) {

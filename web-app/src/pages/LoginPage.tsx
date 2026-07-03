@@ -123,6 +123,9 @@ export default function LoginPage() {
         <p className={styles.note}>
           New to Hosti? Download the app to create your account.
         </p>
+        <p style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', marginTop: 16 }}>
+          Suppliers and venue operators use the same login.
+        </p>
       </div>
     </div>
   )
