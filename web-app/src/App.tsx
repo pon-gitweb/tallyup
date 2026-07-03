@@ -12,6 +12,7 @@ import SettingsPage from './pages/SettingsPage'
 import SuiteePage from './pages/SuiteePage'
 import HostiHealthPage from './pages/HostiHealthPage'
 import TeamPage from './pages/TeamPage'
+import ImportPage from './pages/ImportPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import styles from './App.module.css'
 
@@ -48,7 +49,7 @@ function App() {
     setPage('hostihealth')
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team']
 
   return (
     <DashboardLayout
@@ -69,6 +70,7 @@ function App() {
       {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
       {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
+      {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
       {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}

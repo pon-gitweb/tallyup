@@ -1,0 +1,701 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  addDoc, collection, doc, getDocs, serverTimestamp, writeBatch, updateDoc,
+} from 'firebase/firestore'
+import { db } from '../firebase'
+import styles from './ImportPage.module.css'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type ImportStatus = 'idle' | 'ready' | 'importing' | 'done' | 'error'
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let inQuotes = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++ }
+        else { inQuotes = false }
+      } else { field += ch }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
+      row.push(field); field = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++
+      row.push(field); field = ''
+      rows.push(row); row = []
+    } else { field += ch }
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row) }
+  return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''))
+}
+
+function slugId(s: string): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48)
+    || ('p_' + Math.random().toString(36).slice(2, 8))
+}
+
+function findCol(header: string[], ...names: string[]): number {
+  const h = header.map(x => x.trim().toLowerCase())
+  for (const name of names) {
+    const idx = h.indexOf(name.toLowerCase())
+    if (idx !== -1) return idx
+  }
+  return -1
+}
+
+function readFile(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader()
+    r.onload = () => res(String(r.result || ''))
+    r.onerror = rej
+    r.readAsText(file)
+  })
+}
+
+async function batchWrite(
+  dbInstance: typeof db,
+  path: string,
+  docs: Array<{ id: string; data: Record<string, unknown> }>,
+  merge = true
+) {
+  for (let i = 0; i < docs.length; i += 499) {
+    const chunk = docs.slice(i, i + 499)
+    const batch = writeBatch(dbInstance)
+    for (const { id, data } of chunk) {
+      batch.set(doc(dbInstance, path, id), data, { merge })
+    }
+    await batch.commit()
+  }
+}
+
+// ─── DropZone component ───────────────────────────────────────────────────────
+
+function DropZone({ title, description, badge, badgeColour, children, onFiles }: {
+  title: string
+  description: string
+  badge: string
+  badgeColour: string
+  children: React.ReactNode
+  onFiles: (files: FileList) => void
+}) {
+  const [dragActive, setDragActive] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  return (
+    <div className={styles.zone}>
+      <div className={styles.zoneHeader}>
+        <div>
+          <h2 className={styles.zoneTitle}>{title}</h2>
+          <p className={styles.zoneDesc}>{description}</p>
+        </div>
+        <span className={styles.zoneBadge} style={{ background: badgeColour }}>{badge}</span>
+      </div>
+      <div
+        className={`${styles.dropArea} ${dragActive ? styles.dropAreaActive : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(e) => { e.preventDefault(); setDragActive(false); onFiles(e.dataTransfer.files) }}
+        onClick={() => inputRef.current?.click()}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv"
+          hidden
+          onChange={(e) => e.target.files && onFiles(e.target.files)}
+        />
+        <p className={styles.dropAreaTitle}>Drag a CSV here, or click to browse</p>
+        <p className={styles.dropAreaHint}>Accepts: .csv</p>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function ImportPage({ venueId }: { venueId: string }) {
+
+  // ── Zone A — Opening Stock Baseline ────────────────────────────────────────
+  type ARow = { name: string; unit: string | null; costPrice: number | null; parLevel: number | null; count: number }
+  const [aRows, setARows] = useState<ARow[]>([])
+  const [aStatus, setAStatus] = useState<ImportStatus>('idle')
+  const [aError, setAError] = useState<string | null>(null)
+  const [aDate, setADate] = useState('')
+
+  async function handleFileA(files: FileList) {
+    const file = files[0]
+    if (!file) return
+    setAError(null)
+    setAStatus('idle')
+    try {
+      const text = await readFile(file)
+      const rows = parseCsv(text)
+      if (rows.length < 2) { setAError('No data rows found.'); return }
+      const header = rows[0].map(h => h.trim().toLowerCase())
+      const nameIdx = findCol(header, 'name')
+      if (nameIdx === -1) { setAError('CSV must have a "Name" column.'); return }
+      const unitIdx = findCol(header, 'unit')
+      const costIdx = findCol(header, 'cost price', 'costprice', 'cost', 'price')
+      const parIdx = findCol(header, 'par level', 'parlevel', 'par')
+      const countIdx = findCol(header, 'count', 'qty', 'quantity', 'opening count')
+
+      const parsed = rows.slice(1)
+        .map(r => ({
+          name: r[nameIdx]?.trim() || '',
+          unit: unitIdx >= 0 ? r[unitIdx]?.trim() || null : null,
+          costPrice: costIdx >= 0 && r[costIdx]?.trim() ? Number(r[costIdx]) : null,
+          parLevel: parIdx >= 0 && r[parIdx]?.trim() ? Number(r[parIdx]) : null,
+          count: countIdx >= 0 && r[countIdx]?.trim() ? Math.round(Number(r[countIdx])) : 0,
+        }))
+        .filter(r => r.name)
+
+      setARows(parsed)
+      setAStatus('ready')
+    } catch {
+      setAError('Failed to read file.')
+    }
+  }
+
+  async function handleImportA() {
+    setAStatus('importing')
+    try {
+      await batchWrite(db, `venues/${venueId}/products`,
+        aRows.map(r => ({
+          id: slugId(r.name),
+          data: {
+            name: r.name,
+            unit: r.unit,
+            costPrice: r.costPrice,
+            parLevel: r.parLevel,
+            confirmedCount: r.count,
+            confirmedCountAt: serverTimestamp(),
+            lastCount: r.count,
+            lastCountAt: serverTimestamp(),
+            supplierName: 'Unassigned',
+            updatedAt: serverTimestamp(),
+          },
+        }))
+      )
+      await updateDoc(doc(db, 'venues', venueId), {
+        onboardingRoad: 'data',
+        onboardingCompletedAt: serverTimestamp(),
+        onboardingLastStocktakeDate: aDate || null,
+        onboardingHasInvoices: false,
+        onboardingHasSales: false,
+        onboardingInvoiceLinesCount: 0,
+      })
+      setAStatus('done')
+    } catch {
+      setAError('Import failed. Please try again.')
+      setAStatus('error')
+    }
+  }
+
+  // ── Zone B — Sales Data ────────────────────────────────────────────────────
+  type BRow = { name: string; qty: number; revenue: number | null }
+  const [bRows, setBRows] = useState<BRow[]>([])
+  const [bStatus, setBStatus] = useState<ImportStatus>('idle')
+  const [bError, setBError] = useState<string | null>(null)
+
+  async function handleFileB(files: FileList) {
+    const file = files[0]
+    if (!file) return
+    setBError(null)
+    setBStatus('idle')
+    try {
+      const text = await readFile(file)
+      const rows = parseCsv(text)
+      if (rows.length < 2) { setBError('No data rows found.'); return }
+      const header = rows[0].map(h => h.trim().toLowerCase())
+      const nameIdx = findCol(header, 'item', 'product', 'name')
+      if (nameIdx === -1) { setBError('CSV must have a Name, Item, or Product column.'); return }
+      const qtyIdx = findCol(header, 'quantity', 'qty', 'units sold')
+      const revIdx = findCol(header, 'revenue', 'sales', 'amount')
+
+      const parsed = rows.slice(1)
+        .map(r => ({
+          name: r[nameIdx]?.trim() || '',
+          qty: qtyIdx >= 0 && r[qtyIdx]?.trim() ? Number(r[qtyIdx]) : 0,
+          revenue: revIdx >= 0 && r[revIdx]?.trim() ? Number(r[revIdx]) : null,
+        }))
+        .filter(r => r.name)
+
+      setBRows(parsed)
+      setBStatus('ready')
+    } catch {
+      setBError('Failed to read file.')
+    }
+  }
+
+  async function handleImportB() {
+    setBStatus('importing')
+    try {
+      await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
+        source: 'csv-desktop',
+        importedAt: serverTimestamp(),
+        lineCount: bRows.length,
+        lines: bRows,
+      })
+      await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
+      setBStatus('done')
+    } catch {
+      setBError('Import failed. Please try again.')
+      setBStatus('error')
+    }
+  }
+
+  function downloadSalesTemplate() {
+    const csv = 'Name,Quantity,Revenue\n'
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'sales-template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // ── Zone C — Supplier Invoice ──────────────────────────────────────────────
+  type CRow = { name: string; qty: number | null; costPrice: number | null; supplierCol: string | null }
+  const [cRows, setCRows] = useState<CRow[]>([])
+  const [cStatus, setCStatus] = useState<ImportStatus>('idle')
+  const [cError, setCError] = useState<string | null>(null)
+  const [cSupplierName, setCSupplierName] = useState('')
+
+  async function handleFileC(files: FileList) {
+    const file = files[0]
+    if (!file) return
+    setCError(null)
+    setCStatus('idle')
+    try {
+      const text = await readFile(file)
+      const rows = parseCsv(text)
+      if (rows.length < 2) { setCError('No data rows found.'); return }
+      const header = rows[0].map(h => h.trim().toLowerCase())
+      const nameIdx = findCol(header, 'product', 'name', 'item')
+      if (nameIdx === -1) { setCError('CSV must have a Name, Product, or Item column.'); return }
+      const qtyIdx = findCol(header, 'quantity', 'qty')
+      const priceIdx = findCol(header, 'unit price', 'cost', 'price')
+      const supplierIdx = findCol(header, 'supplier')
+
+      const parsed = rows.slice(1)
+        .map(r => ({
+          name: r[nameIdx]?.trim() || '',
+          qty: qtyIdx >= 0 && r[qtyIdx]?.trim() ? Number(r[qtyIdx]) : null,
+          costPrice: priceIdx >= 0 && r[priceIdx]?.trim() ? Number(r[priceIdx]) : null,
+          supplierCol: supplierIdx >= 0 ? r[supplierIdx]?.trim() || null : null,
+        }))
+        .filter(r => r.name)
+
+      // Pre-fill supplier name from CSV if found
+      if (supplierIdx >= 0 && parsed[0]?.supplierCol) {
+        setCSupplierName(parsed[0].supplierCol)
+      }
+
+      setCRows(parsed)
+      setCStatus('ready')
+    } catch {
+      setCError('Failed to read file.')
+    }
+  }
+
+  async function handleImportC() {
+    setCStatus('importing')
+    try {
+      await batchWrite(db, `venues/${venueId}/products`,
+        cRows.map(r => ({
+          id: slugId(r.name),
+          data: {
+            name: r.name,
+            costPrice: r.costPrice,
+            supplierName: cSupplierName || 'Unassigned',
+            updatedAt: serverTimestamp(),
+          },
+        }))
+      )
+      await updateDoc(doc(db, 'venues', venueId), {
+        onboardingHasInvoices: true,
+        onboardingInvoiceLinesCount: cRows.length,
+      })
+      setCStatus('done')
+    } catch {
+      setCError('Import failed. Please try again.')
+      setCStatus('error')
+    }
+  }
+
+  // ── Zone D — Supplier Catalogue ────────────────────────────────────────────
+  type DRow = { name: string; price: number; currentCost: number | null; isNew: boolean }
+  const [dRows, setDRows] = useState<DRow[]>([])
+  const [dStatus, setDStatus] = useState<ImportStatus>('idle')
+  const [dError, setDError] = useState<string | null>(null)
+  const [dSupplierName, setDSupplierName] = useState('')
+  const [existingPrices, setExistingPrices] = useState<Record<string, number | null>>({})
+
+  useEffect(() => {
+    if (!venueId) return
+    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+      const map: Record<string, number | null> = {}
+      snap.docs.forEach(d => {
+        const data = d.data() as { name?: string; costPrice?: number }
+        if (data.name) map[data.name.toLowerCase()] = data.costPrice ?? null
+      })
+      setExistingPrices(map)
+    }).catch(() => {})
+  }, [venueId])
+
+  async function handleFileD(files: FileList) {
+    const file = files[0]
+    if (!file) return
+    setDError(null)
+    setDStatus('idle')
+    try {
+      const text = await readFile(file)
+      const rows = parseCsv(text)
+      if (rows.length < 2) { setDError('No data rows found.'); return }
+      const header = rows[0].map(h => h.trim().toLowerCase())
+      const nameIdx = findCol(header, 'product', 'name', 'item')
+      if (nameIdx === -1) { setDError('CSV must have a Name, Product, or Item column.'); return }
+      const priceIdx = findCol(header, 'price', 'cost', 'unit price')
+      if (priceIdx === -1) { setDError('CSV must have a Price, Cost, or Unit Price column.'); return }
+
+      const parsed = rows.slice(1)
+        .map(r => {
+          const name = r[nameIdx]?.trim() || ''
+          const price = r[priceIdx]?.trim() ? Number(r[priceIdx]) : 0
+          const currentCost = existingPrices[name.toLowerCase()] ?? null
+          return { name, price, currentCost, isNew: currentCost === null }
+        })
+        .filter(r => r.name)
+
+      setDRows(parsed)
+      setDStatus('ready')
+    } catch {
+      setDError('Failed to read file.')
+    }
+  }
+
+  async function handleImportD() {
+    setDStatus('importing')
+    try {
+      const priceChanges = dRows.filter(r => !r.isNew && r.currentCost !== r.price)
+      await batchWrite(db, `venues/${venueId}/products`,
+        dRows.map(r => ({
+          id: slugId(r.name),
+          data: {
+            name: r.name,
+            costPrice: r.price,
+            supplierName: dSupplierName || 'Unassigned',
+            updatedAt: serverTimestamp(),
+          },
+        }))
+      )
+      if (priceChanges.length > 0) {
+        const batch = writeBatch(db)
+        for (const r of priceChanges) {
+          batch.set(doc(collection(db, 'venues', venueId, 'priceChangeFlags')), {
+            productName: r.name,
+            supplierName: dSupplierName,
+            oldPrice: r.currentCost,
+            newPrice: r.price,
+            detectedAt: serverTimestamp(),
+            status: 'pending',
+            source: 'catalogue-import',
+          })
+        }
+        await batch.commit()
+      }
+      setDStatus('done')
+    } catch {
+      setDError('Import failed. Please try again.')
+      setDStatus('error')
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <div className={styles.page}>
+      <h1 className={styles.heading}>Import</h1>
+      <p className={styles.subhead}>
+        Drag files from your computer to import data into Hosti. Each section is independent — import one or all.
+      </p>
+
+      {/* ── Zone A — Opening Stock Baseline ── */}
+      <DropZone
+        title="Opening Stock Baseline"
+        description="Import a list of products with their opening stock counts. This becomes the baseline for your first stocktake variance report."
+        badge="Step 1"
+        badgeColour="#1b4f72"
+        onFiles={handleFileA}
+      >
+        {aError && <p className={styles.error}>{aError}</p>}
+        {(aStatus === 'ready' || aStatus === 'importing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{aRows.length} products found</p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Name</th><th>Unit</th><th>Cost</th><th>Count</th></tr>
+                </thead>
+                <tbody>
+                  {aRows.slice(0, 20).map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      <td>{r.unit || '—'}</td>
+                      <td>{r.costPrice != null ? `$${r.costPrice}` : '—'}</td>
+                      <td>{r.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {aRows.length > 20 && (
+              <p className={styles.dropAreaHint} style={{ marginTop: 6 }}>
+                Showing first 20 of {aRows.length}
+              </p>
+            )}
+            <div className={styles.dateInput}>
+              <label>Date of this stocktake (optional):</label>
+              <input type="date" value={aDate} onChange={e => setADate(e.target.value)} />
+            </div>
+            <div className={styles.actions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => { setARows([]); setAStatus('idle'); setAError(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmBtn}
+                onClick={handleImportA}
+                disabled={aStatus === 'importing'}
+              >
+                {aStatus === 'importing' ? 'Importing…' : `Import ${aRows.length} products`}
+              </button>
+            </div>
+          </div>
+        )}
+        {aStatus === 'done' && (
+          <p className={styles.success}>
+            ✓ {aRows.length} products imported with opening counts. Your first real stocktake will show variance against this baseline.
+          </p>
+        )}
+      </DropZone>
+
+      {/* ── Zone B — Sales Data ── */}
+      <DropZone
+        title="Sales Data"
+        description="Import a sales report to help calibrate suggested order quantities. Columns needed: Name, Quantity, Revenue."
+        badge="Optional"
+        badgeColour="#6b7280"
+        onFiles={handleFileB}
+      >
+        {bError && <p className={styles.error}>{bError}</p>}
+        {(bStatus === 'ready' || bStatus === 'importing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{bRows.length} sales lines found</p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Name</th><th>Qty</th><th>Revenue</th></tr>
+                </thead>
+                <tbody>
+                  {bRows.slice(0, 20).map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      <td>{r.qty}</td>
+                      <td>{r.revenue != null ? `$${r.revenue}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {bRows.length > 20 && (
+              <p className={styles.dropAreaHint} style={{ marginTop: 6 }}>
+                Showing first 20 of {bRows.length}
+              </p>
+            )}
+            <div className={styles.actions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => { setBRows([]); setBStatus('idle'); setBError(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmBtn}
+                onClick={handleImportB}
+                disabled={bStatus === 'importing'}
+              >
+                {bStatus === 'importing' ? 'Importing…' : `Import ${bRows.length} sales lines`}
+              </button>
+              <button className={styles.cancelBtn} onClick={downloadSalesTemplate}>
+                Download template
+              </button>
+            </div>
+          </div>
+        )}
+        {bStatus === 'done' && (
+          <p className={styles.success}>
+            ✓ Sales data imported. Suggested orders will use this to calibrate recommendations.
+          </p>
+        )}
+      </DropZone>
+
+      {/* ── Zone C — Supplier Invoice ── */}
+      <DropZone
+        title="Supplier Invoice"
+        description="Import a supplier invoice CSV to update product costs in bulk. Columns needed: Name/Product, Quantity, Unit Price."
+        badge="Optional"
+        badgeColour="#6b7280"
+        onFiles={handleFileC}
+      >
+        <p className={styles.mobileNote}>
+          For PDF invoices, use the Scan Invoice feature in the mobile app or Invoices hub.
+        </p>
+        {cError && <p className={styles.error}>{cError}</p>}
+        {(cStatus === 'ready' || cStatus === 'importing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{cRows.length} invoice lines found</p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Name</th><th>Qty</th><th>Unit Price</th></tr>
+                </thead>
+                <tbody>
+                  {cRows.slice(0, 20).map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      <td>{r.qty ?? '—'}</td>
+                      <td>{r.costPrice != null ? `$${r.costPrice}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {cRows.length > 20 && (
+              <p className={styles.dropAreaHint} style={{ marginTop: 6 }}>
+                Showing first 20 of {cRows.length}
+              </p>
+            )}
+            <div className={styles.supplierInput}>
+              <label>Supplier name:</label>
+              <input
+                value={cSupplierName}
+                onChange={e => setCSupplierName(e.target.value)}
+                placeholder="e.g. Hancocks"
+              />
+            </div>
+            <div className={styles.actions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => { setCRows([]); setCStatus('idle'); setCError(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmBtn}
+                onClick={handleImportC}
+                disabled={cStatus === 'importing'}
+              >
+                {cStatus === 'importing' ? 'Importing…' : `Update ${cRows.length} products`}
+              </button>
+            </div>
+          </div>
+        )}
+        {cStatus === 'done' && (
+          <p className={styles.success}>
+            ✓ {cRows.length} products updated with costs from {cSupplierName || 'supplier'}.
+          </p>
+        )}
+      </DropZone>
+
+      {/* ── Zone D — Supplier Catalogue ── */}
+      <DropZone
+        title="Supplier Catalogue"
+        description="Import a supplier price list to update costs and flag any price changes. Columns needed: Name/Product, Price/Cost."
+        badge="Optional"
+        badgeColour="#6b7280"
+        onFiles={handleFileD}
+      >
+        {dError && <p className={styles.error}>{dError}</p>}
+        {(dStatus === 'ready' || dStatus === 'importing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{dRows.length} products found</p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Product</th><th>Current</th><th>New</th><th>Change %</th></tr>
+                </thead>
+                <tbody>
+                  {dRows.slice(0, 20).map((r, i) => {
+                    const changePercent = r.currentCost != null && r.currentCost !== 0
+                      ? (((r.price - r.currentCost) / r.currentCost) * 100).toFixed(1)
+                      : null
+                    const rowClass = r.isNew
+                      ? styles.newRow
+                      : r.currentCost !== r.price
+                        ? styles.changeRow
+                        : ''
+                    return (
+                      <tr key={i} className={rowClass}>
+                        <td>{r.name}</td>
+                        <td>{r.currentCost != null ? `$${r.currentCost}` : '—'}</td>
+                        <td>${r.price}</td>
+                        <td>{changePercent != null ? `${changePercent}%` : r.isNew ? 'New' : '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {dRows.length > 20 && (
+              <p className={styles.dropAreaHint} style={{ marginTop: 6 }}>
+                Showing first 20 of {dRows.length}
+              </p>
+            )}
+            <div className={styles.supplierInput}>
+              <label>Supplier name:</label>
+              <input
+                value={dSupplierName}
+                onChange={e => setDSupplierName(e.target.value)}
+                placeholder="e.g. Hancocks"
+              />
+            </div>
+            <div className={styles.actions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => { setDRows([]); setDStatus('idle'); setDError(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.confirmBtn}
+                onClick={handleImportD}
+                disabled={dStatus === 'importing'}
+              >
+                {dStatus === 'importing' ? 'Importing…' : `Update ${dRows.length} products`}
+              </button>
+            </div>
+          </div>
+        )}
+        {dStatus === 'done' && (
+          <p className={styles.success}>
+            ✓ {dRows.length} products updated.{' '}
+            {dRows.filter(r => !r.isNew && r.currentCost !== r.price).length} price change
+            {dRows.filter(r => !r.isNew && r.currentCost !== r.price).length !== 1 ? 's' : ''} flagged for review in Reports → Price Changes.
+          </p>
+        )}
+      </DropZone>
+    </div>
+  )
+}

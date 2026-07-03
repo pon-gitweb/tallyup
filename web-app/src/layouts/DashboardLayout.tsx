@@ -11,6 +11,7 @@ export type Page =
   | 'craftit'
   | 'suitee'
   | 'products'
+  | 'import'
   | 'suppliers'
   | 'team'
   | 'account'
@@ -35,6 +36,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Manage',
     items: [
       { key: 'products',  label: 'Products',  icon: '📦' },
+      { key: 'import',    label: 'Import',    icon: '📥' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
       { key: 'team',      label: 'Team',      icon: '👥' },
       { key: 'account',   label: 'Account',   icon: '⚙️' },
