@@ -14,6 +14,8 @@ import HostiHealthPage from './pages/HostiHealthPage'
 import TeamPage from './pages/TeamPage'
 import ImportPage from './pages/ImportPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
+import FestivalLayout, { type FestivalPage } from './layouts/FestivalLayout'
+import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
 import styles from './App.module.css'
 
 function App() {
@@ -21,6 +23,7 @@ function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [activeVenue, setActiveVenue] = useState<VenueRow | null>(null)
   const [page, setPage] = useState<Page>('hostihealth')
+  const [festivalPage, setFestivalPage] = useState<FestivalPage>('festival-setup')
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -46,10 +49,55 @@ function App() {
 
   function openVenue(venue: VenueRow) {
     setActiveVenue(venue)
-    setPage('hostihealth')
+    if (venue.venueType === 'festival') {
+      setFestivalPage('festival-setup')
+    } else {
+      setPage('hostihealth')
+    }
   }
 
   const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team']
+
+  const isFestival = activeVenue?.venueType === 'festival'
+
+  if (isFestival && activeVenue) {
+    return (
+      <FestivalLayout
+        user={user}
+        activeVenueName={activeVenue.name}
+        page={festivalPage}
+        onNavigate={setFestivalPage}
+      >
+        {festivalPage === 'projects' && (
+          <ProjectsPage user={user} activeVenueId={activeVenue.id} onOpenVenue={openVenue} />
+        )}
+        {festivalPage === 'festival-setup' && (
+          <FestivalEventSetupPage venueId={activeVenue.id} user={user} />
+        )}
+        {festivalPage === 'festival-stock' && (
+          <SetupProductsPage venueId={activeVenue.id} />
+        )}
+        {festivalPage === 'festival-purchasing' && (
+          <div style={{ padding: 32, color: '#6b7280' }}>Purchasing — coming soon</div>
+        )}
+        {festivalPage === 'festival-contracts' && (
+          <div style={{ padding: 32, color: '#6b7280' }}>Contracts — coming soon</div>
+        )}
+        {festivalPage === 'festival-team' && (
+          <TeamPage venueId={activeVenue.id} user={user} />
+        )}
+        {festivalPage === 'festival-liveops' && (
+          <div style={{ padding: 32, color: '#6b7280' }}>Live Operations — available during your event</div>
+        )}
+        {festivalPage === 'festival-outcomes' && (
+          <div style={{ padding: 32, color: '#6b7280' }}>Outcomes — available after event close</div>
+        )}
+        {festivalPage === 'festival-suitee' && (
+          <SuiteePage venueId={activeVenue.id} user={user} />
+        )}
+      </FestivalLayout>
+    )
+  }
 
   return (
     <DashboardLayout

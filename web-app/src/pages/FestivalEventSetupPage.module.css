@@ -1,0 +1,41 @@
+.page { max-width: 1100px; }
+.heading { font-family: 'Playfair Display', Georgia, serif; font-size: 28px; font-weight: 800; color: #0B132B; margin: 0 0 6px; }
+.subhead { font-size: 14px; color: #6b7280; margin: 0 0 32px; }
+.twoCol { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; }
+@media (max-width: 900px) { .twoCol { grid-template-columns: 1fr; } }
+.card { background: #fff; border: 1px solid #e5e3de; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+.cardHeading { font-size: 15px; font-weight: 700; color: #0B132B; margin: 0 0 20px; }
+.field { margin-bottom: 16px; }
+.fieldLabel { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 6px; }
+.savedBadge { font-size: 11px; font-weight: 600; color: #16a34a; }
+.input { width: 100%; padding: 8px 12px; border: 1px solid #e5e3de; border-radius: 8px; font-size: 14px; color: #0B132B; background: #fff; box-sizing: border-box; }
+.input:focus { outline: none; border-color: #1b4f72; }
+.prefixInput { display: flex; align-items: center; border: 1px solid #e5e3de; border-radius: 8px; overflow: hidden; background: #fff; }
+.prefixInput:focus-within { border-color: #1b4f72; }
+.prefix { padding: 8px 10px; font-size: 14px; color: #6b7280; background: #f9f8f6; border-right: 1px solid #e5e3de; }
+.prefixInput input { border: none; flex: 1; padding: 8px 12px; font-size: 14px; color: #0B132B; background: transparent; }
+.prefixInput input:focus { outline: none; }
+.chipRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { padding: 6px 14px; border: 1px solid #e5e3de; border-radius: 999px; font-size: 13px; font-weight: 500; color: #374151; background: #fff; cursor: pointer; transition: all 0.1s; }
+.chip:hover { border-color: #1b4f72; color: #1b4f72; }
+.chipActive { background: #1b4f72; border-color: #1b4f72; color: #fff; }
+.dateDiff { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+.summaryRow { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #f0ede8; }
+.summaryRow:last-child { border-bottom: none; }
+.summaryLabel { font-size: 13px; color: #6b7280; }
+.summaryValue { font-size: 14px; font-weight: 600; color: #0B132B; }
+.barTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.barTable th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; font-weight: 700; padding: 6px 8px; text-align: left; }
+.barTable td { padding: 6px 8px; border-bottom: 1px solid #f0ede8; }
+.barTable tr:last-child td { border-bottom: none; }
+.addBarBtn { display: flex; align-items: center; gap: 6px; background: none; border: 1px dashed #e5e3de; border-radius: 8px; color: #6b7280; font-size: 13px; font-weight: 600; padding: 8px 14px; cursor: pointer; width: 100%; justify-content: center; margin-top: 10px; }
+.addBarBtn:hover { border-color: #1b4f72; color: #1b4f72; }
+.barNameInput { border: none; background: transparent; font-size: 13px; color: #0B132B; padding: 2px 4px; width: 100%; }
+.barNameInput:focus { outline: 1px solid #1b4f72; border-radius: 4px; }
+.barTypeSelect { border: none; background: transparent; font-size: 12px; color: #6b7280; padding: 2px; }
+.deleteBarBtn { background: none; border: none; color: #9ca3af; font-size: 14px; cursor: pointer; padding: 2px 6px; }
+.deleteBarBtn:hover { color: #dc2626; }
+.confirmDelete { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #dc2626; }
+.confirmDeleteYes { background: #dc2626; color: #fff; border: none; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.confirmDeleteNo { background: none; border: 1px solid #e5e3de; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; color: #6b7280; }
+.loading { color: #6b7280; font-size: 14px; }

@@ -1,0 +1,196 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: #0B132B;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+}
+
+.sidebarTop {
+  margin-bottom: 32px;
+}
+
+.wordmark {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 22px;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0;
+}
+
+.wordmarkAmber {
+  color: #c47b2b;
+}
+
+.activeVenueName {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #9aa3b8;
+  font-weight: 500;
+}
+
+.switchVenue {
+  display: block;
+  background: none;
+  border: none;
+  color: #9aa3b8;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  margin-top: 6px;
+}
+
+.switchVenue:hover {
+  color: #ffffff;
+}
+
+.nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.navGroup {
+  margin-bottom: 8px;
+}
+
+.navGroupLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4a5568;
+  padding: 12px 12px 4px;
+  margin: 0;
+}
+
+.navIcon {
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.navLink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #c4c9d6;
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+}
+
+.navLink:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.navLinkActive {
+  border-left-color: #1b4f72;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+
+.sidebarBottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.userEmail {
+  font-size: 12px;
+  color: #9aa3b8;
+  margin: 0 0 10px;
+  word-break: break-all;
+}
+
+.signOut {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0B132B;
+  background: #f5f3ee;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.main {
+  flex: 1;
+  background: #f5f3ee;
+  overflow-y: auto;
+  padding: 32px;
+  min-width: 0;
+}
+
+.mobileHeader {
+  display: none;
+}
+
+.hamburger {
+  background: none;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+
+  .sidebarOpen {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    width: 80%;
+    max-width: 280px;
+  }
+
+  .main {
+    padding: 20px;
+  }
+
+  .mobileHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .mobileWordmark {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 18px;
+    font-weight: 800;
+    color: #0B132B;
+    margin: 0;
+  }
+}
+
+/* Festival-specific */
+.liveIndicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c47b2b;
+  margin-left: 6px;
+  vertical-align: middle;
+}
