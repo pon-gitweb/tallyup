@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import {
   addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc,
 } from 'firebase/firestore'
-import { db } from '../firebase'
+import { auth, db, storage } from '../firebase'
+import { ref, uploadBytes } from 'firebase/storage'
 import styles from './ImportPage.module.css'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type ImportStatus = 'idle' | 'ready' | 'importing' | 'done' | 'error'
+type ImportStatus = 'idle' | 'ready' | 'importing' | 'done' | 'error' | 'parsing'
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
@@ -117,13 +118,14 @@ function buildInvoiceFingerprint(
 
 // ─── DropZone component ───────────────────────────────────────────────────────
 
-function DropZone({ title, description, badge, badgeColour, children, onFiles }: {
+function DropZone({ title, description, badge, badgeColour, children, onFiles, accept }: {
   title: string
   description: string
   badge: string
   badgeColour: string
   children: React.ReactNode
   onFiles: (files: FileList) => void
+  accept?: string
 }) {
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -146,12 +148,12 @@ function DropZone({ title, description, badge, badgeColour, children, onFiles }:
         <input
           ref={inputRef}
           type="file"
-          accept=".csv"
+          accept={accept ?? '.csv'}
           hidden
           onChange={(e) => e.target.files && onFiles(e.target.files)}
         />
         <p className={styles.dropAreaTitle}>Drag a CSV here, or click to browse</p>
-        <p className={styles.dropAreaHint}>Accepts: .csv</p>
+        <p className={styles.dropAreaHint}>Accepts: {accept ?? '.csv'}</p>
       </div>
       {children}
     </div>
@@ -323,10 +325,70 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [cDuplicateDate, setCDuplicateDate] = useState<string | null>(null)
   const [cIgnoreDuplicate, setCIgnoreDuplicate] = useState(false)
   const [cFingerprint, setCFingerprint] = useState('')
+  const [cPdfMode, setCPdfMode] = useState(false)
+  const [cPdfError, setCPdfError] = useState<string | null>(null)
 
   async function handleFileC(files: FileList) {
     const file = files[0]
     if (!file) return
+
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      // PDF path — upload to Firebase Storage, call OCR endpoint
+      setCPdfMode(true)
+      setCStatus('parsing')
+      setCPdfError(null)
+      setCError(null)
+      try {
+        const path = `venues/${venueId}/invoices/desktop-${Date.now()}.pdf`
+        const storageRef = ref(storage, path)
+        await uploadBytes(storageRef, file)
+
+        const idToken = await auth.currentUser?.getIdToken()
+        const response = await fetch(
+          'https://us-central1-tallyup-f1463.cloudfunctions.net/api/process-invoices-pdf',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ venueId, storagePath: path }),
+          }
+        )
+        const data = await response.json()
+        if (!data.ok) throw new Error(data.message || data.error || 'OCR failed')
+
+        // Map OCR result to CRow format
+        const ocrRows: CRow[] = (data.lines || []).map((l: any) => ({
+          name: l.productName || l.name || '',
+          qty: l.quantity ?? 1,
+          costPrice: l.unitPrice ?? l.costPrice ?? null,
+          supplierCol: null,
+        }))
+        if (data.supplierName) setCSupplierName(data.supplierName)
+
+        if (ocrRows.length === 0) throw new Error('No products found in the PDF.')
+
+        // Check for scanned image warning
+        if (data.isScan || (data.message || '').toLowerCase().includes('scan')) {
+          setCPdfError('This PDF appears to be a scanned image. For best results, use the Scan Invoice camera in the mobile app, or ask your supplier for a digital PDF.')
+          setCStatus('idle')
+          setCPdfMode(false)
+          return
+        }
+
+        setCRows(ocrRows)
+        setCStatus('ready')
+      } catch (e: any) {
+        setCPdfError(e?.message || 'Could not read PDF. Try a CSV instead, or use the mobile app to scan this invoice.')
+        setCStatus('idle')
+        setCPdfMode(false)
+      }
+      return
+    }
+
+    // CSV path — existing code below unchanged
+    setCPdfMode(false)
     setCError(null)
     setCStatus('idle')
     try {
@@ -694,12 +756,29 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         description="Import a supplier invoice CSV to update product costs in bulk. Columns needed: Name/Product, Quantity, Unit Price."
         badge="Optional"
         badgeColour="#6b7280"
+        accept=".csv,.pdf"
         onFiles={handleFileC}
       >
         <p className={styles.mobileNote}>
           For PDF invoices, use the Scan Invoice feature in the mobile app or Invoices hub.
         </p>
         {cError && <p className={styles.error}>{cError}</p>}
+        {cPdfMode && cStatus === 'parsing' && (
+          <p className={styles.dropAreaHint} style={{ marginTop: 8 }}>Reading PDF…</p>
+        )}
+        {cPdfError && (
+          <div className={styles.error} style={{ marginTop: 10 }}>
+            {cPdfError}
+            {' '}
+            <button
+              type="button"
+              style={{ background: 'none', border: 'none', color: '#1b4f72', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
+              onClick={() => { setCPdfError(null); setCPdfMode(false); setCStatus('idle') }}
+            >
+              Try a CSV instead
+            </button>
+          </div>
+        )}
         {(cStatus === 'ready' || cStatus === 'importing') && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{cRows.length} invoice lines found</p>
