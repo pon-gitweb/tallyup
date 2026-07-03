@@ -63,6 +63,20 @@ service cloud.firestore {
         );
     }
 
+    function isThisSupplier(sid) {
+      return isSignedIn() && supplierId() == sid;
+    }
+
+    function isConnectedVenueMember(sid) {
+      // Checks if the user's UID is listed in the supplier's connectedVenueMembers array.
+      // connectedVenueMembers stores individual UIDs (not venueIds) for efficient rule evaluation.
+      // This field is written when a venue connection is established.
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/supplierAccounts/$(sid))
+        && get(/databases/$(database)/documents/supplierAccounts/$(sid))
+             .data.get('connectedVenueMembers', []).hasAny([request.auth.uid]);
+    }
+
     // ========= Root collections =========
     match /global_products/{id} {
       allow read: if isSignedIn();
@@ -97,6 +111,68 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create, update: if isSignedIn();
         allow delete: if false;
+      }
+    }
+
+    // ========= Supplier Accounts =========
+    // Commercial supplier data — pricing, orders, specials, contracts.
+    // Only the supplier themselves and members of explicitly connected venues can access.
+    // connectedVenueMembers[] stores individual UIDs for efficient rule evaluation.
+    match /supplierAccounts/{sid} {
+
+      // Root account doc: supplier reads own account only.
+      // Connected venue members cannot read the root doc (contains connectedVenues, config).
+      allow read: if isThisSupplier(sid);
+      allow write: if isThisSupplier(sid);
+
+      // Catalogue: supplier manages, connected venue members can read for pricing.
+      match /catalogue/{productId} {
+        allow read: if isThisSupplier(sid) || isConnectedVenueMember(sid);
+        allow write: if isThisSupplier(sid);
+        allow delete: if isThisSupplier(sid);
+      }
+
+      // Specials: supplier manages, connected venue members can read active promotions.
+      match /specials/{specialId} {
+        allow read: if isThisSupplier(sid) || isConnectedVenueMember(sid);
+        allow write: if isThisSupplier(sid);
+        allow delete: if isThisSupplier(sid);
+      }
+
+      // Orders: supplier manages, venue members can create and read their own orders.
+      match /orders/{orderId} {
+        // Supplier sees all orders.
+        // Venue member can read if the order's venueId is a venue they belong to.
+        allow read: if isThisSupplier(sid)
+          || (isConnectedVenueMember(sid)
+              && isVenueMember(resource.data.venueId));
+        // Venue member can create an order for a venue they belong to.
+        allow create: if isConnectedVenueMember(sid)
+          && isVenueMember(request.resource.data.venueId)
+          && request.resource.data.keys().hasAll(['venueId', 'lines', 'status'])
+          && request.resource.data.status == 'pending';
+        // Only supplier can update order status (acknowledge, fulfill, etc).
+        allow update: if isThisSupplier(sid);
+        allow delete: if isThisSupplier(sid);
+      }
+
+      // Contracts: supplier and the specific venue named in the contract.
+      match /contracts/{contractId} {
+        allow read: if isThisSupplier(sid)
+          || (isConnectedVenueMember(sid)
+              && isVenueMember(resource.data.venueId));
+        allow write: if isThisSupplier(sid);
+        allow delete: if isThisSupplier(sid);
+      }
+
+      // Connections: supplier manages connection requests.
+      // Venue members can read their own connection status.
+      match /connections/{venueId} {
+        allow read: if isThisSupplier(sid) || isVenueMember(venueId);
+        allow write: if isThisSupplier(sid);
+        // Venue can create a connection request (pending status only).
+        allow create: if isVenueMember(venueId)
+          && request.resource.data.status == 'pending';
       }
     }
 
