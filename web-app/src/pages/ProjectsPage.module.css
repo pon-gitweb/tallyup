@@ -102,3 +102,35 @@
   font-size: 14px;
   color: #dc2626;
 }
+
+/* ── Command Centre ── */
+.commandCentre { margin-bottom: 40px; }
+.commandCentreHeader { margin-bottom: 16px; }
+.commandCentreTitle { font-family: 'Playfair Display', Georgia, serif; font-size: 22px; font-weight: 800; color: #0B132B; margin: 0 0 4px; }
+.commandCentreSubtitle { font-size: 13px; color: #6b7280; margin: 0; }
+.commandTable { background: #fff; border: 1px solid #e5e3de; border-radius: 12px; overflow: hidden; }
+.commandTableHeader { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr 1.5fr 1fr 80px; padding: 10px 16px; background: #f5f3ee; border-bottom: 1px solid #e5e3de; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; }
+.commandRow { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr 1.5fr 1fr 80px; padding: 14px 16px; border-bottom: 1px solid #f0ede8; align-items: center; transition: background 0.1s; }
+.commandRow:hover { background: #fafaf9; }
+.commandRow:last-child { border-bottom: none; }
+.commandTotalsRow { background: #f9f8f6; font-weight: 700; border-top: 2px solid #e5e3de; }
+.commandTotalsRow:hover { background: #f9f8f6; }
+.commandVenueName { font-size: 14px; font-weight: 600; color: #0B132B; }
+.commandScore { display: flex; align-items: baseline; gap: 6px; }
+.commandScoreNum { font-size: 20px; font-weight: 800; }
+.commandScoreLabel { font-size: 11px; color: #6b7280; }
+.commandNoData { font-size: 12px; color: #9ca3af; font-style: italic; }
+.commandValue { font-size: 13px; color: #374151; }
+.commandVariance { font-size: 13px; color: #374151; }
+.commandVarianceHigh { color: #dc2626; font-weight: 600; }
+.commandTopIssue { font-size: 12px; color: #6b7280; }
+.commandLastStocktake { font-size: 12px; color: #6b7280; }
+.commandOpenBtn { background: none; border: 1px solid #1b4f72; border-radius: 6px; color: #1b4f72; font-size: 12px; font-weight: 600; padding: 5px 10px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+.commandOpenBtn:hover { background: #1b4f72; color: #fff; }
+.sectionDivider { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9ca3af; margin: 24px 0 12px; }
+.updatedNote { font-size: 12px; color: #9ca3af; font-style: italic; margin-top: 10px; }
+
+@media (max-width: 900px) {
+  .commandTableHeader { display: none; }
+  .commandRow { grid-template-columns: 1fr; gap: 4px; }
+}
