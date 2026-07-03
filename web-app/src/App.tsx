@@ -11,6 +11,7 @@ import CraftItPage from './pages/CraftItPage'
 import SettingsPage from './pages/SettingsPage'
 import SuiteePage from './pages/SuiteePage'
 import HostiHealthPage from './pages/HostiHealthPage'
+import TeamPage from './pages/TeamPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import styles from './App.module.css'
 
@@ -67,7 +68,7 @@ function App() {
       {page === 'craftit'      && activeVenue && <CraftItPage venueId={activeVenue.id} />}
       {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
       {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
-      {page === 'team'         && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
+      {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
       {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}
