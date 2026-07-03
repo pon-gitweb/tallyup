@@ -270,3 +270,22 @@
 .expandInput:focus {
   border-color: #1b4f72;
 }
+
+.expandTextarea {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #0B132B;
+  background: #ffffff;
+  resize: vertical;
+  min-height: 64px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.expandTextarea:focus {
+  border-color: #1b4f72;
+}

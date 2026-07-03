@@ -28,6 +28,8 @@ type Supplier = {
   portalUrl: string | null
   orderCutoffLocalTime: string | null
   mergeWindowHours: number | null
+  repName: string | null
+  notes: string | null
 }
 
 type EditableField = 'name' | 'email' | 'phone' | 'accountNumber' | 'orderingMethod' | 'defaultLeadDays'
@@ -55,6 +57,8 @@ function blankDraft(id: string): Supplier {
     portalUrl: null,
     orderCutoffLocalTime: null,
     mergeWindowHours: null,
+    repName: null,
+    notes: null,
   }
 }
 
@@ -171,6 +175,8 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
             portalUrl: data.portalUrl ?? null,
             orderCutoffLocalTime: data.orderCutoffLocalTime ?? null,
             mergeWindowHours: data.mergeWindowHours ?? null,
+            repName: data.repName ?? null,
+            notes: data.notes ?? null,
           }
         })
         setSuppliers(rows)
@@ -546,6 +552,8 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
 }
 
 function ExpandPanel({ supplier, venueId }: { supplier: Supplier; venueId: string }) {
+  const [repName, setRepName] = useState(supplier.repName ?? '')
+  const [notes, setNotes] = useState(supplier.notes ?? '')
   const [portalUrl, setPortalUrl] = useState(supplier.portalUrl ?? '')
   const [cutoff, setCutoff] = useState(supplier.orderCutoffLocalTime ?? '')
   const [mergeHours, setMergeHours] = useState(
@@ -553,12 +561,17 @@ function ExpandPanel({ supplier, venueId }: { supplier: Supplier; venueId: strin
   )
 
   useEffect(() => {
+    setRepName(supplier.repName ?? '')
+    setNotes(supplier.notes ?? '')
     setPortalUrl(supplier.portalUrl ?? '')
     setCutoff(supplier.orderCutoffLocalTime ?? '')
     setMergeHours(supplier.mergeWindowHours != null ? String(supplier.mergeWindowHours) : '')
-  }, [supplier.id, supplier.portalUrl, supplier.orderCutoffLocalTime, supplier.mergeWindowHours])
+  }, [supplier.id, supplier.repName, supplier.notes, supplier.portalUrl, supplier.orderCutoffLocalTime, supplier.mergeWindowHours])
 
-  async function saveField(field: 'portalUrl' | 'orderCutoffLocalTime' | 'mergeWindowHours', raw: string) {
+  async function saveField(
+    field: 'portalUrl' | 'orderCutoffLocalTime' | 'mergeWindowHours' | 'repName' | 'notes',
+    raw: string,
+  ) {
     const trimmed = raw.trim()
     let value: string | number | null
     if (field === 'mergeWindowHours') {
@@ -579,6 +592,27 @@ function ExpandPanel({ supplier, venueId }: { supplier: Supplier; venueId: strin
 
   return (
     <div className={styles.expandPanel}>
+      <div className={styles.expandField}>
+        <label className={styles.expandLabel}>Rep / contact name</label>
+        <input
+          className={styles.expandInput}
+          value={repName}
+          onChange={(e) => setRepName(e.target.value)}
+          onBlur={(e) => saveField('repName', e.target.value)}
+          placeholder="e.g. Sarah Jones"
+        />
+      </div>
+      <div className={styles.expandField}>
+        <label className={styles.expandLabel}>Notes</label>
+        <textarea
+          className={styles.expandTextarea}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          onBlur={(e) => saveField('notes', e.target.value)}
+          placeholder="Minimum orders, delivery windows, special instructions…"
+          rows={3}
+        />
+      </div>
       <div className={styles.expandField}>
         <label className={styles.expandLabel}>Portal URL</label>
         <input
