@@ -18,14 +18,14 @@ function App() {
   // undefined = auth state not yet resolved, null = signed out
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [activeVenue, setActiveVenue] = useState<VenueRow | null>(null)
-  const [page, setPage] = useState<Page>('projects')
+  const [page, setPage] = useState<Page>('hostihealth')
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u)
       if (!u) {
         setActiveVenue(null)
-        setPage('projects')
+        setPage('hostihealth')
       }
     })
   }, [])
@@ -44,8 +44,10 @@ function App() {
 
   function openVenue(venue: VenueRow) {
     setActiveVenue(venue)
-    setPage('setup-products')
+    setPage('hostihealth')
   }
+
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team']
 
   return (
     <DashboardLayout
@@ -57,15 +59,16 @@ function App() {
       {page === 'projects' && (
         <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} />
       )}
-      {page === 'setup-products' && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
-      {page === 'suppliers' && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
-      {page === 'reports' && activeVenue && <ReportsPage venueId={activeVenue.id} />}
-      {page === 'orders' && activeVenue && <OrdersPage venueId={activeVenue.id} />}
-      {page === 'craftit' && activeVenue && <CraftItPage venueId={activeVenue.id} />}
-      {page === 'settings' && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
-      {page === 'suitee' && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
-      {page === 'hostihealth' && activeVenue && <HostiHealthPage venueId={activeVenue.id} />}
-      {(page === 'setup-products' || page === 'suppliers' || page === 'reports' || page === 'orders' || page === 'craftit' || page === 'settings' || page === 'suitee' || page === 'hostihealth') && !activeVenue && (
+      {page === 'hostihealth'  && activeVenue && <HostiHealthPage venueId={activeVenue.id} />}
+      {page === 'products'     && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
+      {page === 'suppliers'    && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
+      {page === 'reports'      && activeVenue && <ReportsPage venueId={activeVenue.id} />}
+      {page === 'orders'       && activeVenue && <OrdersPage venueId={activeVenue.id} />}
+      {page === 'craftit'      && activeVenue && <CraftItPage venueId={activeVenue.id} />}
+      {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
+      {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
+      {page === 'team'         && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
+      {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}
           <button type="button" className={styles.noVenueLink} onClick={() => setPage('projects')}>

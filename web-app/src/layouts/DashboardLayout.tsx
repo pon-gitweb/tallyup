@@ -3,18 +3,43 @@ import { signOut, type User } from 'firebase/auth'
 import { auth } from '../firebase'
 import styles from './DashboardLayout.module.css'
 
-export type Page = 'projects' | 'setup-products' | 'suppliers' | 'reports' | 'craftit' | 'orders' | 'settings' | 'suitee' | 'hostihealth'
+export type Page =
+  | 'projects'
+  | 'hostihealth'
+  | 'reports'
+  | 'orders'
+  | 'craftit'
+  | 'suitee'
+  | 'products'
+  | 'suppliers'
+  | 'team'
+  | 'account'
 
-const NAV_ITEMS: { key: Page; label: string; enabled: boolean; isAI?: boolean; isHealth?: boolean }[] = [
-  { key: 'projects',       label: 'Projects',         enabled: true },
-  { key: 'hostihealth',    label: '⬡ Hosti Health',  enabled: true, isHealth: true },
-  { key: 'setup-products', label: 'Setup',             enabled: true },
-  { key: 'suppliers',      label: 'Suppliers',      enabled: true },
-  { key: 'reports',        label: 'Reports',        enabled: true },
-  { key: 'suitee',         label: '✦ Ask Suitee',  enabled: true, isAI: true },
-  { key: 'craftit',        label: 'CraftIt',        enabled: true },
-  { key: 'orders',         label: 'Orders',         enabled: true },
-  { key: 'settings',       label: 'Settings',       enabled: true },
+type NavGroup = {
+  label: string
+  items: { key: Page; label: string; icon: string }[]
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: 'Analyse',
+    items: [
+      { key: 'hostihealth', label: 'Hosti Health', icon: '⬡' },
+      { key: 'reports',     label: 'Reports',      icon: '📊' },
+      { key: 'orders',      label: 'Orders',       icon: '🛒' },
+      { key: 'craftit',     label: 'CraftIt',      icon: '🍹' },
+      { key: 'suitee',      label: 'Ask Suitee',   icon: '✦' },
+    ],
+  },
+  {
+    label: 'Manage',
+    items: [
+      { key: 'products',  label: 'Products',  icon: '📦' },
+      { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
+      { key: 'team',      label: 'Team',      icon: '👥' },
+      { key: 'account',   label: 'Account',   icon: '⚙️' },
+    ],
+  },
 ]
 
 export default function DashboardLayout({
@@ -43,29 +68,36 @@ export default function DashboardLayout({
         <p className={styles.wordmark}>
           <span className={styles.wordmarkAmber}>H</span>osti
         </p>
-        {activeVenueName && <p className={styles.activeVenueName}>{activeVenueName}</p>}
+        {activeVenueName && (
+          <button
+            type="button"
+            className={styles.switchVenue}
+            onClick={() => navigate('projects')}
+          >
+            ← {activeVenueName}
+          </button>
+        )}
       </div>
 
       <nav className={styles.nav}>
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className={[
-              styles.navLink,
-              page === item.key ? styles.navLinkActive : '',
-              !item.enabled ? styles.navLinkDisabled : '',
-            ].join(' ').trim()}
-            style={
-              item.isAI ? { color: '#c47b2b', fontWeight: page === item.key ? 800 : 600 } :
-              item.isHealth ? { color: '#1b4f72', fontWeight: page === item.key ? 800 : 600 } :
-              undefined
-            }
-            onClick={() => item.enabled && navigate(item.key)}
-            disabled={!item.enabled}
-          >
-            {item.label}
-          </button>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label} className={styles.navGroup}>
+            <p className={styles.navGroupLabel}>{group.label}</p>
+            {group.items.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={[
+                  styles.navLink,
+                  page === item.key ? styles.navLinkActive : '',
+                ].join(' ').trim()}
+                onClick={() => navigate(item.key)}
+              >
+                <span className={styles.navIcon}>{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
 
