@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  addDoc, collection, doc, getDocs, serverTimestamp, writeBatch, updateDoc,
+  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import styles from './ImportPage.module.css'
@@ -76,6 +76,45 @@ async function batchWrite(
   }
 }
 
+// ─── Deduplication helpers ────────────────────────────────────────────────────
+
+async function loadExistingProducts(venueId: string): Promise<Map<string, string>> {
+  const snap = await getDocs(collection(db, 'venues', venueId, 'products'))
+  const map = new Map<string, string>()
+  snap.docs.forEach(d => {
+    const name = ((d.data() as any).name || '').toLowerCase().trim()
+    if (name) map.set(name, d.id)
+  })
+  return map
+}
+
+async function findExistingSupplier(venueId: string, name: string): Promise<string | null> {
+  const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'))
+  const needle = name.toLowerCase().trim()
+  const match = snap.docs.find(d => {
+    const existing = ((d.data() as any).name || '').toLowerCase().trim()
+    return existing === needle || existing.includes(needle) || needle.includes(existing)
+  })
+  return match?.id ?? null
+}
+
+function buildInvoiceFingerprint(
+  supplierName: string,
+  lines: { name: string; qty: number | null; costPrice: number | null }[],
+): string {
+  const content = [
+    supplierName.toLowerCase().trim(),
+    lines.length,
+    ...lines.slice(0, 10).map(l => `${l.name.toLowerCase().trim()}:${l.qty ?? 0}:${l.costPrice ?? 0}`),
+  ].join('|')
+  let hash = 0
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) - hash) + content.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
 // ─── DropZone component ───────────────────────────────────────────────────────
 
 function DropZone({ title, description, badge, badgeColour, children, onFiles }: {
@@ -129,6 +168,9 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [aStatus, setAStatus] = useState<ImportStatus>('idle')
   const [aError, setAError] = useState<string | null>(null)
   const [aDate, setADate] = useState('')
+  const [aExistingMap, setAExistingMap] = useState<Map<string, string>>(new Map())
+  const [aUpdateCount, setAUpdateCount] = useState(0)
+  const [aCreateCount, setACreateCount] = useState(0)
 
   async function handleFileA(files: FileList) {
     const file = files[0]
@@ -157,6 +199,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         }))
         .filter(r => r.name)
 
+      const existingMap = await loadExistingProducts(venueId)
+      setAExistingMap(existingMap)
+      const updateCount = parsed.filter(r => existingMap.has(r.name.toLowerCase().trim())).length
+      setAUpdateCount(updateCount)
+      setACreateCount(parsed.length - updateCount)
       setARows(parsed)
       setAStatus('ready')
     } catch {
@@ -167,9 +214,10 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   async function handleImportA() {
     setAStatus('importing')
     try {
+      const existingMap = aExistingMap.size > 0 ? aExistingMap : await loadExistingProducts(venueId)
       await batchWrite(db, `venues/${venueId}/products`,
         aRows.map(r => ({
-          id: slugId(r.name),
+          id: existingMap.get(r.name.toLowerCase().trim()) ?? slugId(r.name),
           data: {
             name: r.name,
             unit: r.unit,
@@ -269,6 +317,12 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [cStatus, setCStatus] = useState<ImportStatus>('idle')
   const [cError, setCError] = useState<string | null>(null)
   const [cSupplierName, setCSupplierName] = useState('')
+  const [cExistingSupplierId, setCExistingSupplierId] = useState<string | null>(null)
+  const [cSupplierFound, setCSupplierFound] = useState(false)
+  const [cIsDuplicate, setCIsDuplicate] = useState(false)
+  const [cDuplicateDate, setCDuplicateDate] = useState<string | null>(null)
+  const [cIgnoreDuplicate, setCIgnoreDuplicate] = useState(false)
+  const [cFingerprint, setCFingerprint] = useState('')
 
   async function handleFileC(files: FileList) {
     const file = files[0]
@@ -296,9 +350,32 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         .filter(r => r.name)
 
       // Pre-fill supplier name from CSV if found
-      if (supplierIdx >= 0 && parsed[0]?.supplierCol) {
-        setCSupplierName(parsed[0].supplierCol)
+      const supplierFromCsv = supplierIdx >= 0 ? parsed[0]?.supplierCol || '' : ''
+      if (supplierFromCsv) setCSupplierName(supplierFromCsv)
+      const effectiveSupplier = supplierFromCsv || cSupplierName
+
+      // Supplier deduplication
+      if (effectiveSupplier) {
+        const existingId = await findExistingSupplier(venueId, effectiveSupplier)
+        setCExistingSupplierId(existingId)
+        setCSupplierFound(!!existingId)
       }
+
+      // Invoice fingerprint deduplication
+      const fp = buildInvoiceFingerprint(effectiveSupplier, parsed)
+      setCFingerprint(fp)
+      setCIgnoreDuplicate(false)
+      try {
+        const fpSnap = await getDoc(doc(db, 'venues', venueId, 'processedInvoices', fp))
+        if (fpSnap.exists()) {
+          setCIsDuplicate(true)
+          const importedAt = (fpSnap.data() as any)?.importedAt?.toDate?.()
+          setCDuplicateDate(importedAt ? importedAt.toLocaleDateString('en-NZ') : null)
+        } else {
+          setCIsDuplicate(false)
+          setCDuplicateDate(null)
+        }
+      } catch { setCIsDuplicate(false) }
 
       setCRows(parsed)
       setCStatus('ready')
@@ -310,13 +387,28 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   async function handleImportC() {
     setCStatus('importing')
     try {
+      // Find or create supplier
+      let supplierId = cExistingSupplierId
+      if (!supplierId && cSupplierName.trim()) {
+        const ref = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+          name: cSupplierName.trim(),
+          orderingMethod: 'email',
+          createdAt: serverTimestamp(),
+        })
+        supplierId = ref.id
+      }
+
+      // Load existing products for name-based matching
+      const existingMap = await loadExistingProducts(venueId)
+
       await batchWrite(db, `venues/${venueId}/products`,
         cRows.map(r => ({
-          id: slugId(r.name),
+          id: existingMap.get(r.name.toLowerCase().trim()) ?? slugId(r.name),
           data: {
             name: r.name,
             costPrice: r.costPrice,
-            supplierName: cSupplierName || 'Unassigned',
+            supplierName: cSupplierName.trim() || 'Unassigned',
+            ...(supplierId ? { supplierId } : {}),
             updatedAt: serverTimestamp(),
           },
         }))
@@ -325,6 +417,17 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         onboardingHasInvoices: true,
         onboardingInvoiceLinesCount: cRows.length,
       })
+
+      // Write fingerprint to prevent duplicate re-import
+      if (cFingerprint) {
+        await setDoc(doc(db, 'venues', venueId, 'processedInvoices', cFingerprint), {
+          importedAt: serverTimestamp(),
+          supplierName: cSupplierName.trim(),
+          lineCount: cRows.length,
+          source: 'desktop-import',
+        })
+      }
+
       setCStatus('done')
     } catch {
       setCError('Import failed. Please try again.')
@@ -339,6 +442,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [dError, setDError] = useState<string | null>(null)
   const [dSupplierName, setDSupplierName] = useState('')
   const [existingPrices, setExistingPrices] = useState<Record<string, number | null>>({})
+  const [dAllSuppliers, setDAllSuppliers] = useState<Map<string, string>>(new Map())
 
   useEffect(() => {
     if (!venueId) return
@@ -350,7 +454,20 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       })
       setExistingPrices(map)
     }).catch(() => {})
+    getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
+      const map = new Map<string, string>()
+      snap.docs.forEach(d => {
+        const name = ((d.data() as any).name || '').toLowerCase().trim()
+        if (name) map.set(name, d.id)
+      })
+      setDAllSuppliers(map)
+    }).catch(() => {})
   }, [venueId])
+
+  // Derive supplier match reactively from current input
+  const dSupplierMatch = dSupplierName.trim()
+    ? dAllSuppliers.get(dSupplierName.toLowerCase().trim()) ?? null
+    : null
 
   async function handleFileD(files: FileList) {
     const file = files[0]
@@ -386,14 +503,29 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   async function handleImportD() {
     setDStatus('importing')
     try {
+      // Find or create supplier
+      let supplierId = dSupplierMatch
+      if (!supplierId && dSupplierName.trim()) {
+        const ref = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+          name: dSupplierName.trim(),
+          orderingMethod: 'email',
+          createdAt: serverTimestamp(),
+        })
+        supplierId = ref.id
+      }
+
+      // Load existing products for name-based matching
+      const existingMap = await loadExistingProducts(venueId)
+
       const priceChanges = dRows.filter(r => !r.isNew && r.currentCost !== r.price)
       await batchWrite(db, `venues/${venueId}/products`,
         dRows.map(r => ({
-          id: slugId(r.name),
+          id: existingMap.get(r.name.toLowerCase().trim()) ?? slugId(r.name),
           data: {
             name: r.name,
             costPrice: r.price,
-            supplierName: dSupplierName || 'Unassigned',
+            supplierName: dSupplierName.trim() || 'Unassigned',
+            ...(supplierId ? { supplierId } : {}),
             updatedAt: serverTimestamp(),
           },
         }))
@@ -441,6 +573,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         {(aStatus === 'ready' || aStatus === 'importing') && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{aRows.length} products found</p>
+            <p className={styles.deduplicateSummary}>
+              {aUpdateCount > 0 || aCreateCount > 0
+                ? `${aUpdateCount} will update existing · ${aCreateCount} will be created new`
+                : null}
+            </p>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
@@ -566,6 +703,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         {(cStatus === 'ready' || cStatus === 'importing') && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{cRows.length} invoice lines found</p>
+            {cSupplierName && (
+              <p className={styles.deduplicateSummary}>
+                Supplier: {cSupplierName} — {cSupplierFound ? 'matches existing supplier' : 'will be created'}
+              </p>
+            )}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
@@ -595,17 +737,24 @@ export default function ImportPage({ venueId }: { venueId: string }) {
                 placeholder="e.g. Hancocks"
               />
             </div>
+            {cIsDuplicate && !cIgnoreDuplicate && (
+              <div className={styles.duplicateWarning}>
+                ⚠️ This invoice looks like it may have been imported before
+                {cDuplicateDate ? ` (${cDuplicateDate})` : ' (previously)'}.
+                <button type="button" onClick={() => setCIgnoreDuplicate(true)}>Import anyway</button>
+              </div>
+            )}
             <div className={styles.actions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => { setCRows([]); setCStatus('idle'); setCError(null) }}
+                onClick={() => { setCRows([]); setCStatus('idle'); setCError(null); setCIsDuplicate(false); setCIgnoreDuplicate(false) }}
               >
                 Cancel
               </button>
               <button
                 className={styles.confirmBtn}
                 onClick={handleImportC}
-                disabled={cStatus === 'importing'}
+                disabled={cStatus === 'importing' || (cIsDuplicate && !cIgnoreDuplicate)}
               >
                 {cStatus === 'importing' ? 'Importing…' : `Update ${cRows.length} products`}
               </button>
@@ -631,6 +780,13 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         {(dStatus === 'ready' || dStatus === 'importing') && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{dRows.length} products found</p>
+            {dSupplierName.trim() && (
+              <p className={styles.deduplicateSummary}>
+                {dSupplierMatch
+                  ? `Updating prices for existing supplier: ${dSupplierName.trim()}`
+                  : `New supplier will be created: ${dSupplierName.trim()}`}
+              </p>
+            )}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>

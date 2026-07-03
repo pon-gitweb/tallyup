@@ -31,3 +31,35 @@
 .changeRow td { background: #fef9c3; }
 .newRow td { color: #1b4f72; font-style: italic; }
 .mobileNote { font-size: 12px; color: #9ca3af; font-style: italic; margin-top: 8px; }
+
+.deduplicateSummary {
+  font-size: 12px;
+  color: #6b7280;
+  font-style: italic;
+  margin: 0 0 8px;
+}
+
+.duplicateWarning {
+  background: #fef9c3;
+  border: 1px solid #c47b2b;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #92400e;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.duplicateWarning button {
+  background: none;
+  border: 1px solid #c47b2b;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
+  cursor: pointer;
+  white-space: nowrap;
+}
