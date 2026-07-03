@@ -16,6 +16,8 @@ import ImportPage from './pages/ImportPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import FestivalLayout, { type FestivalPage } from './layouts/FestivalLayout'
 import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
+import FestivalPurchasingPage from './pages/FestivalPurchasingPage'
+import FestivalContractsPage from './pages/FestivalContractsPage'
 import styles from './App.module.css'
 
 function App() {
@@ -78,10 +80,10 @@ function App() {
           <SetupProductsPage venueId={activeVenue.id} />
         )}
         {festivalPage === 'festival-purchasing' && (
-          <div style={{ padding: 32, color: '#6b7280' }}>Purchasing — coming soon</div>
+          <FestivalPurchasingPage venueId={activeVenue.id} user={user} />
         )}
         {festivalPage === 'festival-contracts' && (
-          <div style={{ padding: 32, color: '#6b7280' }}>Contracts — coming soon</div>
+          <FestivalContractsPage venueId={activeVenue.id} />
         )}
         {festivalPage === 'festival-team' && (
           <TeamPage venueId={activeVenue.id} user={user} />
