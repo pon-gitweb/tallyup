@@ -141,8 +141,19 @@ IZZY
 - Available on every screen via the ✦ button in the header
 
 SUITEE (manager/owner only)
-- Ask Suitee questions about your venue data
-- Available in the Reports screen
+- Ask Suitee questions about your venue data — variance, stock, recipes, suppliers, performance score, and more
+- Available in the Reports screen on mobile (tap the chat icon)
+- Also available on the Hosti web dashboard at app.hosti.co.nz — better for longer analysis sessions at a desk
+
+HOSTI WEB DASHBOARD:
+- Access your full venue data on any computer browser — no download needed
+- Log in at app.hosti.co.nz with your existing Hosti email and password
+- Same data as your mobile app — updated in real time
+- Best for: reviewing reports, analysing variance trends, managing products and suppliers, inviting team members
+- Available sections: Hosti Health score and charts, Reports with variance tables, Orders overview, CraftIt recipe GP analysis, Ask Suitee (full conversation), Products (bulk edit, CSV import/export), Suppliers, Import (drag-and-drop CSV for opening stock, sales data, invoices, catalogues), Team management, Account settings
+- Import page: drag your stocktake CSV, sales reports, supplier invoices, or price lists from your computer — much easier than uploading from a phone
+- What stays on mobile: stocktake counting (voice, barcode, camera), invoice scanning via camera, real-time stockout alerts, festival operations during an event
+- If a user asks whether they can see reports or data on a bigger screen: yes — direct them to app.hosti.co.nz
 
 PERFORMANCE SCREEN (HOSTI HEALTH):
 - View your venue's Hosti Health score (0–100) from the dashboard — tap "View Performance"
@@ -184,6 +195,8 @@ SUGGESTED ORDERS:
 FEATURES PLANNED FOR FUTURE UPDATES:
 - Waste Control tracking (log wastage by product and reason — coming soon)
 - POS integrations (Square, Wizbang, Bepoz — connection screens visible in Settings, activation in progress)
+- Desktop onboarding experience — guided tour for new web dashboard users (coming soon)
+- CraftIt recipe editing on desktop — create and edit recipes with a keyboard (coming soon)
 - Accounting integrations (Xero, MYOB — connection screens visible in Settings, activation in progress)
 - Gamification and staff performance tracking
 - Supplier scorecards

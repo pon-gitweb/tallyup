@@ -8,12 +8,12 @@ import styles from './SuiteePage.module.css'
 const AI_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
 
 const SUGGESTED_QUESTIONS = [
-  'What were my top 3 variance drivers this stocktake?',
-  'Which products are at risk of running out?',
-  'How can I improve my Hosti Health score?',
-  'Which supplier has increased prices the most?',
-  'What is my Days of Cover and is it healthy?',
-  'Which of my recipes has the worst GP and what should I do about it?',
+  'What were my top 3 variance drivers last stocktake and what likely caused them?',
+  'How does my Hosti Health score compare to the NZ hospitality benchmark?',
+  'Which of my recipes has the worst GP% and what should I price it at?',
+  'Which products should I reorder this week based on current stock levels?',
+  'Which supplier has increased their prices the most in the last 3 months?',
+  'I can see my variance report — which products should I investigate first?',
 ]
 
 // ─── Types ────────────────────────────────────────────────────────────────────
