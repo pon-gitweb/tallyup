@@ -4,11 +4,20 @@ import type { User } from 'firebase/auth'
 import { db } from '../firebase'
 import styles from './ProjectsPage.module.css'
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ParetoItem = {
+  name: string
+  varianceDollars: number
+  contributionPct: number
+  areaName: string | null
+  categoryName: string | null
+}
+
 export type VenueRow = {
   id: string
   name: string
   venueType: string
-  // Command Centre data — loaded with each venue
   score: number | null
   scoreLabel: string | null
   varianceDollars: number | null
@@ -16,9 +25,12 @@ export type VenueRow = {
   estimatedImpact: number | null
   totalStocktakesCompleted: number | null
   lastCompletedAt: Date | null
-  topVarianceProduct: string | null
+  paretoTop10: ParetoItem[]
+  prevParetoTop10: ParetoItem[]
   snapshotLoaded: boolean
 }
+
+// ─── Data loading ─────────────────────────────────────────────────────────────
 
 async function loadVenues(uid: string): Promise<VenueRow[]> {
   const userSnap = await getDoc(doc(db, 'users', uid))
@@ -32,11 +44,12 @@ async function loadVenues(uid: string): Promise<VenueRow[]> {
         const data = venueSnap.data() as any
         if (data.deletedAt) return null
 
-        // Load latest monthly snapshot for Command Centre
         const now = new Date()
         const monthKey = now.toISOString().slice(0, 7)
         const prevMonthKey = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7)
+        const twoMonthsBack = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().slice(0, 7)
 
+        // Current snapshot: this month → prev month fallback
         let snapshot: any = null
         const snapDoc = await getDoc(doc(db, 'venues', id, 'profitRecoverySnapshots', monthKey))
         if (snapDoc.exists()) {
@@ -46,14 +59,22 @@ async function loadVenues(uid: string): Promise<VenueRow[]> {
           if (prevDoc.exists()) snapshot = prevDoc.data()
         }
 
+        // Previous snapshot for trend comparison: prev month → two months back fallback
+        let prevSnapshot: any = null
+        const prevDoc2 = await getDoc(doc(db, 'venues', id, 'profitRecoverySnapshots', prevMonthKey))
+        if (prevDoc2.exists()) {
+          prevSnapshot = prevDoc2.data()
+        } else {
+          const prevDoc3 = await getDoc(doc(db, 'venues', id, 'profitRecoverySnapshots', twoMonthsBack))
+          if (prevDoc3.exists()) prevSnapshot = prevDoc3.data()
+        }
+
         const score: number | null = snapshot?.score ?? null
         const scoreLabel: string | null = score == null ? null :
           score >= 90 ? 'Excellent' :
           score >= 75 ? 'Strong' :
           score >= 60 ? 'Developing' :
           score >= 40 ? 'Needs attention' : 'At risk'
-
-        const lastCompletedAt: Date | null = data.lastCompletedAt?.toDate?.() ?? null
 
         return {
           id,
@@ -65,8 +86,9 @@ async function loadVenues(uid: string): Promise<VenueRow[]> {
           stockValue: snapshot?.stockValue ?? null,
           estimatedImpact: snapshot?.estimatedImpact ?? null,
           totalStocktakesCompleted: data.totalStocktakesCompleted ?? null,
-          lastCompletedAt,
-          topVarianceProduct: snapshot?.paretoTop3?.[0]?.name ?? null,
+          lastCompletedAt: data.lastCompletedAt?.toDate?.() ?? null,
+          paretoTop10: snapshot?.paretoTop10 ?? snapshot?.paretoTop3 ?? [],
+          prevParetoTop10: prevSnapshot?.paretoTop10 ?? prevSnapshot?.paretoTop3 ?? [],
           snapshotLoaded: snapshot != null,
         } as VenueRow
       } catch {
@@ -77,7 +99,7 @@ async function loadVenues(uid: string): Promise<VenueRow[]> {
   return rows.filter((r): r is VenueRow => r !== null)
 }
 
-// ─── Command Centre helpers ───────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function scoreColour(score: number): string {
   if (score >= 75) return '#16a34a'
@@ -118,6 +140,27 @@ function formatVariance(venues: VenueRow[]): string {
   return `$${Math.abs(Math.round(total)).toLocaleString()} ${total < 0 ? 'short' : 'excess'}`
 }
 
+function getItemTrend(
+  current: ParetoItem,
+  prevPareto: ParetoItem[],
+): 'worse' | 'better' | 'stable' | 'new' {
+  const prev = prevPareto.find(p => p.name.toLowerCase() === current.name.toLowerCase())
+  if (!prev) return 'new'
+  const currentAbs = Math.abs(current.varianceDollars)
+  const prevAbs = Math.abs(prev.varianceDollars)
+  if (currentAbs > prevAbs * 1.2) return 'worse'
+  if (currentAbs < prevAbs * 0.8) return 'better'
+  return 'stable'
+}
+
+function detectAnomaly(current: ParetoItem, prevPareto: ParetoItem[]): boolean {
+  const prev = prevPareto.find(p => p.name.toLowerCase() === current.name.toLowerCase())
+  if (!prev) return false
+  const currentAbs = Math.abs(current.varianceDollars)
+  const prevAbs = Math.abs(prev.varianceDollars)
+  return currentAbs > prevAbs * 2 && currentAbs > 50
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ProjectsPage({
@@ -132,6 +175,7 @@ export default function ProjectsPage({
   const [venues, setVenues] = useState<VenueRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [expandedVenueId, setExpandedVenueId] = useState<string | null>(null)
   const autoSelected = useRef(false)
 
   useEffect(() => {
@@ -153,7 +197,6 @@ export default function ProjectsPage({
   }, [user.uid])
 
   const venueCount = venues.filter(v => v.venueType !== 'festival').length
-  const totalVarianceStr = formatVariance(venues)
   const avgScore = groupAvgScore(venues)
   const totalStock = groupTotalStockValue(venues)
   const totalVariance = groupTotalVariance(venues)
@@ -172,12 +215,13 @@ export default function ProjectsPage({
         <p className={styles.empty}>No projects yet. Create your first venue or festival from the mobile app.</p>
       )}
 
+      {/* ── Command Centre (2+ venues) ── */}
       {!loading && !error && venues.length >= 2 && (
         <div className={styles.commandCentre}>
           <div className={styles.commandCentreHeader}>
             <h2 className={styles.commandCentreTitle}>Group Overview</h2>
             <p className={styles.commandCentreSubtitle}>
-              {venueCount} venue{venueCount !== 1 ? 's' : ''} · Total variance: {totalVarianceStr} · Updated from each venue's Performance screen
+              {venueCount} venue{venueCount !== 1 ? 's' : ''} · Total variance: {formatVariance(venues)} · Updated from each venue's Performance screen
             </p>
           </div>
 
@@ -187,7 +231,7 @@ export default function ProjectsPage({
               <span>Hosti Health</span>
               <span>Stock Value</span>
               <span>Variance</span>
-              <span>Top Issue</span>
+              <span>Top Variances</span>
               <span>Last Stocktake</span>
               <span></span>
             </div>
@@ -196,41 +240,117 @@ export default function ProjectsPage({
               .filter(v => v.venueType !== 'festival')
               .sort((a, b) => (a.score ?? 999) - (b.score ?? 999))
               .map(venue => (
-                <div key={venue.id} className={styles.commandRow}>
-                  <span className={styles.commandVenueName}>{venue.name}</span>
-                  <span className={styles.commandScore}>
-                    {venue.score != null ? (
-                      <>
-                        <span className={styles.commandScoreNum} style={{ color: scoreColour(venue.score) }}>
-                          {venue.score}
+                <div key={venue.id}>
+                  <div
+                    className={`${styles.commandRow} ${expandedVenueId === venue.id ? styles.commandRowExpanded : ''}`}
+                    onClick={() => setExpandedVenueId(expandedVenueId === venue.id ? null : venue.id)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <span className={styles.commandVenueName}>{venue.name}</span>
+                    <span className={styles.commandScore}>
+                      {venue.score != null ? (
+                        <>
+                          <span className={styles.commandScoreNum} style={{ color: scoreColour(venue.score) }}>{venue.score}</span>
+                          <span className={styles.commandScoreLabel}>{venue.scoreLabel}</span>
+                        </>
+                      ) : (
+                        <span className={styles.commandNoData}>No data yet</span>
+                      )}
+                    </span>
+                    <span className={styles.commandValue}>
+                      {venue.stockValue != null ? `$${Math.round(venue.stockValue).toLocaleString()}` : '—'}
+                    </span>
+                    <span className={`${styles.commandVariance} ${(venue.varianceDollars ?? 0) < -200 ? styles.commandVarianceHigh : ''}`}>
+                      {venue.varianceDollars != null
+                        ? `$${Math.abs(Math.round(venue.varianceDollars)).toLocaleString()} ${venue.varianceDollars < 0 ? 'short' : 'excess'}`
+                        : '—'}
+                    </span>
+                    <span className={styles.commandTopIssues}>
+                      {venue.paretoTop10.slice(0, 3).map((item, i) => (
+                        <span
+                          key={i}
+                          className={`${styles.varianceChip} ${item.varianceDollars < 0 ? styles.varianceChipShort : styles.varianceChipExcess}`}
+                        >
+                          {item.name.length > 14 ? item.name.slice(0, 13) + '…' : item.name}
+                          {' '}${Math.abs(Math.round(item.varianceDollars))}
                         </span>
-                        <span className={styles.commandScoreLabel}>{venue.scoreLabel}</span>
-                      </>
-                    ) : (
-                      <span className={styles.commandNoData}>No data yet</span>
-                    )}
-                  </span>
-                  <span className={styles.commandValue}>
-                    {venue.stockValue != null ? `$${Math.round(venue.stockValue).toLocaleString()}` : '—'}
-                  </span>
-                  <span className={`${styles.commandVariance} ${(venue.varianceDollars ?? 0) < -200 ? styles.commandVarianceHigh : ''}`}>
-                    {venue.varianceDollars != null
-                      ? `$${Math.abs(Math.round(venue.varianceDollars)).toLocaleString()} ${venue.varianceDollars < 0 ? 'short' : 'excess'}`
-                      : '—'}
-                  </span>
-                  <span className={styles.commandTopIssue}>{venue.topVarianceProduct ?? '—'}</span>
-                  <span className={styles.commandLastStocktake}>
-                    {venue.lastCompletedAt
-                      ? formatDaysAgo(venue.lastCompletedAt)
-                      : venue.totalStocktakesCompleted === 0
-                      ? 'No stocktakes yet'
-                      : '—'}
-                  </span>
-                  <span>
-                    <button type="button" className={styles.commandOpenBtn} onClick={() => onOpenVenue(venue)}>
-                      Open →
-                    </button>
-                  </span>
+                      ))}
+                      {venue.paretoTop10.length === 0 && <span className={styles.commandNoData}>No data</span>}
+                    </span>
+                    <span className={styles.commandLastStocktake}>
+                      {venue.lastCompletedAt
+                        ? formatDaysAgo(venue.lastCompletedAt)
+                        : venue.totalStocktakesCompleted === 0
+                        ? 'No stocktakes yet'
+                        : '—'}
+                    </span>
+                    <span className={styles.commandExpandIcon}>
+                      {expandedVenueId === venue.id ? '▴' : '▾'}
+                    </span>
+                  </div>
+
+                  {/* Expanded detail panel */}
+                  {expandedVenueId === venue.id && (
+                    <div className={styles.expandedPanel}>
+                      <div className={styles.expandedColumns}>
+                        <div className={styles.expandedColumn}>
+                          <h4 className={styles.expandedColHeading}>🔴 Shortages</h4>
+                          {venue.paretoTop10.filter(p => p.varianceDollars < 0).length === 0 ? (
+                            <p className={styles.expandedEmpty}>No shortages this cycle ✓</p>
+                          ) : (
+                            venue.paretoTop10.filter(p => p.varianceDollars < 0).map((item, i) => {
+                              const trend = getItemTrend(item, venue.prevParetoTop10)
+                              const isAnomaly = detectAnomaly(item, venue.prevParetoTop10)
+                              return (
+                                <div key={i} className={styles.expandedItem}>
+                                  <span className={styles.expandedItemName}>
+                                    {item.name}
+                                    {isAnomaly && <span className={styles.anomalyBadge}>⚠️ anomaly</span>}
+                                  </span>
+                                  <span className={styles.expandedItemValue} style={{ color: '#dc2626' }}>
+                                    -${Math.abs(Math.round(item.varianceDollars))}
+                                  </span>
+                                  <span className={`${styles.trendArrow} ${styles[`trend_${trend}`]}`}>
+                                    {trend === 'worse' ? '↑' : trend === 'better' ? '↓' : trend === 'new' ? '★' : '→'}
+                                  </span>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                        <div className={styles.expandedColumn}>
+                          <h4 className={styles.expandedColHeading}>🟢 Excesses</h4>
+                          {venue.paretoTop10.filter(p => p.varianceDollars > 0).length === 0 ? (
+                            <p className={styles.expandedEmpty}>No excesses this cycle</p>
+                          ) : (
+                            venue.paretoTop10.filter(p => p.varianceDollars > 0).map((item, i) => {
+                              const trend = getItemTrend(item, venue.prevParetoTop10)
+                              return (
+                                <div key={i} className={styles.expandedItem}>
+                                  <span className={styles.expandedItemName}>{item.name}</span>
+                                  <span className={styles.expandedItemValue} style={{ color: '#16a34a' }}>
+                                    +${Math.round(item.varianceDollars)}
+                                  </span>
+                                  <span className={`${styles.trendArrow} ${styles[`trend_${trend}`]}`}>
+                                    {trend === 'worse' ? '↑' : trend === 'better' ? '↓' : trend === 'new' ? '★' : '→'}
+                                  </span>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                      <div className={styles.expandedFooter}>
+                        <button
+                          type="button"
+                          className={styles.commandOpenBtn}
+                          onClick={(e) => { e.stopPropagation(); onOpenVenue(venue) }}
+                        >
+                          Open {venue.name} →
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -263,11 +383,10 @@ export default function ProjectsPage({
         </div>
       )}
 
+      {/* ── Project cards ── */}
       {!loading && !error && venues.length > 0 && (
         <>
-          {venues.length >= 2 && (
-            <p className={styles.sectionDivider}>Switch Venue</p>
-          )}
+          {venues.length >= 2 && <p className={styles.sectionDivider}>Switch Venue</p>}
           <div className={styles.grid}>
             {venues.map((venue) => {
               const isActive = venue.id === activeVenueId

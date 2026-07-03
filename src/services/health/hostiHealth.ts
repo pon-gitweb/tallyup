@@ -64,6 +64,13 @@ export interface HostiHealthStage3 {
     varianceQty: number;
     contributionPct: number;  // this item's share of total absolute variance
   }>;
+  paretoTop10?: Array<{
+    name: string;
+    areaName: string | null;
+    categoryName: string | null;
+    varianceDollars: number;
+    contributionPct: number;
+  }>;
   paretoTotalVariance: number;  // total absolute variance across all items
   paretoCoverageByTop3: number; // % of total variance covered by top 3 items (0–100)
   constraint: {
@@ -247,7 +254,7 @@ async function calculateFullScore(
 
     const totalAbsVariance = allVarianceItems.reduce((s, i) => s + Math.abs(i.varianceDollars), 0);
 
-    paretoItems = allVarianceItems.slice(0, 3).map(item => ({
+    paretoItems = allVarianceItems.slice(0, 10).map(item => ({
       ...item,
       contributionPct: totalAbsVariance > 0
         ? Math.round(Math.abs(item.varianceDollars) / totalAbsVariance * 100)
@@ -721,7 +728,15 @@ async function calculateFullScore(
       stockValue: stockValueResolved,
       varianceDollars: totalVarianceDollars,
       calculatedAt: Date.now(),
-      // NEW — Pareto top 3 variance drivers for Suitee context
+      // Pareto top 10 variance drivers for Command Centre group view
+      paretoTop10: paretoItems.slice(0, 10).map(p => ({
+        name: p.name,
+        varianceDollars: p.varianceDollars,
+        contributionPct: p.contributionPct,
+        areaName: p.areaName || null,
+        categoryName: p.categoryName || null,
+      })),
+      // Pareto top 3 for Suitee context and mobile Performance screen
       paretoTop3: paretoItems.slice(0, 3).map(p => ({
         name: p.name,
         varianceDollars: p.varianceDollars,
