@@ -95,7 +95,7 @@ function App() {
           <div style={{ padding: 32, color: '#6b7280' }}>Outcomes — available after event close</div>
         )}
         {festivalPage === 'festival-suitee' && (
-          <SuiteePage venueId={activeVenue.id} user={user} />
+          <SuiteePage venueId={activeVenue.id} user={user} isFestival={true} />
         )}
       </FestivalLayout>
     )

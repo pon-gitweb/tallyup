@@ -7,7 +7,16 @@ import styles from './SuiteePage.module.css'
 
 const AI_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
 
-const SUGGESTED_QUESTIONS = [
+const FESTIVAL_QUESTIONS = [
+  'What did we sell most of at this event and which bar performed best?',
+  'Were we over or under-stocked on spirits based on actuals vs prediction?',
+  'Which supplier had the most accurate delivery against our purchase order?',
+  'What should we order more of next year based on what ran out?',
+  'How did our actual spend compare to the event budget?',
+  'Which bar had the highest depletion rate during the event?',
+]
+
+const VENUE_QUESTIONS = [
   'What were my top 3 variance drivers last stocktake and what likely caused them?',
   'How does my Hosti Health score compare to the NZ hospitality benchmark?',
   'Which of my recipes has the worst GP% and what should I price it at?',
@@ -71,7 +80,8 @@ function renderAnswer(text: string): React.ReactNode {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SuiteePage({ venueId }: { venueId: string; user: User }) {
+export default function SuiteePage({ venueId, isFestival = false }: { venueId: string; user: User; isFestival?: boolean }) {
+  const SUGGESTED_QUESTIONS = isFestival ? FESTIVAL_QUESTIONS : VENUE_QUESTIONS
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
