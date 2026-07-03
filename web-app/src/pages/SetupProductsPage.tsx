@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   serverTimestamp,
@@ -14,27 +15,33 @@ import styles from './SetupProductsPage.module.css'
 type Product = {
   id: string
   name: string
+  category: string | null
   unit: string | null
   packSize: number | null
   costPrice: number | null
   supplierName: string | null
+  parLevel: number | null
   gstPercent: number | null
 }
 
-type EditableField = 'name' | 'unit' | 'packSize' | 'costPrice' | 'supplierName'
+type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel'
 
 const COLUMNS: { field: EditableField; label: string }[] = [
-  { field: 'name', label: 'Name' },
-  { field: 'unit', label: 'Unit' },
-  { field: 'packSize', label: 'Pack Size' },
-  { field: 'costPrice', label: 'Cost Price' },
+  { field: 'name',         label: 'Name' },
+  { field: 'category',     label: 'Category' },
+  { field: 'unit',         label: 'Unit' },
+  { field: 'packSize',     label: 'Pack Size' },
+  { field: 'costPrice',    label: 'Cost Price' },
   { field: 'supplierName', label: 'Supplier' },
+  { field: 'parLevel',     label: 'PAR' },
 ]
 
-// Matches the mobile app's isIncomplete logic (see computeMissingFields in
-// src/screens/setup/ProductsScreen.tsx) — unit, pack size, GST%, and a real
-// supplier (not the "Unassigned" placeholder) must all be set.
+// Matches the mobile app's isIncomplete logic — name, category, unit, pack
+// size, GST%, and a real supplier (not the "Unassigned" placeholder) must all
+// be set. parLevel being null does NOT make a product incomplete.
 function isIncomplete(p: Product): boolean {
+  if (!p.name) return true
+  if (!p.category) return true
   if (!p.unit) return true
   if (!p.packSize) return true
   if (p.gstPercent == null) return true
@@ -44,16 +51,13 @@ function isIncomplete(p: Product): boolean {
 
 function displayValue(p: Product, field: EditableField): string {
   switch (field) {
-    case 'name':
-      return p.name || ''
-    case 'unit':
-      return p.unit || ''
-    case 'packSize':
-      return p.packSize != null ? String(p.packSize) : ''
-    case 'costPrice':
-      return p.costPrice != null ? p.costPrice.toFixed(2) : ''
-    case 'supplierName':
-      return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
+    case 'name':         return p.name || ''
+    case 'category':     return p.category || ''
+    case 'unit':         return p.unit || ''
+    case 'packSize':     return p.packSize != null ? String(p.packSize) : ''
+    case 'costPrice':    return p.costPrice != null ? p.costPrice.toFixed(2) : ''
+    case 'supplierName': return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
+    case 'parLevel':     return p.parLevel != null ? String(p.parLevel) : ''
   }
 }
 
@@ -78,6 +82,12 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
     case 'supplierName':
       // "Unassigned" is the mobile app's convention for "no supplier set".
       return { supplierName: trimmed || 'Unassigned', updatedAt: serverTimestamp() }
+    case 'category':
+      return { category: trimmed || null, updatedAt: serverTimestamp() }
+    case 'parLevel': {
+      const n = trimmed === '' ? null : Number(trimmed)
+      return { parLevel: n != null && Number.isFinite(n) && n >= 0 ? n : null, updatedAt: serverTimestamp() }
+    }
   }
 }
 
@@ -197,6 +207,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const skipNextBlur = useRef(false)
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [csvFileName, setCsvFileName] = useState<string | null>(null)
   const [csvRows, setCsvRows] = useState<CsvRow[] | null>(null)
@@ -215,10 +226,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             return {
               id: d.id,
               name: data.name || '',
+              category: data.category ?? null,
               unit: data.unit ?? null,
               packSize: data.packSize ?? null,
               costPrice: data.costPrice ?? null,
               supplierName: data.supplierName ?? null,
+              parLevel: data.parLevel ?? null,
               gstPercent: data.gstPercent ?? null,
             }
           })
@@ -259,6 +272,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       rows = rows.filter(
         (p) =>
           p.name.toLowerCase().includes(needle) ||
+          (p.category || '').toLowerCase().includes(needle) ||
           (p.unit || '').toLowerCase().includes(needle) ||
           (p.supplierName || '').toLowerCase().includes(needle)
       )
@@ -413,6 +427,39 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
   }
 
+  function handleExportCsv() {
+    const headers = ['Name', 'Category', 'Unit', 'Pack Size', 'Cost Price', 'Supplier', 'PAR', 'Status']
+    const rows = visibleRows.map((p) => [
+      p.name,
+      p.category || '',
+      p.unit || '',
+      p.packSize != null ? String(p.packSize) : '',
+      p.costPrice != null ? p.costPrice.toFixed(2) : '',
+      p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : '',
+      p.parLevel != null ? String(p.parLevel) : '',
+      isIncomplete(p) ? 'Incomplete' : 'Complete',
+    ])
+    const csv = [headers, ...rows]
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `products-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleDeleteProduct(id: string) {
+    try {
+      await deleteDoc(doc(db, 'venues', venueId, 'products', id))
+    } catch (e) {
+      console.error('[SetupProductsPage] delete failed', e)
+    }
+    setConfirmDeleteId(null)
+  }
+
   function renderCell(product: Product, field: EditableField) {
     const isEditing = editingCell?.id === product.id && editingCell.field === field
     if (isEditing) {
@@ -422,7 +469,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             inputRefs.current[`${product.id}:${field}`] = el
           }}
           className={styles.cellInput}
-          type={field === 'packSize' || field === 'costPrice' ? 'number' : 'text'}
+          type={field === 'packSize' || field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}
@@ -531,10 +578,13 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       <div className={styles.toolbar}>
         <input
           className={styles.search}
-          placeholder="Search by name, unit, or supplier"
+          placeholder="Search by name, category, unit, or supplier"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <button type="button" className={styles.exportButton} onClick={handleExportCsv}>
+          Export CSV
+        </button>
         <button type="button" className={styles.addButton} onClick={handleAddProduct}>
           + Add product
         </button>
@@ -556,24 +606,60 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                 <th onClick={() => toggleSort('status')}>
                   Status{sortField === 'status' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                 </th>
+                <th style={{ width: 40 }}></th>
               </tr>
             </thead>
             <tbody>
               {visibleRows.map((product) => (
-                <tr key={product.id}>
-                  {COLUMNS.map((col) => (
-                    <td key={col.field}>{renderCell(product, col.field)}</td>
-                  ))}
-                  <td className={styles.statusCell}>
-                    <span
-                      className={`${styles.statusBadge} ${
-                        isIncomplete(product) ? styles.statusIncomplete : styles.statusComplete
-                      }`}
-                    >
-                      {isIncomplete(product) ? 'Incomplete' : 'Complete'}
-                    </span>
-                  </td>
-                </tr>
+                <Fragment key={product.id}>
+                  <tr>
+                    {COLUMNS.map((col) => (
+                      <td key={col.field}>{renderCell(product, col.field)}</td>
+                    ))}
+                    <td className={styles.statusCell}>
+                      <span
+                        className={`${styles.statusBadge} ${
+                          isIncomplete(product) ? styles.statusIncomplete : styles.statusComplete
+                        }`}
+                      >
+                        {isIncomplete(product) ? 'Incomplete' : 'Complete'}
+                      </span>
+                    </td>
+                    <td className={styles.deleteCell}>
+                      <button
+                        type="button"
+                        className={styles.deleteBtn}
+                        onClick={() => setConfirmDeleteId(confirmDeleteId === product.id ? null : product.id)}
+                        title="Delete product"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                  {confirmDeleteId === product.id && (
+                    <tr className={styles.deleteConfirmRow}>
+                      <td colSpan={COLUMNS.length + 2} className={styles.deleteConfirmCell}>
+                        <span className={styles.deleteConfirmText}>
+                          Delete <strong>{product.name || 'this product'}</strong> permanently?
+                        </span>
+                        <button
+                          type="button"
+                          className={styles.deleteConfirmYes}
+                          onClick={() => handleDeleteProduct(product.id)}
+                        >
+                          Delete
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.deleteConfirmNo}
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

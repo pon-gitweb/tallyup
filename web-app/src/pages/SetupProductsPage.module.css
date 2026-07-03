@@ -242,3 +242,92 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* ── Export button (outlined) ── */
+.exportButton {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1b4f72;
+  background: transparent;
+  border: 1.5px solid #1b4f72;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.exportButton:hover {
+  background: #eff6ff;
+}
+
+/* ── Delete column ── */
+.deleteCell {
+  padding: 4px 6px;
+  border-bottom: 1px solid #f1efe9;
+  text-align: center;
+  vertical-align: middle;
+  width: 40px;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.deleteBtn:hover {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* ── Delete confirm row ── */
+.deleteConfirmRow td {
+  border-bottom: 1px solid #fee2e2;
+  background: #fff5f5;
+}
+
+.deleteConfirmCell {
+  padding: 10px 14px !important;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deleteConfirmText {
+  flex: 1;
+  font-size: 13px;
+  color: #991b1b;
+}
+
+.deleteConfirmYes {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #dc2626;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.deleteConfirmNo {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6B7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e3de;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+}
