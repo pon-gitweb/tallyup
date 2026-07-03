@@ -13,6 +13,7 @@ import SuiteePage from './pages/SuiteePage'
 import HostiHealthPage from './pages/HostiHealthPage'
 import TeamPage from './pages/TeamPage'
 import ImportPage from './pages/ImportPage'
+import VenueSetupPage from './pages/VenueSetupPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import FestivalLayout, { type FestivalPage } from './layouts/FestivalLayout'
 import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
@@ -58,7 +59,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -121,6 +122,7 @@ function App() {
       {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
       {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
+      {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
       {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}

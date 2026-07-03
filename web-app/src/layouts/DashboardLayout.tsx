@@ -15,6 +15,7 @@ export type Page =
   | 'suppliers'
   | 'team'
   | 'account'
+  | 'venue-setup'
 
 type NavGroup = {
   label: string
@@ -38,8 +39,9 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'products',  label: 'Products',  icon: '📦' },
       { key: 'import',    label: 'Import',    icon: '📥' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
-      { key: 'team',      label: 'Team',      icon: '👥' },
-      { key: 'account',   label: 'Account',   icon: '⚙️' },
+      { key: 'team',        label: 'Team',        icon: '👥' },
+      { key: 'account',     label: 'Account',     icon: '⚙️' },
+      { key: 'venue-setup', label: 'Venue Setup', icon: '🏗️' },
     ],
   },
 ]

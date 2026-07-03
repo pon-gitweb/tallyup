@@ -1,0 +1,52 @@
+.page { max-width: 1000px; padding: 32px 0; }
+.heading { font-family: 'Playfair Display', Georgia, serif; font-size: 28px; font-weight: 800; color: #0B132B; margin: 0 0 6px; }
+.subhead { font-size: 14px; color: #6B7280; margin: 0 0 32px; line-height: 1.6; }
+.section { margin-bottom: 40px; }
+.sectionHeading { font-size: 16px; font-weight: 700; color: #0B132B; margin: 0 0 4px; }
+.sectionSubhead { font-size: 12px; color: #6B7280; margin: 0 0 16px; }
+.card { background: #fff; border: 1px solid #e5e3de; border-radius: 12px; padding: 20px; }
+/* Department tree */
+.deptRow { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #f1efe9; }
+.deptRow:last-child { border-bottom: none; }
+.deptName { font-size: 14px; font-weight: 700; color: #0B132B; flex: 1; }
+.areaRow { display: flex; align-items: center; gap: 8px; padding: 8px 0; padding-left: 28px; border-bottom: 1px solid #f1efe9; }
+.areaRow:last-child { border-bottom: none; }
+.areaIndent { font-size: 12px; color: #9ca3af; margin-right: 4px; flex-shrink: 0; }
+.areaName { font-size: 13px; color: #374151; flex: 1; }
+.iconBtn { background: none; border: none; color: #9ca3af; font-size: 13px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.iconBtn:hover { background: #f5f3ee; color: #0B132B; }
+.deleteBtn { background: none; border: none; color: #9ca3af; font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+.deleteBtn:hover { color: #dc2626; }
+.addAreaBtn { background: none; border: 1px dashed #e5e3de; border-radius: 6px; color: #6B7280; font-size: 12px; font-weight: 600; padding: 4px 10px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+.addAreaBtn:hover { border-color: #1b4f72; color: #1b4f72; }
+.confirmRow { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #fff5f5; border-radius: 6px; font-size: 12px; color: #991b1b; flex: 1; flex-wrap: wrap; }
+.confirmYes { background: #dc2626; color: #fff; border: none; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.confirmNo { background: #f3f4f6; color: #6B7280; border: 1px solid #e5e3de; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.inlineInput { border: 1px solid #1b4f72; border-radius: 6px; padding: 5px 10px; font-size: 13px; color: #0B132B; outline: none; flex: 1; font-family: Inter, system-ui, sans-serif; }
+.addDeptRow { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; }
+.addDeptBtn { background: none; border: 1px dashed #e5e3de; border-radius: 8px; color: #6B7280; font-size: 13px; font-weight: 600; padding: 8px 16px; cursor: pointer; width: 100%; text-align: center; margin-top: 8px; font-family: Inter, system-ui, sans-serif; }
+.addDeptBtn:hover { border-color: #1b4f72; color: #1b4f72; }
+.emptyState { padding: 32px; text-align: center; color: #9ca3af; font-size: 14px; line-height: 1.6; }
+/* Product assignment section */
+.areaSelector { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.areaSelect { padding: 8px 12px; border: 1px solid #e5e3de; border-radius: 8px; font-size: 14px; color: #0B132B; background: #fff; min-width: 220px; font-family: Inter, system-ui, sans-serif; }
+.searchInput { flex: 1; min-width: 180px; padding: 8px 12px; border: 1.5px solid #e5e3de; border-radius: 999px; font-size: 13px; color: #0B132B; outline: none; font-family: Inter, system-ui, sans-serif; }
+.searchInput:focus { border-color: #1b4f72; }
+.filterGroup { display: flex; gap: 8px; }
+.filterBtn { background: none; border: none; font-size: 13px; color: #6B7280; cursor: pointer; padding: 4px 0; font-family: Inter, system-ui, sans-serif; }
+.filterBtn:hover { color: #1b4f72; }
+.filterBtnActive { color: #1b4f72; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.bulkToolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; margin-bottom: 10px; flex-wrap: wrap; font-size: 13px; color: #1e40af; font-weight: 600; }
+.bulkApplyBtn { padding: 6px 14px; background: #1b4f72; color: #fff; border: none; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.bulkApplyBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bulkClearBtn { background: none; border: 1px solid #bfdbfe; border-radius: 6px; color: #1e40af; font-size: 12px; padding: 5px 10px; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.tableWrap { background: #fff; border: 1px solid #e5e3de; border-radius: 12px; overflow-x: auto; max-height: 500px; overflow-y: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; font-family: Inter, system-ui, sans-serif; }
+.table th { position: sticky; top: 0; z-index: 1; background: #f5f3ee; padding: 9px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6B7280; text-align: left; border-bottom: 1.5px solid #e5e3de; }
+.dataRow:hover > td { background: #f9f8f6; }
+.td { padding: 10px 12px; border-bottom: 1px solid #f1efe9; color: #0B132B; vertical-align: middle; }
+.assignedBadge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 11px; font-weight: 700; }
+.notAssigned { color: #9ca3af; font-size: 12px; }
+.successMsg { font-size: 13px; color: #16a34a; font-weight: 600; padding: 10px 0; }
+.noAreaSelected { padding: 48px 32px; text-align: center; color: #9ca3af; font-size: 14px; }
+.loading { font-size: 14px; color: #6B7280; text-align: center; padding: 40px; }
