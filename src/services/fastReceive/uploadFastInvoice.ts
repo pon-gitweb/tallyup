@@ -11,7 +11,7 @@ export async function uploadFastInvoice(venueId: string, fileUri: string, fileNa
   if (!fileUri || !fileUri.startsWith('file')) throw new Error('uploadFastInvoice: expected a file URI');
 
   const safe = (fileName || 'invoice').replace(/[^\w.\-]+/g, '_').slice(0, 80);
-  const destPath = `uploads/${venueId}/fast-receive/${Date.now()}-${safe}`;
+  const destPath = `venues/${venueId}/fast-receive/${Date.now()}-${safe}`;
 
   try {
     const out = await uploadUriViaApi({ fileUri, destPath, contentType });

@@ -268,6 +268,7 @@ app.post("/upload-file", async (req, res) => {
     }
     const allowedPrefixes = [
       `venues/${venueId}/`,
+      `uploads/${venueId}/`,
       `festival-contracts/${venueId}/`,
       `festival-riders/${venueId}/`,
     ];
