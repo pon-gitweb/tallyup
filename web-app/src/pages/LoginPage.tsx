@@ -134,12 +134,14 @@ export default function LoginPage() {
             <p style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', marginTop: 16 }}>
               Suppliers and venue operators use the same login.
             </p>
+            {/* Supplier register link hidden until endpoint is live
             <div style={{ textAlign: 'center', marginTop: 16 }}>
               <button type="button" onClick={() => setShowSupplierForm(true)}
                 style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: 13, cursor: 'pointer', textDecoration: 'underline', fontFamily: 'Inter, sans-serif' }}>
                 Are you a supplier? Register here →
               </button>
             </div>
+            */}
           </>
         )}
 
