@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc,
 } from 'firebase/firestore'
-import { auth, db, storage } from '../firebase'
-import { ref, uploadBytes } from 'firebase/storage'
+import { auth, db } from '../firebase'
 import styles from './ImportPage.module.css'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -341,75 +340,82 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [cDuplicateDate, setCDuplicateDate] = useState<string | null>(null)
   const [cIgnoreDuplicate, setCIgnoreDuplicate] = useState(false)
   const [cFingerprint, setCFingerprint] = useState('')
-  const [cPdfMode, setCPdfMode] = useState(false)
   const [cPdfError, setCPdfError] = useState<string | null>(null)
+  const [cPdfLines, setCPdfLines] = useState<{ name: string; qty: number; unitPrice?: number }[]>([])
+  const [cPdfSupplier, setCPdfSupplier] = useState('')
+  const [cPdfStatus, setCPdfStatus] = useState<'idle' | 'uploading' | 'processing' | 'ready' | 'importing' | 'done'>('idle')
 
   async function handleFileC(files: FileList) {
     const file = files[0]
     if (!file) return
 
     if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
-      setCError('PDF invoices are scanned on the mobile app. For desktop, export your invoice as a CSV.')
-      return
-    }
-
-    if (false && file.name.toLowerCase().endsWith('.pdf')) {
-      // PDF path — upload to Firebase Storage, call OCR endpoint (disabled — redirected above)
-      setCPdfMode(true)
-      setCStatus('parsing')
       setCPdfError(null)
-      setCError(null)
+      setCPdfLines([])
+      setCPdfStatus('uploading')
       try {
-        const path = `venues/${venueId}/invoices/desktop-${Date.now()}.pdf`
-        const storageRef = ref(storage, path)
-        await uploadBytes(storageRef, file)
+        // Step 1: read PDF as base64 data URL
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = () => reject(new Error('Failed to read PDF'))
+          reader.readAsDataURL(file)
+        })
 
-        const idToken = await auth.currentUser?.getIdToken()
-        const response = await fetch(
-          'https://us-central1-tallyup-f1463.cloudfunctions.net/api/process-invoices-pdf',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${idToken}`,
-            },
-            body: JSON.stringify({ venueId, storagePath: path }),
-          }
-        )
-        const data = await response.json()
-        if (!data.ok) throw new Error(data.message || data.error || 'OCR failed')
+        // Step 2: get auth token
+        const token = await auth.currentUser?.getIdToken().catch(() => null)
+        if (!token) throw new Error('Not authenticated. Please sign in again.')
 
-        // Map OCR result to CRow format
-        const ocrRows: CRow[] = (data.lines || []).map((l: any) => ({
-          name: l.productName || l.name || '',
-          qty: l.quantity ?? 1,
-          costPrice: l.unitPrice ?? l.costPrice ?? null,
-          supplierCol: null,
-        }))
-        if (data.supplierName) setCSupplierName(data.supplierName)
+        const API = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
 
-        if (ocrRows.length === 0) throw new Error('No products found in the PDF.')
+        // Step 3: upload to Firebase Storage via Cloud Function
+        const destPath = `venues/${venueId}/invoices/desktop/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, '_').slice(0, 60)}`
+        const uploadRes = await fetch(`${API}/upload-file`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ venueId, destPath, dataUrl: base64 }),
+        })
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => ({})) as any
+          throw new Error(err.error || `Upload failed (${uploadRes.status})`)
+        }
+        const { fullPath } = await uploadRes.json() as { fullPath: string }
 
-        // Check for scanned image warning
-        if (data.isScan || (data.message || '').toLowerCase().includes('scan')) {
-          setCPdfError('This PDF appears to be a scanned image. For best results, use the Scan Invoice camera in the mobile app, or ask your supplier for a digital PDF.')
-          setCStatus('idle')
-          setCPdfMode(false)
+        // Step 4: call OCR endpoint
+        setCPdfStatus('processing')
+        const ocrRes = await fetch(`${API}/process-invoices-pdf`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ venueId, orderId: 'UNSET', storagePath: fullPath }),
+        })
+        const ocrData = await ocrRes.json().catch(() => null)
+        if (!ocrRes.ok || !ocrData) throw new Error(ocrData?.error || ocrData?.message || `OCR failed (${ocrRes.status})`)
+
+        // Step 5: handle scanned PDF
+        if (ocrData.scannedPdf || (ocrData.message || '').toLowerCase().includes('scan')) {
+          setCPdfError('This PDF appears to be a scanned image. For best results, ask your supplier for a digital PDF or CSV export, or use the mobile app to photograph the invoice.')
+          setCPdfStatus('idle')
           return
         }
 
-        setCRows(ocrRows)
-        setCStatus('ready')
+        // Step 6: store results for preview
+        const lines = (ocrData.lines || []).filter((l: any) => l.name && l.qty > 0)
+        if (!lines.length) {
+          setCPdfError('No product lines could be extracted from this PDF. Try a CSV export from your supplier instead.')
+          setCPdfStatus('idle')
+          return
+        }
+
+        setCPdfLines(lines)
+        setCPdfSupplier(ocrData.invoice?.supplierName || '')
+        setCPdfStatus('ready')
       } catch (e: any) {
-        setCPdfError(e?.message || 'Could not read PDF. Try a CSV instead, or use the mobile app to scan this invoice.')
-        setCStatus('idle')
-        setCPdfMode(false)
+        setCPdfError(e?.message || 'PDF processing failed. Please try a CSV instead.')
+        setCPdfStatus('idle')
       }
       return
     }
 
     // CSV path
-    setCPdfMode(false)
     setCError(null)
     setCStatus('idle')
     try {
@@ -516,6 +522,55 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     } catch {
       setCError('Import failed. Please try again.')
       setCStatus('error')
+    }
+  }
+
+  async function handleImportPdf() {
+    if (!cPdfLines.length) return
+    setCPdfStatus('importing')
+    try {
+      const existingMap = await loadExistingProducts(venueId)
+      const supplierName = cPdfSupplier.trim() || 'Unassigned'
+
+      // Find or create supplier
+      let supplierId: string | null = null
+      if (supplierName !== 'Unassigned') {
+        const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'))
+        const existing = suppliersSnap.docs.find(d =>
+          ((d.data() as any).name || '').toLowerCase().trim() === supplierName.toLowerCase()
+        )
+        if (existing) {
+          supplierId = existing.id
+        } else {
+          const newRef = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+            name: supplierName, orderingMethod: 'email', createdAt: serverTimestamp(),
+          })
+          supplierId = newRef.id
+        }
+      }
+
+      await batchWrite(db, `venues/${venueId}/products`,
+        cPdfLines.map((l: any) => ({
+          id: existingMap.get((l.name || '').toLowerCase().trim()) ?? slugId(l.name),
+          data: {
+            name: l.name,
+            costPrice: l.unitPrice ?? null,
+            supplierName,
+            ...(supplierId ? { supplierId } : {}),
+            updatedAt: serverTimestamp(),
+          },
+        }))
+      )
+
+      await updateDoc(doc(db, 'venues', venueId), {
+        onboardingHasInvoices: true,
+        onboardingInvoiceLinesCount: cPdfLines.length,
+      })
+
+      setCPdfStatus('done')
+    } catch {
+      setCPdfError('Import failed. Please try again.')
+      setCPdfStatus('idle')
     }
   }
 
@@ -775,31 +830,72 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       {/* ── Zone C — Supplier Invoice ── */}
       <DropZone
         title="Supplier Invoice"
-        description="Import a supplier invoice CSV to update product costs in bulk. Columns needed: Name/Product, Quantity, Unit Price."
-        badge="Optional"
-        badgeColour="#6b7280"
+        description="Import a supplier invoice — drag a CSV or PDF. PDFs are processed with AI to extract product lines automatically."
+        badge="CSV or PDF"
+        badgeColour="#1b4f72"
         accept=".csv,.pdf"
         onFiles={handleFileC}
       >
-        <p className={styles.mobileNote}>
-          For PDF invoices, use the Scan Invoice feature in the mobile app or Invoices hub.
-        </p>
         {cError && <p className={styles.error}>{cError}</p>}
-        {cPdfMode && cStatus === 'parsing' && (
-          <p className={styles.dropAreaHint} style={{ marginTop: 8 }}>Reading PDF…</p>
+
+        {/* PDF processing states */}
+        {(cPdfStatus === 'uploading' || cPdfStatus === 'processing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>
+              {cPdfStatus === 'uploading' ? '⬆ Uploading PDF…' : '🔍 Extracting invoice data with AI…'}
+            </p>
+            <p style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+              {cPdfStatus === 'processing' ? 'This usually takes 10–20 seconds for a digital PDF.' : ''}
+            </p>
+          </div>
         )}
         {cPdfError && (
           <div className={styles.error} style={{ marginTop: 10 }}>
             {cPdfError}
             {' '}
-            <button
-              type="button"
-              style={{ background: 'none', border: 'none', color: '#1b4f72', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
-              onClick={() => { setCPdfError(null); setCPdfMode(false); setCStatus('idle') }}
-            >
-              Try a CSV instead
+            <button type="button" style={{ background: 'none', border: 'none', color: '#1b4f72', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
+              onClick={() => { setCPdfError(null); setCPdfStatus('idle'); setCPdfLines([]) }}>
+              Try again
             </button>
           </div>
+        )}
+        {(cPdfStatus === 'ready' || cPdfStatus === 'importing') && cPdfLines.length > 0 && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{cPdfLines.length} product lines extracted from PDF</p>
+            {cPdfSupplier && <p className={styles.deduplicateSummary}>Supplier: {cPdfSupplier}</p>}
+            <div style={{ marginTop: 8, marginBottom: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>
+                Confirm supplier name
+              </label>
+              <input value={cPdfSupplier} onChange={e => setCPdfSupplier(e.target.value)} placeholder="e.g. Pacific Beverages NZ Ltd"
+                style={{ width: '100%', padding: '6px 10px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' as const }} />
+            </div>
+            <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+              <table className={styles.table}>
+                <thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th></tr></thead>
+                <tbody>
+                  {cPdfLines.slice(0, 20).map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.name}</td>
+                      <td>{l.qty}</td>
+                      <td>{l.unitPrice != null ? `$${Number(l.unitPrice).toFixed(2)}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.actions}>
+              <button className={styles.cancelBtn} onClick={() => { setCPdfStatus('idle'); setCPdfLines([]); setCPdfError(null) }}>Cancel</button>
+              <button className={styles.confirmBtn} onClick={handleImportPdf} disabled={cPdfStatus === 'importing'}>
+                {cPdfStatus === 'importing' ? 'Importing…' : `Import ${cPdfLines.length} products`}
+              </button>
+            </div>
+          </div>
+        )}
+        {cPdfStatus === 'done' && (
+          <p className={styles.success}>
+            ✓ {cPdfLines.length} products imported from PDF. Cost prices and supplier updated.
+          </p>
         )}
         {(cStatus === 'ready' || cStatus === 'importing') && (
           <div className={styles.preview}>
