@@ -5090,6 +5090,115 @@ app.post("/process-invoices-pdf", async (req, res) => {
   }
 });
 
+// ── POST /process-invoice-photo ──────────────────────────────────────────────
+// Body: { venueId, storagePath }
+// Downloads image from Storage, sends to Claude Vision, extracts invoice lines.
+app.post("/process-invoice-photo", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, storagePath } = req.body || {};
+    if (!venueId || !storagePath) {
+      res.status(400).json({ ok: false, error: "Missing venueId or storagePath" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+    if (!storagePath.startsWith(`venues/${venueId}/`)) {
+      res.status(403).json({ error: "Storage path not permitted" }); return;
+    }
+
+    const lcPhoto = await checkAiLimit(venueId, "invoice_ocr");
+    if (!lcPhoto.allowed) { res.status(429).json(lcPhoto.limitError); return; }
+
+    // Download image from Storage
+    const bucket = admin.storage().bucket();
+    const [imageBuffer] = await bucket.file(storagePath).download();
+    const base64Image = imageBuffer.toString("base64");
+
+    const ext = storagePath.split(".").pop()?.toLowerCase() ?? "jpg";
+    const mediaType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) { res.status(500).json({ ok: false, error: "AI not configured" }); return; }
+
+    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: base64Image },
+            },
+            {
+              type: "text",
+              text: `Extract all invoice line items from this supplier invoice image. Return ONLY valid JSON in this exact format, no other text:
+{
+  "supplierName": "string or null",
+  "invoiceNumber": "string or null",
+  "poNumber": "string or null",
+  "lines": [
+    { "name": "product name", "qty": 1, "unitPrice": 10.00 }
+  ]
+}
+Rules: Include every product line. qty must be a positive number. unitPrice is the per-unit cost excluding GST (null if not visible). Skip totals, subtotals, GST rows, and header rows. Only include actual product lines.`,
+            },
+          ],
+        }],
+      }),
+    });
+
+    if (!claudeRes.ok) {
+      const errText = await claudeRes.text();
+      console.error("[process-invoice-photo] Claude error:", errText);
+      res.status(500).json({ ok: false, error: "AI extraction failed" }); return;
+    }
+
+    const claudeData = await claudeRes.json() as any;
+    const rawText: string = claudeData.content?.[0]?.text ?? "";
+
+    let extracted: { supplierName?: string; invoiceNumber?: string; poNumber?: string; lines: any[] } = { lines: [] };
+    try {
+      const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
+      extracted = JSON.parse(cleaned);
+    } catch {
+      console.error("[process-invoice-photo] JSON parse failed:", rawText.slice(0, 200));
+      res.json({ ok: true, lines: [], invoice: { source: "photo", storagePath }, warnings: ["Could not parse AI response — please try a clearer photo"] });
+      return;
+    }
+
+    const lines = (extracted.lines || []).filter((l: any) => l.name && Number(l.qty) > 0);
+    const warnings: string[] = [];
+    if (!lines.length) warnings.push("No product lines detected — try a clearer, well-lit photo of the invoice");
+
+    trackAiCall(venueId, "invoice_ocr").catch(() => {});
+
+    res.json({
+      ok: true,
+      invoice: {
+        source: "photo",
+        storagePath,
+        supplierName: extracted.supplierName ?? null,
+        invoiceNumber: extracted.invoiceNumber ?? null,
+        poNumber: extracted.poNumber ?? null,
+      },
+      lines,
+      warnings,
+    });
+  } catch (e: any) {
+    console.error("[process-invoice-photo]", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Photo processing failed" });
+  }
+});
+
 // ── POST /refine-prediction ───────────────────────────────────────────────────
 // Body: { venueId, mathResults, eventDetails }
 // Calls Claude to adjust market share splits within categories.

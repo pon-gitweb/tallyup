@@ -7,8 +7,8 @@ import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
-import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import { processInvoicePhoto } from '../../services/invoices/processInvoicePhoto';
 import { useToast } from '../../components/common/Toast';
 
 export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
@@ -22,24 +22,37 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
     try {
       const filename = `fast-receive-${Date.now()}.jpg`;
       const up = await uploadFastInvoice(venueId, uri, filename, 'image/jpeg');
-      const save = await persistFastReceiveSnapshot({
+
+      let parsed: any = null;
+      try {
+        parsed = await processInvoicePhoto({ venueId, storagePath: up.fullPath });
+      } catch (ocrErr: any) {
+        console.log('[uploadPhoto] OCR failed, saving without lines:', ocrErr?.message);
+      }
+
+      const hasLines = Array.isArray(parsed?.lines) && parsed.lines.length > 0;
+
+      const result = await tryAttachToOrderOrSavePending({
         venueId,
-        source: 'photo',
-        storagePath: up.fullPath,
-        parsedPo: null,
-        payload: {
+        parsed: parsed ?? {
           invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
           lines: [],
           confidence: null,
-          warnings: ['ocr_pending: no text extraction performed yet'],
+          warnings: ['ocr_failed: no lines extracted'],
         },
+        storagePath: up.fullPath
       });
-      if (!save || save.ok !== true) {
-        const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied: ${msg}`);
+
+      if (result.attached) {
+        showSuccess(`Invoice photo matched to order ${result.orderId} — ${(parsed?.lines || []).length} lines reconciled.`);
+      } else if (hasLines) {
+        showInfo(`Photo processed — ${parsed.lines.length} product lines found. Review in Invoices → Fast Receives Pending.`);
+      } else {
+        showInfo('Photo saved. No lines could be extracted — review manually in Invoices → Fast Receives Pending.');
       }
-      showSuccess('Captured image saved as a Pending Fast Receive.');
       onClose();
+    } catch (e: any) {
+      showError(e?.message || 'Photo upload failed.');
     } finally {
       setBusy(false);
     }
@@ -101,21 +114,6 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         ? await processInvoicesCsv({ venueId, orderId: 'UNSET', storagePath: up.fullPath })
         : await processInvoicesPdf({ venueId, orderId: 'UNSET', storagePath: up.fullPath });
 
-      const parsedPo = parsed?.invoice?.poNumber ?? null;
-
-      const save = await persistFastReceiveSnapshot({
-        venueId,
-        source: isCsv ? 'csv' : 'pdf',
-        storagePath: up.fullPath,
-        payload: parsed,
-        parsedPo
-      });
-      if (!save || save.ok !== true) {
-        const path = `venues/${venueId}/fastReceives`;
-        const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied at ${path}: ${msg}`);
-      }
-
       const result = await tryAttachToOrderOrSavePending({
         venueId,
         parsed,
@@ -138,7 +136,7 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   }, [venueId, onClose]);
 
   const quickTip = useMemo(()=>(
-    'Tip: CSV/PDF auto-parse now; Photo saves a pending snapshot. OCR will update the same snapshot later.'
+    'CSV and PDF invoices are parsed automatically. Photos are processed with AI to extract product lines.'
   ), []);
 
   return (
