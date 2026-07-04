@@ -176,6 +176,14 @@ service cloud.firestore {
       }
     }
 
+    match /supplierRegistrations/{regId} {
+      // Anyone can submit a registration — no login required to apply
+      allow create: if true;
+      // Only Hosti admin can read, update, or delete registrations
+      allow read, update, delete: if request.auth != null
+        && request.auth.token.email == 'poni@hosti.co.nz';
+    }
+
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create: if request.auth != null

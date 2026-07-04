@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import * as nodemailer from "nodemailer";
 import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
@@ -4594,6 +4595,80 @@ app.post("/send-failing-invoice", async (req, res) => {
   } catch (e: any) {
     console.error("[send-failing-invoice] error", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Internal error" });
+  }
+});
+
+// ── POST /supplier-register ──────────────────────────────────────────────────
+// Body: { companyName, contactName, email, phone, region, abn }
+// Creates a pending supplier registration in Firestore and emails poni@hosti.co.nz
+app.post("/supplier-register", async (req, res) => {
+  try {
+    const { companyName, contactName, email, phone, region, abn } = req.body || {};
+
+    if (!companyName || !email) {
+      res.status(400).json({ ok: false, error: "Company name and email are required." });
+      return;
+    }
+
+    // Write registration to Firestore
+    const regRef = await admin.firestore().collection("supplierRegistrations").add({
+      companyName: companyName.trim(),
+      contactName: contactName?.trim() ?? null,
+      email: email.trim().toLowerCase(),
+      phone: phone?.trim() ?? null,
+      region: region?.trim() ?? null,
+      abn: abn?.trim() ?? null,
+      status: "pending",
+      submittedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Send notification email to poni@hosti.co.nz
+    const gmailUser = process.env.GMAIL_SENDER_ADDRESS;
+    const gmailPass = process.env.GMAIL_APP_PASSWORD;
+
+    if (gmailUser && gmailPass) {
+      try {
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: { user: gmailUser, pass: gmailPass },
+        });
+
+        await transporter.sendMail({
+          from: `"Hosti Notifications" <${gmailUser}>`,
+          to: "poni@hosti.co.nz",
+          subject: `New Supplier Registration — ${companyName}`,
+          text: [
+            "A new supplier has registered on Hosti and is awaiting verification.",
+            "",
+            `Company:      ${companyName}`,
+            `Contact:      ${contactName ?? "—"}`,
+            `Email:        ${email}`,
+            `Phone:        ${phone ?? "—"}`,
+            `Region:       ${region ?? "—"}`,
+            `ABN/NZBN:     ${abn ?? "—"}`,
+            `Registration: ${regRef.id}`,
+            "",
+            "To activate this account:",
+            "1. Create a Firebase Auth account for this supplier (email + password)",
+            "2. Create /supplierAccounts/{supplierId} with their details",
+            "3. Set supplierId on their /users/{uid} doc",
+            "4. Email them their login credentials",
+            "",
+            "Hosti Admin",
+          ].join("\n"),
+        });
+      } catch (emailErr: any) {
+        // Non-fatal — registration is written to Firestore regardless
+        console.error("[supplier-register] email failed:", emailErr?.message);
+      }
+    } else {
+      console.log("[supplier-register] Gmail credentials not configured — skipping email. Registration ID:", regRef.id);
+    }
+
+    res.json({ ok: true, registrationId: regRef.id });
+  } catch (e: any) {
+    console.error("[supplier-register] error:", e?.message);
+    res.status(500).json({ ok: false, error: "Registration failed. Please try again." });
   }
 });
 

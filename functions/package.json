@@ -12,6 +12,7 @@
     "express": "^5.1.0",
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^5.1.1",
+    "nodemailer": "^9.0.3",
     "pdf-parse": "^1.1.4",
     "stripe": "^22.1.0"
   },
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.15",
+    "@types/nodemailer": "^8.0.1",
     "typescript": "^5.9.3"
   }
 }
