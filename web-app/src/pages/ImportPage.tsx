@@ -49,7 +49,20 @@ function findCol(header: string[], ...names: string[]): number {
     const idx = h.indexOf(name.toLowerCase())
     if (idx !== -1) return idx
   }
+  for (const name of names) {
+    const idx = h.findIndex(col => col.includes(name.toLowerCase()))
+    if (idx !== -1) return idx
+  }
   return -1
+}
+
+function findHeaderRow(rows: string[][]): number {
+  const terms = ['name', 'product', 'item', 'description', 'quantity', 'qty', 'price', 'cost', 'unit']
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = rows[i].map(c => c.trim().toLowerCase())
+    if (terms.filter(t => row.some(c => c.includes(t))).length >= 2) return i
+  }
+  return 0
 }
 
 function readFile(file: File): Promise<string> {
@@ -165,7 +178,7 @@ function DropZone({ title, description, badge, badgeColour, children, onFiles, a
 export default function ImportPage({ venueId }: { venueId: string }) {
 
   // ── Zone A — Opening Stock Baseline ────────────────────────────────────────
-  type ARow = { name: string; unit: string | null; costPrice: number | null; parLevel: number | null; count: number }
+  type ARow = { name: string; unit: string | null; category: string | null; costPrice: number | null; parLevel: number | null; count: number }
   const [aRows, setARows] = useState<ARow[]>([])
   const [aStatus, setAStatus] = useState<ImportStatus>('idle')
   const [aError, setAError] = useState<string | null>(null)
@@ -187,6 +200,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       const nameIdx = findCol(header, 'name')
       if (nameIdx === -1) { setAError('CSV must have a "Name" column.'); return }
       const unitIdx = findCol(header, 'unit')
+      const categoryIdx = findCol(header, 'category')
       const costIdx = findCol(header, 'cost price', 'costprice', 'cost', 'price')
       const parIdx = findCol(header, 'par level', 'parlevel', 'par')
       const countIdx = findCol(header, 'count', 'qty', 'quantity', 'opening count')
@@ -195,6 +209,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         .map(r => ({
           name: r[nameIdx]?.trim() || '',
           unit: unitIdx >= 0 ? r[unitIdx]?.trim() || null : null,
+          category: categoryIdx >= 0 && r[categoryIdx]?.trim() ? r[categoryIdx].trim() : null,
           costPrice: costIdx >= 0 && r[costIdx]?.trim() ? Number(r[costIdx]) : null,
           parLevel: parIdx >= 0 && r[parIdx]?.trim() ? Number(r[parIdx]) : null,
           count: countIdx >= 0 && r[countIdx]?.trim() ? Math.round(Number(r[countIdx])) : 0,
@@ -223,6 +238,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           data: {
             name: r.name,
             unit: r.unit,
+            ...(r.category ? { category: r.category } : {}),
             costPrice: r.costPrice,
             parLevel: r.parLevel,
             confirmedCount: r.count,
@@ -332,8 +348,13 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     const file = files[0]
     if (!file) return
 
-    if (file.name.toLowerCase().endsWith('.pdf')) {
-      // PDF path — upload to Firebase Storage, call OCR endpoint
+    if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+      setCError('PDF invoices are scanned on the mobile app. For desktop, export your invoice as a CSV.')
+      return
+    }
+
+    if (false && file.name.toLowerCase().endsWith('.pdf')) {
+      // PDF path — upload to Firebase Storage, call OCR endpoint (disabled — redirected above)
       setCPdfMode(true)
       setCStatus('parsing')
       setCPdfError(null)
@@ -387,7 +408,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       return
     }
 
-    // CSV path — existing code below unchanged
+    // CSV path
     setCPdfMode(false)
     setCError(null)
     setCStatus('idle')
@@ -395,14 +416,15 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       const text = await readFile(file)
       const rows = parseCsv(text)
       if (rows.length < 2) { setCError('No data rows found.'); return }
-      const header = rows[0].map(h => h.trim().toLowerCase())
+      const headerRowIdx = findHeaderRow(rows)
+      const header = rows[headerRowIdx].map(h => h.trim().toLowerCase())
       const nameIdx = findCol(header, 'product', 'name', 'item')
       if (nameIdx === -1) { setCError('CSV must have a Name, Product, or Item column.'); return }
       const qtyIdx = findCol(header, 'quantity', 'qty')
       const priceIdx = findCol(header, 'unit price', 'cost', 'price')
       const supplierIdx = findCol(header, 'supplier')
 
-      const parsed = rows.slice(1)
+      const parsed = rows.slice(headerRowIdx + 1)
         .map(r => ({
           name: r[nameIdx]?.trim() || '',
           qty: qtyIdx >= 0 && r[qtyIdx]?.trim() ? Number(r[qtyIdx]) : null,
