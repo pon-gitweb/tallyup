@@ -1,0 +1,64 @@
+.heading { font-family: 'Playfair Display', Georgia, serif; font-size: 26px; font-weight: 800; color: #0B132B; margin: 0 0 4px; }
+.subhead { font-size: 14px; color: #6B7280; margin: 0 0 20px; }
+.loading { font-size: 14px; color: #6B7280; padding: 40px 0; text-align: center; }
+
+/* Bulk bar */
+.bulkBar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; margin-bottom: 12px; font-size: 13px; color: #1e40af; font-weight: 600; flex-wrap: wrap; }
+.bulkBtn { padding: 5px 12px; background: #fff; border: 1px solid #bfdbfe; border-radius: 6px; font-size: 12px; font-weight: 600; color: #1e40af; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.bulkDeleteBtn { padding: 5px 12px; background: none; border: 1px solid #fca5a5; border-radius: 6px; font-size: 12px; font-weight: 600; color: #dc2626; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.bulkDeleteConfirm { padding: 5px 12px; background: #dc2626; border: none; border-radius: 6px; font-size: 12px; font-weight: 700; color: #fff; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.bulkCancel { padding: 5px 12px; background: #f3f4f6; border: 1px solid #e5e3de; border-radius: 6px; font-size: 12px; color: #6B7280; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.bulkConfirm { font-size: 12px; color: #dc2626; }
+
+/* Toolbar */
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.search { flex: 1; min-width: 220px; max-width: 360px; padding: 9px 12px; font-size: 14px; border: 1.5px solid #e5e3de; border-radius: 10px; background: #fff; color: #0B132B; outline: none; font-family: Inter, system-ui, sans-serif; }
+.search:focus { border-color: #1b4f72; }
+.addButton { padding: 9px 16px; font-size: 14px; font-weight: 700; color: #fff; background: #1b4f72; border: none; border-radius: 999px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+.exportBtn, .importBtn { padding: 8px 14px; font-size: 13px; font-weight: 600; color: #1b4f72; background: #fff; border: 1.5px solid #1b4f72; border-radius: 999px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+.exportBtn:hover, .importBtn:hover { background: #eff6ff; }
+
+/* CSV import */
+.csvZone { background: #f9f8f6; border: 1px solid #e5e3de; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.dropZone { border: 2px dashed #e5e3de; border-radius: 8px; padding: 24px 16px; text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.dropZone:hover, .dropZoneActive { border-color: #1b4f72; background: #eff6ff; }
+.dropZoneTitle { font-size: 14px; font-weight: 600; color: #0B132B; margin: 0 0 4px; }
+.dropZoneHint { font-size: 12px; color: #9ca3af; margin: 0; }
+.csvError { font-size: 13px; color: #dc2626; margin-top: 8px; }
+.csvPreview { margin-top: 12px; }
+.csvPreviewTitle { font-size: 13px; font-weight: 600; color: #0B132B; margin: 0 0 10px; }
+.actions { display: flex; gap: 8px; }
+.csvCancel { padding: 8px 16px; font-size: 13px; font-weight: 600; background: none; border: 1px solid #e5e3de; border-radius: 8px; color: #6B7280; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.csvConfirm { padding: 8px 20px; font-size: 13px; font-weight: 700; background: #1b4f72; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.csvConfirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Table */
+.tableWrap { background: #fff; border: 1px solid #e5e3de; border-radius: 14px; overflow-x: auto; margin-bottom: 28px; }
+.table { width: 100%; border-collapse: collapse; font-size: 14px; font-family: Inter, system-ui, sans-serif; }
+.table th { text-align: left; padding: 10px 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6B7280; border-bottom: 1.5px solid #e5e3de; white-space: nowrap; user-select: none; background: #f5f3ee; }
+.table td { padding: 0; border-bottom: 1px solid #f1efe9; color: #0B132B; vertical-align: middle; }
+.cellText { padding: 9px 14px; cursor: text; min-height: 20px; }
+.cellText:hover { background: #f5f3ee; }
+.cellTextEmpty { color: #b5b0a4; }
+.cellUnavailable { opacity: 0.55; }
+.cellInput { width: 100%; height: 100%; padding: 9px 14px; font-size: 14px; border: none; outline: 2px solid #1b4f72; outline-offset: -2px; background: #fff; color: #0B132B; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; }
+.unavailableRow { opacity: 0.65; }
+.readonlyCell { padding: 9px 14px; color: #6B7280; font-size: 12px; }
+.actionCell { padding: 6px 10px; }
+
+/* Available toggle */
+.availableToggle { background: none; border: none; font-size: 12px; font-weight: 700; cursor: pointer; padding: 3px 8px; border-radius: 999px; font-family: Inter, system-ui, sans-serif; }
+.availableOn { color: #16a34a; background: #dcfce7; }
+.availableOff { color: #9ca3af; background: #f3f4f6; }
+
+/* Delete */
+.deleteTrigger { background: none; border: none; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: 6px; color: #9ca3af; }
+.deleteTrigger:hover { background: #fef2f2; color: #dc2626; }
+.deleteConfirmRow { display: flex; align-items: center; gap: 8px; white-space: nowrap; padding: 4px; }
+.deleteConfirmText { font-size: 12px; color: #0B132B; }
+.deleteConfirmButton { padding: 6px 12px; font-size: 12px; font-weight: 700; color: #fff; border: none; border-radius: 999px; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+.deleteCancelButton { padding: 6px 12px; font-size: 12px; font-weight: 700; color: #0B132B; background: #f5f3ee; border: 1px solid #e5e3de; border-radius: 999px; cursor: pointer; font-family: Inter, system-ui, sans-serif; }
+
+/* Empty */
+.empty { padding: 48px 32px; text-align: center; background: #f9f8f6; border-radius: 12px; border: 1px solid #e5e3de; font-size: 15px; font-weight: 600; color: #6B7280; }
+.emptySearch { padding: 24px; text-align: center; color: #6B7280; font-size: 14px; }

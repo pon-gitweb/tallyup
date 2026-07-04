@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from './firebase'
-import SupplierPortalPage from './pages/SupplierPortalPage'
+import SupplierLayout, { type SupplierPage } from './layouts/SupplierLayout'
+import SupplierCataloguePage from './pages/SupplierCataloguePage'
 import LoginPage from './pages/LoginPage'
 import ProjectsPage, { type VenueRow } from './pages/ProjectsPage'
 import SetupProductsPage from './pages/SetupProductsPage'
@@ -29,6 +30,8 @@ function App() {
   const [activeVenue, setActiveVenue] = useState<VenueRow | null>(null)
   const [page, setPage] = useState<Page>('hostihealth')
   const [festivalPage, setFestivalPage] = useState<FestivalPage>('festival-setup')
+  const [supplierPage, setSupplierPage] = useState<SupplierPage>('supplier-catalogue')
+  const [supplierName, setSupplierName] = useState<string | null>(null)
   const [accountType, setAccountType] = useState<'venue' | 'supplier' | null>(null)
   const [supplierId, setSupplierId] = useState<string | null>(null)
 
@@ -49,6 +52,10 @@ function App() {
           if (data?.supplierId) {
             setAccountType('supplier')
             setSupplierId(data.supplierId)
+            try {
+              const supplierDoc = await getDoc(doc(db, 'supplierAccounts', data.supplierId))
+              if (supplierDoc.exists()) setSupplierName((supplierDoc.data() as any).name ?? null)
+            } catch {}
             return
           }
         }
@@ -72,7 +79,30 @@ function App() {
   }
 
   if (user && accountType === 'supplier' && supplierId) {
-    return <SupplierPortalPage supplierId={supplierId} user={user} />
+    return (
+      <SupplierLayout
+        user={user}
+        supplierName={supplierName}
+        page={supplierPage}
+        onNavigate={setSupplierPage}
+      >
+        {supplierPage === 'supplier-catalogue' && (
+          <SupplierCataloguePage supplierId={supplierId} user={user} />
+        )}
+        {supplierPage === 'supplier-connections' && (
+          <div style={{ padding: 32, color: '#6b7280', fontFamily: 'Inter, sans-serif' }}>Connections — coming in next build</div>
+        )}
+        {supplierPage === 'supplier-specials' && (
+          <div style={{ padding: 32, color: '#6b7280', fontFamily: 'Inter, sans-serif' }}>Specials — coming in next build</div>
+        )}
+        {supplierPage === 'supplier-orders' && (
+          <div style={{ padding: 32, color: '#6b7280', fontFamily: 'Inter, sans-serif' }}>Orders — coming in next build</div>
+        )}
+        {supplierPage === 'supplier-account' && (
+          <div style={{ padding: 32, color: '#6b7280', fontFamily: 'Inter, sans-serif' }}>Account — coming in next build</div>
+        )}
+      </SupplierLayout>
+    )
   }
 
   function openVenue(venue: VenueRow) {
