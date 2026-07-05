@@ -58,6 +58,9 @@ function StocktakeSummaryScreen() {
   const [resetting, setResetting] = React.useState(false);
   const [baseline, setBaseline] = useState<BaselineData | null>(null);
   const [baselineLoading, setBaselineLoading] = useState(true);
+  const [activeMinutes, setActiveMinutes] = useState<number | null>(null);
+  const [totalBreaks, setTotalBreaks] = useState<number>(0);
+  const [breakMinutes, setBreakMinutes] = useState<number>(0);
 
   const handleNewCycle = () => {
     confirm({
@@ -158,6 +161,38 @@ function StocktakeSummaryScreen() {
     })();
   }, [venueId, items, totalValue]);
 
+  // Load active counting time across all departments' areas
+  useEffect(() => {
+    if (!venueId) return;
+    (async () => {
+      try {
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        let totalActive = 0;
+        let totalBreakCount = 0;
+        await Promise.all(deptsSnap.docs.map(async deptDoc => {
+          const areasSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
+          );
+          areasSnap.docs.forEach(d => {
+            const data = d.data();
+            if (typeof data.activeCountingMinutes === 'number') {
+              totalActive += data.activeCountingMinutes;
+            }
+            const segs = data.countSessionSegments || [];
+            if (segs.length > 1) totalBreakCount += segs.length - 1;
+          });
+        }));
+        const wallMinutes = Math.round(windowHours * 60);
+        const breakMins = Math.max(0, wallMinutes - Math.round(totalActive));
+        setActiveMinutes(Math.round(totalActive));
+        setTotalBreaks(totalBreakCount);
+        setBreakMinutes(breakMins);
+      } catch {
+        // Non-fatal — falls back to wall clock display
+      }
+    })();
+  }, [venueId, windowHours]);
+
   const formatDuration = (hours: number) => {
     if (hours < 1) return `${Math.round(hours * 60)} minutes`;
     if (hours === 1) return '1 hour';
@@ -197,7 +232,10 @@ function StocktakeSummaryScreen() {
         {windowHours > 0 && (
           <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 999, marginTop: 4 }}>
             <Text style={{ color: '#fff', fontWeight: '900', fontSize: 18 }}>
-              ⏱ Done in {formatDuration(windowHours)}
+              ⏱ {activeMinutes != null && activeMinutes > 0
+                ? `${activeMinutes} min active counting${totalBreaks > 0 ? ` · ${totalBreaks} break${totalBreaks > 1 ? 's' : ''} (${breakMinutes} min) excluded` : ''}`
+                : `Done in ${formatDuration(windowHours)}`
+              }
             </Text>
           </View>
         )}
@@ -216,7 +254,8 @@ function StocktakeSummaryScreen() {
         {[
           { label: 'Items counted', value: itemsCounted, colour: c.success },
           { label: 'Not counted', value: itemsMissed, colour: itemsMissed > 0 ? c.warning : c.success },
-          { label: 'Duration', value: formatDuration(windowHours), colour: '#1b4f72', small: true },
+          { label: 'Duration', value: activeMinutes != null && activeMinutes > 0 ? `${activeMinutes} min` : formatDuration(windowHours), colour: '#1b4f72', small: true },
+          ...(activeMinutes != null && totalBreaks > 0 ? [{ label: 'Breaks excluded', value: `${totalBreaks} break${totalBreaks > 1 ? 's' : ''} · ${breakMinutes} min`, colour: '#6b7280', small: true }] : []),
         ].map((stat, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e5e1d8' }}>
             <Text style={{ fontSize: stat.small ? 16 : 28, fontWeight: '900', color: stat.colour }}>{stat.value}</Text>

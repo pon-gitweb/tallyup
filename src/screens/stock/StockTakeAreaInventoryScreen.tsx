@@ -2427,10 +2427,17 @@ try {
         if (isFestivalSession && finalized) {
           await startNewDepartmentCycle(venueId!, departmentId);
         }
+        const breakCount = Math.max(0, countSessionSegments.length - 1);
+        const totalWallMinutes = Math.round(windowHours * 60);
+        const breakMinutes = Math.max(0, totalWallMinutes - Math.round(activeCountingMinutes));
+        const durationMsg = activeCountingMinutes > 0 && breakCount > 0
+          ? `${Math.round(activeCountingMinutes)} min active · ${breakCount} break${breakCount > 1 ? 's' : ''} (${breakMinutes} min) excluded`
+          : `${totalWallMinutes} min`;
+
         if (finalized) {
           showSuccess('Department complete — nice work!');
         } else {
-          showSuccess(`${areaName || 'Area'} counted ✅`);
+          showSuccess(`${areaName || 'Area'} submitted · ${durationMsg}`);
         }
         if (!finalized) nav.navigate('Areas' as never, { departmentId } as never);
       } catch (e: any) {
