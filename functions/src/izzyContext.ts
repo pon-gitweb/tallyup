@@ -96,7 +96,7 @@ VOICE COUNTING (hands-free mode)
 - Normal counting with steppers and number inputs works alongside voice mode — switch freely
 - If a product has multiple matches say "one", "two", or "three" to select
 - If a product is not found say "skip" to move on
-- Works with AirPods and Bluetooth earphones automatically — no setup needed
+- Works with the device microphone automatically — no setup needed. Bluetooth earphones may work depending on device and earphone model but are not guaranteed.
 - Best in quieter environments (walk-in chiller, prep area, pre-service) — for noisy service use steppers
 
 Voice counting commands:
@@ -142,7 +142,7 @@ BATCH PRICE ENTRY
 
 RECIPE COSTS (CraftIt)
 - Recipes linked to venue products show live cost prices
-- COGS updates automatically when invoice prices change
+- When an invoice price differs from the recorded product cost, a price change flag is raised for your review. Once you accept the change, COGS recalculates automatically.
 - Ingredients show whether their cost is live (linked to a product) or manual
 - Add prices directly from the recipe if a linked product has no price set
 
@@ -167,14 +167,14 @@ HOSTI WEB DASHBOARD:
 
 PERFORMANCE SCREEN (HOSTI HEALTH):
 - View your venue's Hosti Health score (0–100) from the dashboard — tap "View Performance"
-- The score is made up of five KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, Ordering Intelligence, and Waste Control
+- The score is made up of four KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, and Ordering Intelligence. A fifth KPI — Waste Control — is planned for when POS sales data is available to calculate true waste vs variance.
 - Labour Efficiency specifically measures: how long the stocktake takes vs the venue's set baseline (configured in Settings → hourly rate and stocktake baseline)
 - The time used for Labour Efficiency is active counting time — breaks over 3 minutes are automatically excluded from the calculation
 - A faster stocktake relative to baseline = higher Labour Efficiency score
 - To improve Labour Efficiency: count more efficiently, reduce breaks between product counts, use voice counting to speed up entry
 - Stage 1 (no stocktakes): shows a building baseline checklist
 - Stage 2 (1 stocktake): shows an estimated score range
-- Stage 3 (2+ stocktakes): shows your full confirmed score with trend and financial impact
+- Stage 3 (3+ stocktakes): shows your full confirmed score with trend and financial impact
 - Each KPI card is tappable — shows exactly how the score is calculated
 - The Focus List shows the top 3 products driving your variance (your biggest opportunities)
 - Insights show what the data most likely means (e.g. "concentrated variance — possible overpouring")
@@ -194,7 +194,7 @@ INVOICE SCANNING:
 - Products on the invoice are matched to your existing products and stock is updated
 - Unmatched products are surfaced with an "Add to products" button
 - Duplicate invoices are detected automatically
-- If no matching order exists, a retrospective order is created automatically
+- If no matching order exists, the invoice is saved as a Pending Fast Receive for manual review. You can attach it to an existing order or action it from Invoices → Fast Receives Pending.
 
 SUGGESTED ORDERS:
 - After a stocktake, go to Orders → Suggested Orders to see what needs reordering
@@ -207,7 +207,7 @@ SUGGESTED ORDERS:
 
   planned: `
 FEATURES PLANNED FOR FUTURE UPDATES:
-- Waste Control tracking (log wastage by product and reason — coming soon)
+- Waste Control KPI (requires POS sales data for accurate calculation — planned for post-POS integration release)
 - POS integrations (Square, Wizbang, Bepoz — connection screens visible in Settings, activation in progress)
 - Desktop onboarding experience — guided tour for new web dashboard users (coming soon)
 - CraftIt recipe editing on desktop — create and edit recipes with a keyboard (coming soon)
