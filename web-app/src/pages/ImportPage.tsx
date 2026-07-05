@@ -269,10 +269,75 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [bRows, setBRows] = useState<BRow[]>([])
   const [bStatus, setBStatus] = useState<ImportStatus>('idle')
   const [bError, setBError] = useState<string | null>(null)
+  const [bPdfStatus, setBPdfStatus] = useState<'idle'|'uploading'|'processing'|'ready'|'done'>('idle')
+  const [bPdfLines, setBPdfLines] = useState<any[]>([])
+  const [bPdfError, setBPdfError] = useState<string|null>(null)
+  const [bPdfPeriod, setBPdfPeriod] = useState<{start?:string|null;end?:string|null}>({})
+
+  async function handleImportBPdf() {
+    if (!bPdfLines.length) return
+    setBPdfStatus('done') // optimistic — writes are fast
+    try {
+      await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
+        source: 'pdf',
+        importedAt: serverTimestamp(),
+        lineCount: bPdfLines.length,
+        period: bPdfPeriod,
+        lines: bPdfLines,
+      })
+      await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
+    } catch {
+      setBPdfError('Import failed. Please try again.')
+      setBPdfStatus('idle')
+    }
+  }
 
   async function handleFileB(files: FileList) {
     const file = files[0]
     if (!file) return
+
+    if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+      setBPdfError(null)
+      setBPdfLines([])
+      setBPdfStatus('uploading')
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = () => reject(new Error('Failed to read PDF'))
+          reader.readAsDataURL(file)
+        })
+        const token = await auth.currentUser?.getIdToken().catch(() => null)
+        if (!token) throw new Error('Not authenticated')
+        const API = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        const destPath = `venues/${venueId}/sales/pdf/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, '_').slice(0, 60)}`
+        const uploadRes = await fetch(`${API}/upload-file`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ venueId, destPath, dataUrl: base64 }),
+        })
+        if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status})`)
+        const { fullPath } = await uploadRes.json()
+        setBPdfStatus('processing')
+        const ocrRes = await fetch(`${API}/process-sales-pdf`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ venueId, storagePath: fullPath }),
+        })
+        const ocrData = await ocrRes.json().catch(() => null)
+        if (!ocrRes.ok || !ocrData?.ok) throw new Error(ocrData?.error || 'Processing failed')
+        if (ocrData.warnings?.length && !ocrData.lines?.length) {
+          setBPdfError(ocrData.warnings[0]); setBPdfStatus('idle'); return
+        }
+        setBPdfLines(ocrData.lines || [])
+        setBPdfPeriod(ocrData.period || {})
+        setBPdfStatus('ready')
+      } catch (e: any) {
+        setBPdfError(e?.message || 'PDF processing failed. Try a CSV export from your POS instead.')
+        setBPdfStatus('idle')
+      }
+      return
+    }
+
     setBError(null)
     setBStatus('idle')
     try {
@@ -770,12 +835,58 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       {/* ── Zone B — Sales Data ── */}
       <DropZone
         title="Sales Data"
-        description="Import a sales report to help calibrate suggested order quantities. Columns needed: Name, Quantity, Revenue."
-        badge="Optional"
-        badgeColour="#6b7280"
+        description="Import a POS sales report — CSV or PDF. Columns needed for CSV: Name, Qty Sold, Revenue. PDFs are processed with AI."
+        badge="CSV or PDF"
+        badgeColour="#1b4f72"
+        accept=".csv,.pdf"
         onFiles={handleFileB}
       >
         {bError && <p className={styles.error}>{bError}</p>}
+
+        {/* PDF processing states */}
+        {(bPdfStatus === 'uploading' || bPdfStatus === 'processing') && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>
+              {bPdfStatus === 'uploading' ? '⬆ Uploading PDF…' : '🔍 Extracting sales data with AI…'}
+            </p>
+          </div>
+        )}
+        {bPdfError && <p className={styles.error}>{bPdfError}</p>}
+        {bPdfStatus === 'ready' && bPdfLines.length > 0 && (
+          <div className={styles.preview}>
+            <p className={styles.previewTitle}>{bPdfLines.length} sales lines extracted from PDF</p>
+            {(bPdfPeriod.start || bPdfPeriod.end) && (
+              <p className={styles.deduplicateSummary}>
+                Period: {bPdfPeriod.start || '?'} → {bPdfPeriod.end || '?'}
+              </p>
+            )}
+            <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+              <table className={styles.table}>
+                <thead><tr><th>Product</th><th>Qty Sold</th><th>Gross</th></tr></thead>
+                <tbody>
+                  {bPdfLines.slice(0, 20).map((l: any, i: number) => (
+                    <tr key={i}>
+                      <td>{l.name}</td>
+                      <td>{l.qtySold}</td>
+                      <td>{l.gross != null ? `$${Number(l.gross).toFixed(2)}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.actions}>
+              <button className={styles.confirmBtn} onClick={handleImportBPdf}>
+                Import {bPdfLines.length} sales lines
+              </button>
+              <button className={styles.cancelBtn} onClick={() => { setBPdfStatus('idle'); setBPdfLines([]); setBPdfError(null) }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {bPdfStatus === 'done' && (
+          <p className={styles.success}>✓ Sales data imported from PDF. Suggested Orders will use this data.</p>
+        )}
         {(bStatus === 'ready' || bStatus === 'importing') && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{bRows.length} sales lines found</p>

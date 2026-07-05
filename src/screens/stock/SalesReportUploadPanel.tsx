@@ -3,10 +3,13 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import { apiBase } from '../../services/apiBase';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import { refreshAIContext } from '../../services/aiContext';
 import { salesFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
@@ -33,7 +36,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
   const upload = useCallback(async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', '*/*'],
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/pdf', '*/*'],
         multiple: false,
         copyToCacheDirectory: true,
       });
@@ -42,7 +45,48 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       const a = res.assets[0];
       const isCsv = (a.mimeType || '').includes('csv') || /\.csv$/i.test(a.name || '');
       if (!isCsv) {
-        showInfo('Sales PDF imports are not enabled yet. Please export a CSV from your POS instead.');
+        // PDF path — upload to Storage then call /process-sales-pdf
+        if (!venueId) throw new Error('Not ready: no venue selected');
+        try {
+          const auth = getAuth();
+          const idToken = await auth.currentUser?.getIdToken();
+          if (!idToken) throw new Error('Not signed in');
+
+          const base = apiBase();
+          const destPath = `venues/${venueId}/sales/pdf/${Date.now()}-${(a.name || 'sales.pdf').replace(/[^\w.\-]+/g, '_')}`;
+          const base64 = await FileSystem.readAsStringAsync(a.uri, { encoding: FileSystem.EncodingType.Base64 });
+
+          const uploadRes = await fetch(`${base}/upload-file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ venueId, destPath, dataUrl: `data:application/pdf;base64,${base64}` }),
+          });
+          if (!uploadRes.ok) throw new Error('Upload failed');
+          const { fullPath } = await uploadRes.json();
+
+          const processRes = await fetch(`${base}/process-sales-pdf`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+            body: JSON.stringify({ venueId, storagePath: fullPath }),
+          });
+          const result = await processRes.json();
+
+          if (!processRes.ok || !result.ok) throw new Error(result.error || 'Processing failed');
+
+          if (result.warnings?.length && !result.lines?.length) {
+            showInfo(result.warnings[0]);
+            return;
+          }
+
+          await storeSalesReport({
+            venueId,
+            report: { source: 'pdf', period: result.period || {}, lines: result.lines || [], warnings: result.warnings || [] },
+            source: 'pdf',
+          });
+          showSuccess(`Sales report imported — ${result.lines?.length ?? 0} products from PDF.`);
+        } catch (e: any) {
+          showError(e?.message || 'Could not process PDF. Try a CSV export from your POS instead.');
+        }
         return;
       }
       if (!venueId) throw new Error('Not ready: no venue selected');

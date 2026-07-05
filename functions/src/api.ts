@@ -5090,6 +5090,130 @@ app.post("/process-invoices-pdf", async (req, res) => {
   }
 });
 
+// ── POST /process-sales-pdf ──────────────────────────────────────────────────
+// Body: { venueId, storagePath }
+// Downloads PDF from Storage, extracts sales data via pdf-parse + Claude
+app.post("/process-sales-pdf", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, storagePath } = req.body || {};
+    if (!venueId || !storagePath) {
+      res.status(400).json({ ok: false, error: "Missing venueId or storagePath" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+    if (!storagePath.startsWith(`venues/${venueId}/`)) {
+      res.status(403).json({ error: "Storage path not permitted" }); return;
+    }
+
+    const lc = await checkAiLimit(venueId, "sales_report");
+    if (!lc.allowed) { res.status(429).json(lc.limitError); return; }
+
+    // Download PDF from Storage
+    const bucket = admin.storage().bucket();
+    const [fileBuffer] = await bucket.file(storagePath).download();
+
+    // Extract text with pdf-parse
+    let pdfText = "";
+    try {
+      const pdfParse = require("pdf-parse");
+      const parsed = await pdfParse(fileBuffer);
+      pdfText = parsed.text || "";
+    } catch (e: any) {
+      console.error("[process-sales-pdf] pdf-parse error:", e?.message);
+    }
+
+    if (!pdfText.trim()) {
+      res.json({
+        ok: true,
+        source: "pdf",
+        period: {},
+        lines: [],
+        warnings: ["Could not extract text from this PDF — it may be a scanned image. Export a CSV from your POS instead."],
+      }); return;
+    }
+
+    // Send to Claude
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) { res.status(500).json({ ok: false, error: "AI not configured" }); return; }
+
+    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 3000,
+        messages: [{
+          role: "user",
+          content: `Extract all sales line items from this POS sales report. Return ONLY valid JSON, no other text:
+{
+  "period": { "start": "YYYY-MM-DD or null", "end": "YYYY-MM-DD or null" },
+  "lines": [
+    {
+      "name": "product name",
+      "sku": "sku or null",
+      "barcode": "barcode or null",
+      "qtySold": 12,
+      "gross": 180.00,
+      "net": 156.52,
+      "tax": 23.48
+    }
+  ],
+  "warnings": []
+}
+Rules: Include every product line. qtySold must be a positive number. gross/net/tax are numbers or null. Skip totals, subtotals, header rows, and category rows — only individual product lines. Extract period dates if visible.
+
+Sales report text:
+${pdfText.slice(0, 8000)}`,
+        }],
+      }),
+    });
+
+    if (!claudeRes.ok) {
+      const err = await claudeRes.text();
+      console.error("[process-sales-pdf] Claude error:", err);
+      res.status(500).json({ ok: false, error: "AI extraction failed" }); return;
+    }
+
+    const claudeData = await claudeRes.json() as any;
+    const rawText: string = claudeData.content?.[0]?.text ?? "";
+
+    let extracted: any = { period: {}, lines: [], warnings: [] };
+    try {
+      const cleaned = rawText.replace(/```json\n?|\n?```/g, "").trim();
+      extracted = JSON.parse(cleaned);
+    } catch {
+      console.error("[process-sales-pdf] JSON parse failed:", rawText.slice(0, 200));
+      res.json({
+        ok: true,
+        source: "pdf",
+        period: {},
+        lines: [],
+        warnings: ["Could not parse AI response — try a CSV export from your POS instead."],
+      }); return;
+    }
+
+    const lines = (extracted.lines || []).filter((l: any) => l.name && Number(l.qtySold) > 0);
+    trackAiCall(venueId, "sales_report").catch(() => {});
+
+    res.json({
+      ok: true,
+      source: "pdf",
+      period: extracted.period || {},
+      lines,
+      warnings: extracted.warnings || [],
+    });
+  } catch (e: any) {
+    console.error("[process-sales-pdf]", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Sales PDF processing failed" });
+  }
+});
+
 // ── POST /process-invoice-photo ──────────────────────────────────────────────
 // Body: { venueId, storagePath }
 // Downloads image from Storage, sends to Claude Vision, extracts invoice lines.
