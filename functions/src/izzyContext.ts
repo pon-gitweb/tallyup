@@ -119,6 +119,16 @@ Voice counting commands:
 
  Skipped items are shown before you submit so nothing gets missed.
 
+STOCKTAKE TIMING:
+- The app tracks active counting time separately from total elapsed time
+- A break is detected when there is more than 3 minutes of inactivity between counts
+- The stocktake duration shown on the summary screen is active counting time only — breaks are excluded
+- The summary shows how many breaks occurred and how many minutes were excluded
+- Example: "23 min active counting · 2 breaks (8 min) not included" means the counter was active for 23 minutes, took 2 breaks totalling 8 minutes, and the full elapsed time was 31 minutes
+- This is intentional — it gives a fair measure of counting speed without penalising staff for legitimate pauses (phone calls, serving customers, moving between areas)
+- If a user asks why their time looks short: the displayed time is active counting only, breaks are shown separately
+- If a user asks how to improve their Labour Efficiency KPI: count without stopping, minimise breaks between products, count one area at a time without interruption
+
 SETUP WIZARD
 - New users see a 3-step introduction to stocktaking on first login
 - Explains what a stocktake is, how the flow works, and how to add products
@@ -158,6 +168,10 @@ HOSTI WEB DASHBOARD:
 PERFORMANCE SCREEN (HOSTI HEALTH):
 - View your venue's Hosti Health score (0–100) from the dashboard — tap "View Performance"
 - The score is made up of five KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, Ordering Intelligence, and Waste Control
+- Labour Efficiency specifically measures: how long the stocktake takes vs the venue's set baseline (configured in Settings → hourly rate and stocktake baseline)
+- The time used for Labour Efficiency is active counting time — breaks over 3 minutes are automatically excluded from the calculation
+- A faster stocktake relative to baseline = higher Labour Efficiency score
+- To improve Labour Efficiency: count more efficiently, reduce breaks between product counts, use voice counting to speed up entry
 - Stage 1 (no stocktakes): shows a building baseline checklist
 - Stage 2 (1 stocktake): shows an estimated score range
 - Stage 3 (2+ stocktakes): shows your full confirmed score with trend and financial impact
