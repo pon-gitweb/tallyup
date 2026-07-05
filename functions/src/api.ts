@@ -5605,6 +5605,61 @@ app.post("/extract-festival-contract", async (req, res) => {
     }
     await batch.commit();
 
+    // Write contracted prices to venue products (best-effort — non-fatal)
+    if (pricingTerms.length > 0) {
+      try {
+        const db2 = admin.firestore();
+        const productsSnap = await db2.collection(`venues/${venueId}/products`).get();
+        const productsBatch = db2.batch();
+        let priceUpdates = 0;
+
+        for (const pt of pricingTerms) {
+          if (!pt.productName || pt.agreedUnitPrice == null) continue;
+          const needle = (pt.productName as string).toLowerCase().trim();
+
+          const match = productsSnap.docs.find(d => {
+            const pName = ((d.data() as any).name || "").toLowerCase().trim();
+            return pName === needle || pName.includes(needle) || needle.includes(pName);
+          });
+
+          if (match) {
+            const currentCost = (match.data() as any).costPrice ?? null;
+            const newCost = pt.gstExclusive === false
+              ? Math.round((pt.agreedUnitPrice / 1.15) * 100) / 100
+              : pt.agreedUnitPrice;
+
+            productsBatch.update(match.ref, {
+              costPrice: newCost,
+              supplierPriceUpdated: true,
+              supplierNewPrice: newCost,
+              supplierPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              contractPriceLockedBy: contractId,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            if (currentCost !== null && Math.abs(currentCost - newCost) > 0.01) {
+              await db2.collection(`venues/${venueId}/priceChangeFlags`).add({
+                productName: (match.data() as any).name,
+                supplierName: extracted.supplierName || null,
+                oldPrice: currentCost,
+                newPrice: newCost,
+                detectedAt: admin.firestore.FieldValue.serverTimestamp(),
+                status: "pending",
+                source: "contract-extraction",
+                contractId,
+              });
+            }
+            priceUpdates++;
+          }
+        }
+
+        await productsBatch.commit();
+        console.log(`[extract-festival-contract] updated costPrice for ${priceUpdates} products from contract pricing`);
+      } catch (e: any) {
+        console.log("[extract-festival-contract] product price update failed:", e?.message);
+      }
+    }
+
     console.log(`[extract-festival-contract] ok: venueId=${venueId}, contractId=${contractId}, obligations=${obligations.length}`);
     res.json({ ok: true, obligationsCount: obligations.length, supplierName: extracted.supplierName });
 

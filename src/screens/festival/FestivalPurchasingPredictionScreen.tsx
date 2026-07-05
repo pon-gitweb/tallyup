@@ -417,35 +417,76 @@ export default function FestivalPurchasingPredictionScreen() {
 
       // 4. Obligation minimums from contracts collection
       const obligationMins = {};
+      const productObligationMins: Record<string, number> = {};
       if (oblSnapMaybe) {
         oblSnapMaybe.docs.forEach(d => {
           const obl = d.data();
+          // Supplier-level obligation (existing logic)
           if (obl.type === 'minimum_volume' && obl.supplierName) {
             obligationMins[obl.supplierName] =
               (obligationMins[obl.supplierName] || 0) + (obl.quantity || 0);
           }
+          // Product-level obligation
+          if (obl.type === 'minimum_volume' && obl.product) {
+            const key = (obl.product as string).toLowerCase().trim();
+            productObligationMins[key] = (productObligationMins[key] || 0) + (obl.quantity || 0);
+          }
         });
       }
 
-      // 5. Rider stock per product
+      // 5. Rider stock per product — match by name since riders store free-text names
       const riderStock = {};
+      const riderNameStock: Record<string, number> = {};
       if (ridersSnapMaybe) {
         ridersSnapMaybe.docs.forEach(d => {
-          (d.data().products || []).forEach(p => {
-            riderStock[p.productId] = (riderStock[p.productId] || 0) + (p.quantity || 0);
+          const rider = d.data();
+          const allItems = [
+            ...(rider.dressingRoom || []),
+            ...(rider.stageArea || []),
+          ];
+          allItems.forEach((item: any) => {
+            if (!item.product || !item.quantity) return;
+            const key = (item.product as string).toLowerCase().trim();
+            riderNameStock[key] = (riderNameStock[key] || 0) + Number(item.quantity || 0);
           });
         });
       }
+      // Resolve rider names to productIds using venue products
+      allProducts.forEach(p => {
+        const nameKey = p.name.toLowerCase().trim();
+        if (riderNameStock[nameKey]) {
+          riderStock[p.id] = (riderStock[p.id] || 0) + riderNameStock[nameKey];
+        }
+        // Also try partial match — "Heineken" matches "Heineken 330ml"
+        Object.entries(riderNameStock).forEach(([riderName, qty]) => {
+          if (nameKey.includes(riderName) || riderName.includes(nameKey)) {
+            if (!riderStock[p.id]) riderStock[p.id] = qty;
+          }
+        });
+      });
 
-      // 6. Activation stock per product
+      // 6. Activation stock per product — match by name
       const activationStock = {};
+      const activationNameStock: Record<string, number> = {};
       if (actSnapMaybe) {
         actSnapMaybe.docs.forEach(d => {
-          (d.data().products || []).forEach(p => {
-            activationStock[p.productId] = (activationStock[p.productId] || 0) + (p.quantity || 0);
+          const act = d.data();
+          (act.products || []).forEach((p: any) => {
+            const nameKey = (p.name || p.product || '').toLowerCase().trim();
+            const qty = Number(p.qty || p.quantity || 0);
+            if (nameKey && qty > 0) {
+              activationNameStock[nameKey] = (activationNameStock[nameKey] || 0) + qty;
+            }
           });
         });
       }
+      // Resolve to productIds
+      allProducts.forEach(p => {
+        const nameKey = p.name.toLowerCase().trim();
+        if (activationNameStock[nameKey]) {
+          activationStock[p.id] = (activationStock[p.id] || 0) + activationNameStock[nameKey];
+        }
+      });
 
       // 7. Filter by active categories (FIX 8)
       const setupCats = event.categories || null;
@@ -511,6 +552,21 @@ export default function FestivalPurchasingPredictionScreen() {
             r.obligationAdjusted = true;
             r.notes.push(`⚠️ Scaled up to meet supplier obligation minimum of ${minQty} units.`);
           });
+        }
+      });
+
+      // 10b. Product-level obligation minimums — ensure specific product meets its commitment
+      rawPredictions.forEach(r => {
+        const nameKey = r.productName.toLowerCase().trim();
+        const productMin = productObligationMins[nameKey];
+        if (productMin && r.safeOrderQty < productMin) {
+          r.safeOrderQty = productMin;
+          r.predictedQty = productMin;
+          r.bufferedQty = productMin;
+          r.estimatedCost = r.unitCost != null ? r.unitCost * productMin : null;
+          r.obligationAdjusted = true;
+          r.obligationMin = productMin;
+          r.notes.push(`Minimum volume commitment: ${productMin} units required by contract.`);
         }
       });
 
