@@ -67,5 +67,19 @@ service firebase.storage {
 
       allow read: if false;
     }
+
+    match /festival-riders/{venueId}/{anyFile=**} {
+      allow read: if isVenueMember(venueId);
+      allow write: if isVenueMember(venueId)
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+    }
+
+    match /festival-contracts/{venueId}/{anyFile=**} {
+      allow read: if isVenueMember(venueId);
+      allow write: if isVenueMember(venueId)
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+    }
   }
 }
