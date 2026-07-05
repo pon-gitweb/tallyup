@@ -5650,6 +5650,39 @@ app.post("/extract-festival-contract", async (req, res) => {
               });
             }
             priceUpdates++;
+          } else {
+            // Product not in inventory — create it
+            const newProductRef = db2.collection(`venues/${venueId}/products`).doc();
+            const guessedCategory = (() => {
+              const n = (pt.productName as string).toLowerCase();
+              if (n.includes("beer") || n.includes("lager") || n.includes("ale")) return "Beer";
+              if (n.includes("wine") || n.includes("sauvignon") || n.includes("pinot") || n.includes("chardonnay")) return "Wine";
+              if (n.includes("spirit") || n.includes("vodka") || n.includes("gin") || n.includes("rum") || n.includes("whisky") || n.includes("tequila")) return "Spirits";
+              if (n.includes("rtd") || n.includes("seltzer") || n.includes("cider")) return "RTD";
+              if (n.includes("water") || n.includes("juice") || n.includes("soft") || n.includes("cola")) return "Non-Alcoholic";
+              return null;
+            })();
+            const newCost = pt.agreedUnitPrice != null
+              ? (pt.gstExclusive === false
+                  ? Math.round((pt.agreedUnitPrice / 1.15) * 100) / 100
+                  : pt.agreedUnitPrice)
+              : null;
+            productsBatch.set(newProductRef, {
+              name: pt.productName,
+              costPrice: newCost,
+              supplierName: extracted.supplierName || "Unassigned",
+              category: guessedCategory,
+              unit: null,
+              packSize: null,
+              parLevel: null,
+              inductionStatus: "complete",
+              inductionSource: "contract-extraction",
+              contractPriceLockedBy: contractId,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            priceUpdates++;
+            console.log(`[extract-festival-contract] created new product: ${pt.productName}`);
           }
         }
 
