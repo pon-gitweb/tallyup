@@ -1,4 +1,3 @@
-// @ts-nocheck
 // [diag] FastReceive snapshot write — logs collection path + keys on failure
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';

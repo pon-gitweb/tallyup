@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { NormalizedSalesReport } from './types';

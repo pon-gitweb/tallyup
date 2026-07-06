@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Abductive Reasoning — pure math pattern matching over already-computed
  * Hosti Health values. No Firestore reads here; the caller supplies inputs

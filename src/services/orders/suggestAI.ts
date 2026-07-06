@@ -1,6 +1,5 @@
 import { getAIContext } from '../aiContext';
 import { getAuth } from 'firebase/auth';
-// @ts-nocheck
 /**
  * runAISuggest(venueId, opts, mode)
  * - mode = 'math' (default): uses in-memory baseline (legacy math)

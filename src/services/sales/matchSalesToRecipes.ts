@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Recipe-aware sales matching and theoretical consumption engine.
  *

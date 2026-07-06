@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Linking } from 'react-native';
 import * as Sharing from 'expo-sharing';
 

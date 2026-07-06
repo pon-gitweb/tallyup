@@ -1,4 +1,3 @@
-// @ts-nocheck
 
 // Minimal REST shim (same style as sales CSV & invoices)
 const BASE =

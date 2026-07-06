@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getApp } from 'firebase/app';
 import {
   getFirestore, collection, query, where, limit, getDocs, addDoc, serverTimestamp

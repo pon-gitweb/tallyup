@@ -1,4 +1,3 @@
-// @ts-nocheck
 import * as FileSystem from 'expo-file-system';
 import { NormalizedSalesReport, NormalizedSalesLine } from './types';
 

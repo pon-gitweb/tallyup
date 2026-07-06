@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getFirestore, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 export type CompletedStockTakeRow = {

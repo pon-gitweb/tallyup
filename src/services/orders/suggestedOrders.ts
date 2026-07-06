@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import { getVenueSession } from '../completion';

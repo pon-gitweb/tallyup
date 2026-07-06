@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Abductive cellar/premium stock classifier — infers whether a product is
  * cellar or premium stock from signals already in the data (cost, unit,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Lightweight persistence for parsed invoice results (CSV/PDF).
  * - Guards against undefined/null payloads (no crash, just logs).

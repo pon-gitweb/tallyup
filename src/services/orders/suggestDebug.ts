@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Lightweight debug logger for Suggested Orders.
  * Safe to include in production; logs only in __DEV__.

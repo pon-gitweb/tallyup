@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * AI Suggested Orders — client-fed aggregates + minimal filtering.
  * Keep payload tiny, deterministic, and Expo-safe.

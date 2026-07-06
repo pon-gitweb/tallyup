@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Hosti Health — Phase 1.
  * Stage 1 (before the first stocktake): a data-completeness checklist, no score.

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getFirestore, collection, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 
 /**

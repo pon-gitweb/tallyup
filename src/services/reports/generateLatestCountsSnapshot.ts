@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Generate item-level latestCounts snapshot for variance math.
  *

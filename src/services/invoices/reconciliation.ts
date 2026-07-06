@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Reconciliation engine: parsed invoice lines (CSV/PDF) vs submitted order lines.
  * - Conservative matching: productId -> code -> normalized name

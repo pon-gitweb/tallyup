@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { db } from '../firebase';
 import {
   collection, getDocs, doc, getDoc, setDoc,

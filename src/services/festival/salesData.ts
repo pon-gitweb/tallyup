@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 

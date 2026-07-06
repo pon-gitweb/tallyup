@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getFirestore, doc, updateDoc, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 
 export async function finalizeReceiveFromManual({

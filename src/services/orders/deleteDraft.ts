@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Legacy service shim: kept for backwards compatibility during migration.
 // Persistence now lives in domain repo.
 import { OrdersRepo } from '../../domain/orders/orders.repo';

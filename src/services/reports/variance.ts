@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Variance + shrinkage reports.
  *

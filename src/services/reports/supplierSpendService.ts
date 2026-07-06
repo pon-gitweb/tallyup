@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Pure math — reads invoices + snapshot velocity to produce supplier spend data.
 
 import { db } from '../firebase';

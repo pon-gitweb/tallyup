@@ -1,4 +1,3 @@
-// @ts-nocheck
 export type ManualLine = {
   code?: string | null;
   name: string;

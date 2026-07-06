@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { uploadUriViaApi } from '../imports/uploadViaApi';
 
 /**

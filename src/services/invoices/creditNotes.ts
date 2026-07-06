@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Credit note creation — writes a `type: 'credit_note'` document to
  * venues/{venueId}/invoices with negative quantities/amounts, and reverses

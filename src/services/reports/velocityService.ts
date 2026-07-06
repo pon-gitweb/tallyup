@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Pure math — no AI, no Firestore reads. Calculates velocity and performance
 // metrics from snapshot documents (each snapshot has an .items[] array).
 

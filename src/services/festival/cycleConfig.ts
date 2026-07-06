@@ -1,4 +1,3 @@
-// @ts-nocheck
 
 export type CycleLength = 'session' | 'daily' | 'weekly';
 

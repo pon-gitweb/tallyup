@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Predictive Modelling — pure arithmetic stockout predictions. No AI.
  * Velocity comes from velocityService.ts's multi-cycle calculateVelocity (the
