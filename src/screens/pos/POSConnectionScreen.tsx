@@ -160,17 +160,30 @@ export default function POSConnectionScreen() {
       const verifier = generateCodeVerifier();
       const challenge = await generateCodeChallenge(verifier);
       if (!challenge) {
-        showInfo('Square connection setup needs one more step on our side before it can go live — check back soon.');
+        showInfo('Square connection needs one more step — check back soon.');
         return;
       }
+
+      // Store verifier in Firestore so Cloud Function GET callback can access it
+      await setDoc(
+        doc(db, 'squarePkceVerifiers', venueId),
+        { verifier, createdAt: serverTimestamp() },
+        { merge: false }
+      );
+      // Keep in AsyncStorage as fallback
       await AsyncStorage.setItem(`square_pkce_verifier_${venueId}`, verifier);
-      const url = `https://connect.squareup.com/oauth2/authorize` +
+
+      const SQUARE_AUTH_BASE = __DEV__
+        ? 'https://connect.squareupsandbox.com/oauth2/authorize'
+        : 'https://connect.squareup.com/oauth2/authorize';
+
+      const url = SQUARE_AUTH_BASE +
         `?client_id=${encodeURIComponent(SQUARE_APP_ID)}` +
-        `&scope=ITEMS_READ+MERCHANT_PROFILE_READ` +
-        `&session=false` +
+        `&scope=ITEMS_READ+MERCHANT_PROFILE_READ+ORDERS_READ` +
         `&state=${encodeURIComponent(venueId)}` +
         `&code_challenge=${encodeURIComponent(challenge)}` +
         `&code_challenge_method=S256`;
+
       await Linking.openURL(url);
     } catch (e: any) {
       showError(e?.message || 'Could not start Square connection.');

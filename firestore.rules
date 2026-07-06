@@ -1355,5 +1355,14 @@ service cloud.firestore {
         }
       }
     }
+
+    match /squarePkceVerifiers/{venueId} {
+      allow write: if isVenueMember(venueId);
+      allow read: if isVenueMember(venueId);
+    }
+
+    match /squareMerchants/{merchantId} {
+      allow read, write: if false;
+    }
   }
 }

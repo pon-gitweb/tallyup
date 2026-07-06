@@ -1898,10 +1898,112 @@ app.get("/square/status", async (req, res) => {
   }
 });
 
-// POST /square/oauth-callback — exchanges the PKCE authorization code for
-// tokens. Called by the client itself after intercepting the OAuth redirect
-// deep link (Square has no server endpoint of ours to redirect to directly).
-app.post("/square/oauth-callback", async (req, res) => {
+// ── GET /square/oauth-callback ───────────────────────────────────────────────
+// Square redirects here after merchant authorises. Reads code_verifier from
+// Firestore, exchanges code for access token, stores token, redirects to app.
+app.get("/square/oauth-callback", async (req, res) => {
+  try {
+    const { code, state, error } = req.query as Record<string, string>;
+
+    if (error) {
+      console.error('[square/oauth-callback] OAuth error:', error);
+      res.redirect(`tallyup://square-callback?error=${encodeURIComponent(error)}`);
+      return;
+    }
+
+    if (!code || !state) {
+      res.redirect('tallyup://square-callback?error=missing_params');
+      return;
+    }
+
+    const venueId = state;
+
+    // Read code_verifier from Firestore
+    const verifierDoc = await admin.firestore().doc(`squarePkceVerifiers/${venueId}`).get();
+    if (!verifierDoc.exists) {
+      console.error('[square/oauth-callback] No verifier for venueId:', venueId);
+      res.redirect('tallyup://square-callback?error=verifier_not_found');
+      return;
+    }
+    const codeVerifier = verifierDoc.data()?.verifier;
+    await admin.firestore().doc(`squarePkceVerifiers/${venueId}`).delete().catch(() => {});
+
+    if (!squareIsActivated()) {
+      res.redirect('tallyup://square-callback?error=not_configured');
+      return;
+    }
+
+    // Exchange code for token
+    const tokenResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Square-Version': SQUARE_VERSION,
+      },
+      body: JSON.stringify({
+        client_id: SQUARE_APP_ID,
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: codeVerifier,
+      }),
+    });
+    const tokenData: any = await tokenResp.json().catch(() => ({}));
+    if (!tokenResp.ok) {
+      console.error('[square/oauth-callback] token exchange failed', tokenData);
+      res.redirect('tallyup://square-callback?error=token_exchange_failed');
+      return;
+    }
+
+    const accessToken = tokenData.access_token;
+    const expiresAt = tokenData.expires_at || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const merchantId = tokenData.merchant_id || '';
+
+    // Fetch location
+    const locResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/locations`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Square-Version': SQUARE_VERSION,
+      },
+    });
+    const locData: any = await locResp.json().catch(() => ({}));
+    const location = locData?.locations?.[0];
+    const locationId = location?.id || '';
+
+    // Write to Firestore
+    const firestore = admin.firestore();
+    const batch = firestore.batch();
+    batch.set(firestore.doc(`venues/${venueId}/integrationTokens/square`), {
+      accessToken,
+      expiresAt,
+      merchantId,
+      locationId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(firestore.doc(`venues/${venueId}/posIntegration/config`), {
+      adapter: 'square',
+      merchantId,
+      locationId,
+      connectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: 'connected',
+    }, { merge: true });
+    // Merchant lookup for webhooks
+    batch.set(firestore.doc(`squareMerchants/${merchantId}`), {
+      venueId,
+      locationId,
+      connectedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+
+    console.log('[square/oauth-callback] connected', { venueId, merchantId, locationId });
+    res.redirect(`tallyup://square-callback?success=true&venueId=${encodeURIComponent(venueId)}`);
+  } catch (e: any) {
+    console.error('[square/oauth-callback] ERROR', e?.message || e);
+    res.redirect('tallyup://square-callback?error=server_error');
+  }
+});
+
+// POST /square/oauth-callback-post — legacy fallback: client exchanges code directly.
+app.post("/square/oauth-callback-post", async (req, res) => {
   try {
     if (!squareIsActivated()) {
       res.json({ ok: false, error: "Square integration not yet activated" });
