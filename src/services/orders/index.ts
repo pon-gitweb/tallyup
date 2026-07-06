@@ -1,4 +1,3 @@
-// @ts-nocheck
 /** Canonical orders barrel — exports from concrete files. */
 
 /* ---------- Types ---------- */
@@ -23,9 +22,6 @@ export { createDraftsFromSuggestions } from './createDraftsFromSuggestions';
 /* ---------- Draft creation & mutations ---------- */
 export { createDraftOrderWithLines } from './create';
 export {
-  updateOrderLineQty,
-  deleteOrderLine,
-  updateOrderNotes,
   setParOnProduct,
   setSupplierOnProduct,
 } from './updates';
@@ -37,7 +33,7 @@ export { getOrderWithLines, calcTotal } from './queries';
 export { listOrders } from './list';
 
 /* ---------- Submit/Receive flows ---------- */
-export { submitDraftOrder, receiveOrder, submitOrder, postInvoice } from './submit';
+export { submitDraftOrder, receiveOrder, postInvoice } from './submit';
 export { markOrderReceived } from './manage';
 
 /* ---------- Suppliers & smart setters ---------- */
