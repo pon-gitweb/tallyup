@@ -1749,7 +1749,7 @@ const SQUARE_APP_ID = process.env.SQUARE_APP_ID || "YOUR_SQUARE_APP_ID";
 const SQUARE_APP_SECRET = process.env.SQUARE_APP_SECRET || "YOUR_SQUARE_APP_SECRET";
 const SQUARE_VERSION = "2026-05-20";
 const SQUARE_API_BASE = "https://connect.squareup.com";
-const SQUARE_SANDBOX_TOKEN = process.env.SQUARE_SANDBOX_ACCESS_TOKEN || '';
+const SQUARE_SANDBOX_TOKEN = process.env.SQUARE_SANDBOX_ACCESS_TOKEN || functions.config().square?.sandbox_token || '';
 const SQUARE_IS_SANDBOX = SQUARE_APP_ID.startsWith('sandbox-') || !!SQUARE_SANDBOX_TOKEN;
 const SQUARE_API_BASE_RESOLVED = SQUARE_IS_SANDBOX
   ? 'https://connect.squareupsandbox.com'
