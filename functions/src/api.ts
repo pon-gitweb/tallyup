@@ -1749,6 +1749,11 @@ const SQUARE_APP_ID = process.env.SQUARE_APP_ID || "YOUR_SQUARE_APP_ID";
 const SQUARE_APP_SECRET = process.env.SQUARE_APP_SECRET || "YOUR_SQUARE_APP_SECRET";
 const SQUARE_VERSION = "2026-05-20";
 const SQUARE_API_BASE = "https://connect.squareup.com";
+const SQUARE_SANDBOX_TOKEN = process.env.SQUARE_SANDBOX_ACCESS_TOKEN || '';
+const SQUARE_IS_SANDBOX = SQUARE_APP_ID.startsWith('sandbox-') || !!SQUARE_SANDBOX_TOKEN;
+const SQUARE_API_BASE_RESOLVED = SQUARE_IS_SANDBOX
+  ? 'https://connect.squareupsandbox.com'
+  : 'https://connect.squareup.com';
 
 function squareIsActivated(): boolean {
   return (
@@ -2033,6 +2038,73 @@ app.post("/square/disconnect", async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || "Disconnect failed" });
   }
 });
+
+// ── GET /square/sandbox-test ──────────────────────────────────────────────────
+// Tests the sandbox access token by pulling catalogue items
+// Remove before production
+app.get("/square/sandbox-test", async (req, res) => {
+  try {
+    if (!SQUARE_SANDBOX_TOKEN) {
+      res.status(400).json({ ok: false, error: 'SQUARE_SANDBOX_ACCESS_TOKEN not set' });
+      return;
+    }
+
+    // Test 1: Get merchant info
+    const merchantResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/merchants/me`, {
+      headers: {
+        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
+        'Square-Version': SQUARE_VERSION,
+      },
+    });
+    const merchantData: any = await merchantResp.json().catch(() => ({}));
+
+    // Test 2: Get catalogue items
+    const catalogResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/catalog/list?types=ITEM`, {
+      headers: {
+        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
+        'Square-Version': SQUARE_VERSION,
+      },
+    });
+    const catalogData: any = await catalogResp.json().catch(() => ({}));
+    const items = (catalogData.objects || [])
+      .filter((o: any) => o.type === 'ITEM')
+      .map((o: any) => ({
+        id: o.id,
+        name: o.item_data?.name,
+        price: o.item_data?.variations?.[0]?.item_variation_data?.price_money?.amount,
+      }));
+
+    // Test 3: Get locations
+    const locResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/locations`, {
+      headers: {
+        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
+        'Square-Version': SQUARE_VERSION,
+      },
+    });
+    const locData: any = await locResp.json().catch(() => ({}));
+    const locations = (locData.locations || []).map((l: any) => ({
+      id: l.id,
+      name: l.name,
+      status: l.status,
+    }));
+
+    res.json({
+      ok: true,
+      merchant: {
+        id: merchantData.merchant?.id,
+        businessName: merchantData.merchant?.business_name,
+        country: merchantData.merchant?.country,
+        currency: merchantData.merchant?.currency,
+      },
+      locations,
+      catalogItemCount: items.length,
+      catalogItems: items.slice(0, 10),
+    })
+  } catch (e: any) {
+    console.error('[square/sandbox-test]', e?.message)
+    res.status(500).json({ ok: false, error: e?.message })
+  }
+})
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
