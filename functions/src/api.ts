@@ -2198,6 +2198,133 @@ app.get("/square/sandbox-test", async (req, res) => {
   }
 })
 
+// ── GET /square/pull-sales ────────────────────────────────────────────────────
+// Pulls Square orders for a venue and writes them to salesReports collection.
+// Query params: venueId (required), days (optional, default 7)
+// For sandbox testing: uses SQUARE_SANDBOX_TOKEN if no venue token found.
+app.get("/square/pull-sales", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const venueId = String(req.query.venueId || "");
+    const days = parseInt(String(req.query.days || "7"), 10);
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+
+    await verifyVenueMembership(uid, venueId);
+
+    // Get access token — try venue token first, fall back to sandbox token
+    let accessToken = SQUARE_SANDBOX_TOKEN;
+    try {
+      const tokenSnap = await admin.firestore().doc(`venues/${venueId}/integrationTokens/square`).get();
+      if (tokenSnap.exists) {
+        accessToken = tokenSnap.data()?.accessToken || SQUARE_SANDBOX_TOKEN;
+      }
+    } catch {}
+
+    if (!accessToken) {
+      res.status(400).json({ ok: false, error: "No Square access token found for this venue" });
+      return;
+    }
+
+    // Get location
+    const locSnap = await admin.firestore().doc(`venues/${venueId}/posIntegration/config`).get();
+    const locationId = locSnap.data()?.locationId || "L8BHN9R0XG42D";
+
+    // Pull orders from Square for the last N days
+    const startAt = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const ordersResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/orders/search`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Square-Version": SQUARE_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        location_ids: [locationId],
+        query: {
+          filter: {
+            date_time_filter: {
+              created_at: { start_at: startAt }
+            }
+          }
+        },
+        limit: 500,
+      }),
+    });
+
+    const ordersData: any = await ordersResp.json().catch(() => ({}));
+    if (!ordersResp.ok) {
+      res.status(500).json({ ok: false, error: ordersData?.errors?.[0]?.detail || "Failed to fetch orders" });
+      return;
+    }
+
+    const orders = ordersData.orders || [];
+
+    // Aggregate into daily sales lines keyed by product name
+    const dailyAgg: Record<string, Record<string, { qtySold: number; gross: number }>> = {};
+
+    for (const order of orders) {
+      const date = (order.created_at || "").slice(0, 10); // YYYY-MM-DD
+      if (!dailyAgg[date]) dailyAgg[date] = {};
+
+      for (const item of (order.line_items || [])) {
+        const name = item.name || "Unknown";
+        const qty = parseInt(item.quantity || "0", 10);
+        const gross = (item.gross_sales_money?.amount || 0) / 100; // cents to dollars
+
+        if (!dailyAgg[date][name]) dailyAgg[date][name] = { qtySold: 0, gross: 0 };
+        dailyAgg[date][name].qtySold += qty;
+        dailyAgg[date][name].gross += gross;
+      }
+    }
+
+    // Write each day as a salesReport document
+    const firestore = admin.firestore();
+    const batch = firestore.batch();
+    const written: string[] = [];
+
+    for (const [date, lines] of Object.entries(dailyAgg)) {
+      const docId = `square-${date}`;
+      const ref = firestore.doc(`venues/${venueId}/salesReports/${docId}`);
+      batch.set(ref, {
+        source: "square",
+        date,
+        lines: Object.entries(lines).map(([name, data]) => ({
+          name,
+          qtySold: data.qtySold,
+          gross: data.gross,
+          net: null,
+          tax: null,
+          sku: null,
+          barcode: null,
+        })),
+        transactionCount: orders.filter((o: any) => (o.created_at || "").slice(0, 10) === date).length,
+        pulledAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      written.push(docId);
+    }
+
+    await batch.commit();
+
+    res.json({
+      ok: true,
+      ordersFound: orders.length,
+      daysWritten: written,
+      summary: Object.fromEntries(
+        Object.entries(dailyAgg).map(([date, lines]) => [
+          date,
+          Object.entries(lines).map(([name, d]) => ({ name, qtySold: d.qtySold, gross: `$${d.gross.toFixed(2)}` }))
+        ])
+      ),
+    });
+  } catch (e: any) {
+    console.error("[square/pull-sales] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Pull failed" });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: Date.now() });
