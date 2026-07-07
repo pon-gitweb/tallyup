@@ -78,7 +78,35 @@ export default function POSMappingScreen() {
       setAdapterName(adapter.name);
       const posItems = await adapter.getSaleItems();
 
-      const newItems: ItemState[] = posItems.map(posItem => {
+      // Also load unmatched items from salesReportUnknowns
+      const unknownsSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'salesReportUnknowns'),
+          where('status', '==', 'unmapped')
+        )
+      );
+
+      // Build a set of existing posItemIds to avoid duplicates
+      const existingPosIds = new Set(posItems.map(p => p.posItemId));
+
+      // Add unknowns not already in posItems
+      const unknownItems: POSSaleItem[] = unknownsSnap.docs
+        .map(d => {
+          const data = d.data() as any;
+          const line = data.line || {};
+          return {
+            posItemId: `unknown-${d.id}`,
+            posItemName: line.name || 'Unknown item',
+            posSku: null,
+            sellPrice: line.gross ? line.gross / (line.qtySold || 1) : 0,
+            category: null,
+          };
+        })
+        .filter(item => !existingPosIds.has(item.posItemId));
+
+      const allPosItems = [...posItems, ...unknownItems];
+
+      const newItems: ItemState[] = allPosItems.map(posItem => {
         const existing = existingMap.get(posItem.posItemId);
         if (existing) {
           const isSkipped = existing.mappingType === 'skipped';
@@ -245,6 +273,14 @@ export default function POSMappingScreen() {
           }} />
         </View>
       </View>
+
+      {items.some(i => i.posItem.posItemId.startsWith('unknown-')) && (
+        <View style={{ backgroundColor: '#fef9c3', padding: 12, marginBottom: 8, borderRadius: 8, marginHorizontal: 12, marginTop: 8 }}>
+          <Text style={{ fontSize: 13, color: '#92400e', fontWeight: '600' }}>
+            ⚠ Some items from your Square sales couldn't be auto-matched. Map them below to track their stock correctly.
+          </Text>
+        </View>
+      )}
 
       <ScrollView contentContainerStyle={{ padding: 12, gap: 10 }}>
         {items.map((item, idx) => (
