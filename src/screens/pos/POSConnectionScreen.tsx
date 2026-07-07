@@ -14,7 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 // Square app credential — placeholder until the developer account is
 // registered. The OAuth tile stays inert (shows a stub message instead of
 // opening a real authorize URL) while this is a placeholder.
-const SQUARE_APP_ID = 'YOUR_SQUARE_APP_ID';
+const SQUARE_APP_ID = 'sq0idp-8FFUpIjeKaG9fys2-ACumw';
 
 
 function useManagerAccess(venueId: string | null) {
