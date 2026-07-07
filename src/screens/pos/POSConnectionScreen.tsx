@@ -171,13 +171,18 @@ export default function POSConnectionScreen() {
   function onDisconnect() {
     confirm({
       title: 'Disconnect POS?',
-      message: 'This venue will no longer be linked to a POS system.',
+      message: 'Square sales data will stop syncing to Hosti. You can reconnect at any time.',
       confirmLabel: 'Disconnect',
       destructive: true,
       onConfirm: async () => {
         if (!venueId) return;
         try {
           await deleteDoc(doc(db, 'venues', venueId, 'posIntegration', 'config'));
+          // Also remove the OAuth token for Square
+          if (config?.adapter === 'square') {
+            await deleteDoc(doc(db, 'venues', venueId, 'integrationTokens', 'square'));
+          }
+          setSquareConnected(false);
           showSuccess('POS disconnected');
           await load();
         } catch (e: any) {
@@ -231,61 +236,114 @@ export default function POSConnectionScreen() {
           <ActivityIndicator color={c.primary} />
         ) : (
           <>
-            {/* Tiles */}
-            <View style={{ gap: 10 }}>
-              {adapterKeys.map(key => {
-                const adapter = getAdapter(key);
-                const isMock = key === 'mock';
-                const isSquare = key === 'square';
-                const isSelected = selected === key;
+            {config ? (
+              <View style={{
+                backgroundColor: c.positiveSoft,
+                borderRadius: 14, padding: 20,
+                borderWidth: 2, borderColor: c.positiveStrong,
+                gap: 12,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: c.positiveStrong }} />
+                  <Text style={{ fontWeight: '900', fontSize: 18, color: c.navy }}>
+                    {getAdapter(config.adapter).name}
+                  </Text>
+                  <View style={{
+                    backgroundColor: c.positiveStrong, paddingHorizontal: 10, paddingVertical: 3,
+                    borderRadius: 999, marginLeft: 'auto',
+                  }}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>Connected</Text>
+                  </View>
+                </View>
+                {config.connectedAt && (
+                  <Text style={{ fontSize: 12, color: c.textSecondary }}>
+                    Connected {formatConnectedAt(config.connectedAt)}
+                  </Text>
+                )}
+                {config.adapter === 'square' && config.merchantId && (
+                  <Text style={{ fontSize: 12, color: c.textSecondary }}>
+                    Merchant: {config.merchantId}
+                  </Text>
+                )}
+                <TouchableOpacity
+                  onPress={onDisconnect}
+                  style={{
+                    marginTop: 4, borderRadius: 10, padding: 12, alignItems: 'center',
+                    borderWidth: 1.5, borderColor: c.danger || '#dc2626',
+                    backgroundColor: c.background,
+                  }}
+                >
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: c.danger || '#dc2626' }}>
+                    Disconnect
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {adapterKeys.map(key => {
+                  const adapter = getAdapter(key);
+                  const isMock = key === 'mock';
+                  const isSquare = key === 'square';
+                  const isSelected = selected === key;
+                  const isComingSoon = !isMock && !isSquare;
 
-                let badgeBg = c.primaryLight, badgeBorder = c.border, badgeText = c.warning;
-                let badgeLabel = 'Coming soon — partnership pending';
-                if (isMock) {
-                  badgeBg = c.positiveSoft; badgeBorder = c.positiveStrong; badgeText = c.positiveStrong;
-                  badgeLabel = 'Test / Demo mode';
-                } else if (isSquare) {
-                  if (squareConnected) {
+                  let badgeBg = c.primaryLight, badgeBorder = c.border, badgeText = c.warning;
+                  let badgeLabel = 'Coming soon — partnership pending';
+                  if (isMock) {
                     badgeBg = c.positiveSoft; badgeBorder = c.positiveStrong; badgeText = c.positiveStrong;
-                    badgeLabel = 'Connected';
-                  } else {
+                    badgeLabel = 'Test / Demo mode';
+                  } else if (isSquare) {
                     badgeBg = c.surface; badgeBorder = c.border; badgeText = c.textSecondary;
                     badgeLabel = squareConnected === null ? 'Checking…' : 'Not connected';
                   }
-                }
 
-                return (
-                  <TouchableOpacity
-                    key={key}
-                    onPress={() => setSelected(key)}
-                    activeOpacity={0.8}
-                    style={{
-                      borderRadius: 14, padding: 14, borderWidth: 2,
-                      borderColor: isSelected ? c.primary : c.border,
-                      backgroundColor: isSelected ? c.primaryLight : c.surface,
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                      <Text style={{ fontWeight: '900', fontSize: 15, color: isSelected ? c.primary : c.text, flex: 1 }}>
-                        {adapter.name}
-                      </Text>
-                      <View style={{
-                        backgroundColor: badgeBg,
-                        paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                        borderWidth: 1, borderColor: badgeBorder,
-                      }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: badgeText }}>
-                          {badgeLabel}
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={isSquare ? connectSquare : isComingSoon ? undefined : () => setSelected(key)}
+                      activeOpacity={isComingSoon ? 1 : 0.8}
+                      style={{
+                        borderRadius: 14, padding: 14, borderWidth: 2,
+                        borderColor: isSelected ? c.primary : c.border,
+                        backgroundColor: isSelected ? c.primaryLight : c.surface,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontWeight: '900', fontSize: 15, color: isSelected ? c.primary : c.text, flex: 1 }}>
+                          {adapter.name}
                         </Text>
+                        <View style={{
+                          backgroundColor: badgeBg,
+                          paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+                          borderWidth: 1, borderColor: badgeBorder,
+                        }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: badgeText }}>
+                            {badgeLabel}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      {isSquare && !squareConnected && (
+                        <TouchableOpacity
+                          onPress={connectSquare}
+                          disabled={saving}
+                          style={{
+                            marginTop: 10, backgroundColor: c.primary,
+                            borderRadius: 10, padding: 10, alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>
+                            {saving ? 'Opening Square…' : 'Connect'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
 
-            {/* Credentials placeholder — real adapters only; Square uses OAuth, not typed credentials */}
-            {selected && selected !== 'mock' && selected !== 'square' && (
+            {/* Credentials placeholder — coming-soon adapters only */}
+            {!config && selected && selected !== 'mock' && selected !== 'square' && (
               <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: c.border, gap: 8 }}>
                 <Text style={{ fontWeight: '700', fontSize: 13, color: c.textSecondary }}>
                   API credentials will be configured here when integration is active
@@ -300,35 +358,6 @@ export default function POSConnectionScreen() {
                   }}
                 />
               </View>
-            )}
-
-            {/* Save */}
-            <TouchableOpacity
-              onPress={onSave}
-              disabled={!selected || saving}
-              style={{
-                backgroundColor: selected ? c.primary : c.border,
-                borderRadius: 12, padding: 16, alignItems: 'center',
-              }}
-            >
-              {saving
-                ? <ActivityIndicator color={c.primaryText} />
-                : <Text style={{ color: selected ? c.primaryText : c.textSecondary, fontWeight: '900', fontSize: 16 }}>
-                    Save connection
-                  </Text>}
-            </TouchableOpacity>
-
-            {/* Disconnect */}
-            {config && (
-              <TouchableOpacity
-                onPress={onDisconnect}
-                style={{
-                  backgroundColor: c.negativeSoft, borderRadius: 12, padding: 16,
-                  alignItems: 'center', borderWidth: 1, borderColor: c.border,
-                }}
-              >
-                <Text style={{ fontWeight: '900', color: c.error }}>Disconnect</Text>
-              </TouchableOpacity>
             )}
           </>
         )}
