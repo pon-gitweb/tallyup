@@ -2211,7 +2211,7 @@ app.get("/square/pull-sales", async (req, res) => {
     const venueId = String(req.query.venueId || "");
     const days = parseInt(String(req.query.days || "7"), 10);
     if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
-    // Note: membership check skipped for pull-sales — test endpoint
+    await verifyVenueMembership(uid, venueId);
     const db = admin.firestore();
 
     // Get access token — try venue token first, fall back to sandbox token
