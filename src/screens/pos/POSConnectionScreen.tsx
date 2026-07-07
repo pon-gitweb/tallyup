@@ -9,6 +9,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { getAdapter, listAdapters } from '../../services/pos/POSRegistry';
 import { SquareAdapter } from '../../services/pos/adapters/SquareAdapter';
+import { useFocusEffect } from '@react-navigation/native';
 
 // Square app credential — placeholder until the developer account is
 // registered. The OAuth tile stays inert (shows a stub message instead of
@@ -109,6 +110,16 @@ export default function POSConnectionScreen() {
   useEffect(() => {
     if (venueId && allowed) load();
   }, [venueId, allowed, load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!venueId || !allowed) return;
+      new SquareAdapter(venueId).isConnected().then(connected => {
+        setSquareConnected(connected);
+      });
+      load();
+    }, [venueId, allowed, load])
+  );
 
   // Square has no credentials to type in — connecting means opening Square's
   // OAuth authorize page in the browser. PKCE: code_verifier is generated and

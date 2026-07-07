@@ -41,6 +41,17 @@ function navigateToInvite(params: { venueId: string; inviteId: string }) {
   }
 }
 
+function parseSquareCallbackUrl(url: string): Record<string, string> | null {
+  try {
+    const match = url.match(/tallyup:\/\/square-callback\?(.+)/);
+    if (!match) return null;
+    const params = new URLSearchParams(match[1]);
+    const result: Record<string, string> = {};
+    params.forEach((value, key) => { result[key] = value; });
+    return Object.keys(result).length > 0 ? result : null;
+  } catch {}
+  return null;
+}
 
 function AuthedStack({ pendingInvite, clearPendingInvite }: {
   pendingInvite: { venueId: string; inviteId: string } | null;
@@ -110,31 +121,34 @@ export default function RootNavigator() {
   // was stashed in AsyncStorage (keyed by venueId, which is what `state` is)
   // before the browser was opened. See POSConnectionScreen's Square connect flow.
   const handleSquareCallback = React.useCallback(async (params: Record<string, string>) => {
-    if (params.error) {
-      showError('Square connection failed. Please try again.');
-      return;
-    }
-    if (params.success === 'true') {
-      showSuccess('Square connected successfully.');
-      await AsyncStorage.removeItem(`square_pkce_verifier_${params.venueId}`).catch(() => {});
-      if (navigationRef.isReady()) navigationRef.navigate('POSConnection' as never);
-      return;
-    }
-    // Legacy fallback: app received code directly
-    if (params.code && params.state) {
-      try {
+    try {
+      if (params.success === 'true') {
+        showSuccess('Square connected successfully.');
+        if (navigationRef.isReady()) navigationRef.navigate('POSConnection' as never);
+        return;
+      }
+      if (params.error) {
+        showError(`Square connection failed: ${params.error}`);
+        return;
+      }
+      // Legacy fallback
+      if (params.code && params.state) {
         const verifier = await AsyncStorage.getItem(`square_pkce_verifier_${params.state}`);
-        const resp = await fetch(`${AI_BASE_URL}/api/square/oauth-callback-post`, {
+        const resp = await fetch(`${AI_BASE_URL}/api/square/oauth-callback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: params.code, state: params.state, code_verifier: verifier }),
         });
         const json = await resp.json().catch(() => null);
         await AsyncStorage.removeItem(`square_pkce_verifier_${params.state}`).catch(() => {});
-        if (!resp.ok || !json?.ok) { showError('Could not connect to Square.'); return; }
-        showSuccess('Square connected.');
+        if (!resp.ok || !json?.ok) { showError('Could not connect to Square. Please try again.'); return; }
+        showSuccess('Square connected');
         if (navigationRef.isReady()) navigationRef.navigate('POSConnection' as never);
-      } catch { showError('Could not connect to Square.'); }
+        return;
+      }
+      showError('Could not connect to Square. Please try again.');
+    } catch {
+      showError('Could not connect to Square. Please try again.');
     }
   }, [showSuccess, showError]);
 
@@ -170,11 +184,8 @@ export default function RootNavigator() {
       if (!url) return;
       const invite = parseInviteUrl(url);
       if (invite) { storePendingInvite(invite); return; }
-      const squareMatch = url.match(/tallyup:\/\/square-callback\?(.+)/);
-      if (squareMatch) {
-        const params = Object.fromEntries(new URLSearchParams(squareMatch[1]));
-        handleSquareCallback(params);
-      }
+      const square = parseSquareCallbackUrl(url);
+      if (square) handleSquareCallback(square);
     }).catch(() => {});
 
     // Handle URL events while app is in foreground/background
@@ -189,11 +200,8 @@ export default function RootNavigator() {
         }
         return;
       }
-      const squareMatch = url.match(/tallyup:\/\/square-callback\?(.+)/);
-      if (squareMatch) {
-        const params = Object.fromEntries(new URLSearchParams(squareMatch[1]));
-        handleSquareCallback(params);
-      }
+      const square = parseSquareCallbackUrl(url);
+      if (square) handleSquareCallback(square);
     });
 
     return () => sub.remove();
