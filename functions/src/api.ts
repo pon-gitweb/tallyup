@@ -2212,11 +2212,12 @@ app.get("/square/pull-sales", async (req, res) => {
     const days = parseInt(String(req.query.days || "7"), 10);
     if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
     // Note: membership check skipped for pull-sales — test endpoint
+    const db = admin.firestore();
 
     // Get access token — try venue token first, fall back to sandbox token
     let accessToken = SQUARE_SANDBOX_TOKEN;
     try {
-      const tokenSnap = await admin.firestore().doc(`venues/${venueId}/integrationTokens/square`).get();
+      const tokenSnap = await db.doc(`venues/${venueId}/integrationTokens/square`).get();
       if (tokenSnap.exists) {
         accessToken = tokenSnap.data()?.accessToken || SQUARE_SANDBOX_TOKEN;
       }
@@ -2228,7 +2229,7 @@ app.get("/square/pull-sales", async (req, res) => {
     }
 
     // Get location
-    const locSnap = await admin.firestore().doc(`venues/${venueId}/posIntegration/config`).get();
+    const locSnap = await db.doc(`venues/${venueId}/posIntegration/config`).get();
     const locationId = locSnap.data()?.locationId || "L8BHN9R0XG42D";
 
     // Pull orders from Square for the last N days
@@ -2281,13 +2282,12 @@ app.get("/square/pull-sales", async (req, res) => {
     }
 
     // Write each day as a salesReport document
-    const firestore = admin.firestore();
-    const batch = firestore.batch();
+    const batch = db.batch();
     const written: string[] = [];
 
     for (const [date, lines] of Object.entries(dailyAgg)) {
       const docId = `square-${date}`;
-      const ref = firestore.doc(`venues/${venueId}/salesReports/${docId}`);
+      const ref = db.doc(`venues/${venueId}/salesReports/${docId}`);
       batch.set(ref, {
         source: "square",
         date,
@@ -2310,7 +2310,6 @@ app.get("/square/pull-sales", async (req, res) => {
 
     // Match products for each day written
     try {
-      const db = admin.firestore();
       const productsSnap = await db.collection(`venues/${venueId}/products`).get();
       const allProducts: any[] = [];
       productsSnap.forEach(d => allProducts.push({ id: d.id, ...d.data() as any }));
@@ -2337,6 +2336,7 @@ app.get("/square/pull-sales", async (req, res) => {
           matches,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
+        console.log(`[square/pull-sales] writing to venues/${venueId}/salesReportMatches/square-${date}`);
         console.log(`[square/pull-sales] matching complete`, { venueId, date, matched: matches.length, unknowns: unknowns.length });
       }
     } catch (matchErr: any) {
