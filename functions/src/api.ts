@@ -2308,6 +2308,40 @@ app.get("/square/pull-sales", async (req, res) => {
 
     await batch.commit();
 
+    // Match products for each day written
+    try {
+      const db = admin.firestore();
+      const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+      const allProducts: any[] = [];
+      productsSnap.forEach(d => allProducts.push({ id: d.id, ...d.data() as any }));
+
+      for (const [date, lines] of Object.entries(dailyAgg)) {
+        const lineArr = Object.entries(lines as any).map(([name, data]: [string, any]) => ({
+          name, qtySold: data.qtySold, gross: data.gross, barcode: null, sku: null,
+        }));
+        const matches: any[] = [];
+        const unknowns: any[] = [];
+        for (const ln of lineArr) {
+          const n = (ln.name || '').toLowerCase();
+          const hit = allProducts.find(
+            p => (p.name || '').toLowerCase().includes(n) || n.includes((p.name || '').toLowerCase())
+          );
+          if (hit) matches.push({ productId: hit.id, productName: hit.name, name: ln.name, qtySold: ln.qtySold, gross: ln.gross });
+          else unknowns.push({ line: ln });
+        }
+        await db.doc(`venues/${venueId}/salesReportMatches/square-${date}`).set({
+          reportId: `square-${date}`,
+          source: 'square',
+          date,
+          counts: { total: lineArr.length, matched: matches.length, unknowns: unknowns.length },
+          matches,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    } catch (matchErr: any) {
+      console.error("[square/pull-sales] matching failed (non-fatal):", matchErr?.message);
+    }
+
     res.json({
       ok: true,
       ordersFound: orders.length,
@@ -2456,6 +2490,85 @@ app.post("/square/webhook", async (req, res) => {
       transactionCount: admin.firestore.FieldValue.increment(1),
       lastWebhookAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+
+    // Step 6: Match sales lines to venue products (server-side)
+    // Mirrors client matchSalesToProducts but uses Admin SDK
+    try {
+      const db = admin.firestore();
+      const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+      const byBarcode = new Map<string, any>();
+      const bySku = new Map<string, any>();
+      const allProducts: any[] = [];
+
+      productsSnap.forEach(d => {
+        const p = { id: d.id, ...d.data() as any };
+        const bc = (p.barcode || p.barCode || p.bar_code || '').toString().trim();
+        const sku = (p.sku || p.code || '').toString().trim();
+        if (bc) byBarcode.set(bc, p);
+        if (sku) bySku.set(sku, p);
+        allProducts.push(p);
+      });
+
+      const matches: any[] = [];
+      const unknowns: any[] = [];
+
+      for (const ln of updatedLines) {
+        const b = (ln.barcode || '').toString().trim();
+        const s = (ln.sku || '').toString().trim();
+        const n = (ln.name || '').toString().trim().toLowerCase();
+
+        let hit: any = null;
+        if (!hit && b && byBarcode.has(b)) hit = byBarcode.get(b);
+        if (!hit && s && bySku.has(s)) hit = bySku.get(s);
+        if (!hit && n) hit = allProducts.find(
+          p => (p.name || '').toString().toLowerCase().includes(n) ||
+               n.includes((p.name || '').toString().toLowerCase())
+        );
+
+        if (hit) {
+          matches.push({
+            productId: hit.id,
+            productName: hit.name || null,
+            name: ln.name || null,
+            qtySold: Number(ln.qtySold || 0),
+            gross: ln.gross ?? null,
+            net: null,
+            tax: null,
+          });
+        } else {
+          unknowns.push({ line: ln });
+        }
+      }
+
+      const matchDocId = `square-${date}`;
+      await db.doc(`venues/${venueId}/salesReportMatches/${matchDocId}`).set({
+        reportId: matchDocId,
+        source: 'square-webhook',
+        date,
+        counts: {
+          total: updatedLines.length,
+          matched: matches.length,
+          unknowns: unknowns.length,
+        },
+        matches,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      for (const u of unknowns) {
+        await db.collection(`venues/${venueId}/salesReportUnknowns`).add({
+          reportId: matchDocId,
+          line: u.line,
+          status: 'unmapped',
+          source: 'square-webhook',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      console.log(`[square/webhook] matched ${matches.length}/${updatedLines.length} products`, { venueId, date });
+    } catch (matchErr: any) {
+      // Non-fatal — sales data is already written, matching can be retried
+      console.error("[square/webhook] matching failed (non-fatal):", matchErr?.message);
+    }
 
     console.log("[square/webhook] updated salesReports", { venueId, date, itemCount: lineItems.length });
     res.json({ ok: true, venueId, date, itemsProcessed: lineItems.length });
