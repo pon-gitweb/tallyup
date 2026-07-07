@@ -1,7 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Linking } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId, useVenue } from '../../context/VenueProvider';
@@ -16,43 +15,6 @@ import { SquareAdapter } from '../../services/pos/adapters/SquareAdapter';
 // opening a real authorize URL) while this is a placeholder.
 const SQUARE_APP_ID = 'YOUR_SQUARE_APP_ID';
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b1 = bytes[i], b2 = bytes[i + 1], b3 = bytes[i + 2];
-    result += chars[b1 >> 2];
-    result += chars[((b1 & 3) << 4) | (b2 !== undefined ? b2 >> 4 : 0)];
-    result += b2 !== undefined ? chars[((b2 & 15) << 2) | (b3 !== undefined ? b3 >> 6 : 0)] : '';
-    result += b3 !== undefined ? chars[b3 & 63] : '';
-  }
-  return result.replace(/\+/g, '-').replace(/\//g, '_');
-}
-
-function generateCodeVerifier(): string {
-  const bytes = new Uint8Array(64);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  return base64UrlEncode(bytes).slice(0, 128);
-}
-
-// PKCE code_challenge = base64url(SHA-256(code_verifier)) using Web Crypto API
-// (available in Hermes since Expo SDK 48+, no extra package needed).
-async function generateCodeChallenge(verifier: string): Promise<string | null> {
-  try {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(verifier);
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    const bytes = new Uint8Array(digest);
-    const base64 = btoa(Array.from(bytes).map(b => String.fromCharCode(b)).join(''));
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  } catch {
-    return null;
-  }
-}
 
 function useManagerAccess(venueId: string | null) {
   const { user } = useVenue();
@@ -157,27 +119,14 @@ export default function POSConnectionScreen() {
     if (!venueId) return;
     setSaving(true);
     try {
-      const verifier = generateCodeVerifier();
-      const challenge = await generateCodeChallenge(verifier);
-      if (!challenge) {
-        showInfo('Could not generate security token. Please try again.');
-        return;
-      }
-      await setDoc(
-        doc(db, 'squarePkceVerifiers', venueId),
-        { verifier, createdAt: serverTimestamp() },
-        { merge: false }
-      );
-      await AsyncStorage.setItem(`square_pkce_verifier_${venueId}`, verifier);
-      const SQUARE_AUTH_BASE = __DEV__
+      const isSandbox = SQUARE_APP_ID.startsWith('sandbox-');
+      const SQUARE_AUTH_BASE = isSandbox
         ? 'https://connect.squareupsandbox.com/oauth2/authorize'
         : 'https://connect.squareup.com/oauth2/authorize';
       const url = SQUARE_AUTH_BASE +
         `?client_id=${encodeURIComponent(SQUARE_APP_ID)}` +
         `&scope=ITEMS_READ+MERCHANT_PROFILE_READ+ORDERS_READ` +
-        `&state=${encodeURIComponent(venueId)}` +
-        `&code_challenge=${encodeURIComponent(challenge)}` +
-        `&code_challenge_method=S256`;
+        `&state=${encodeURIComponent(venueId)}`;
       await Linking.openURL(url);
     } catch (e: any) {
       showError(e?.message || 'Could not start Square connection.');

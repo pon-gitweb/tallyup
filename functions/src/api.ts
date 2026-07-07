@@ -1899,8 +1899,8 @@ app.get("/square/status", async (req, res) => {
 });
 
 // ── GET /square/oauth-callback ───────────────────────────────────────────────
-// Square redirects here after merchant authorises. Reads code_verifier from
-// Firestore, exchanges code for access token, stores token, redirects to app.
+// Square redirects here after merchant authorises. Exchanges code for access
+// token server-side, stores token, redirects to app via deep link.
 app.get("/square/oauth-callback", async (req, res) => {
   try {
     const { code, state, error } = req.query as Record<string, string>;
@@ -1918,16 +1918,6 @@ app.get("/square/oauth-callback", async (req, res) => {
 
     const venueId = state;
 
-    // Read code_verifier from Firestore
-    const verifierDoc = await admin.firestore().doc(`squarePkceVerifiers/${venueId}`).get();
-    if (!verifierDoc.exists) {
-      console.error('[square/oauth-callback] No verifier for venueId:', venueId);
-      res.redirect('tallyup://square-callback?error=verifier_not_found');
-      return;
-    }
-    const codeVerifier = verifierDoc.data()?.verifier;
-    await admin.firestore().doc(`squarePkceVerifiers/${venueId}`).delete().catch(() => {});
-
     if (!squareIsActivated()) {
       res.redirect('tallyup://square-callback?error=not_configured');
       return;
@@ -1942,9 +1932,9 @@ app.get("/square/oauth-callback", async (req, res) => {
       },
       body: JSON.stringify({
         client_id: SQUARE_APP_ID,
+        client_secret: SQUARE_APP_SECRET,
         grant_type: 'authorization_code',
         code,
-        code_verifier: codeVerifier,
       }),
     });
     const tokenData: any = await tokenResp.json().catch(() => ({}));
