@@ -2337,6 +2337,7 @@ app.get("/square/pull-sales", async (req, res) => {
           matches,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
+        console.log(`[square/pull-sales] matching complete`, { venueId, date, matched: matches.length, unknowns: unknowns.length });
       }
     } catch (matchErr: any) {
       console.error("[square/pull-sales] matching failed (non-fatal):", matchErr?.message);
