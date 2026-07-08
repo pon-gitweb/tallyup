@@ -4,7 +4,7 @@ import {
   ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
