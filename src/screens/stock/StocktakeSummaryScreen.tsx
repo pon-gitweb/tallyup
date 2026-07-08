@@ -19,6 +19,15 @@ import { useVenueId } from '../../context/VenueProvider';
 import { markStepComplete } from '../../services/guide/SetupGuideService';
 import { db } from '../../services/firebase';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import type { VarianceLine } from '../../services/reports/briefing';
+
+function toMs(val: any): number | null {
+  if (!val) return null;
+  if (typeof val.toMillis === 'function') return val.toMillis();
+  if (typeof val.toDate === 'function') return val.toDate().getTime();
+  if (typeof val === 'number') return val;
+  return null;
+}
 
 type SummaryItem = {
   name: string;
@@ -61,6 +70,11 @@ function StocktakeSummaryScreen() {
   const [activeMinutes, setActiveMinutes] = useState<number | null>(null);
   const [totalBreaks, setTotalBreaks] = useState<number>(0);
   const [breakMinutes, setBreakMinutes] = useState<number>(0);
+  const [shortages, setShortages] = useState<VarianceLine[]>([]);
+  const [excesses, setExcesses] = useState<VarianceLine[]>([]);
+  const [varianceLoaded, setVarianceLoaded] = useState(false);
+  const [shortagesExpanded, setShortagesExpanded] = useState(false);
+  const [excessesExpanded, setExcessesExpanded] = useState(false);
 
   const handleNewCycle = () => {
     confirm({
@@ -193,6 +207,66 @@ function StocktakeSummaryScreen() {
     })();
   }, [venueId, windowHours]);
 
+  // Load variance (shortages and excesses) from Firestore
+  useEffect(() => {
+    if (!venueId) { setVarianceLoaded(true); return; }
+    (async () => {
+      try {
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const allShortages: VarianceLine[] = [];
+        const allExcesses: VarianceLine[] = [];
+        await Promise.all(deptsSnap.docs.map(async deptDoc => {
+          const deptName = (deptDoc.data() as any)?.name || deptDoc.id;
+          const areasSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
+          );
+          await Promise.all(areasSnap.docs.map(async areaDoc => {
+            const areaData = areaDoc.data() as any;
+            const areaName = areaData?.name || areaDoc.id;
+            const completedAtMs = toMs(areaData?.completedAt);
+            const itemsSnap = await getDocs(
+              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items')
+            );
+            for (const itemDoc of itemsSnap.docs) {
+              const d = itemDoc.data() as any;
+              const lastCount = typeof d.lastCount === 'number' ? d.lastCount : null;
+              const confirmedCount = typeof d.confirmedCount === 'number' ? d.confirmedCount : null;
+              const parLevel = typeof d.parLevel === 'number' ? d.parLevel : null;
+              const costPrice = typeof d.costPrice === 'number' ? d.costPrice : null;
+              const lastCountAtMs = toMs(d.lastCountAt);
+              const confirmedCountAtMs = toMs(d.confirmedCountAt);
+              const name = d.name || itemDoc.id;
+              const countedInCycle =
+                lastCountAtMs != null && (
+                  confirmedCountAtMs == null ||
+                  lastCountAtMs > confirmedCountAtMs ||
+                  (completedAtMs != null && lastCountAtMs <= completedAtMs && confirmedCountAtMs <= completedAtMs)
+                );
+              if (!countedInCycle || lastCount === null) continue;
+              const baseline = confirmedCount != null ? confirmedCount : parLevel;
+              if (baseline == null) continue;
+              const varianceUnits = lastCount - baseline;
+              const dollarVariance = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
+              if (varianceUnits < 0) {
+                allShortages.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+              } else if (varianceUnits > 0) {
+                allExcesses.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+              }
+            }
+          }));
+        }));
+        allShortages.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
+        allExcesses.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
+        setShortages(allShortages);
+        setExcesses(allExcesses);
+      } catch {
+        // non-fatal
+      } finally {
+        setVarianceLoaded(true);
+      }
+    })();
+  }, [venueId]);
+
   const formatDuration = (hours: number) => {
     if (hours < 1) return `${Math.round(hours * 60)} minutes`;
     if (hours === 1) return '1 hour';
@@ -211,10 +285,33 @@ function StocktakeSummaryScreen() {
 
   const handleShareReport = async () => {
     try {
-      await Share.share({
-        message: `Stocktake complete at ${venueId ? 'our venue' : departmentName}. ${itemsCounted} products counted. ${totalValue > 0 ? `Stock value: $${totalValue.toFixed(2)}.` : ''}`,
-        title: 'Stocktake Report',
-      });
+      const lines: string[] = [];
+      lines.push(`Stocktake complete — ${departmentName}`);
+      lines.push(new Date(submittedAt).toLocaleString('en-NZ'));
+      lines.push('');
+      lines.push(`Items counted: ${itemsCounted}`);
+      if (itemsMissed > 0) lines.push(`Not counted: ${itemsMissed}`);
+      if (totalValue > 0) lines.push(`Stock value: $${totalValue.toFixed(2)}`);
+      lines.push(`Completion: ${completionPct}%`);
+      if (shortages.length > 0) {
+        lines.push('');
+        lines.push('── SHORTAGES ──');
+        shortages.slice(0, 10).forEach(item => {
+          const dollar = item.dollarVariance != null ? ` ($${item.dollarVariance.toFixed(2)})` : '';
+          lines.push(`${item.name}: ${item.varianceUnits}${dollar}`);
+        });
+        if (shortages.length > 10) lines.push(`+ ${shortages.length - 10} more`);
+      }
+      if (excesses.length > 0) {
+        lines.push('');
+        lines.push('── EXCESSES ──');
+        excesses.slice(0, 10).forEach(item => {
+          const dollar = item.dollarVariance != null ? ` ($${item.dollarVariance.toFixed(2)})` : '';
+          lines.push(`${item.name}: +${item.varianceUnits}${dollar}`);
+        });
+        if (excesses.length > 10) lines.push(`+ ${excesses.length - 10} more`);
+      }
+      await Share.share({ message: lines.join('\n'), title: 'Stocktake Report' });
     } catch {}
   };
 
@@ -288,6 +385,85 @@ function StocktakeSummaryScreen() {
             ${totalValue.toFixed(2)}
           </Text>
           <Text style={{ color: c.success, fontSize: 12, marginTop: 4 }}>Based on cost prices in your product list</Text>
+        </View>
+      )}
+
+      {/* Variance — shortages and excesses */}
+      {varianceLoaded && !isFirst && (shortages.length > 0 || excesses.length > 0) && (
+        <View style={{ gap: 10 }}>
+          {shortages.length > 0 && (
+            <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setShortagesExpanded(e => !e)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              >
+                <Text style={{ fontSize: 18 }}>📉</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '900', color: c.text, fontSize: 15 }}>Shortages</Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>
+                    {shortages.length} item{shortages.length !== 1 ? 's' : ''} below expected
+                  </Text>
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>{shortagesExpanded ? '▲' : '▼'}</Text>
+              </TouchableOpacity>
+              {(shortagesExpanded ? shortages : shortages.slice(0, 3)).map((item, i) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{item.name}</Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.areaName}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: c.error, fontWeight: '800', fontSize: 13 }}>{item.varianceUnits}</Text>
+                    {item.dollarVariance != null && (
+                      <Text style={{ color: c.textSecondary, fontSize: 11 }}>${item.dollarVariance.toFixed(2)}</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+              {!shortagesExpanded && shortages.length > 3 && (
+                <TouchableOpacity onPress={() => setShortagesExpanded(true)}>
+                  <Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>+ {shortages.length - 3} more</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {excesses.length > 0 && (
+            <View style={{ backgroundColor: c.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border, gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setExcessesExpanded(e => !e)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+              >
+                <Text style={{ fontSize: 18 }}>📈</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '900', color: c.text, fontSize: 15 }}>Excesses</Text>
+                  <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>
+                    {excesses.length} item{excesses.length !== 1 ? 's' : ''} above expected
+                  </Text>
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>{excessesExpanded ? '▲' : '▼'}</Text>
+              </TouchableOpacity>
+              {(excessesExpanded ? excesses : excesses.slice(0, 3)).map((item, i) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{item.name}</Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.areaName}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: c.success, fontWeight: '800', fontSize: 13 }}>+{item.varianceUnits}</Text>
+                    {item.dollarVariance != null && (
+                      <Text style={{ color: c.textSecondary, fontSize: 11 }}>${item.dollarVariance.toFixed(2)}</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+              {!excessesExpanded && excesses.length > 3 && (
+                <TouchableOpacity onPress={() => setExcessesExpanded(true)}>
+                  <Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>+ {excesses.length - 3} more</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
       )}
 
