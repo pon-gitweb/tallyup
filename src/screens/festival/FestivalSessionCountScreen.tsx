@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import {
   collection, doc, getDocs, query, where, orderBy, limit,
@@ -55,6 +56,13 @@ export default function FestivalSessionCountScreen() {
   // Tracks whether we've navigated to AreaInventory (so we know to write session on return)
   const sessionStarted = useRef(false);
   const [navigated, setNavigated] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+
+  useEffect(() => {
+    NetInfo.fetch().then(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+  }, []);
 
   // Navigate to AreaInventory once on mount (keep this screen in stack so we get focus back)
   useEffect(() => {
@@ -147,18 +155,47 @@ export default function FestivalSessionCountScreen() {
           await vBatch.commit();
         }
 
+        // Check connectivity to give appropriate feedback
+        const netState = await NetInfo.fetch();
+        const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
+
+        if (isOnline) {
+          showSuccess(`${barName || 'Bar'} session saved ✓`);
+        } else {
+          showInfo(`Session saved locally — will sync when you're back online`);
+        }
         nav.goBack();
       } catch (e: any) {
         console.error('[FestivalSessionCount] post-count write failed:', e?.message);
+        const msg = e?.message || '';
+        if (msg.includes('unavailable') || msg.includes('offline') || msg.includes('failed to get')) {
+          // Firestore offline queue — data is safe
+          showInfo(`Session saved locally — will sync when you're back online`);
+        } else {
+          showError('Could not save session. Please try again.');
+        }
         nav.goBack();
       }
     })();
   }, [venueId, barId]));
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={{ flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', gap: 16 }}>
       {modal}
       <ActivityIndicator color={c.deepBlue} size="large" />
+      <Text style={{ fontSize: 15, fontWeight: '600', color: c.missionSlate, textAlign: 'center' }}>
+        Saving session counts…
+      </Text>
+      {isOffline && (
+        <View style={{
+          backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10,
+          marginTop: 8, maxWidth: 280,
+        }}>
+          <Text style={{ fontSize: 13, color: '#92400e', textAlign: 'center', fontWeight: '600' }}>
+            📶 You're offline — counts are saved locally and will sync automatically when you reconnect
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
