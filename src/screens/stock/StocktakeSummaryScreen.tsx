@@ -175,86 +175,78 @@ function StocktakeSummaryScreen() {
     })();
   }, [venueId, items, totalValue]);
 
-  // Load active counting time across all departments' areas
-  useEffect(() => {
-    if (!venueId) return;
-    (async () => {
-      try {
-        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-        let totalActive = 0;
-        let totalBreakCount = 0;
-        await Promise.all(deptsSnap.docs.map(async deptDoc => {
-          const areasSnap = await getDocs(
-            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
-          );
-          areasSnap.docs.forEach(d => {
-            const data = d.data();
-            if (typeof data.activeCountingMinutes === 'number') {
-              totalActive += data.activeCountingMinutes;
-            }
-            const segs = data.countSessionSegments || [];
-            if (segs.length > 1) totalBreakCount += segs.length - 1;
-          });
-        }));
-        const wallMinutes = Math.round(windowHours * 60);
-        const breakMins = Math.max(0, wallMinutes - Math.round(totalActive));
-        setActiveMinutes(Math.round(totalActive));
-        setTotalBreaks(totalBreakCount);
-        setBreakMinutes(breakMins);
-      } catch {
-        // Non-fatal — falls back to wall clock display
-      }
-    })();
-  }, [venueId, windowHours]);
-
-  // Load variance (shortages and excesses) from Firestore
+  // Single traversal: timing + variance — one getDocs(departments) → getDocs(areas) → getDocs(items)
   useEffect(() => {
     if (!venueId) { setVarianceLoaded(true); return; }
     (async () => {
       try {
         const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        let totalActive = 0;
+        let totalBreakCount = 0;
         const allShortages: VarianceLine[] = [];
         const allExcesses: VarianceLine[] = [];
+
         await Promise.all(deptsSnap.docs.map(async deptDoc => {
           const deptName = (deptDoc.data() as any)?.name || deptDoc.id;
           const areasSnap = await getDocs(
             collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
           );
+
           await Promise.all(areasSnap.docs.map(async areaDoc => {
             const areaData = areaDoc.data() as any;
             const areaName = areaData?.name || areaDoc.id;
             const completedAtMs = toMs(areaData?.completedAt);
-            const itemsSnap = await getDocs(
-              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items')
-            );
-            for (const itemDoc of itemsSnap.docs) {
-              const d = itemDoc.data() as any;
-              const lastCount = typeof d.lastCount === 'number' ? d.lastCount : null;
-              const confirmedCount = typeof d.confirmedCount === 'number' ? d.confirmedCount : null;
-              const parLevel = typeof d.parLevel === 'number' ? d.parLevel : null;
-              const costPrice = typeof d.costPrice === 'number' ? d.costPrice : null;
-              const lastCountAtMs = toMs(d.lastCountAt);
-              const confirmedCountAtMs = toMs(d.confirmedCountAt);
-              const name = d.name || itemDoc.id;
-              const countedInCycle =
-                lastCountAtMs != null && (
-                  confirmedCountAtMs == null ||
-                  lastCountAtMs > confirmedCountAtMs ||
-                  (completedAtMs != null && lastCountAtMs <= completedAtMs && confirmedCountAtMs <= completedAtMs)
-                );
-              if (!countedInCycle || lastCount === null) continue;
-              const baseline = confirmedCount != null ? confirmedCount : parLevel;
-              if (baseline == null) continue;
-              const varianceUnits = lastCount - baseline;
-              const dollarVariance = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
-              if (varianceUnits < 0) {
-                allShortages.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
-              } else if (varianceUnits > 0) {
-                allExcesses.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
-              }
+
+            // Timing — read from area doc directly (no extra read)
+            if (typeof areaData.activeCountingMinutes === 'number') {
+              totalActive += areaData.activeCountingMinutes;
             }
+            const segs = areaData.countSessionSegments || [];
+            if (segs.length > 1) totalBreakCount += segs.length - 1;
+
+            // Variance — read items subcollection
+            try {
+              const itemsSnap = await getDocs(
+                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items')
+              );
+              for (const itemDoc of itemsSnap.docs) {
+                const d = itemDoc.data() as any;
+                const lastCount = typeof d.lastCount === 'number' ? d.lastCount : null;
+                const confirmedCount = typeof d.confirmedCount === 'number' ? d.confirmedCount : null;
+                const parLevel = typeof d.parLevel === 'number' ? d.parLevel : null;
+                const costPrice = typeof d.costPrice === 'number' ? d.costPrice : null;
+                const lastCountAtMs = toMs(d.lastCountAt);
+                const confirmedCountAtMs = toMs(d.confirmedCountAt);
+                const name = d.name || itemDoc.id;
+                const countedInCycle =
+                  lastCountAtMs != null && (
+                    confirmedCountAtMs == null ||
+                    lastCountAtMs > confirmedCountAtMs ||
+                    (completedAtMs != null && lastCountAtMs <= completedAtMs && confirmedCountAtMs <= completedAtMs)
+                  );
+                if (!countedInCycle || lastCount === null) continue;
+                const baseline = confirmedCount != null ? confirmedCount : parLevel;
+                if (baseline == null) continue;
+                const varianceUnits = lastCount - baseline;
+                const dollarVariance = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
+                if (varianceUnits < 0) {
+                  allShortages.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+                } else if (varianceUnits > 0) {
+                  allExcesses.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+                }
+              }
+            } catch {}
           }));
         }));
+
+        // Timing
+        const wallMinutes = Math.round(windowHours * 60);
+        const breakMins = Math.max(0, wallMinutes - Math.round(totalActive));
+        setActiveMinutes(Math.round(totalActive));
+        setTotalBreaks(totalBreakCount);
+        setBreakMinutes(breakMins);
+
+        // Variance
         allShortages.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
         allExcesses.sort((a, b) => (b.dollarVariance ?? 0) - (a.dollarVariance ?? 0));
         setShortages(allShortages);
@@ -265,7 +257,7 @@ function StocktakeSummaryScreen() {
         setVarianceLoaded(true);
       }
     })();
-  }, [venueId]);
+  }, [venueId, windowHours]);
 
   const formatDuration = (hours: number) => {
     if (hours < 1) return `${Math.round(hours * 60)} minutes`;
