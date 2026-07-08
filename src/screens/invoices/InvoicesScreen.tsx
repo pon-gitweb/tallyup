@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, SafeAreaView } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Alert, View, Text, ScrollView, TouchableOpacity, Modal, SafeAreaView } from 'react-native';
+import { getOfflineInvoiceQueue } from '../fastReceive/FastReceivePanel';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
@@ -13,6 +14,11 @@ export default function InvoicesScreen() {
 
   const [showFastReceive, setShowFastReceive] = useState(false);
   const [showFastReview, setShowFastReview] = useState(false);
+  const [offlineCount, setOfflineCount] = useState(0);
+
+  useEffect(() => {
+    getOfflineInvoiceQueue().then(q => setOfflineCount(q.length));
+  }, []);
 
   const actions = [
     {
@@ -75,6 +81,33 @@ export default function InvoicesScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+          {offlineCount > 0 && (
+            <TouchableOpacity
+              onPress={() => Alert.alert(
+                `${offlineCount} invoice${offlineCount > 1 ? 's' : ''} saved offline`,
+                'Go to "Scan or upload invoice" and re-upload the files. Your originals are saved on your device.',
+                [{ text: 'OK' }]
+              )}
+              style={{
+                backgroundColor: '#fef9c3',
+                borderRadius: 12, padding: 14,
+                borderWidth: 1.5, borderColor: '#c47b2b',
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 20 }}>📋</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400e' }}>
+                  {offlineCount} invoice{offlineCount > 1 ? 's' : ''} saved offline
+                </Text>
+                <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>
+                  Tap to process now you're back online
+                </Text>
+              </View>
+              <Text style={{ fontSize: 18, color: '#c47b2b' }}>→</Text>
+            </TouchableOpacity>
+          )}
           {actions.map((action, i) => (
             <TouchableOpacity
               key={i}

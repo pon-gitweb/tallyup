@@ -10,6 +10,35 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { processInvoicePhoto } from '../../services/invoices/processInvoicePhoto';
 import { useToast } from '../../components/common/Toast';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+
+const OFFLINE_INVOICE_QUEUE_KEY = 'hosti:offlineInvoiceQueue';
+
+async function saveToOfflineQueue(venueId: string, entry: {
+  uri: string;
+  fileName: string;
+  type: 'photo' | 'csv' | 'pdf';
+  savedAt: number;
+}) {
+  try {
+    const existing = await AsyncStorage.getItem(OFFLINE_INVOICE_QUEUE_KEY);
+    const queue = existing ? JSON.parse(existing) : [];
+    queue.push({ venueId, ...entry });
+    await AsyncStorage.setItem(OFFLINE_INVOICE_QUEUE_KEY, JSON.stringify(queue));
+  } catch {}
+}
+
+export async function getOfflineInvoiceQueue(): Promise<any[]> {
+  try {
+    const stored = await AsyncStorage.getItem(OFFLINE_INVOICE_QUEUE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch { return []; }
+}
+
+export async function clearOfflineInvoiceQueue() {
+  try { await AsyncStorage.removeItem(OFFLINE_INVOICE_QUEUE_KEY); } catch {}
+}
 
 export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
@@ -20,6 +49,24 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
     if (!venueId) throw new Error('Not ready: no venue selected');
     setBusy(true);
     try {
+      // Check connectivity before attempting upload
+      const netState = await NetInfo.fetch();
+      const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
+
+      if (!isOnline) {
+        // Save URI to offline queue — process when back online
+        await saveToOfflineQueue(venueId, {
+          uri,
+          fileName: `invoice-photo-${Date.now()}.jpg`,
+          type: 'photo',
+          savedAt: Date.now(),
+        });
+        showInfo('You\'re offline. Invoice photo saved — tap "Process offline invoices" in Invoices when you\'re back online.');
+        onClose();
+        setBusy(false);
+        return;
+      }
+
       const filename = `fast-receive-${Date.now()}.jpg`;
       const up = await uploadFastInvoice(venueId, uri, filename, 'image/jpeg');
 
@@ -103,12 +150,42 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
 
       if (!venueId) throw new Error('Not ready: no venue selected');
 
-      const up = await uploadFastInvoice(
-        venueId,
-        a.uri,
-        a.name || (isCsv ? 'invoice.csv' : 'invoice.pdf'),
-        isCsv ? 'text/csv' : 'application/pdf'
-      );
+      // Check connectivity before attempting upload to Storage + Cloud Function
+      const netState = await NetInfo.fetch();
+      const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
+
+      if (!isOnline) {
+        await saveToOfflineQueue(venueId, {
+          uri: a.uri,
+          fileName: a.name || (isCsv ? 'invoice.csv' : 'invoice.pdf'),
+          type: isCsv ? 'csv' : 'pdf',
+          savedAt: Date.now(),
+        });
+        showInfo(`You're offline. ${isCsv ? 'Invoice CSV' : 'PDF'} saved — tap "Process offline invoices" in Invoices when you're back online.`);
+        onClose();
+        return;
+      }
+
+      let up: any;
+      try {
+        up = await uploadFastInvoice(
+          venueId,
+          a.uri,
+          a.name || (isCsv ? 'invoice.csv' : 'invoice.pdf'),
+          isCsv ? 'text/csv' : 'application/pdf'
+        );
+      } catch (uploadErr: any) {
+        // Network dropped mid-upload — save to offline queue
+        await saveToOfflineQueue(venueId, {
+          uri: a.uri,
+          fileName: a.name || (isCsv ? 'invoice.csv' : 'invoice.pdf'),
+          type: isCsv ? 'csv' : 'pdf',
+          savedAt: Date.now(),
+        });
+        showInfo('Upload interrupted. Invoice saved — process it from Invoices when you\'re back online.');
+        onClose();
+        return;
+      }
 
       const parsed = isCsv
         ? await processInvoicesCsv({ venueId, orderId: 'UNSET', storagePath: up.fullPath })
