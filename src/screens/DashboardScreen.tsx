@@ -16,7 +16,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orderBy, limit, serverTimestamp, where, Timestamp } from 'firebase/firestore';
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
@@ -144,38 +144,81 @@ export default function DashboardScreen() {
   React.useEffect(() => {
     if (!venueId) return;
     const db = getFirestore();
-    let unsubscribers: (() => void)[] = [];
 
-    const unsub = onSnapshot(collection(db, 'venues', venueId, 'departments'), async deptSnap => {
-      unsubscribers.forEach(u => u());
-      unsubscribers = [];
-      let best: any = null;
-
-      for (const deptDoc of deptSnap.docs) {
-        const areaUnsub = onSnapshot(
-          query(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
-            orderBy('startedAt', 'desc'), limit(3)),
-          areaSnap => {
-            for (const areaDoc of areaSnap.docs) {
+    const unsub = onSnapshot(
+      collection(db, 'venues', venueId, 'departments'),
+      async deptSnap => {
+        let best: any = null;
+        await Promise.all(deptSnap.docs.map(async deptDoc => {
+          try {
+            const areasSnap = await getDocs(
+              query(
+                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+                orderBy('startedAt', 'desc'),
+                limit(3)
+              )
+            );
+            for (const areaDoc of areasSnap.docs) {
               const data = areaDoc.data();
               if (data.startedAt && !data.completedAt) {
                 if (!best || data.startedAt.toMillis() > best.startedAt) {
-                  best = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: data.name || 'Area', deptName: deptDoc.data().name || 'Department', startedAt: data.startedAt.toMillis(), lockedBy: data.currentLock?.uid || null };
+                  best = {
+                    deptId: deptDoc.id,
+                    areaId: areaDoc.id,
+                    areaName: data.name || 'Area',
+                    deptName: (deptDoc.data() as any).name || 'Department',
+                    startedAt: data.startedAt.toMillis(),
+                    lockedBy: data.currentLock?.uid || null,
+                  };
                 }
               }
             }
-            setLastArea(best || null);
-          }
-        );
-        unsubscribers.push(areaUnsub);
+          } catch {}
+        }));
+        setLastArea(best || null);
       }
-    });
+    );
 
-    return () => {
-      unsub();
-      unsubscribers.forEach(u => u());
-    };
+    return () => unsub();
   }, [venueId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!venueId) return;
+      const db = getFirestore();
+      (async () => {
+        try {
+          const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+          let best: any = null;
+          await Promise.all(deptsSnap.docs.map(async deptDoc => {
+            const areasSnap = await getDocs(
+              query(
+                collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'),
+                orderBy('startedAt', 'desc'),
+                limit(3)
+              )
+            );
+            for (const areaDoc of areasSnap.docs) {
+              const data = areaDoc.data();
+              if (data.startedAt && !data.completedAt) {
+                if (!best || data.startedAt.toMillis() > best.startedAt) {
+                  best = {
+                    deptId: deptDoc.id,
+                    areaId: areaDoc.id,
+                    areaName: data.name || 'Area',
+                    deptName: (deptDoc.data() as any).name || 'Department',
+                    startedAt: data.startedAt.toMillis(),
+                    lockedBy: data.currentLock?.uid || null,
+                  };
+                }
+              }
+            }
+          }));
+          setLastArea(best || null);
+        } catch {}
+      })();
+    }, [venueId])
+  );
 
   const [stocktakeCount, setStocktakeCount] = React.useState(0);
   const [stockValue, setStockValue] = useState<number | null>(null);
