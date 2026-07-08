@@ -332,7 +332,8 @@ async function callClaude(systemPrompt: string, userMessage: string): Promise<st
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 1500,
+      temperature: 0,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }],
     }),
@@ -574,6 +575,7 @@ app.post("/generate-recipe", async (req, res) => {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 2500,
+        temperature: 0.7,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
       }),
@@ -4288,6 +4290,16 @@ app.post("/suitee", async (req, res) => {
 
     const context = lines.join("\n");
 
+    // Guard: if context is empty or data-poor, return a clear message instead of hallucinating
+    const contextLines = context.trim().split('\n').filter(l => l.trim() && !l.includes('No data') && !l.includes('0 stocktakes'));
+    if (contextLines.length < 3) {
+      return res.json({
+        ok: true,
+        answer: "I don't have enough venue data yet to answer that. Once you've completed your first stocktake, I'll be able to give you real insights about your stock, variance, and performance.",
+        empty: true,
+      });
+    }
+
     const systemPrompt = `You are Suitee, the venue intelligence assistant for Hosti.
 You have been given real data from this venue's stocktake and ordering history. Answer the operator's question using only this data — never invent numbers or make assumptions beyond what the data shows.
 
@@ -4315,15 +4327,15 @@ You answer questions like:
 
 Hosti Health is the venue's overall operational score (0–100), calculated from five KPIs:
 
-1. STOCK ACCURACY (30% weight) — measures variance as a percentage of total stock value. Healthy venues score 80+. Lower scores mean product is going missing faster than expected. Improvement: count more frequently, investigate the Focus List (top 3 variance products), check pour specs on high-variance spirits.
+1. STOCK ACCURACY (35% weight) — measures variance as a percentage of total stock value. Healthy venues score 80+. Lower scores mean product is going missing faster than expected. Improvement: count more frequently, investigate the Focus List (top 3 variance products), check pour specs on high-variance spirits.
 
-2. LABOUR EFFICIENCY (20% weight) — measures how efficiently stocktakes are run compared to the venue's baseline. Improvement: consistent counting rhythm, voice counting, multiple staff counting simultaneously.
+2. LABOUR EFFICIENCY (24% weight) — measures how efficiently stocktakes are run compared to the venue's baseline. Active counting time only — breaks over 3 minutes are excluded automatically. Improvement: consistent counting rhythm, voice counting, multiple staff counting simultaneously.
 
-3. INVENTORY HEALTH (20% weight) — measures Days of Cover (how many days of stock you're holding at current consumption). Healthy range: 7–14 days (or the venue's configured target). Too high = over-ordering, capital tied up. Too low = stockout risk. Improvement: align order quantities with the Suggested Orders feature.
+3. INVENTORY HEALTH (24% weight) — measures Days of Cover (how many days of stock you're holding at current consumption). Healthy range: 7–14 days (or the venue's configured target). Too high = over-ordering, capital tied up. Too low = stockout risk. Improvement: align order quantities with the Suggested Orders feature.
 
-4. ORDERING INTELLIGENCE (15% weight, confidence-adjusted) — measures how often Suggested Orders are acted on. Weight increases as more stocktakes complete and velocity data improves. Improvement: use Suggested Orders after each stocktake, adjust quantities, place orders promptly.
+4. ORDERING INTELLIGENCE (17% weight, confidence-adjusted) — measures how often Suggested Orders are acted on. Weight increases as more stocktakes complete and velocity data improves. Improvement: use Suggested Orders after each stocktake, adjust quantities, place orders promptly.
 
-5. WASTE CONTROL (15% weight) — coming soon. Will track wastage logs once that feature is built.
+Note: A fifth KPI — Waste Control — will be added once POS sales data is connected. Until then the four active KPIs share 100% of the weight as shown above.
 
 ## Score benchmarks (NZ/AU hospitality)
 - 90–100: Excellent — top-tier operational discipline
@@ -4403,6 +4415,7 @@ ${context}`;
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 800,
+        temperature: 0.3,
         system: systemPrompt,
         messages,
       }),
