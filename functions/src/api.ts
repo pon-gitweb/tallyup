@@ -461,7 +461,21 @@ app.post("/generate-recipe", async (req, res) => {
     const recipeType: string = ['cocktail', 'drink', 'dish', 'batch'].includes(type) ? type : 'cocktail';
     const isCocktail = recipeType === 'cocktail' || recipeType === 'drink';
 
-    const productList = Array.isArray(products) ? products.slice(0, 250) : [];
+    const allProducts = Array.isArray(products) ? products : [];
+
+    // Pre-filter to relevant products — cocktails need spirits/liqueurs/mixers,
+    // not 200 food items. Reduces token usage 60-80% for large venue product lists.
+    const relevantProducts = isCocktail
+      ? allProducts.filter((p: any) => {
+          const cat = (p.category || p.categorySuggested || '').toLowerCase();
+          return cat === '' || // include uncategorised — may be spirits
+            ['spirits', 'liqueurs', 'liqueur', 'wine', 'beer', 'rtd', 'cocktail',
+             'mixer', 'mixers', 'soft drink', 'non-alcoholic', 'syrup', 'juice',
+             'garnish', 'ingredient'].some(c => cat.includes(c));
+        })
+      : allProducts; // food recipes get everything
+
+    const productList = relevantProducts.slice(0, 80);
     const supplierList = Array.isArray(suppliers) ? suppliers.slice(0, 100) : [];
 
     const productLines = productList.map((p: any) => {
@@ -704,7 +718,14 @@ app.post("/budget-suggest", async (req, res) => {
       suggestedAmount: Number.isFinite(s.suggestedAmount) ? Math.round(s.suggestedAmount) : 500,
       periodDays: Number.isFinite(s.periodDays) ? s.periodDays : 30,
       reasoning: String(s.reasoning || ""),
-      confidence: Number.isFinite(s.confidence) ? s.confidence : 0.5,
+      // Calculate confidence from actual data — Claude's guesses are uncalibrated
+      confidence: (() => {
+        if (dataQuality === 'high' && orderCycles >= 5) return 0.85;
+        if (dataQuality === 'medium' && orderCycles >= 3) return 0.70;
+        if (dataQuality === 'medium' && orderCycles >= 1) return 0.55;
+        if (orderCycles >= 1) return 0.45;
+        return 0.30; // no order history
+      })(),
     })) : [];
     const meter = await trackAiCall(venueId, 'suggest_orders');
     console.log("[api/budget-suggest] OK", { uid, venueId, meter });
@@ -736,7 +757,7 @@ app.post("/ai-insights", async (req, res) => {
       const dbInst = admin.firestore();
       const deptsSnap = await dbInst.collection(`venues/${venueId}/departments`).get();
       const snapshotSummaries: any[] = [];
-      for (const deptDoc of deptsSnap.docs) {
+      await Promise.all(deptsSnap.docs.map(async deptDoc => {
         const latestSnap = await dbInst
           .collection(`venues/${venueId}/departments/${deptDoc.id}/snapshots`)
           .orderBy('completedAt', 'desc')
@@ -763,7 +784,7 @@ app.post("/ai-insights", async (req, res) => {
             recommendations: (s.recommendations || []).slice(0, 5),
           });
         }
-      }
+      }));
       if (snapshotSummaries.length > 0) enrichedData = { ...enrichedData, snapshotSummaries };
     } catch {}
 
