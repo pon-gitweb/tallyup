@@ -2434,10 +2434,16 @@ try {
           ? `${Math.round(activeCountingMinutes)} min active · ${breakCount} break${breakCount > 1 ? 's' : ''} (${breakMinutes} min) excluded`
           : `${totalWallMinutes} min`;
 
+        // Offline-aware feedback
+        const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+        const isOnline = (netState as any).isConnected === true && (netState as any).isInternetReachable !== false;
+
         if (finalized) {
           showSuccess('Department complete — nice work!');
-        } else {
+        } else if (isOnline) {
           showSuccess(`${areaName || 'Area'} submitted · ${durationMsg}`);
+        } else {
+          showInfo(`${areaName || 'Area'} saved locally · ${durationMsg} · will sync when online`);
         }
         if (!finalized) nav.navigate('Areas' as never, { departmentId } as never);
       } catch (e: any) {

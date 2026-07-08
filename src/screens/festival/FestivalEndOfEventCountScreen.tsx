@@ -13,6 +13,7 @@ import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
+import NetInfo from '@react-native-community/netinfo';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -135,10 +136,24 @@ export default function FestivalEndOfEventCountScreen() {
           })),
           completedAt: serverTimestamp(),
         });
-        showSuccess('✓ Final count saved');
+
+        // Offline-aware feedback
+        const netState = await NetInfo.fetch();
+        const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
+        if (isOnline) {
+          showSuccess(`✓ Final count saved — ${selectedBar!.barName}`);
+        } else {
+          showInfo(`Final count saved locally — will sync when you're back online`);
+        }
         setSelectedBar(null);
       } catch (e: any) {
-        showError(e?.message || 'Could not save count.');
+        const msg = e?.message || '';
+        if (msg.includes('unavailable') || msg.includes('offline') || msg.includes('failed to get')) {
+          showInfo(`Count saved locally — will sync when you're back online`);
+          setSelectedBar(null);
+        } else {
+          showError(msg || 'Could not save count. Please try again.');
+        }
       } finally {
         setSaving(false);
       }
