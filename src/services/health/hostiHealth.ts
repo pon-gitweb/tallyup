@@ -44,7 +44,9 @@ export interface HostiHealthStage3 {
     labourEfficiency: number | null; // 0–100 or null if no hourlyRate or no segments
     inventoryHealth: number | null;  // 0–100 or null if < 2 monthly snapshots
     orderingIntelligence: number | null; // 0–100 or null if < 3 cycles
-    wasteControl: null;              // always null — not yet built
+    wasteControl: number | null;     // Stock Integrity (no POS) or Waste Control (POS connected)
+    wasteControlMode: 'stock_integrity' | 'waste_control' | null;
+    wasteControlLabel: string | null; // human-readable mode description
   };
   completedStocktakes: number;
   stockValue: number | null;
@@ -510,8 +512,158 @@ async function calculateFullScore(
   // Redistribute the weight reduction to Stock Accuracy (most reliable KPI)
   const orderingWeightReduction = 0.15 - orderingIntelligenceWeight;
 
-  // ── Waste Control — not yet built ────────────────────────────────────────
-  const wasteControl: null = null;
+  // ── Waste Control / Stock Integrity ──────────────────────────────────────────
+  // Mode A — Waste Control (POS connected + sales data available):
+  //   True waste = stock consumed - units sold via POS
+  //   Requires: posIntegration/config.status === 'connected' AND salesReports exist
+  //
+  // Mode B — Stock Integrity (no POS):
+  //   Measures systematic variance patterns across cycles
+  //   Consistent shortages on same products = likely real loss, not counting noise
+  //   All venues get this from cycle 3+ regardless of POS
+
+  let wasteControl: number | null = null;
+  let wasteControlMode: 'stock_integrity' | 'waste_control' | null = null;
+  let wasteControlLabel: string | null = null;
+
+  try {
+    // Detect POS connection
+    const posConfigSnap = await getDoc(doc(db, 'venues', venueId, 'posIntegration', 'config'));
+    const posConnected = posConfigSnap.exists() && posConfigSnap.data()?.status === 'connected';
+
+    // Check if sales data exists for this cycle window
+    let hasSalesData = false;
+    if (posConnected && totalStocktakesCompleted > 0) {
+      const salesSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'salesReports'),
+          limit(1)
+        )
+      );
+      hasSalesData = !salesSnap.empty;
+    }
+
+    if (posConnected && hasSalesData) {
+      // ── MODE A: Full Waste Control ──────────────────────────────────────────
+      // Pull sales for the current cycle window
+      // Sum all qtySold per product from salesReports within cycle dates
+      const salesReportsSnap = await getDocs(
+        collection(db, 'venues', venueId, 'salesReports')
+      );
+
+      // Build sales map: productName (lowercase) → total units sold
+      const salesByName: Record<string, number> = {};
+      salesReportsSnap.docs.forEach(d => {
+        const data = d.data() as any;
+        const lines = data.lines || data.report?.lines || [];
+        lines.forEach((line: any) => {
+          const name = (line.name || '').toLowerCase().trim();
+          const qty = Number(line.qtySold || 0);
+          if (name && qty > 0) salesByName[name] = (salesByName[name] || 0) + qty;
+        });
+      });
+
+      // Get latest snapshot variance and compare against sales
+      let totalWasteDollars = 0;
+      let totalStockVal = 0;
+
+      for (const deptDoc of deptsSnap.docs) {
+        const latestSnapDocs = await getDocs(
+          query(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+            orderBy('cycleNumber', 'desc'),
+            limit(1)
+          )
+        );
+        if (latestSnapDocs.empty) continue;
+        const snapData = latestSnapDocs.docs[0].data() as any;
+
+        (snapData.items || []).forEach((item: any) => {
+          const name = (item.name || '').toLowerCase().trim();
+          const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
+          const costPrice = item.costPrice ?? 0;
+          const soldUnits = salesByName[name] || 0;
+          const stockVal = Math.abs(varianceUnits) * costPrice;
+          totalStockVal += stockVal;
+
+          if (varianceUnits < 0) {
+            // Shortage: how much is explained by sales vs unexplained waste
+            const consumed = Math.abs(varianceUnits);
+            const actualWaste = Math.max(0, consumed - soldUnits);
+            totalWasteDollars += actualWaste * costPrice;
+          }
+        });
+      }
+
+      if (totalStockVal > 0) {
+        const wasteRate = totalWasteDollars / totalStockVal;
+        // Score: 100 at 0% waste, 0 at 20%+ waste rate
+        wasteControl = Math.max(0, Math.round(100 - (wasteRate * 500)));
+        wasteControlMode = 'waste_control';
+        wasteControlLabel = 'Waste Control — calculated from POS sales data';
+      }
+
+    } else {
+      // ── MODE B: Stock Integrity ─────────────────────────────────────────────
+      // Need at least 3 cycles to detect patterns
+      if (totalStocktakesCompleted >= 3) {
+        // For each product across last 3 cycles: how consistently is it negative?
+        const productCycleMap: Record<string, { negative: number; total: number; dollarImpact: number }> = {};
+
+        for (const deptDoc of deptsSnap.docs) {
+          // Get last 3 snapshots
+          const recentSnaps = await getDocs(
+            query(
+              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+              orderBy('cycleNumber', 'desc'),
+              limit(3)
+            )
+          );
+
+          recentSnaps.docs.forEach(snapDoc => {
+            const snapData = snapDoc.data() as any;
+            (snapData.items || []).forEach((item: any) => {
+              const key = (item.name || item.productId || '').toLowerCase().trim();
+              if (!key) return;
+              const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
+              const costPrice = item.costPrice ?? 0;
+              if (!productCycleMap[key]) productCycleMap[key] = { negative: 0, total: 0, dollarImpact: 0 };
+              productCycleMap[key].total++;
+              if (varianceUnits < 0) {
+                productCycleMap[key].negative++;
+                productCycleMap[key].dollarImpact += Math.abs(varianceUnits) * costPrice;
+              }
+            });
+          });
+        }
+
+        // Systematic loss = products negative in 2+ of last 3 cycles
+        let systematicLossDollars = 0;
+        let totalVarianceDollarsWC = 0;
+        Object.values(productCycleMap).forEach(p => {
+          totalVarianceDollarsWC += p.dollarImpact;
+          if (p.total >= 2 && p.negative / p.total >= 0.67) {
+            systematicLossDollars += p.dollarImpact;
+          }
+        });
+
+        if (totalVarianceDollarsWC > 0) {
+          const systematicRate = systematicLossDollars / Math.max(totalVarianceDollarsWC, 1);
+          // Score: 100 if no systematic loss, 0 if 100% of variance is systematic
+          wasteControl = Math.max(0, Math.round(100 - (systematicRate * 100)));
+          wasteControlMode = 'stock_integrity';
+          wasteControlLabel = 'Stock Integrity — connect your POS for full waste calculation';
+        } else if (totalStocktakesCompleted >= 3) {
+          // No variance at all — perfect score
+          wasteControl = 100;
+          wasteControlMode = 'stock_integrity';
+          wasteControlLabel = 'Stock Integrity — no systematic loss detected';
+        }
+      }
+    }
+  } catch (e: any) {
+    console.log('[hostiHealth] wasteControl calculation failed (non-fatal):', e?.message);
+  }
 
   const kpis = { stockAccuracy, labourEfficiency, inventoryHealth, orderingIntelligence, wasteControl };
 
@@ -776,7 +928,15 @@ async function calculateFullScore(
     trend,
     trendDirection,
     estimatedImpact,
-    kpis,
+    kpis: {
+      stockAccuracy,
+      labourEfficiency,
+      inventoryHealth,
+      orderingIntelligence,
+      wasteControl,
+      wasteControlMode,
+      wasteControlLabel,
+    },
     completedStocktakes: totalStocktakesCompleted,
     stockValue: stockValueResolved,
     varianceDollars: totalVarianceDollars,

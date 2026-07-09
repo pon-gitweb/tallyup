@@ -167,7 +167,11 @@ HOSTI WEB DASHBOARD:
 
 PERFORMANCE SCREEN (HOSTI HEALTH):
 - View your venue's Hosti Health score (0–100) from the dashboard — tap "View Performance"
-- The score is made up of four KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, and Ordering Intelligence. A fifth KPI — Waste Control — is planned for when POS sales data is available to calculate true waste vs variance.
+- The score is made up of five KPIs: Stock Accuracy, Labour Efficiency, Inventory Health, Ordering Intelligence, and Waste Control.
+- Note: Waste Control operates in two modes:
+  - Stock Integrity (no POS connected): measures systematic variance patterns across cycles. Products that are consistently short in 2+ of the last 3 stocktakes are flagged as likely real loss rather than counting noise. Score of 100 = no systematic loss detected.
+  - Waste Control (POS connected): calculates true waste as stock consumed minus units sold via POS. Score of 100 = zero unexplained loss.
+  When a venue connects Square or another POS, the KPI automatically upgrades from Stock Integrity to full Waste Control. The label in the app changes to reflect which mode is active.
 - Labour Efficiency specifically measures: how long the stocktake takes vs the venue's set baseline (configured in Settings → hourly rate and stocktake baseline)
 - The time used for Labour Efficiency is active counting time — breaks over 3 minutes are automatically excluded from the calculation
 - A faster stocktake relative to baseline = higher Labour Efficiency score
@@ -207,7 +211,6 @@ SUGGESTED ORDERS:
 
   planned: `
 FEATURES PLANNED FOR FUTURE UPDATES:
-- Waste Control KPI (requires POS sales data for accurate calculation — planned for post-POS integration release)
 - POS integrations (Square, Wizbang, Bepoz — connection screens visible in Settings, activation in progress)
 - Desktop onboarding experience — guided tour for new web dashboard users (coming soon)
 - CraftIt recipe editing on desktop — create and edit recipes with a keyboard (coming soon)
