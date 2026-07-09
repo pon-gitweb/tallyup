@@ -443,8 +443,8 @@ function StockTakeAreaInventoryScreen() {
   const itemsPathOk = !!venueId && !!departmentId && !!areaId;
 
   // Header: 📷 Scan + ✦ Izzy — set once, stable ref avoids stale closure on setOptions
-  const openBarcodeRef = useRef(() => setBarcodeScanOpen(true));
-  useEffect(() => { openBarcodeRef.current = () => setBarcodeScanOpen(true); });
+  const openBarcodeRef = useRef(() => setSheet('barcodeScanOpen', true));
+  useEffect(() => { openBarcodeRef.current = () => setSheet('barcodeScanOpen', true); });
   useEffect(() => {
     nav.setOptions({
       headerRight: () => (
@@ -591,33 +591,39 @@ function StockTakeAreaInventoryScreen() {
 
   // View prefs (per-area)
   const prefKey = (k: string) => `view:${venueId ?? 'noVen'}:${areaId ?? 'noArea'}:${k}`;
-  const [showExpected, setShowExpected] = useState(true);
-  const [compactCounted, setCompactCounted] = useState(true);
-  const [sortUncountedFirst, setSortUncountedFirst] = useState(false);
-  const [onlyUncounted, setOnlyUncounted] = useState(false);
-  const [onlyLow, setOnlyLow] = useState(false);
-  const [showSteppers, setShowSteppers] = useState(true);
-  const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [displayPrefs, setDisplayPrefs] = useState({
+    showExpected: true,
+    compactCounted: true,
+    sortUncountedFirst: false,
+    onlyUncounted: false,
+    onlyLow: false,
+    showSteppers: true,
+    onlyFlagged: false,
+  });
+  const setDisplayPref = (key: keyof typeof displayPrefs, value: boolean) =>
+    setDisplayPrefs(prev => ({ ...prev, [key]: value }));
 
-  // More menu (settings only)
-  const [moreOpen, setMoreOpen] = useState(false);
-  // Add product sheet
-  const [addSheetOpen, setAddSheetOpen] = useState(false);
-  // Quick add manual sub-modal
-  const [quickAddSheetOpen, setQuickAddSheetOpen] = useState(false);
+  const [sheets, setSheets] = useState({
+    moreOpen: false,
+    addSheetOpen: false,
+    quickAddSheetOpen: false,
+    shelfOpen: false,
+    shelfPhotoOpen: false,
+    captureShelfOpen: false,
+    captureProductOpen: false,
+    venueSearchOpen: false,
+    barcodeScanOpen: false,
+    photoCountSheetOpen: false,
+    photoOpen: false,
+  });
+  const setSheet = (key: keyof typeof sheets, value: boolean) =>
+    setSheets(prev => ({ ...prev, [key]: value }));
 
-  // Smart Shelf Count (existing)
-  const [shelfOpen, setShelfOpen] = useState(false);
-  const [shelfPhotoOpen, setShelfPhotoOpen] = useState(false);
-  const [shelfLoading, setShelfLoading] = useState(false);
-  const [shelfJobId, setShelfJobId] = useState(null);
-  const [shelfProposals, setShelfProposals] = useState([]);
-
-  // New capture tools
-  const [captureShelfOpen, setCaptureShelfOpen] = useState(false);
-  const [captureProductOpen, setCaptureProductOpen] = useState(false);
-  const [venueSearchOpen, setVenueSearchOpen] = useState(false);
-  const [barcodeScanOpen, setBarcodeScanOpen] = useState(false);
+  const [shelfFlow, setShelfFlow] = useState({
+    loading: false,
+    jobId: null as string | null,
+    proposals: [] as any[],
+  });
   const [batchAddToast, setBatchAddToast] = useState<string | null>(null);
   const [photoModalBarcode, setPhotoModalBarcode] = useState<string | null>(null);
 
@@ -651,20 +657,20 @@ function StockTakeAreaInventoryScreen() {
         AS.getItem(prefKey('showSteppers')),
         AS.getItem(prefKey('onlyFlagged')),
       ]);
-      if (exp != null) setShowExpected(exp === '1');
-      if (comp != null) setCompactCounted(comp === '1');
-      if (sort != null) setSortUncountedFirst(sort === '1');
-      if (unc != null) setOnlyUncounted(unc === '1');
-      if (stp != null) setShowSteppers(stp === '1');
-      if (flg != null) setOnlyFlagged(flg === '1');
+      if (exp != null) setDisplayPref('showExpected', exp === '1');
+      if (comp != null) setDisplayPref('compactCounted', comp === '1');
+      if (sort != null) setDisplayPref('sortUncountedFirst', sort === '1');
+      if (unc != null) setDisplayPref('onlyUncounted', unc === '1');
+      if (stp != null) setDisplayPref('showSteppers', stp === '1');
+      if (flg != null) setDisplayPref('onlyFlagged', flg === '1');
     } catch {}
   })(); }, [venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('showExpected'), showExpected ? '1' : '0').catch(()=>{}); }, [showExpected, venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('compactCounted'), compactCounted ? '1' : '0').catch(()=>{}); }, [compactCounted, venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('sortUncountedFirst'), sortUncountedFirst ? '1' : '0').catch(()=>{}); }, [sortUncountedFirst, venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyUncounted'), onlyUncounted ? '1' : '0').catch(()=>{}); }, [onlyUncounted, venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('showSteppers'), showSteppers ? '1' : '0').catch(()=>{}); }, [showSteppers, venueId, areaId]);
-  useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyFlagged'), onlyFlagged ? '1' : '0').catch(()=>{}); }, [onlyFlagged, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('showExpected'), displayPrefs.showExpected ? '1' : '0').catch(()=>{}); }, [displayPrefs.showExpected, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('compactCounted'), displayPrefs.compactCounted ? '1' : '0').catch(()=>{}); }, [displayPrefs.compactCounted, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('sortUncountedFirst'), displayPrefs.sortUncountedFirst ? '1' : '0').catch(()=>{}); }, [displayPrefs.sortUncountedFirst, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyUncounted'), displayPrefs.onlyUncounted ? '1' : '0').catch(()=>{}); }, [displayPrefs.onlyUncounted, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('showSteppers'), displayPrefs.showSteppers ? '1' : '0').catch(()=>{}); }, [displayPrefs.showSteppers, venueId, areaId]);
+  useEffect(() => { if (!AS) return; AS.setItem(prefKey('onlyFlagged'), displayPrefs.onlyFlagged ? '1' : '0').catch(()=>{}); }, [displayPrefs.onlyFlagged, venueId, areaId]);
 
   const [localQty, setLocalQty] = useState<Record<string, string>>({});
   const localQtyRef = React.useRef<Record<string, string>>({});
@@ -1361,33 +1367,37 @@ function StockTakeAreaInventoryScreen() {
 
   // Bluetooth scale — live weight modal
   const [scaleModalFor, setScaleModalFor] = useState<Item | null>(null);
-  const [scaleModalPhase, setScaleModalPhase] = useState<'checking' | 'reconnecting' | 'live' | 'unavailable'>('checking');
-  const [scaleWeight, setScaleWeight] = useState<number | null>(null);
-  const [scaleStable, setScaleStable] = useState(false);
-  const [scaleReconnectName, setScaleReconnectName] = useState<string | null>(null);
-  const [scaleConversionMsg, setScaleConversionMsg] = useState<string | null>(null);
+  const [scaleModal, setScaleModal] = useState({
+    phase: 'checking' as 'checking' | 'reconnecting' | 'live' | 'unavailable',
+    weight: null as number | null,
+    stable: false,
+    reconnectName: null as string | null,
+    conversionMsg: null as string | null,
+  });
   const scaleRequestRef = useRef(0);
 
-  const [addingName, setAddingName] = useState('');
-  const [addingUnit, setAddingUnit] = useState('');
-  const [addingSupplier, setAddingSupplier] = useState('');
-  const [addingQty, setAddingQty] = useState('');
-  const [addingBarcode, setAddingBarcode] = useState('');
+  const [quickAdd, setQuickAdd] = useState({
+    name: '', unit: '', supplier: '', qty: '', barcode: '',
+  });
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
 
   // Edit window state
   const [overrideActive, setOverrideActive] = useState(false);
-  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
-  const [overrideReasonInput, setOverrideReasonInput] = useState('');
-  const [currentOverrideReason, setCurrentOverrideReason] = useState('');
+  const [overrideModal, setOverrideModal] = useState({
+    open: false,
+    reasonInput: '',
+    currentReason: '',
+  });
   const [editedItemIds, setEditedItemIds] = useState<Set<string>>(new Set());
   const [highlightedItemIds, setHighlightedItemIds] = useState<Set<string>>(new Set());
 
   const [histFor, setHistFor] = useState<Item | null>(null);
-  const [histRows, setHistRows] = useState<AuditEntry[]>([]);
-  const [histLoading, setHistLoading] = useState(false);
+  const [histPanel, setHistPanel] = useState({
+    loading: false,
+    rows: [] as AuditEntry[],
+  });
 
   const [menuFor, setMenuFor] = useState<Item | null>(null);
 
@@ -1401,11 +1411,9 @@ function StockTakeAreaInventoryScreen() {
   const [countingUnitForItem, setCountingUnitForItem] = useState<Item | null>(null);
 
   const [editFor, setEditFor] = useState<Item | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editUnit, setEditUnit] = useState('');
-  const [editSupplier, setEditSupplier] = useState('');
-  const [editPar, setEditPar] = useState<string>('');
-  const [editFocusPar, setEditFocusPar] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '', unit: '', supplier: '', par: '', focusPar: false,
+  });
   const editParRef = useRef<TextInput>(null);
 
   const inputRefs = useRef<Record<string, TextInput | null>>({});
@@ -1415,11 +1423,9 @@ function StockTakeAreaInventoryScreen() {
   // Mirrors focusedInputId but isn't cleared on blur — gives toolbar-level actions
   // (not tied to a specific row) a stable "which item was the user just working on" signal.
   const [lastTouchedItemId, setLastTouchedItemId] = useState<string | null>(null);
-  const [photoCountSheetOpen, setPhotoCountSheetOpen] = useState(false);
   const [bottleLevelBusy, setBottleLevelBusy] = useState(false);
 
   const [offline, setOffline] = useState(false);
-  const [photoOpen, setPhotoOpen] = useState(false);
   const [photoFor, setPhotoFor] = useState<Item | null>(null);
   useEffect(() => {
     const unsub = NetInfo.addEventListener((s) => setOffline(!(s.isConnected && s.isInternetReachable !== false)));
@@ -1475,7 +1481,7 @@ function StockTakeAreaInventoryScreen() {
   useEffect(() => { (async () => { if (!AS) return; try { const v = await AS.getItem(legendKey); setLegendDismissed(v === '1'); } catch {} })(); }, [legendKey]);
   const dismissLegend = async () => { setLegendDismissed(true); if (AS) try { await AS.setItem(legendKey, '1'); } catch {} };
 
-  useEffect(() => { (async () => { if (!AS) return; try { const u = await AS.getItem('quickAdd:unit'); if (u) setAddingUnit(u); const s = await AS.getItem('quickAdd:supplier'); if (s) setAddingSupplier(s); } catch {} })(); }, []);
+  useEffect(() => { (async () => { if (!AS) return; try { const u = await AS.getItem('quickAdd:unit'); if (u) setQuickAdd(prev => ({...prev, unit: u})); const s = await AS.getItem('quickAdd:supplier'); if (s) setQuickAdd(prev => ({...prev, supplier: s})); } catch {} })(); }, []);
   const rememberQuickAdd = async (unit: string, supplier: string) => { if (!AS) return; try { await AS.setItem('quickAdd:unit', unit || ''); await AS.setItem('quickAdd:supplier', supplier || ''); } catch {} };
 
   useEffect(() => {
@@ -1558,10 +1564,10 @@ function StockTakeAreaInventoryScreen() {
   const filtered = useMemo(() => {
     let rows = filteredBase;
     if (filterSkippedOnly) rows = rows.filter((it) => skippedItems.has(it.id));
-    if (onlyLow) rows = rows.filter(isLow);
-    if (onlyUncounted) rows = rows.filter((it) => !hasLocalEntry(it) || it.id === focusedInputId);
-    if (onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
-    if (sortUncountedFirst) {
+    if (displayPrefs.onlyLow) rows = rows.filter(isLow);
+    if (displayPrefs.onlyUncounted) rows = rows.filter((it) => !hasLocalEntry(it) || it.id === focusedInputId);
+    if (displayPrefs.onlyFlagged) rows = rows.filter((it) => !!it.flagRecount);
+    if (displayPrefs.sortUncountedFirst) {
       rows = rows.slice().sort((a, b) => {
         const au = hasLocalEntry(a) ? 1 : 0;
         const bu = hasLocalEntry(b) ? 1 : 0;
@@ -1571,7 +1577,7 @@ function StockTakeAreaInventoryScreen() {
       });
     }
     return rows;
-  }, [filteredBase, filterSkippedOnly, skippedItems, onlyLow, onlyUncounted, onlyFlagged, sortUncountedFirst, startedAtMs, focusedInputId]);
+  }, [filteredBase, filterSkippedOnly, skippedItems, displayPrefs.onlyLow, displayPrefs.onlyUncounted, displayPrefs.onlyFlagged, displayPrefs.sortUncountedFirst, startedAtMs, focusedInputId]);
 
   const countedCount = items.filter(hasLocalEntry).length;
   const lowCount = items.filter(isLow).length;
@@ -1689,7 +1695,7 @@ function StockTakeAreaInventoryScreen() {
         // Log edit if area was already submitted
         if (isSubmitted && canEdit) {
           const oldCount = typeof item.lastCount === 'number' ? item.lastCount : null;
-          const reason = isManager && overrideActive ? currentOverrideReason : 'within-edit-window';
+          const reason = isManager && overrideActive ? overrideModal.currentReason : 'within-edit-window';
           await logEditToArea(item, oldCount, finalQty, reason, isManager && overrideActive);
           setEditedItemIds(prev => { const n = new Set(prev); n.add(item.id); return n; });
           // FIX 4: Flag snapshot for recalculation
@@ -1783,11 +1789,11 @@ const qty = parseFloat(typed);
   };
 
   const addQuickItem = async () => {
-  const nm = (addingName || '').trim();
-  const unit = (addingUnit || '').trim();
-  const supplier = (addingSupplier || '').trim();
-  const qtyStr = (addingQty || '').trim();
-  const bc = (addingBarcode || '').trim();
+  const nm = (quickAdd.name || '').trim();
+  const unit = (quickAdd.unit || '').trim();
+  const supplier = (quickAdd.supplier || '').trim();
+  const qtyStr = (quickAdd.qty || '').trim();
+  const bc = (quickAdd.barcode || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
     showInfo('Missing area context. Please go back and re-enter this area.');
@@ -1906,10 +1912,7 @@ const qty = parseFloat(typed);
     showSuccess(`✓ “${nm}” added to this area.`);
 
     // Clear name, qty, supplier — keep unit (user likely counting same type of product)
-    setAddingName('');
-    setAddingQty('');
-    setAddingSupplier('');
-    setAddingBarcode('');
+    setQuickAdd(prev => ({...prev, name: '', qty: '', supplier: '', barcode: ''}));
 
     // Persist unit preference only
     rememberQuickAdd(unit, '');
@@ -2214,10 +2217,12 @@ try {
 
   const varianceCheckedRef = React.useRef(false);
   const skippedReviewedRef = React.useRef(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewCounted, setReviewCounted] = useState<Item[]>([]);
-  const [reviewMissing, setReviewMissing] = useState<Item[]>([]);
-  const [reviewFlagged, setReviewFlagged] = useState<Item[]>([]);
+  const [reviewState, setReviewState] = useState({
+    open: false,
+    counted: [] as Item[],
+    missing: [] as Item[],
+    flagged: [] as Item[],
+  });
   const [submittingArea, setSubmittingArea] = useState(false);
 
   const openReview = () => {
@@ -2263,10 +2268,7 @@ try {
 
     const proceedToReview = () => {
       varianceCheckedRef.current = true;
-      setReviewCounted(counted);
-      setReviewMissing(missing);
-      setReviewFlagged(flagged);
-      setReviewOpen(true);
+      setReviewState({ open: true, counted, missing, flagged });
     };
 
     if (highVariance.length > 0) {
@@ -2305,7 +2307,7 @@ try {
   };
 
   const jumpToItem = (id: string) => {
-    setReviewOpen(false);
+    setReviewState(prev => ({...prev, open: false}));
     const idx = filtered.findIndex((x) => x.id === id);
     if (idx > -1) {
       try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
@@ -2502,60 +2504,50 @@ try {
 
   const closeScaleModal = () => {
     setScaleModalFor(null);
-    setScaleModalPhase('checking');
-    setScaleWeight(null);
-    setScaleStable(false);
-    setScaleReconnectName(null);
-    setScaleConversionMsg(null);
+    setScaleModal({ phase: 'checking', weight: null, stable: false, reconnectName: null, conversionMsg: null });
   };
 
   const useBluetoothFor = async (item: Item) => {
     const requestId = ++scaleRequestRef.current;
     setScaleModalFor(item);
-    setScaleModalPhase('checking');
-    setScaleWeight(null);
-    setScaleStable(false);
-    setScaleReconnectName(null);
-    setScaleConversionMsg(null);
+    setScaleModal({ phase: 'checking', weight: null, stable: false, reconnectName: null, conversionMsg: null });
 
     await ScaleService.init();
     if (scaleRequestRef.current !== requestId) return; // superseded by a newer request
 
     if (ScaleService.getStatus() === 'connected') {
-      setScaleModalPhase('live');
+      setScaleModal(prev => ({...prev, phase: 'live'}));
       return;
     }
 
     const last = ScaleService.getLastKnownDevice();
     if (!last) {
-      setScaleModalPhase('unavailable');
+      setScaleModal(prev => ({...prev, phase: 'unavailable'}));
       return;
     }
 
-    setScaleReconnectName(last.deviceName || 'your scale');
-    setScaleModalPhase('reconnecting');
+    setScaleModal(prev => ({...prev, reconnectName: last.deviceName || 'your scale'}));
+    setScaleModal(prev => ({...prev, phase: 'reconnecting'}));
     const ok = await ScaleService.tryReconnectLastDevice();
     if (scaleRequestRef.current !== requestId) return; // superseded by a newer request
-    setScaleModalPhase(ok ? 'live' : 'unavailable');
+    setScaleModal(prev => ({...prev, phase: ok ? 'live' : 'unavailable'}));
   };
 
   const onScaleTare = () => { ScaleService.tare(); };
 
   const useScaleWeightForItem = () => {
     const item = scaleModalFor;
-    if (!item || scaleWeight == null) return;
+    if (!item || scaleModal.weight == null) return;
 
     const base = toBaseUnit(item.unit);
     if (base !== 'g') {
-      setScaleConversionMsg(
-        `"${item.unit || 'No unit set'}" isn't a weight unit, so the scale reading can't be converted automatically. Enter the count manually, or change this item's counting unit to g/kg.`
-      );
+      setScaleModal(prev => ({...prev, conversionMsg: `"${item.unit || 'No unit set'}" isn't a weight unit, so the scale reading can't be converted automatically. Enter the count manually, or change this item's counting unit to g/kg.`}));
       return;
     }
 
     const unitLower = (item.unit || '').toLowerCase().trim();
     const isKg = unitLower === 'kg' || unitLower === 'kilogram';
-    const value = isKg ? scaleWeight / 1000 : scaleWeight;
+    const value = isKg ? scaleModal.weight / 1000 : scaleModal.weight;
     const rounded = isKg ? Math.round(value * 1000) / 1000 : Math.round(value);
 
     setLocalQty(m => ({ ...m, [item.id]: String(rounded) }));
@@ -2566,17 +2558,17 @@ try {
 
   // Subscribe to live weight only while the scale modal is open and connected.
   useEffect(() => {
-    if (!scaleModalFor || scaleModalPhase !== 'live') return;
+    if (!scaleModalFor || scaleModal.phase !== 'live') return;
     const unsub = ScaleService.onWeight(r => {
-      setScaleWeight(r.weightGrams);
-      setScaleStable(r.stable);
+      setScaleModal(prev => ({...prev, weight: r.weightGrams}));
+      setScaleModal(prev => ({...prev, stable: r.stable}));
     });
     return () => { unsub(); };
-  }, [scaleModalFor, scaleModalPhase]);
+  }, [scaleModalFor, scaleModal.phase]);
 
   const usePhotoFor = (item: Item) => {
     setPhotoFor(item);
-    setPhotoOpen(true);
+    setSheet('photoOpen', true);
   };
 
   // ── AI photo count toolbar button — targets whichever item's count field
@@ -2588,11 +2580,11 @@ try {
   };
 
   const openPhotoCountSheet = () => {
-    setPhotoCountSheetOpen(true); // Always open — sheet handles no-target case
+    setSheet('photoCountSheetOpen', true); // Always open — sheet handles no-target case
   };
 
   const handleCountItemsOnShelf = () => {
-    setPhotoCountSheetOpen(false);
+    setSheet('photoCountSheetOpen', false);
     const item = resolvePhotoCountTarget();
     if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
     usePhotoFor(item);
@@ -2642,7 +2634,7 @@ try {
   };
 
   const handleEstimateBottleLevel = async () => {
-    setPhotoCountSheetOpen(false);
+    setSheet('photoCountSheetOpen', false);
     const item = resolvePhotoCountTarget();
     if (!item) { showInfo("Tap a product's count field first, then use AI Count."); return; }
     await handleEstimateBottleLevelForItem(item);
@@ -2650,38 +2642,34 @@ try {
 
 const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) return;
-    setHistFor(item); setHistLoading(true);
-    try { const rows = await fetchRecentItemAudits(venueId, item.id, 10); setHistRows(rows); }
-    catch { setHistRows([]); }
-    finally { setHistLoading(false); }
+    setHistFor(item); setHistPanel(prev => ({...prev, loading: true}));
+    try { const rows = await fetchRecentItemAudits(venueId, item.id, 10); setHistPanel(prev => ({...prev, rows})); }
+    catch { setHistPanel(prev => ({...prev, rows: []})); }
+    finally { setHistPanel(prev => ({...prev, loading: false})); }
   });
-  const closeHistory = () => { setHistFor(null); setHistRows([]); setHistLoading(false); };
+  const closeHistory = () => { setHistFor(null); setHistPanel({ loading: false, rows: [] }); };
 
   const openEditItem = (item: Item, focusPar?: boolean) => {
     setEditFor(item);
-    setEditName(item.name || '');
-    setEditUnit(item.unit || '');
-    setEditSupplier(item.supplierName || '');
-    setEditPar(typeof item.parLevel === 'number' ? String(item.parLevel) : '');
-    setEditFocusPar(!!focusPar);
+    setEditForm({ name: item.name || '', unit: item.unit || '', supplier: item.supplierName || '', par: typeof item.parLevel === 'number' ? String(item.parLevel) : '', focusPar: !!focusPar });
   };
   useEffect(() => {
-    if (editFor && editFocusPar) {
+    if (editFor && editForm.focusPar) {
       setTimeout(() => editParRef.current?.focus?.(), 100);
-      setEditFocusPar(false);
+      setEditForm(prev => ({...prev, focusPar: false}));
     }
-  }, [editFor, editFocusPar]);
+  }, [editFor, editForm.focusPar]);
 
   const saveEditItem = async () => {
     if (!editFor) return;
-    const par = (editPar ?? '').trim();
+    const par = (editForm.par ?? '').trim();
     const parNum = par === '' ? null : Number(par);
     if (par !== '' && !/^\d+(\.\d+)?$/.test(par)) { showInfo('Par level must be a number.'); return; }
     try {
       await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',editFor.id), {
-        name: (editName || '').trim() || editFor.name || '',
-        unit: (editUnit || '').trim() || null,
-        supplierName: (editSupplier || '').trim() || null,
+        name: (editForm.name || '').trim() || editFor.name || '',
+        unit: (editForm.unit || '').trim() || null,
+        supplierName: (editForm.supplier || '').trim() || null,
         parLevel: parNum,
         updatedAt: serverTimestamp(),
       });
@@ -3009,10 +2997,10 @@ const openHistory = throttleAction(async (item: Item) => {
         Add your first products to start counting
       </Text>
       {[
-        { icon: '📱', title: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: () => setBarcodeScanOpen(true) },
-        { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
+        { icon: '📱', title: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: () => setSheet('barcodeScanOpen', true) },
+        { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setSheet('captureShelfOpen', true) },
         /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
-        { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
+        { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setSheet('venueSearchOpen', true) },
         { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => nameInputRef.current?.focus() },
       ].map(card => (
         <TouchableOpacity
@@ -3238,7 +3226,7 @@ const openHistory = throttleAction(async (item: Item) => {
                 onPress={() => {
                   const term = unifiedSearch.trim();
                   setUnifiedSearch('');
-                  setAddingName(term);
+                  setQuickAdd(prev => ({...prev, name: term}));
                   setTimeout(() => nameInputRef.current?.focus(), 100);
                 }}
                 style={{ paddingHorizontal: 12, paddingVertical: 12 }}
@@ -3268,7 +3256,7 @@ const openHistory = throttleAction(async (item: Item) => {
           </View>
           {isManager && (
             <TouchableOpacity
-              onPress={() => { setOverrideReasonInput(''); setOverrideModalOpen(true); }}
+              onPress={() => { setOverrideModal(prev => ({...prev, reasonInput: '', open: true})); }}
               style={{ backgroundColor: '#374151', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Manager override</Text>
@@ -3279,7 +3267,7 @@ const openHistory = throttleAction(async (item: Item) => {
       {isSubmitted && overrideActive && (
         <View style={{ backgroundColor: '#FDF2F8', borderBottomWidth: 1, borderBottomColor: '#D946EF', paddingHorizontal: 16, paddingVertical: 8 }}>
           <Text style={{ fontWeight: '800', color: '#86198F', fontSize: 13 }}>🔓 Manager override active</Text>
-          <Text style={{ color: '#86198F', fontSize: 12, marginTop: 1 }}>All changes logged · Reason: {currentOverrideReason}</Text>
+          <Text style={{ color: '#86198F', fontSize: 12, marginTop: 1 }}>All changes logged · Reason: {overrideModal.currentReason}</Text>
         </View>
       )}
 
@@ -3298,8 +3286,8 @@ const openHistory = throttleAction(async (item: Item) => {
             isCompact={isCompact}
             dens={dens}
             areaStarted={areaStarted}
-            showExpected={showExpected}
-            showSteppers={showSteppers}
+            showExpected={displayPrefs.showExpected}
+            showSteppers={displayPrefs.showSteppers}
             isManager={isManager}
             localQty={localQty}
             setLocalQty={setLocalQty}
@@ -3330,7 +3318,7 @@ const openHistory = throttleAction(async (item: Item) => {
             legendDismissed={legendDismissed}
             dismissLegend={dismissLegend}
             stats={{ countedCount, total: items.length, lowCount, flaggedCount, progressPct }}
-            onOpenMore={() => setMoreOpen(true)}
+            onOpenMore={() => setSheet('moreOpen', true)}
           />
         }
         ListFooterComponent={<ListFooter />}
@@ -3391,9 +3379,9 @@ const openHistory = throttleAction(async (item: Item) => {
         }}
       >
         {[
-          { icon: '➕', label: 'Add', onPress: () => setAddSheetOpen(true) },
-          { icon: '📷', label: 'Barcode', onPress: () => setBarcodeScanOpen(true) },
-          { icon: '📸', label: 'Shelf', onPress: () => setCaptureShelfOpen(true) },
+          { icon: '➕', label: 'Add', onPress: () => setSheet('addSheetOpen', true) },
+          { icon: '📷', label: 'Barcode', onPress: () => setSheet('barcodeScanOpen', true) },
+          { icon: '📸', label: 'Shelf', onPress: () => setSheet('captureShelfOpen', true) },
           {
             icon: voiceSessionState.isActive ? '🔴' : '🎤',
             label: 'Hands-free',
@@ -3418,7 +3406,7 @@ const openHistory = throttleAction(async (item: Item) => {
       </View>
 
       {/* AI photo count — choose between discrete counting and bottle fill estimate */}
-      <Modal visible={photoCountSheetOpen} animationType="fade" transparent onRequestClose={() => setPhotoCountSheetOpen(false)}>
+      <Modal visible={sheets.photoCountSheetOpen} animationType="fade" transparent onRequestClose={() => setSheet('photoCountSheetOpen', false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '100%', maxWidth: 420, padding: 12 }}>
             <Text style={{ fontSize: 16, fontWeight: '800', marginBottom: 8 }} numberOfLines={1}>
@@ -3441,7 +3429,7 @@ const openHistory = throttleAction(async (item: Item) => {
               </Text>
             )}
 
-            <TouchableOpacity onPress={() => setPhotoCountSheetOpen(false)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F3F4F6' }}>
+            <TouchableOpacity onPress={() => setSheet('photoCountSheetOpen', false)} style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#F3F4F6' }}>
               <Text style={{ fontWeight: '700', color: '#111827', textAlign: 'center' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -3487,26 +3475,26 @@ const openHistory = throttleAction(async (item: Item) => {
               Bluetooth Scale — {scaleModalFor?.name ?? 'Item'}
             </Text>
 
-            {scaleModalPhase === 'checking' && (
+            {scaleModal.phase === 'checking' && (
               <View style={{ alignItems: 'center', paddingVertical: 24 }}>
                 <ActivityIndicator color={colours.primary} />
               </View>
             )}
 
-            {scaleModalPhase === 'reconnecting' && (
+            {scaleModal.phase === 'reconnecting' && (
               <View style={{ alignItems: 'center', paddingVertical: 24 }}>
                 <ActivityIndicator color={colours.primary} />
                 <Text style={{ marginTop: 10, color: colours.textSecondary }}>
-                  Reconnecting to {scaleReconnectName || 'your scale'}…
+                  Reconnecting to {scaleModal.reconnectName || 'your scale'}…
                 </Text>
               </View>
             )}
 
-            {scaleModalPhase === 'unavailable' && (
+            {scaleModal.phase === 'unavailable' && (
               <View>
                 <Text style={{ color: colours.textSecondary, marginBottom: 14, lineHeight: 20 }}>
-                  {scaleReconnectName
-                    ? `Couldn't reconnect to ${scaleReconnectName}. Make sure it's powered on and in range, or pair it again in Scale Settings.`
+                  {scaleModal.reconnectName
+                    ? `Couldn't reconnect to ${scaleModal.reconnectName}. Make sure it's powered on and in range, or pair it again in Scale Settings.`
                     : 'No Bluetooth scale paired yet. Pair one in Scale Settings to enable weight-based counting.'}
                 </Text>
                 <TouchableOpacity onPress={() => { closeScaleModal(); nav.navigate('ScaleSettings' as never); }}
@@ -3519,25 +3507,25 @@ const openHistory = throttleAction(async (item: Item) => {
               </View>
             )}
 
-            {scaleModalPhase === 'live' && (
+            {scaleModal.phase === 'live' && (
               <View>
                 <View style={{ alignItems: 'center', paddingVertical: 16 }}>
                   <Text style={{ fontSize: 48, fontWeight: '900', color: colours.text }}>
-                    {scaleWeight != null ? scaleWeight.toFixed(1) : '—'}
+                    {scaleModal.weight != null ? scaleModal.weight.toFixed(1) : '—'}
                     <Text style={{ fontSize: 18, color: colours.textSecondary }}> g</Text>
                   </Text>
-                  {scaleStable ? (
+                  {scaleModal.stable ? (
                     <Text style={{ color: colours.success, fontWeight: '700', marginTop: 4 }}>Stable ✓</Text>
-                  ) : scaleWeight != null ? (
+                  ) : scaleModal.weight != null ? (
                     <Text style={{ color: colours.warning, fontWeight: '700', marginTop: 4 }}>Settling...</Text>
                   ) : (
                     <Text style={{ color: colours.textSecondary, marginTop: 4 }}>Waiting for reading…</Text>
                   )}
                 </View>
 
-                {scaleConversionMsg && (
+                {scaleModal.conversionMsg && (
                   <View style={{ backgroundColor: colours.negativeSoft, borderRadius: 10, padding: 10, marginBottom: 10 }}>
-                    <Text style={{ color: colours.error, fontSize: 13 }}>{scaleConversionMsg}</Text>
+                    <Text style={{ color: colours.error, fontSize: 13 }}>{scaleModal.conversionMsg}</Text>
                   </View>
                 )}
 
@@ -3546,9 +3534,9 @@ const openHistory = throttleAction(async (item: Item) => {
                     style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: colours.surface, borderWidth: 1, borderColor: colours.border, alignItems: 'center' }}>
                     <Text style={{ fontWeight: '800', color: colours.text }}>Tare</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={useScaleWeightForItem} disabled={scaleWeight == null}
-                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: scaleWeight == null ? colours.border : colours.primary, alignItems: 'center' }}>
-                    <Text style={{ fontWeight: '800', color: scaleWeight == null ? colours.textSecondary : colours.primaryText }}>Use this weight</Text>
+                  <TouchableOpacity onPress={useScaleWeightForItem} disabled={scaleModal.weight == null}
+                    style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: scaleModal.weight == null ? colours.border : colours.primary, alignItems: 'center' }}>
+                    <Text style={{ fontWeight: '800', color: scaleModal.weight == null ? colours.textSecondary : colours.primaryText }}>Use this weight</Text>
                   </TouchableOpacity>
                 </View>
                 <TouchableOpacity onPress={closeScaleModal} style={{ padding: 12, alignItems: 'center', marginTop: 6 }}>
@@ -3568,16 +3556,16 @@ const openHistory = throttleAction(async (item: Item) => {
               History — {histFor?.name ?? 'Item'}
             </Text>
 
-            {histLoading ? (
+            {histPanel.loading ? (
               <View style={{ alignItems:'center', padding:12 }}>
                 <ActivityIndicator />
                 <Text style={{ marginTop:8, color:'#6B7280' }}>Loading…</Text>
               </View>
-            ) : histRows.length === 0 ? (
+            ) : histPanel.rows.length === 0 ? (
               <Text style={{ color:'#6B7280' }}>No recent audits for this item.</Text>
             ) : (
               <View style={{ gap:8 }}>
-                {histRows.map(a => (
+                {histPanel.rows.map(a => (
                   <View key={a.id} style={{ borderWidth:1, borderColor:'#E5E7EB', borderRadius:10, padding:10 }}>
                     <Text style={{ fontWeight:'800' }}>{a.type.replace(/-/g,' ')}</Text>
                     <Text style={{ color:'#374151' }}>
@@ -3600,7 +3588,7 @@ const openHistory = throttleAction(async (item: Item) => {
       </Modal>
 
       {/* Manager Override Modal */}
-      <Modal visible={overrideModalOpen} animationType="slide" transparent onRequestClose={() => setOverrideModalOpen(false)}>
+      <Modal visible={overrideModal.open} animationType="slide" transparent onRequestClose={() => setOverrideModal(prev => ({...prev, open: false}))}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
             <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 8 }}>Manager override</Text>
@@ -3610,30 +3598,30 @@ const openHistory = throttleAction(async (item: Item) => {
             <View style={{ marginBottom: 12 }}>
               <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason for override</Text>
               <TextInput
-                value={overrideReasonInput}
-                onChangeText={setOverrideReasonInput}
+                value={overrideModal.reasonInput}
+                onChangeText={v => setOverrideModal(prev => ({...prev, reasonInput: v}))}
                 placeholder="e.g. Miscounted during handover"
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }}
                 autoFocus
               />
             </View>
             <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity onPress={() => setOverrideModalOpen(false)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
+              <TouchableOpacity onPress={() => setOverrideModal(prev => ({...prev, open: false}))} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
                 <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
-                  if (!overrideReasonInput.trim()) { showInfo('Please enter a reason for the override.'); return; }
-                  setCurrentOverrideReason(overrideReasonInput.trim());
+                  if (!overrideModal.reasonInput.trim()) { showInfo('Please enter a reason for the override.'); return; }
+                  setOverrideModal(prev => ({...prev, currentReason: prev.reasonInput.trim()}));
                   setOverrideActive(true);
-                  setOverrideModalOpen(false);
+                  setOverrideModal(prev => ({...prev, open: false}));
                   // Write override fields to area doc
                   const cu = getAuth().currentUser;
                   updateDoc(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), {
                     managerOverride: true,
                     overrideBy: cu?.uid ?? 'unknown',
                     overrideAt: serverTimestamp(),
-                    overrideReason: overrideReasonInput.trim(),
+                    overrideReason: overrideModal.reasonInput.trim(),
                   }).catch(() => {});
                 }}
                 style={{ padding: 12, borderRadius: 10, backgroundColor: '#374151', flex: 1 }}
@@ -3655,8 +3643,8 @@ const openHistory = throttleAction(async (item: Item) => {
               <View>
                 <Text style={{ fontWeight:'600', marginBottom:4 }}>Name</Text>
                 <TextInput
-                  value={editName}
-                  onChangeText={setEditName}
+                  value={editForm.name}
+                  onChangeText={v => setEditForm(prev => ({...prev, name: v}))}
                   placeholder="Item name"
                   style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
                 />
@@ -3666,8 +3654,8 @@ const openHistory = throttleAction(async (item: Item) => {
                 <View style={{ flex:1 }}>
                   <Text style={{ fontWeight:'600', marginBottom:4 }}>Unit</Text>
                   <TextInput
-                    value={editUnit}
-                    onChangeText={setEditUnit}
+                    value={editForm.unit}
+                    onChangeText={v => setEditForm(prev => ({...prev, unit: v}))}
                     placeholder="e.g. bottles, kg"
                     style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
                   />
@@ -3675,8 +3663,8 @@ const openHistory = throttleAction(async (item: Item) => {
                 <View style={{ flex:1 }}>
                   <Text style={{ fontWeight:'600', marginBottom:4 }}>Supplier</Text>
                   <TextInput
-                    value={editSupplier}
-                    onChangeText={setEditSupplier}
+                    value={editForm.supplier}
+                    onChangeText={v => setEditForm(prev => ({...prev, supplier: v}))}
                     placeholder="Supplier name"
                     style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
                   />
@@ -3687,8 +3675,8 @@ const openHistory = throttleAction(async (item: Item) => {
                 <Text style={{ fontWeight:'600', marginBottom:4 }}>Par level</Text>
                 <TextInput
                   ref={editParRef}
-                  value={editPar}
-                  onChangeText={setEditPar}
+                  value={editForm.par}
+                  onChangeText={v => setEditForm(prev => ({...prev, par: v}))}
                   placeholder="e.g. 24"
                   keyboardType="decimal-pad"
                   inputMode="decimal"
@@ -3757,10 +3745,10 @@ const openHistory = throttleAction(async (item: Item) => {
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); usePhotoFor(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FFF8E1', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#9A3412' }}>Camera (Cam)</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setCaptureShelfOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F0FFF4', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setSheet('captureShelfOpen', true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F0FFF4', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#14532D' }}>📷 Photograph shelf</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setCaptureProductOpen(true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setMenuFor(null); setTimeout(()=>setSheet('captureProductOpen', true), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEFCE8', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#92400E' }}>📸 Add product by photo</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); setTimeout(()=>{ setCountingUnitForItem(it); setCountingUnitVisible(true); }, 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#EDE9FE', marginBottom:8 }}>
@@ -3808,7 +3796,7 @@ const openHistory = throttleAction(async (item: Item) => {
           style={{
             position: 'absolute',
             left: 16, right: 16,
-            bottom: (showSteppers && focusedInputId) ? 120 : 56,
+            bottom: (displayPrefs.showSteppers && focusedInputId) ? 120 : 56,
             borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
             backgroundColor: '#F59E0B',
             shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
@@ -3826,7 +3814,7 @@ const openHistory = throttleAction(async (item: Item) => {
           style={{
             position: 'absolute',
             left: 16, right: 16,
-            bottom: (showSteppers && focusedInputId) ? 120 : 56,
+            bottom: (displayPrefs.showSteppers && focusedInputId) ? 120 : 56,
             transform: [{ translateY: onlineAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
             opacity: onlineAnim
           }}
@@ -3846,7 +3834,7 @@ const openHistory = throttleAction(async (item: Item) => {
       ) : null}
 
       {/* Keyboard Accessory */}
-      {showSteppers && focusedInputId ? (
+      {displayPrefs.showSteppers && focusedInputId ? (
         <View style={{ position:'absolute', left:12, right:12, bottom: bottomBarHeight + 8, backgroundColor:'#F3F4F6', borderRadius:14, padding:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center', borderWidth:1, borderColor:'#E5E7EB' }}>
           <TouchableOpacity onPress={() => {
             setLocalQty(prev => {
@@ -3885,7 +3873,7 @@ const openHistory = throttleAction(async (item: Item) => {
       {/* Next Uncounted FAB */}
       <TouchableOpacity
         onPress={() => focusNext()}
-        style={{ position:'absolute', right:16, bottom: bottomBarHeight + (showSteppers && focusedInputId ? 64 : 0) + 12, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
+        style={{ position:'absolute', right:16, bottom: bottomBarHeight + (displayPrefs.showSteppers && focusedInputId ? 64 : 0) + 12, backgroundColor:'#0A84FF', paddingVertical:12, paddingHorizontal:14, borderRadius:28, elevation:4 }}
         activeOpacity={0.9}
       >
         <Text style={{ color:'white', fontWeight:'900' }}>Next</Text>
@@ -3893,10 +3881,10 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Pre-Submit Review Modal (polished) */}
 <Modal
-  visible={reviewOpen}
+  visible={reviewState.open}
   animationType="slide"
   transparent
-  onRequestClose={() => setReviewOpen(false)}
+  onRequestClose={() => setReviewState(prev => ({...prev, open: false}))}
 >
   <View
     style={{
@@ -3937,18 +3925,18 @@ const openHistory = throttleAction(async (item: Item) => {
             }}
           >
             <Text style={{ fontWeight: '800', marginBottom: 6 }}>
-              Counted this cycle ({reviewCounted.length})
+              Counted this cycle ({reviewState.counted.length})
             </Text>
-            {reviewCounted.length === 0 ? (
+            {reviewState.counted.length === 0 ? (
               <Text style={{ color: '#6B7280' }}>
                 No items have been counted yet.
               </Text>
             ) : (
-              reviewCounted.map((it) => (
+              reviewState.counted.map((it) => (
                 <TouchableOpacity
                   key={it.id}
                   onPress={() => {
-                    setReviewOpen(false);
+                    setReviewState(prev => ({...prev, open: false}));
                     setTimeout(
                       () => inputRefs.current[it.id]?.focus?.(),
                       80,
@@ -3976,17 +3964,17 @@ const openHistory = throttleAction(async (item: Item) => {
             <Text style={{ fontWeight: '800', marginBottom: 6 }}>
               Will be saved as 0
             </Text>
-            {reviewMissing.length === 0 ? (
+            {reviewState.missing.length === 0 ? (
               <Text style={{ color: '#6B7280' }}>
                 None — all items have been counted.
               </Text>
             ) : (
               <>
-                {reviewMissing.slice(0, 3).map((it) => (
+                {reviewState.missing.slice(0, 3).map((it) => (
                   <TouchableOpacity
                     key={it.id}
                     onPress={() => {
-                      setReviewOpen(false);
+                      setReviewState(prev => ({...prev, open: false}));
                       setTimeout(
                         () => inputRefs.current[it.id]?.focus?.(),
                         80,
@@ -3998,9 +3986,9 @@ const openHistory = throttleAction(async (item: Item) => {
                     <Text style={{ color: '#6B7280' }}>Tap to jump to it</Text>
                   </TouchableOpacity>
                 ))}
-                {reviewMissing.length > 3 ? (
+                {reviewState.missing.length > 3 ? (
                   <Text style={{ color: '#6B7280', marginTop: 4 }}>
-                    and {reviewMissing.length - 3} more…
+                    and {reviewState.missing.length - 3} more…
                   </Text>
                 ) : null}
               </>
@@ -4016,18 +4004,18 @@ const openHistory = throttleAction(async (item: Item) => {
             }}
           >
             <Text style={{ fontWeight: '800', marginBottom: 6 }}>
-              Flagged for recount ({reviewFlagged.length})
+              Flagged for recount ({reviewState.flagged.length})
             </Text>
-            {reviewFlagged.length === 0 ? (
+            {reviewState.flagged.length === 0 ? (
               <Text style={{ color: '#6B7280' }}>
                 No items are flagged.
               </Text>
             ) : (
-              reviewFlagged.map((it) => (
+              reviewState.flagged.map((it) => (
                 <TouchableOpacity
                   key={it.id}
                   onPress={() => {
-                    setReviewOpen(false);
+                    setReviewState(prev => ({...prev, open: false}));
                     setTimeout(
                       () => inputRefs.current[it.id]?.focus?.(),
                       80,
@@ -4047,7 +4035,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
           <TouchableOpacity
-            onPress={() => setReviewOpen(false)}
+            onPress={() => setReviewState(prev => ({...prev, open: false}))}
             style={{
               padding: 12,
               borderRadius: 10,
@@ -4061,7 +4049,7 @@ const openHistory = throttleAction(async (item: Item) => {
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => {
-              setReviewOpen(false);
+              setReviewState(prev => ({...prev, open: false}));
               throttleAction(completeArea)();
             }}
             disabled={submittingArea}
@@ -4150,7 +4138,7 @@ const openHistory = throttleAction(async (item: Item) => {
       </Modal>
 
       {/* ⋯ More action sheet — view settings only */}
-      <Modal visible={moreOpen} animationType="fade" transparent onRequestClose={()=>setMoreOpen(false)}>
+      <Modal visible={sheets.moreOpen} animationType="fade" transparent onRequestClose={()=>setSheet('moreOpen', false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 }}>
           <View style={{ backgroundColor:'#fff', borderRadius:12, width:'100%', maxWidth:420, padding:12 }}>
             <Text style={{ fontSize:16, fontWeight:'800', marginBottom:8 }}>View settings</Text>
@@ -4166,27 +4154,27 @@ const openHistory = throttleAction(async (item: Item) => {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>{ setShowSteppers(v=>!v); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#E0F2FE', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ setDisplayPref('showSteppers', !displayPrefs.showSteppers); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#E0F2FE', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#0369A1' }}>
-                {showSteppers ? '✓ Steppers & keyboard bar (on)' : 'Enable steppers & keyboard bar'}
+                {displayPrefs.showSteppers ? '✓ Steppers & keyboard bar (on)' : 'Enable steppers & keyboard bar'}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>setShowExpected(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F1F8E9', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>setDisplayPref('showExpected', !displayPrefs.showExpected)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F1F8E9', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#14532D' }}>
-                {showExpected ? '✓ Show expected (on)' : 'Show expected (off)'}
+                {displayPrefs.showExpected ? '✓ Show expected (on)' : 'Show expected (off)'}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>setCompactCounted(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>setDisplayPref('compactCounted', !displayPrefs.compactCounted)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>
-                {compactCounted ? '✓ Compact counted rows' : 'Compact counted rows'}
+                {displayPrefs.compactCounted ? '✓ Compact counted rows' : 'Compact counted rows'}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={()=>setSortUncountedFirst(v=>!v)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>setDisplayPref('sortUncountedFirst', !displayPrefs.sortUncountedFirst)} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>
-                {sortUncountedFirst ? '✓ Sort uncounted first' : 'Sort uncounted first'}
+                {displayPrefs.sortUncountedFirst ? '✓ Sort uncounted first' : 'Sort uncounted first'}
               </Text>
             </TouchableOpacity>
 
@@ -4198,7 +4186,7 @@ const openHistory = throttleAction(async (item: Item) => {
             </TouchableOpacity>
 
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
-              <TouchableOpacity onPress={()=>setMoreOpen(false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
+              <TouchableOpacity onPress={()=>setSheet('moreOpen', false)} style={{ padding:10, backgroundColor:'#E5E7EB', borderRadius:10, flex:1 }}>
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -4207,18 +4195,18 @@ const openHistory = throttleAction(async (item: Item) => {
       </Modal>
 
       {/* ➕ Add Product options sheet */}
-      <Modal visible={addSheetOpen} animationType="slide" transparent onRequestClose={()=>setAddSheetOpen(false)}>
+      <Modal visible={sheets.addSheetOpen} animationType="slide" transparent onRequestClose={()=>setSheet('addSheetOpen', false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
             <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:4 }}>Add a product</Text>
             <Text style={{ fontSize:13, color:'#64748b', marginBottom:16 }}>Choose how you want to add to this area</Text>
 
             {[
-              { icon: '🔍', label: 'Search venue products', desc: 'Find a product already in your venue', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setVenueSearchOpen(true), 0); } },
-              { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
+              { icon: '🔍', label: 'Search venue products', desc: 'Find a product already in your venue', onPress: ()=>{ setSheet('addSheetOpen', false); setTimeout(()=>setSheet('venueSearchOpen', true), 0); } },
+              { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setSheet('addSheetOpen', false); setTimeout(()=>setSheet('barcodeScanOpen', true), 0); } },
               /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
-              { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
-              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setQuickAddSheetOpen(true); }, 0); } },
+              { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setSheet('addSheetOpen', false); setTimeout(()=>setSheet('captureShelfOpen', true), 0); } },
+              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setSheet('addSheetOpen', false); setTimeout(()=>{ setQuickAdd(prev => ({...prev, name: '', unit: '', qty: '', barcode: ''})); setSheet('quickAddSheetOpen', true); }, 0); } },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.label}
@@ -4237,7 +4225,7 @@ const openHistory = throttleAction(async (item: Item) => {
               </TouchableOpacity>
             ))}
 
-            <TouchableOpacity onPress={()=>setAddSheetOpen(false)} style={{ marginTop:12, paddingVertical:12, backgroundColor:'#f1f5f9', borderRadius:12, alignItems:'center' }}>
+            <TouchableOpacity onPress={()=>setSheet('addSheetOpen', false)} style={{ marginTop:12, paddingVertical:12, backgroundColor:'#f1f5f9', borderRadius:12, alignItems:'center' }}>
               <Text style={{ fontWeight:'700', color:'#374151' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -4245,15 +4233,15 @@ const openHistory = throttleAction(async (item: Item) => {
       </Modal>
 
       {/* ✏️ Quick Add manual sub-modal */}
-      <Modal visible={quickAddSheetOpen} animationType="slide" transparent onRequestClose={()=>setQuickAddSheetOpen(false)}>
+      <Modal visible={sheets.quickAddSheetOpen} animationType="slide" transparent onRequestClose={()=>setSheet('quickAddSheetOpen', false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
             <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
 
             <TextInput
               ref={nameInputRef}
-              value={addingName}
-              onChangeText={setAddingName}
+              value={quickAdd.name}
+              onChangeText={v => setQuickAdd(prev => ({...prev, name: v}))}
               placeholder="Product name (required)"
               autoFocus
               style={{
@@ -4267,8 +4255,8 @@ const openHistory = throttleAction(async (item: Item) => {
 
             <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
               <TextInput
-                value={addingUnit}
-                onChangeText={setAddingUnit}
+                value={quickAdd.unit}
+                onChangeText={v => setQuickAdd(prev => ({...prev, unit: v}))}
                 placeholder="Unit (e.g. bottles)"
                 style={{
                   flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
@@ -4278,8 +4266,8 @@ const openHistory = throttleAction(async (item: Item) => {
                 blurOnSubmit={false}
               />
               <TextInput
-                value={addingQty}
-                onChangeText={setAddingQty}
+                value={quickAdd.qty}
+                onChangeText={v => setQuickAdd(prev => ({...prev, qty: v}))}
                 placeholder="Count now"
                 keyboardType="decimal-pad"
                 inputMode="decimal"
@@ -4289,13 +4277,13 @@ const openHistory = throttleAction(async (item: Item) => {
                 }}
                 returnKeyType="done"
                 blurOnSubmit={false}
-                onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
+                onSubmitEditing={() => { addQuickItem(); setSheet('quickAddSheetOpen', false); }}
               />
             </View>
 
             <TextInput
-              value={addingBarcode}
-              onChangeText={setAddingBarcode}
+              value={quickAdd.barcode}
+              onChangeText={v => setQuickAdd(prev => ({...prev, barcode: v}))}
               placeholder="Barcode (optional)"
               keyboardType="number-pad"
               style={{
@@ -4308,12 +4296,12 @@ const openHistory = throttleAction(async (item: Item) => {
             />
 
             <TouchableOpacity
-              onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
+              onPress={async () => { await addQuickItem(); setSheet('quickAddSheetOpen', false); }}
               style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
             >
               <Text style={{ color:'#fff', fontWeight:'800', fontSize:15 }}>Add to area</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>setQuickAddSheetOpen(false)} style={{ paddingVertical:12, alignItems:'center' }}>
+            <TouchableOpacity onPress={()=>setSheet('quickAddSheetOpen', false)} style={{ paddingVertical:12, alignItems:'center' }}>
               <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -4321,23 +4309,23 @@ const openHistory = throttleAction(async (item: Item) => {
       </Modal>
     
       <ShelfScanModal
-        visible={captureShelfOpen}
-        onClose={() => setCaptureShelfOpen(false)}
+        visible={sheets.captureShelfOpen}
+        onClose={() => setSheet('captureShelfOpen', false)}
         venueId={venueId}
         areaName={areaName}
         onConfirm={handleShelfScanConfirm}
       />
       <ProductPhotoModal
-        visible={captureProductOpen || photoModalBarcode !== null}
-        onClose={() => { setCaptureProductOpen(false); setPhotoModalBarcode(null); }}
+        visible={sheets.captureProductOpen || photoModalBarcode !== null}
+        onClose={() => { setSheet('captureProductOpen', false); setPhotoModalBarcode(null); }}
         venueId={venueId}
         areaName={areaName}
         initialBarcode={photoModalBarcode ?? undefined}
         onConfirm={handleProductPhotoConfirm}
       />
       <BarcodeScannerModal
-        visible={barcodeScanOpen}
-        onClose={() => setBarcodeScanOpen(false)}
+        visible={sheets.barcodeScanOpen}
+        onClose={() => setSheet('barcodeScanOpen', false)}
         venueId={venueId}
         departmentId={departmentId}
         areaId={areaId}
@@ -4345,14 +4333,11 @@ const openHistory = throttleAction(async (item: Item) => {
         onProductAddedToArea={() => { /* onSnapshot auto-refreshes items */ }}
         onOpenPhotoModal={(barcode) => { setPhotoModalBarcode(barcode); }}
         onManualEntry={(barcode) => {
-          setAddingName('');
-          setAddingUnit('');
-          setAddingQty('');
-          setAddingBarcode(barcode);
-          setQuickAddSheetOpen(true);
+          setQuickAdd(prev => ({...prev, name: '', unit: '', qty: '', barcode: barcode}));
+          setSheet('quickAddSheetOpen', true);
         }}
         onBeforeAddToArea={(product, write) => {
-          setBarcodeScanOpen(false);
+          setSheet('barcodeScanOpen', false);
           setTimeout(() => {
             setCountingUnitPending({
               name: product.name,
@@ -4368,8 +4353,8 @@ const openHistory = throttleAction(async (item: Item) => {
         }}
       />
       <VenueProductSearchModal
-        visible={venueSearchOpen}
-        onClose={() => setVenueSearchOpen(false)}
+        visible={sheets.venueSearchOpen}
+        onClose={() => setSheet('venueSearchOpen', false)}
         venueId={venueId}
         areaName={areaName}
         onSelect={handleVenueProductSelected}
@@ -4425,16 +4410,16 @@ const openHistory = throttleAction(async (item: Item) => {
       />
 
       <ShelfPhotoModal
-        visible={shelfPhotoOpen}
-        onClose={() => setShelfPhotoOpen(false)}
+        visible={sheets.shelfPhotoOpen}
+        onClose={() => setSheet('shelfPhotoOpen', false)}
         onCaptured={async ({ fileUri }) => {
           if (!venueId) throw new Error("Missing venueId");
           if (!uid) throw new Error("Missing user");
           if (offline) { showInfo('You are offline. Smart Shelf needs internet to upload.'); return; }
 
           const scanId = String(Date.now());
-          setShelfLoading(true);
-          setShelfOpen(true);
+          setShelfFlow(prev => ({...prev, loading: true}));
+          setSheet('shelfOpen', true);
 
           const up = await uploadShelfScanPhoto({ venueId: venueId!, uid, scanId, fileUri });
           if (!up?.fullPath) throw new Error("Upload returned no fullPath");
@@ -4448,23 +4433,23 @@ const openHistory = throttleAction(async (item: Item) => {
             createdBy: uid,
           });
 
-          setShelfJobId(job.id);
-          setShelfPhotoOpen(false);
+          setShelfFlow(prev => ({...prev, jobId: job.id}));
+          setSheet('shelfPhotoOpen', false);
 
           // TEMP (until backend exists): show placeholder proposal so UX is testable
-          setShelfProposals([
+          setShelfFlow(prev => ({...prev, proposals: [
             { key: "tmp1", name: "Example item (edit me)", itemId: null, count: 1, confidence: 0.5, isNew: true },
-          ]);
-          setShelfLoading(false);
+          ]}));
+          setShelfFlow(prev => ({...prev, loading: false}));
         }}
       />
 
       <SmartShelfModal
-        visible={shelfOpen}
-        onClose={() => { setShelfOpen(false); setShelfJobId(null); setShelfProposals([]); setShelfLoading(false); }}
-        jobId={shelfJobId}
-        proposals={shelfProposals}
-        loading={shelfLoading}
+        visible={sheets.shelfOpen}
+        onClose={() => { setSheet('shelfOpen', false); setShelfFlow(prev => ({...prev, jobId: null})); setShelfFlow(prev => ({...prev, proposals: []})); setShelfFlow(prev => ({...prev, loading: false})); }}
+        jobId={shelfFlow.jobId}
+        proposals={shelfFlow.proposals}
+        loading={shelfFlow.loading}
         onSubmit={async (rows) => {
           // Apply counts + add new items if needed
           if (!venueId) throw new Error("Missing venueId");
@@ -4499,8 +4484,8 @@ const openHistory = throttleAction(async (item: Item) => {
       {modal}
 
       <PhotoCountModal
-        visible={photoOpen}
-        onClose={() => { setPhotoOpen(false); setPhotoFor(null); }}
+        visible={sheets.photoOpen}
+        onClose={() => { setSheet('photoOpen', false); setPhotoFor(null); }}
         item={photoFor}
         areaName={areaName || null}
         defaultCount={photoFor ? (typeof photoFor.lastCount === "number" ? photoFor.lastCount : null) : null}
