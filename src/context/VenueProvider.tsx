@@ -262,6 +262,70 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     };
   }, [venueId]);
 
+  // Pre-cache global_products for venue's known barcodes
+  // This warms Firestore's offline cache so barcodes resolve without network
+  // Runs once per venue load when online — silent, non-blocking
+  useEffect(() => {
+    if (!venueId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // Check connectivity — only pre-cache when online
+        const NetInfo = require('@react-native-community/netinfo').default;
+        const netState = await NetInfo.fetch();
+        const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
+        if (!isOnline) return;
+
+        // Load venue products that have barcodes
+        const productsSnap = await getDocs(
+          collection(db, 'venues', venueId, 'products')
+        );
+        if (cancelled) return;
+
+        const barcodes: string[] = [];
+        productsSnap.forEach(d => {
+          const p = d.data() as any;
+          const bc = (p.barcode || p.barcodeNumber || p.barCode || '').toString().trim();
+          if (bc && bc.length > 4) barcodes.push(bc);
+        });
+
+        if (barcodes.length === 0) return;
+
+        // Deduplicate and cap at 100 barcodes to avoid excessive reads
+        const unique = [...new Set(barcodes)].slice(0, 100);
+
+        // Pre-fetch from global_products in small parallel batches
+        // Firestore caches these reads — they'll serve offline next time
+        const BATCH = 10;
+        for (let i = 0; i < unique.length; i += BATCH) {
+          if (cancelled) return;
+          const chunk = unique.slice(i, i + BATCH);
+          await Promise.all(
+            chunk.map(bc => Promise.all([
+              getDocs(query(
+                collection(db, 'global_products'),
+                where('barcode', '==', bc)
+              )),
+              getDocs(query(
+                collection(db, 'global_products'),
+                where('barcodeNumber', '==', bc)
+              )),
+            ]))
+          );
+          // Small delay between batches to avoid hammering Firestore
+          if (i + BATCH < unique.length) await new Promise(r => setTimeout(r, 200));
+        }
+
+        if (__DEV__) console.log(`[VenueProvider] pre-cached ${unique.length} barcodes for offline use`);
+      } catch {
+        // Non-fatal — silent fail
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [venueId]);
+
   const isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
   const isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
   const plan = subscription?.plan ?? null;
