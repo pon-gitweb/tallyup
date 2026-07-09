@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -133,6 +133,25 @@ export default function ReportsIndexScreen() {
   const [recalculating, setRecalculating] = useState(false);
   const [recalcDismissed, setRecalcDismissed] = useState(false);
   const autoRecalcFiredRef = useRef(false);
+
+  const latestCompletedAt = useMemo(() => {
+    if (!latestSnapshots.length) return null;
+    return latestSnapshots.reduce((max: number | null, s: any) => {
+      const ts = s.completedAt?.toMillis?.() ?? (s.completedAt?.seconds != null ? s.completedAt.seconds * 1000 : null);
+      if (!ts) return max;
+      return max === null || ts > max ? ts : max;
+    }, null as number | null);
+  }, [latestSnapshots]);
+
+  const stalenessLabel = useMemo(() => {
+    if (!latestCompletedAt) return null;
+    const mins = Math.round((Date.now() - latestCompletedAt) / 60000);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs} hr ago`;
+    return `${Math.round(hrs / 24)} day${Math.round(hrs / 24) === 1 ? '' : 's'} ago`;
+  }, [latestCompletedAt]);
 
   const isManager = data?.role === 'owner' || data?.role === 'manager';
 
@@ -560,6 +579,16 @@ export default function ReportsIndexScreen() {
         <OfflineBanner />
         <ScreenHeader S={S} insetsTop={insets.top || 0} />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 + insets.bottom }}>
+
+          {!isOnline && stalenessLabel && (
+            <View style={{ backgroundColor: '#fef9c3', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#c47b2b', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={{ fontSize: 16 }}>📵</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e' }}>Offline — showing cached data</Text>
+                <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>Last updated {stalenessLabel}</Text>
+              </View>
+            </View>
+          )}
 
           {/* ── REPORTS INTRO CARD (shown once, first visit after stocktake) ── */}
           {!reportsIntroSeen && data.hasCountData && (
