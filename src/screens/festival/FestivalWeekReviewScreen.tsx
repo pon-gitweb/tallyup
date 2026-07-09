@@ -28,8 +28,9 @@ export default function FestivalWeekReviewScreen() {
 
   useEffect(() => {
     if (!venueId || !weekNumber) { setLoading(false); return; }
+    let unsubMembers: (() => void) | null = null;
     if (uid) {
-      onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
+      unsubMembers = onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
         setRole(snap.exists() ? (snap.data() as any).role ?? null : null);
       });
     }
@@ -39,6 +40,7 @@ export default function FestivalWeekReviewScreen() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    return () => { unsubMembers?.(); };
   }, [venueId, weekNumber]);
 
   function handleCloseWeek() {

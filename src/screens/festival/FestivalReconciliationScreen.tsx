@@ -74,9 +74,11 @@ export default function FestivalReconciliationScreen() {
   useEffect(() => {
     if (!venueId) { setLoading(false); return; }
 
-    // Role
+    let unsubMembers: (() => void) | null = null;
+    let unsubReconciliation: (() => void) | null = null;
+
     if (uid) {
-      onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
+      unsubMembers = onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
         setRole(snap.exists() ? (snap.data() as any).role ?? null : null);
       });
     }
@@ -90,7 +92,7 @@ export default function FestivalReconciliationScreen() {
         if (recSnap.exists()) setSummary(recSnap.data() as ReconciliationSummary);
         setLoading(false);
       }).catch(() => setLoading(false));
-      return;
+      return () => { unsubMembers?.(); };
     }
 
     // Load supplier configs for return allowance
@@ -107,7 +109,7 @@ export default function FestivalReconciliationScreen() {
     }).catch(() => {});
 
     // Event details (current event)
-    const unsub = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), async snap => {
+    const unsubDetails = onSnapshot(doc(db, 'venues', venueId, 'event', 'details'), async snap => {
       const ev = snap.exists() ? snap.data() : null;
       setEvent(ev);
       await buildSummary(ev);
@@ -115,11 +117,15 @@ export default function FestivalReconciliationScreen() {
     }, () => setLoading(false));
 
     // Previously saved reconciliation
-    onSnapshot(doc(db, 'venues', venueId, 'returns', 'eventReconciliation'), snap => {
+    unsubReconciliation = onSnapshot(doc(db, 'venues', venueId, 'returns', 'eventReconciliation'), snap => {
       if (snap.exists()) setSaved(snap.data() as ReconciliationSummary);
     });
 
-    return () => unsub();
+    return () => {
+      unsubDetails();
+      unsubMembers?.();
+      unsubReconciliation?.();
+    };
   }, [venueId]);
 
   async function buildSummary(ev: any) {

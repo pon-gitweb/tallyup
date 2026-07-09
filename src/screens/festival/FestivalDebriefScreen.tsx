@@ -37,8 +37,9 @@ export default function FestivalDebriefScreen() {
 
   useEffect(() => {
     if (!FESTIVAL_BETA || !venueId || !eventId) { setLoading(false); return; }
+    let unsubMembers: (() => void) | null = null;
     if (uid) {
-      onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
+      unsubMembers = onSnapshot(doc(db, 'venues', venueId, 'members', uid), snap => {
         setRole(snap.exists() ? (snap.data() as any).role ?? null : null);
       });
     }
@@ -55,7 +56,7 @@ export default function FestivalDebriefScreen() {
       },
       () => setLoading(false),
     );
-    return () => unsub();
+    return () => { unsub(); unsubMembers?.(); };
   }, [venueId, eventId]);
 
   async function generateDebrief() {

@@ -4,7 +4,7 @@ import {
   ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -34,35 +34,25 @@ export default function FestivalStockOverviewScreen() {
     const unsubBars = onSnapshot(
       query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true)),
       async deptSnap => {
-        const results: LocationStock[] = [];
-        const promises = deptSnap.docs.map(async deptDoc => {
-          const deptData = deptDoc.data() as any;
-          return new Promise<void>(resolve => {
-            onSnapshot(
-              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', 'back-of-house', 'items'),
-              stockSnap => {
-                const items: StockItem[] = stockSnap.docs.map(d => ({
-                  productId: d.id,
-                  productName: (d.data() as any).name || d.id,
-                  currentStock: (d.data() as any).lastCount ?? 0,
-                  stockCategory: (d.data() as any).stockCategory,
-                }));
-                const existing = results.find(r => r.locationId === deptDoc.id);
-                if (existing) {
-                  existing.items = items;
-                } else {
-                  results.push({ locationId: deptDoc.id, locationName: deptData.name || deptDoc.id, items });
-                }
-                barsData = results;
-                setBarStocks([...results]);
-                resolve();
-              },
-              () => resolve(),
+        try {
+          const results: LocationStock[] = [];
+          await Promise.all(deptSnap.docs.map(async deptDoc => {
+            const deptData = deptDoc.data() as any;
+            const stockSnap = await getDocs(
+              collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas', 'back-of-house', 'items')
             );
-          });
-        });
-        await Promise.all(promises);
-        checkDone();
+            const items: StockItem[] = stockSnap.docs.map(d => ({
+              productId: d.id,
+              productName: (d.data() as any).name || d.id,
+              currentStock: (d.data() as any).lastCount ?? 0,
+              stockCategory: (d.data() as any).stockCategory,
+            }));
+            results.push({ locationId: deptDoc.id, locationName: deptData.name || deptDoc.id, items });
+          }));
+          barsData = results;
+          setBarStocks([...results]);
+          checkDone();
+        } catch { checkDone(); }
       },
       () => checkDone(),
     );
@@ -70,34 +60,24 @@ export default function FestivalStockOverviewScreen() {
     const unsubSrc = onSnapshot(
       collection(db, 'venues', venueId, 'departments', 'hq', 'areas'),
       async hqSnap => {
-        const results: LocationStock[] = [];
-        const promises = hqSnap.docs.map(async areaDoc => {
-          const areaData = areaDoc.data() as any;
-          return new Promise<void>(resolve => {
-            onSnapshot(
-              collection(db, 'venues', venueId, 'departments', 'hq', 'areas', areaDoc.id, 'items'),
-              stockSnap => {
-                const items: StockItem[] = stockSnap.docs.map(d => ({
-                  productId: d.id,
-                  productName: (d.data() as any).name || d.id,
-                  currentStock: (d.data() as any).lastCount ?? 0,
-                }));
-                const existing = results.find(r => r.locationId === areaDoc.id);
-                if (existing) {
-                  existing.items = items;
-                } else {
-                  results.push({ locationId: areaDoc.id, locationName: areaData.name || areaDoc.id, items });
-                }
-                srcData = results;
-                setSrcStocks([...results]);
-                resolve();
-              },
-              () => resolve(),
+        try {
+          const results: LocationStock[] = [];
+          await Promise.all(hqSnap.docs.map(async areaDoc => {
+            const areaData = areaDoc.data() as any;
+            const stockSnap = await getDocs(
+              collection(db, 'venues', venueId, 'departments', 'hq', 'areas', areaDoc.id, 'items')
             );
-          });
-        });
-        await Promise.all(promises);
-        checkDone();
+            const items: StockItem[] = stockSnap.docs.map(d => ({
+              productId: d.id,
+              productName: (d.data() as any).name || d.id,
+              currentStock: (d.data() as any).lastCount ?? 0,
+            }));
+            results.push({ locationId: areaDoc.id, locationName: areaData.name || areaDoc.id, items });
+          }));
+          srcData = results;
+          setSrcStocks([...results]);
+          checkDone();
+        } catch { checkDone(); }
       },
       () => checkDone(),
     );
