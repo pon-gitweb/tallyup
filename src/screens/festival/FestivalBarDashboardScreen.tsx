@@ -407,6 +407,13 @@ export default function FestivalBarDashboardScreen() {
               >
                 <Text style={[S.actionBtnText, S.actionBtnTextSecondary]}>📊  View session history</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[S.actionBtn, S.actionBtnSecondary]}
+                onPress={() => nav.navigate('FestivalCrowdFlow')}
+              >
+                <Text style={[S.actionBtnText, S.actionBtnTextSecondary]}>🌊  Crowd flow</Text>
+              </TouchableOpacity>
             </>
           )}
         </View>

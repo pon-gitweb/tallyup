@@ -126,6 +126,7 @@ import FestivalReturnRiskScreen from '../../screens/festival/FestivalReturnRiskS
 import FestivalSalesUploadScreen from '../../screens/festival/FestivalSalesUploadScreen';
 import FestivalOpeningStockScreen from '../../screens/festival/FestivalOpeningStockScreen';
 import FestivalHistoricalDataScreen from '../../screens/festival/FestivalHistoricalDataScreen';
+import FestivalCrowdFlowScreen from '../../screens/festival/FestivalCrowdFlowScreen';
 import FestivalPaywallScreen from '../../screens/festival/FestivalPaywallScreen';
 
 // Recipes / CraftUp
@@ -325,6 +326,7 @@ export default function MainStack() {
       <Stack.Screen name="FestivalSalesUpload" component={FestivalSalesUploadScreen} options={{ title: 'Sales Data' }} />
       <Stack.Screen name="FestivalOpeningStock" component={FestivalOpeningStockScreen} options={{ title: 'Opening Stock' }} />
       <Stack.Screen name="FestivalHistoricalData" component={FestivalHistoricalDataScreen} options={{ title: 'Prior Year Data' }} />
+      <Stack.Screen name="FestivalCrowdFlow" component={FestivalCrowdFlowScreen} options={{ title: 'Crowd Flow' }} />
       <Stack.Screen
         name="FestivalPaywall"
         component={FestivalPaywallScreen}
