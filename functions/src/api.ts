@@ -243,6 +243,22 @@ async function checkAiLimit(venueId: string, callType: AiCallType): Promise<{ al
   return { allowed: true, meter: baseMeter };
 }
 
+// ── Simple IP rate limiter ────────────────────────────────────────────────────
+// Protects unauthenticated endpoints from spam/DoS
+const ipRequestCounts: Map<string, { count: number; resetAt: number }> = new Map();
+
+function checkRateLimit(ip: string, limitPerHour: number): boolean {
+  const now = Date.now();
+  const entry = ipRequestCounts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    ipRequestCounts.set(ip, { count: 1, resetAt: now + 3_600_000 });
+    return true; // allowed
+  }
+  if (entry.count >= limitPerHour) return false; // blocked
+  entry.count++;
+  return true; // allowed
+}
+
 // ── POST /upload-file ────────────────────────────────────────────────────────
 // Body: { destPath: string, dataUrl: string, cacheControl?: string }
 // Returns: { ok: true, fullPath: string, downloadURL: string }
@@ -2389,25 +2405,31 @@ app.get("/square/pull-sales", async (req, res) => {
 // salesReports aggregate in Firestore. Works for both venue and festival projects.
 app.post("/square/webhook", async (req, res) => {
   try {
-    // Step 1: Verify Square webhook signature
-    if (SQUARE_WEBHOOK_SIGNATURE_KEY) {
-      const signature = req.headers["x-square-hmacsha256-signature"] as string;
-      if (!signature) {
-        console.error("[square/webhook] missing signature header");
-        res.status(401).json({ ok: false, error: "Missing signature" });
-        return;
-      }
-      const crypto = require("crypto");
-      const body = JSON.stringify(req.body);
-      const webhookUrl = "https://us-central1-tallyup-f1463.cloudfunctions.net/api/square/webhook";
-      const hmac = crypto.createHmac("sha256", SQUARE_WEBHOOK_SIGNATURE_KEY);
-      hmac.update(webhookUrl + body);
-      const expected = hmac.digest("base64");
-      if (signature !== expected) {
-        console.error("[square/webhook] signature mismatch");
-        res.status(401).json({ ok: false, error: "Invalid signature" });
-        return;
-      }
+    // Step 1: Verify Square webhook signature — MANDATORY
+    if (!SQUARE_WEBHOOK_SIGNATURE_KEY) {
+      console.error('[square/webhook] SQUARE_WEBHOOK_SIGNATURE_KEY not set — rejecting all webhook calls');
+      res.status(503).json({ ok: false, error: 'Webhook endpoint not configured' });
+      return;
+    }
+
+    const signature = req.headers['x-square-hmacsha256-signature'] as string;
+    if (!signature) {
+      console.error('[square/webhook] missing signature header');
+      res.status(401).json({ ok: false, error: 'Missing signature' });
+      return;
+    }
+
+    const crypto = require('crypto');
+    const body = JSON.stringify(req.body);
+    const webhookUrl = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api/square/webhook';
+    const hmac = crypto.createHmac('sha256', SQUARE_WEBHOOK_SIGNATURE_KEY);
+    hmac.update(webhookUrl + body);
+    const expected = hmac.digest('base64');
+
+    if (signature !== expected) {
+      console.error('[square/webhook] signature mismatch — possible spoofed request');
+      res.status(401).json({ ok: false, error: 'Invalid signature' });
+      return;
     }
 
     const event = req.body;
@@ -5184,6 +5206,16 @@ app.post("/send-failing-invoice", async (req, res) => {
 // Creates a pending supplier registration in Firestore and emails poni@hosti.co.nz
 app.post("/supplier-register", async (req, res) => {
   try {
+    // Rate limit: 20 registrations per IP per hour
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+      || req.socket?.remoteAddress
+      || 'unknown';
+
+    if (!checkRateLimit(clientIp, 20)) {
+      res.status(429).json({ ok: false, error: 'Too many requests. Please try again later.' });
+      return;
+    }
+
     const { companyName, contactName, email, phone, region, abn } = req.body || {};
 
     if (!companyName || !email) {
