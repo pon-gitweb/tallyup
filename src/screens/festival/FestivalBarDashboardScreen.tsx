@@ -9,6 +9,7 @@ import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { buildDepletionCurve } from '../../services/festival/depletionCurve';
+import { buildHourlyIntelligence, HourlyIntelligence } from '../../services/festival/hourlyIntelligence';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
@@ -82,6 +83,7 @@ export default function FestivalBarDashboardScreen() {
   const [eventDetails, setEventDetails] = useState<any>(null);
   const [inTransit,    setInTransit]    = useState<Record<string, number>>({}); // productId → in-transit qty
   const [depletionMap, setDepletionMap] = useState<Record<string, any>>({}); // productId → DepletionCurve
+  const [hourly, setHourly] = useState<HourlyIntelligence | null>(null);
 
   // Load role
   useEffect(() => {
@@ -165,6 +167,11 @@ export default function FestivalBarDashboardScreen() {
           where('barId', '==', barId)
         ));
         const sessions = sessSnap.docs.map(d => d.data());
+
+        // Build hourly intelligence
+        const intel = buildHourlyIntelligence(sessions, eventDetails?.startDate);
+        setHourly(intel);
+
         const endDate = eventDetails?.endDate;
         const eventCloseTime = endDate ? (() => {
           try {
@@ -299,6 +306,67 @@ export default function FestivalBarDashboardScreen() {
               </View>
             );
           })
+        )}
+
+        {/* Hourly intelligence */}
+        {hourly && hourly.buckets.length > 0 && (
+          <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e5e1d8' }}>
+            <Text style={{ fontSize: 16, fontWeight: '900', color: c.navy, marginBottom: 12 }}>
+              ⏱ Hourly Activity
+            </Text>
+
+            {/* Peak and quiet hour summary */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {hourly.peakHour && (
+                <View style={{ flex: 1, backgroundColor: '#fee2e2', borderRadius: 10, padding: 10 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626', textTransform: 'uppercase', letterSpacing: 0.5 }}>Busiest Hour</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: '#dc2626', marginTop: 2 }}>{hourly.peakHour.label}</Text>
+                  <Text style={{ fontSize: 12, color: '#dc2626', marginTop: 2 }}>{hourly.peakHour.totalConsumed} units consumed</Text>
+                </View>
+              )}
+              {hourly.peakProduct && (
+                <View style={{ flex: 1, backgroundColor: '#eff6ff', borderRadius: 10, padding: 10 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#1b4f72', textTransform: 'uppercase', letterSpacing: 0.5 }}>Top Product</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#1b4f72', marginTop: 2 }} numberOfLines={2}>{hourly.peakProduct.productName}</Text>
+                  <Text style={{ fontSize: 12, color: '#1b4f72', marginTop: 2 }}>{hourly.peakProduct.consumed} units total</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Hourly bar chart — simple horizontal bars */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', marginBottom: 8 }}>
+              Units consumed per hour
+            </Text>
+            {hourly.buckets.map(bucket => {
+              const maxConsumed = Math.max(...hourly.buckets.map(b => b.totalConsumed), 1);
+              const pct = bucket.totalConsumed / maxConsumed;
+              const isPeak = bucket.hour === hourly.peakHour?.hour;
+              return (
+                <View key={bucket.hour} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+                  <Text style={{ fontSize: 12, color: '#6b7280', width: 36, textAlign: 'right' }}>{bucket.label}</Text>
+                  <View style={{ flex: 1, height: 20, backgroundColor: '#f5f3ee', borderRadius: 4, overflow: 'hidden' }}>
+                    <View style={{
+                      width: `${Math.round(pct * 100)}%`,
+                      height: '100%',
+                      backgroundColor: isPeak ? '#dc2626' : '#1b4f72',
+                      borderRadius: 4,
+                    }} />
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#6b7280', width: 28, textAlign: 'right' }}>{bucket.totalConsumed}</Text>
+                </View>
+              );
+            })}
+
+            {/* Average velocity */}
+            <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 8, textAlign: 'center' }}>
+              Average {hourly.averageHourlyVelocity.toFixed(1)} units/hr across {hourly.buckets.length} hour{hourly.buckets.length > 1 ? 's' : ''}
+            </Text>
+
+            {/* Future hook — performance correlation placeholder */}
+            <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 8, textAlign: 'center', fontStyle: 'italic' }}>
+              Performance correlation coming soon — assign stages and set times to unlock deeper insights
+            </Text>
+          </View>
         )}
 
         {/* Actions */}
