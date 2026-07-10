@@ -10,6 +10,7 @@ import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
 } from '../chartConfig'
+import { ChartEmptyState } from '../components/ChartEmptyState'
 import styles from './ReportsPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -459,7 +460,12 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
             <div className={styles.chartCard}>
               <p className={styles.chartTitle}>Variance trend</p>
               {trendData.length < 2 ? (
-                <p className={styles.chartEmpty}>Complete another stocktake to see your variance trend.</p>
+                <ChartEmptyState
+                  icon="📊"
+                  title="No trend yet"
+                  body="Complete another stocktake to see how your variance is moving. This is where patterns emerge."
+                  height={CHART_HEIGHT_LINE}
+                />
               ) : (
                 <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
                   <LineChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
@@ -481,7 +487,12 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
             <div className={styles.chartCard}>
               <p className={styles.chartTitle}>Top variance drivers</p>
               {topDrivers.length === 0 ? (
-                <p className={styles.chartEmpty}>Add cost prices to products to see dollar impact.</p>
+                <ChartEmptyState
+                  icon="💰"
+                  title="No dollar impact yet"
+                  body="Add cost prices to your products and we'll show you exactly where the money is going."
+                  height={CHART_HEIGHT_BAR}
+                />
               ) : (
                 <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
                   <BarChart data={topDrivers} layout="vertical" margin={{ top: 4, right: 48, left: 0, bottom: 0 }}>
@@ -896,7 +907,12 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
       )}
 
       {!selectedDeptId || !selectedCycle ? (
-        <p className={styles.chartEmpty}>Select a department and stocktake above to see the full item breakdown.</p>
+        <ChartEmptyState
+          icon="📋"
+          title="Select a stocktake above"
+          body="Choose a department and stocktake to see the full item breakdown."
+          height={200}
+        />
       ) : loadingItems ? (
         <p className={styles.loading}>Loading items…</p>
       ) : (
@@ -1120,7 +1136,12 @@ function AnalysisTab({ venueId }: { venueId: string }) {
           <button type="button" className={styles.exportBtn} onClick={exportSupplierCsv}>Export CSV</button>
         </div>
         {supplierData.length === 0 ? (
-          <p className={styles.chartEmpty}>Add supplier names to your products to see spend by supplier.</p>
+          <ChartEmptyState
+            icon="🤝"
+            title="No supplier data yet"
+            body="Assign suppliers to your products and we'll show you your spend breakdown."
+            height={CHART_HEIGHT_BAR}
+          />
         ) : (
           <>
             <div className={styles.chartCard}>
@@ -1167,7 +1188,12 @@ function AnalysisTab({ venueId }: { venueId: string }) {
           <button type="button" className={styles.exportBtn} onClick={exportVelocityCsv}>Export CSV</button>
         </div>
         {velocityData.length === 0 ? (
-          <p className={styles.chartEmpty}>Complete 2+ stocktakes to see velocity data.</p>
+          <ChartEmptyState
+            icon="⚡"
+            title="No velocity data yet"
+            body="Complete two or more stocktakes and we'll show you how fast each product moves."
+            height={CHART_HEIGHT_BAR}
+          />
         ) : (
           <>
             <div className={styles.filterGroup} style={{ marginBottom: 12 }}>

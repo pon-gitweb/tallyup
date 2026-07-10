@@ -6,6 +6,7 @@ import { theme } from '../theme'
 import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_ANIMATION, CHART_HEIGHT_BAR,
 } from '../chartConfig'
+import { ChartEmptyState } from '../components/ChartEmptyState'
 import styles from './CraftItPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -264,7 +265,12 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
         <p className={styles.chartTitle}>GP % distribution</p>
         <p className={styles.chartSubtitle}>Confirmed recipes only</p>
         {confirmedWithGp < 3 ? (
-          <p className={styles.chartEmpty}>Confirm more recipes to see GP distribution.</p>
+          <ChartEmptyState
+            icon="🍹"
+            title="No GP data yet"
+            body="Confirm recipes to see how your GP% is distributed. Aim for 70%+ on beverages."
+            height={CHART_HEIGHT_BAR}
+          />
         ) : (
           <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
             <BarChart data={gpBuckets} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>

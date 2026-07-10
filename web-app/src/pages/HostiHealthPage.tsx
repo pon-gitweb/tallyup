@@ -10,6 +10,7 @@ import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
 } from '../chartConfig'
+import { ChartEmptyState } from '../components/ChartEmptyState'
 import styles from './HostiHealthPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -326,12 +327,19 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
         <div className={styles.chartCard}>
           <p className={styles.chartTitle}>Score trend</p>
           {trendData.length < 1 ? (
-            <p className={styles.chartEmpty}>No score data available yet.</p>
+            <ChartEmptyState
+              icon="📈"
+              title="No score yet"
+              body="Your Hosti Health score appears after your third stocktake. Each count makes it more accurate."
+              height={CHART_HEIGHT_LINE}
+            />
           ) : trendData.length === 1 ? (
-            <p className={styles.chartEmpty} style={{ paddingTop: 24 }}>
-              Score: {trendData[0].score}/100 in {trendData[0].fullMonth}<br />
-              <span style={{ fontSize: 12 }}>More data coming — score updates monthly.</span>
-            </p>
+            <ChartEmptyState
+              icon="📈"
+              title={`${trendData[0].score}/100 — ${trendData[0].fullMonth}`}
+              body="Complete more stocktakes to see your score trend over time."
+              height={CHART_HEIGHT_LINE}
+            />
           ) : (
             <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
               <LineChart data={trendData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
@@ -392,7 +400,12 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
         <div className={styles.chartCard}>
           <p className={styles.chartTitle}>Variance rate</p>
           {varianceRateData.length < 2 ? (
-            <p className={styles.chartEmpty}>Complete more stocktakes to see variance rate trend.</p>
+            <ChartEmptyState
+              icon="📉"
+              title="No trend yet"
+              body="Your variance rate trend appears after two stocktakes. The lower the line the better."
+              height={CHART_HEIGHT_LINE}
+            />
           ) : (
             <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
               <LineChart data={varianceRateData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
