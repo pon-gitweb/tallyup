@@ -1785,14 +1785,10 @@ if (!isManager) {
 }
 
 // Require something in the box
-if (!typed) {
-  showInfo('Add a quantity first.'); return;
-}
+if (!typed) { return; }
 
 // If NOT a valid number, show error
-if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
-  showInfo('That doesn\'t look right — try a number.'); return;
-}
+if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) { return; }
 
 const qty = parseFloat(typed);
     const prevQty = (typeof item.lastCount === 'number') ? item.lastCount : null;
@@ -1811,7 +1807,6 @@ const qty = parseFloat(typed);
         hapticSuccess();
         showUndo(item.id, prevQty, prevAt);
         focusNext(item.id);
-        showSuccess('Updated.');
       } catch (e: any) {
         toastService.error(e?.message ?? 'Approve failed.');
       }
@@ -1949,7 +1944,6 @@ const qty = parseFloat(typed);
     const docRef = await addDoc(colRef, payload);
 
     console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
-    showSuccess(`✓ “${nm}” added to this area.`);
 
     // Clear name, qty, supplier — keep unit (user likely counting same type of product)
     setQuickAdd(prev => ({...prev, name: '', qty: '', supplier: '', barcode: ''}));
@@ -1982,16 +1976,10 @@ const qty = parseFloat(typed);
   const it = adjModalFor!;
   const qtyStr = adjQty.trim();
 
-if (!qtyStr) {
-  showInfo('Add a quantity first.');
-  return;
-}
+if (!qtyStr) { return; }
 
 // If NOT a valid number, show error
-if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
-  showInfo('That doesn\'t look right — try a number.');
-  return;
-}
+if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) { return; }
 
 if (!adjReason.trim()) { showInfo('Please enter a reason.'); return; }
 

@@ -367,13 +367,9 @@ export default function SettingsScreen() {
     }
   }
 
-  function doSetupWizardStub() {
-    showInfo('Setup wizard coming soon.');
-  }
+  function doSetupWizardStub() {}
 
-  function doFullResetStub() {
-    showInfo('Use per-department long-press reset from the Departments screen.');
-  }
+  function doFullResetStub() {}
 
   async function executeAccountDeletion(currentUser: any) {
     setDeletingAccount(true);
