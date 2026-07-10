@@ -744,6 +744,7 @@ function StockTakeAreaInventoryScreen() {
   // through en-NZ → en-AU → en-GB → en-US → en since many Android devices
   // (e.g. Samsung Galaxy A06) ship with zero en-NZ voices installed.
   const voiceLangRef = useRef<string>('en-NZ');
+  const voiceIdentifierRef = useRef<string | null>(null);
 
   // ── Spoken prompts (hands-free) ─────────────────────────────────────────
   // Default on; persisted across sessions and toggleable from the banner.
@@ -881,12 +882,41 @@ function StockTakeAreaInventoryScreen() {
     }
 
     Speech.getAvailableVoicesAsync().then(voices => {
-      const langs = ['en-NZ', 'en-AU', 'en-GB', 'en-US', 'en'];
-      const best = langs.find(l =>
-        voices.some(v => v.language?.startsWith(l.replace('-', '_')) || v.language?.startsWith(l))
-      );
-      if (best) voiceLangRef.current = best;
-      console.log('[SpeechDebug] selected voice language:', voiceLangRef.current);
+      // Prefer enhanced/premium/neural voices — sound dramatically better
+      // Priority: enhanced > neural > default, prefer NZ/AU English then any English
+      const nzAuLangs = ['en-NZ', 'en-AU', 'en_NZ', 'en_AU'];
+      const enLangs = ['en-GB', 'en-US', 'en_GB', 'en_US', 'en'];
+
+      const isEnhanced = (v: any) =>
+        v.quality === 'Enhanced' ||
+        v.identifier?.toLowerCase().includes('enhanced') ||
+        v.identifier?.toLowerCase().includes('premium') ||
+        v.identifier?.toLowerCase().includes('neural') ||
+        v.name?.toLowerCase().includes('enhanced') ||
+        v.name?.toLowerCase().includes('premium');
+
+      const isNZAU = (v: any) =>
+        nzAuLangs.some(l => v.language?.startsWith(l.replace('-', '_')) || v.language?.startsWith(l));
+
+      const isEnglish = (v: any) =>
+        enLangs.some(l => v.language?.startsWith(l.replace('-', '_')) || v.language?.startsWith(l));
+
+      // Pick best voice: enhanced NZ/AU > enhanced EN > any NZ/AU > any EN
+      const pick =
+        voices.find(v => isEnhanced(v) && isNZAU(v)) ||
+        voices.find(v => isEnhanced(v) && isEnglish(v)) ||
+        voices.find(v => isNZAU(v)) ||
+        voices.find(v => isEnglish(v));
+
+      if (pick) {
+        voiceLangRef.current = pick.language || 'en-NZ';
+        voiceIdentifierRef.current = pick.identifier || null;
+        console.log('[SpeechDebug] selected voice:', pick.name, pick.language, pick.quality);
+      } else {
+        voiceLangRef.current = 'en-NZ';
+        voiceIdentifierRef.current = null;
+        console.log('[SpeechDebug] no preferred voice found, using en-NZ default');
+      }
     }).catch(e => console.log('[SpeechDebug] getAvailableVoices threw:', e?.message));
 
     (async () => {
@@ -932,7 +962,12 @@ function StockTakeAreaInventoryScreen() {
     if (!voiceSpeechEnabledRef.current) return;
     try {
       await Speech.stop();
-      Speech.speak(text, { language: voiceLangRef.current, rate: 1.05, pitch: 1.0 });
+      Speech.speak(text, {
+        language: voiceLangRef.current,
+        voice: voiceIdentifierRef.current ?? undefined,
+        rate: 0.9,
+        pitch: 0.88,
+      });
     } catch (e: any) {
       console.log('[VoiceDebug] speak threw:', e?.message || e);
     }
@@ -952,8 +987,9 @@ function StockTakeAreaInventoryScreen() {
     Speech.stop().catch(() => {});
     Speech.speak(text, {
       language: voiceLangRef.current,
-      rate: 1.05,
-      pitch: 1.0,
+      voice: voiceIdentifierRef.current ?? undefined,
+      rate: 0.9,
+      pitch: 0.88,
       onDone: () => {
         // Wait 300ms after speech ends before starting to listen
         // Gives iOS time to close the audio output session
