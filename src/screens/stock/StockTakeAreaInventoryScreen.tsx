@@ -335,39 +335,41 @@ const Row = React.memo(function Row({
           )}
 
           <View style={{ alignItems: 'center' }}>
-            <TextInput
-              ref={(el) => { inputRefs.current[item.id] = el; }}
-              value={localQty[item.id] ?? ''}
-              onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
-              placeholder="0"
-              keyboardType="decimal-pad"
-              inputMode="decimal"
-              maxLength={10}
-              returnKeyType="done"
-              blurOnSubmit={false}
-              editable={true}
-              onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); }}
-              onBlur={() => setFocusedInputId(prev => prev === item.id ? null : prev)}
-              onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
-              onLongPress={() => {
-                Keyboard.dismiss();
-                setTimeout(() => onEstimateBottleLevel(item), 150);
-              }}
-              editable={!isLocked}
-              style={{
-                width: 80,
-                paddingVertical: Math.max(8, dens(6)),
-                paddingHorizontal: 6,
-                borderWidth: 2,
-                borderColor: hasLocalEntry ? '#4CAF50' : '#d1d5db',
-                borderRadius: 10,
-                height: Math.max(44, dens(40)),
-                backgroundColor: '#fff',
-                fontSize: 18,
-                fontWeight: '700',
-                textAlign: 'center',
-              }}
-            />
+            <Animated.View style={{ transform: [{ scale: focusedInputId === item.id ? countFieldScale : 1 }] }}>
+              <TextInput
+                ref={(el) => { inputRefs.current[item.id] = el; }}
+                value={localQty[item.id] ?? ''}
+                onChangeText={(t) => setLocalQty(m => ({ ...m, [item.id]: t }))}
+                placeholder="0"
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={10}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                editable={true}
+                onFocus={() => { setFocusedInputId(item.id); setLastTouchedItemId(item.id); Animated.spring(countFieldScale, { toValue: 1.04, useNativeDriver: true, speed: 20, bounciness: 4 }).start(); }}
+                onBlur={() => { setFocusedInputId(prev => prev === item.id ? null : prev); Animated.spring(countFieldScale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 4 }).start(); }}
+                onSubmitEditing={() => { inputRefs.current[item.id]?.blur?.(); }}
+                onLongPress={() => {
+                  Keyboard.dismiss();
+                  setTimeout(() => onEstimateBottleLevel(item), 150);
+                }}
+                editable={!isLocked}
+                style={{
+                  width: 80,
+                  paddingVertical: Math.max(8, dens(6)),
+                  paddingHorizontal: 6,
+                  borderWidth: 2,
+                  borderColor: hasLocalEntry ? '#4CAF50' : '#d1d5db',
+                  borderRadius: 10,
+                  height: Math.max(44, dens(40)),
+                  backgroundColor: '#fff',
+                  fontSize: 18,
+                  fontWeight: '700',
+                  textAlign: 'center',
+                }}
+              />
+            </Animated.View>
             {item.countingUnit === 'case' && item.caseSize && (
               <Text style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
                 {hasLocalEntry
@@ -1457,6 +1459,7 @@ function StockTakeAreaInventoryScreen() {
   const listRef = useRef<FlatList>(null);
 
   const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
+  const countFieldScale = useRef(new Animated.Value(1)).current;
   // Mirrors focusedInputId but isn't cleared on blur — gives toolbar-level actions
   // (not tied to a specific row) a stable "which item was the user just working on" signal.
   const [lastTouchedItemId, setLastTouchedItemId] = useState<string | null>(null);

@@ -7,8 +7,8 @@
  * projected retail value, and dead stock flags.
  * When autoSuggestPar is enabled: shows PAR review for items below their level.
  */
-import React, { useEffect, useState } from 'react';
-import { ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
@@ -76,6 +76,13 @@ function StocktakeSummaryScreen() {
   const [shortagesExpanded, setShortagesExpanded] = useState(false);
   const [excessesExpanded, setExcessesExpanded] = useState(false);
 
+  const valueAnim = useRef(new Animated.Value(0)).current;
+  const [displayValue, setDisplayValue] = useState(0);
+  const shortageAnim = useRef(new Animated.Value(0)).current;
+  const [displayShortageValue, setDisplayShortageValue] = useState(0);
+  const excessAnim = useRef(new Animated.Value(0)).current;
+  const [displayExcessValue, setDisplayExcessValue] = useState(0);
+
   const handleNewCycle = () => {
     confirm({
       title: 'Start new stocktake?',
@@ -101,6 +108,29 @@ function StocktakeSummaryScreen() {
   useEffect(() => {
     markStepComplete('first_stocktake').catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!totalValue) return;
+    valueAnim.setValue(0);
+    const id = valueAnim.addListener(({ value }) => setDisplayValue(value));
+    Animated.timing(valueAnim, { toValue: totalValue, duration: 600, useNativeDriver: false }).start();
+    return () => valueAnim.removeListener(id);
+  }, [totalValue]);
+
+  useEffect(() => {
+    if (!varianceLoaded) return;
+    const totalShortage = shortages.reduce((s, v) => s + (v.dollarVariance ?? 0), 0);
+    const totalExcess = excesses.reduce((s, v) => s + (v.dollarVariance ?? 0), 0);
+    shortageAnim.setValue(0);
+    excessAnim.setValue(0);
+    const sid = shortageAnim.addListener(({ value }) => setDisplayShortageValue(value));
+    const eid = excessAnim.addListener(({ value }) => setDisplayExcessValue(value));
+    Animated.parallel([
+      Animated.timing(shortageAnim, { toValue: totalShortage, duration: 500, useNativeDriver: false }),
+      Animated.timing(excessAnim, { toValue: totalExcess, duration: 500, useNativeDriver: false }),
+    ]).start();
+    return () => { shortageAnim.removeListener(sid); excessAnim.removeListener(eid); };
+  }, [varianceLoaded, shortages, excesses]);
 
   // Load baseline and PAR data from Firestore
   useEffect(() => {
@@ -374,7 +404,7 @@ function StocktakeSummaryScreen() {
         <View style={{ backgroundColor: c.primaryLight, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: c.border }}>
           <Text style={{ color: c.success, fontWeight: '700', marginBottom: 4 }}>Total stock value counted</Text>
           <Text style={{ fontSize: 32, fontWeight: '900', color: c.success }}>
-            ${totalValue.toFixed(2)}
+            ${displayValue.toFixed(2)}
           </Text>
           <Text style={{ color: c.success, fontSize: 12, marginTop: 4 }}>Based on cost prices in your product list</Text>
         </View>
@@ -395,6 +425,11 @@ function StocktakeSummaryScreen() {
                   <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>
                     {shortages.length} item{shortages.length !== 1 ? 's' : ''} below expected
                   </Text>
+                  {displayShortageValue > 0 && (
+                    <Text style={{ color: c.error, fontWeight: '800', fontSize: 13, marginTop: 2 }}>
+                      −${displayShortageValue.toFixed(2)}
+                    </Text>
+                  )}
                 </View>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>{shortagesExpanded ? '▲' : '▼'}</Text>
               </TouchableOpacity>
@@ -432,6 +467,11 @@ function StocktakeSummaryScreen() {
                   <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 1 }}>
                     {excesses.length} item{excesses.length !== 1 ? 's' : ''} above expected
                   </Text>
+                  {displayExcessValue > 0 && (
+                    <Text style={{ color: c.success, fontWeight: '800', fontSize: 13, marginTop: 2 }}>
+                      +${displayExcessValue.toFixed(2)}
+                    </Text>
+                  )}
                 </View>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>{excessesExpanded ? '▲' : '▼'}</Text>
               </TouchableOpacity>
