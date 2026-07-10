@@ -32,6 +32,8 @@ const NUDGE_KEYS = {
   firstStocktakeDone: 'tallyup_nudge_first_stocktake_done_v1',
 };
 
+const HOOK_SCREEN_KEY = 'tallyup_hook_screen_shown_v1';
+
 function ContextNudge({ message, cta, onCta, onDismiss, c }) {
   return (
     <View style={{
@@ -268,22 +270,26 @@ export default function DashboardScreen() {
     if (
       onboardingRoad === null &&
       !onboardingDismissed &&
+      !hookScreenShown &&
       stocktakeCount === 0 &&
       onboardingRoad !== undefined // wait until loaded
     ) {
       // Small delay so dashboard renders first
       const t = setTimeout(() => {
+        AsyncStorage.setItem(HOOK_SCREEN_KEY, '1').catch(() => {});
+        setHookScreenShown(true);
         nav.navigate('HookScreen');
       }, 500);
       return () => clearTimeout(t);
     }
-  }, [onboardingRoad, onboardingDismissed, stocktakeCount]);
+  }, [onboardingRoad, onboardingDismissed, hookScreenShown, stocktakeCount]);
 
   // ── Contextual nudge data ──────────────────────────────────────────────────
   const [productCount, setProductCount] = React.useState<number | null>(null);
   const [unassignedCount, setUnassignedCount] = React.useState(0);
   const [supplierCount, setSupplierCount] = React.useState<number | null>(null);
   const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
+  const [hookScreenShown, setHookScreenShown] = React.useState(false);
 
   // Live counts — these are the numbers users see immediately on the
   // dashboard, so they subscribe rather than fetch once per focus. The
@@ -449,6 +455,9 @@ export default function DashboardScreen() {
       const m: Record<string, boolean> = {};
       pairs.forEach(([k, v]) => { m[k as string] = v as boolean; });
       setNudgeDismissed(m);
+    }).catch(() => {});
+    AsyncStorage.getItem(HOOK_SCREEN_KEY).then(v => {
+      if (v !== null) setHookScreenShown(true);
     }).catch(() => {});
   }, []);
 
@@ -777,7 +786,7 @@ export default function DashboardScreen() {
         )}
 
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
-        {onboardingRoad === null && !onboardingDismissed && (
+        {onboardingRoad === null && !onboardingDismissed && hookScreenShown && (
           <View style={{
             backgroundColor: colours.oat, borderRadius: 14, padding: 14, marginBottom: 12,
             borderWidth: 1.5, borderColor: colours.amber,
