@@ -78,7 +78,7 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         style={{ padding:14, borderRadius:12, backgroundColor:'#111' }}
       >
         <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>
-          {busy ? 'Processing…' : 'Upload Sales Report (CSV)'}
+          {busy ? 'Reading your sales data...' : 'Upload Sales Report (CSV)'}
         </Text>
       </TouchableOpacity>
 

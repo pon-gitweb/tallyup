@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Alert, StyleSheet } from 'react-native';
+import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useNavigation } from '@react-navigation/native';
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
@@ -45,8 +46,7 @@ export default function NewOrderStartScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator />
-        <Text style={styles.muted}>Loading suppliers…</Text>
+        <SmartLoader messages={LOADER_MESSAGES.suggestedOrders} size="large" style={{ paddingVertical: 40 }} />
       </View>
     );
   }

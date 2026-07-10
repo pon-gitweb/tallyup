@@ -9,9 +9,9 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import { SmartLoader, LOADER_MESSAGES } from './SmartLoader';
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../config/ai';
 import { navigationRef } from '../navigation/RootNavigator';
@@ -137,10 +137,7 @@ export default function IzzyAssistant() {
             />
 
             {loading && (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator size="small" color="#1b4f72" />
-                <Text style={styles.loadingText}>Izzy is thinking…</Text>
-              </View>
+              <SmartLoader messages={LOADER_MESSAGES.suitee} style={{ paddingVertical: 24 }} />
             )}
 
             <View style={styles.inputRow}>

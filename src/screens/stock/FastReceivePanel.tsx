@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
+import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
@@ -270,7 +271,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           }}
         >
           <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-            {busy ? 'Working…' : '📷 Take Photo'}
+            {busy ? 'Reading your photo...' : '📷 Take Photo'}
           </Text>
         </TouchableOpacity>
 
@@ -286,7 +287,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           }}
         >
           <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-            {busy ? 'Working…' : '🖼️ Choose from Library'}
+            {busy ? 'Reading your photo...' : '🖼️ Choose from Library'}
           </Text>
         </TouchableOpacity>
 
@@ -303,7 +304,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-              {busy ? 'Processing…' : '📄 Upload CSV / PDF'}
+              {busy ? 'Reading your file...' : '📄 Upload CSV / PDF'}
             </Text>
             {!busy && (
               <View style={{ backgroundColor: '#16a34a', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
@@ -318,6 +319,13 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
           )}
         </TouchableOpacity>
 
+        {busy && (
+          <SmartLoader
+            messages={LOADER_MESSAGES.invoiceCsv}
+            showSpinner={false}
+            style={{ marginTop: 16 }}
+          />
+        )}
         <Text style={{ color: '#6B7280', marginTop: 8 }}>{quickTip}</Text>
         <Text style={{ color: '#9CA3AF', marginTop: 6, fontSize: 12 }}>
           Where next: Open <Text style={{ fontWeight: '700' }}>Fast Receives (Pending)</Text> from Stock Control to

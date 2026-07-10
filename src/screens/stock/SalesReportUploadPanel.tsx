@@ -287,7 +287,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         }}
       >
         <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-          {busy ? 'Processing…' : 'Upload Sales Report (CSV)'}
+          {busy ? 'Reading your sales data...' : 'Upload Sales Report (CSV)'}
         </Text>
       </TouchableOpacity>
 

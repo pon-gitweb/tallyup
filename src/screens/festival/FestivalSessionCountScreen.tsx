@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, Text } from 'react-native';
+import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import NetInfo from '@react-native-community/netinfo';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import {
@@ -182,10 +183,11 @@ export default function FestivalSessionCountScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.oat, alignItems: 'center', justifyContent: 'center', gap: 16 }}>
       {modal}
-      <ActivityIndicator color={c.deepBlue} size="large" />
-      <Text style={{ fontSize: 15, fontWeight: '600', color: c.missionSlate, textAlign: 'center' }}>
-        Saving session counts…
-      </Text>
+      <SmartLoader
+        messages={LOADER_MESSAGES.festivalSession}
+        size="large"
+        style={{ marginTop: 16 }}
+      />
       {isOffline && (
         <View style={{
           backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10,

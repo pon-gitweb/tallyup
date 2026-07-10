@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -188,7 +189,7 @@ export default function ProfitInsightsScreen() {
 
         {loading ? (
           <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-            <ActivityIndicator color={c.deepBlue} />
+            <SmartLoader messages={LOADER_MESSAGES.hostiHealth} size="large" />
           </View>
         ) : !health ? (
           <Text style={{ color: c.textSecondary, fontFamily: theme.fontBody, marginTop: 8 }}>
