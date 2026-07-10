@@ -82,6 +82,8 @@ function StocktakeSummaryScreen() {
   const [displayShortageValue, setDisplayShortageValue] = useState(0);
   const excessAnim = useRef(new Animated.Value(0)).current;
   const [displayExcessValue, setDisplayExcessValue] = useState(0);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const celebrationOpacity = useRef(new Animated.Value(0)).current;
 
   const handleNewCycle = () => {
     confirm({
@@ -131,6 +133,17 @@ function StocktakeSummaryScreen() {
     ]).start();
     return () => { shortageAnim.removeListener(sid); excessAnim.removeListener(eid); };
   }, [varianceLoaded, shortages, excesses]);
+
+  useEffect(() => {
+    if (itemsMissed === 0 && itemsCounted > 0 && varianceLoaded) {
+      setShowCelebration(true);
+      Animated.sequence([
+        Animated.timing(celebrationOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.delay(600),
+        Animated.timing(celebrationOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start(() => setShowCelebration(false));
+    }
+  }, [itemsMissed, itemsCounted, varianceLoaded]);
 
   // Load baseline and PAR data from Firestore
   useEffect(() => {
@@ -340,6 +353,20 @@ function StocktakeSummaryScreen() {
   return (
     <>
       {modal}
+      {showCelebration && (
+        <Animated.View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: c.navy,
+          opacity: celebrationOpacity,
+          zIndex: 999,
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Text style={{ fontSize: 48, marginBottom: 16 }}>✓</Text>
+          <Text style={{ fontSize: 24, fontWeight: '800', color: '#f5f3ee', textAlign: 'center' }}>
+            Complete.
+          </Text>
+        </Animated.View>
+      )}
       <ScrollView style={{ flex: 1, backgroundColor: '#f5f3ee' }} contentContainerStyle={{ padding: 16, gap: 16 }}>
 
       {/* Hero */}

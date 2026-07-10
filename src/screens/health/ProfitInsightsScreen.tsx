@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { Animated, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
@@ -93,6 +93,8 @@ export default function ProfitInsightsScreen() {
   const [loading, setLoading] = useState(true);
   const [monthlyScores, setMonthlyScores] = useState<number[] | null>(null);
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
+  const scoreAnim = useRef(new Animated.Value(0)).current;
+  const [displayScore, setDisplayScore] = useState(0);
 
   useEffect(() => {
     if (!venueId) {
@@ -151,6 +153,14 @@ export default function ProfitInsightsScreen() {
     })();
     return () => { alive = false; };
   }, [venueId]);
+
+  useEffect(() => {
+    if (!health || health.stage !== 3 || !health.score) return;
+    scoreAnim.setValue(0);
+    const listener = scoreAnim.addListener(({ value }) => setDisplayScore(Math.round(value)));
+    Animated.timing(scoreAnim, { toValue: health.score, duration: 800, useNativeDriver: false }).start();
+    return () => scoreAnim.removeListener(listener);
+  }, [health?.score]);
 
   useEffect(() => {
     if (!scrollToKpi) return;
@@ -262,7 +272,7 @@ export default function ProfitInsightsScreen() {
             {/* Stage 3 — real score */}
             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
               <Text style={{ fontSize: 32, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold }}>
-                {health.score} / 100
+                {displayScore} / 100
               </Text>
               <Text style={{ fontSize: 16, color: c.deepBlue, fontWeight: '700' }}>· {health.label}</Text>
             </View>

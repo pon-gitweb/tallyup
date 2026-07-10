@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
+  Animated, View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
   Modal, Pressable, RefreshControl, ActivityIndicator
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -46,13 +46,33 @@ type AreaRow = {
 function Stars({ status }: { status: 'idle' | 'inprog' | 'done' }) {
   const c = useColours();
   const fillCount = status === 'done' ? 3 : status === 'inprog' ? 1 : 0;
-  const star = (filled: boolean, key: number) =>
-    <MaterialIcons key={key} name={filled ? 'star' : 'star-border'} size={16} color={filled ? c.amber : '#CBD5E1'} />;
+  const starAnims = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
+
+  useEffect(() => {
+    if (status === 'done') {
+      Animated.stagger(80, starAnims.map(anim =>
+        Animated.timing(anim, { toValue: 1, duration: 200, useNativeDriver: true })
+      )).start();
+    } else {
+      starAnims.forEach(anim => anim.setValue(0));
+    }
+  }, [status]);
+
   return (
     <View style={{ flexDirection: 'row', gap: 2 }}>
-      {star(fillCount >= 1, 1)}
-      {star(fillCount >= 2, 2)}
-      {star(fillCount >= 3, 3)}
+      {starAnims.map((anim, i) => (
+        <Animated.View key={i} style={{ opacity: i < fillCount ? (status === 'done' ? anim : 1) : 0.3 }}>
+          <MaterialIcons
+            name={i < fillCount ? 'star' : 'star-border'}
+            size={16}
+            color={i < fillCount ? c.amber : '#CBD5E1'}
+          />
+        </Animated.View>
+      ))}
     </View>
   );
 }
@@ -77,6 +97,14 @@ function AreaSelectionInner() {
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
   const didAlertRef = useRef(false);
+
+  const recentlyCompleted = useRef<Set<string>>(new Set()).current;
+  const areaScales = useRef<Record<string, Animated.Value>>({}).current;
+
+  function getAreaScale(id: string): Animated.Value {
+    if (!areaScales[id]) areaScales[id] = new Animated.Value(1);
+    return areaScales[id];
+  }
 
   // Role gate
   const [isManager, setIsManager] = useState(false);
@@ -138,8 +166,18 @@ function AreaSelectionInner() {
       const ref = collection(db, 'venues', venueId, 'departments', departmentId, 'areas');
       const qy = query(ref, orderBy('name', 'asc'));
       const unsub = onSnapshot(qy, (snap) => {
-        const rows = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        setAreas(rows);
+        const newAreas = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        newAreas.forEach(area => {
+          if (area.completedAt && !recentlyCompleted.has(area.id)) {
+            recentlyCompleted.add(area.id);
+            const scale = getAreaScale(area.id);
+            Animated.sequence([
+              Animated.timing(scale, { toValue: 1.03, duration: 150, useNativeDriver: true }),
+              Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }),
+            ]).start();
+          }
+        });
+        setAreas(newAreas);
         setLoading(false);
       }, (e:any) => {
         if (__DEV__) console.log('[Areas] listener error', e?.message);
@@ -276,36 +314,38 @@ function AreaSelectionInner() {
     const lockedByMe = !!lockUid && lockUid === uid;
 
     return (
-      <View style={[styles.row, lockedByOther && { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
-        <TouchableOpacity
-          style={{ flex: 1, paddingRight: 8 }}
-          onPress={() => openArea(item)}
-          disabled={lockedByOther}
-        >
-          <Text style={styles.rowTitle}>{item.name || item.id}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-            <Stars status={status} />
-            <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
-            {lockedByOther && status !== 'done' && (
-              <Text style={[styles.pill, styles.pillLocked]}>In use by {lockName || 'another user'}</Text>
-            )}
-            {lockedByMe && status !== 'done' && (
-              <Text style={[styles.pill, styles.pillMine]}>You are in this area</Text>
-            )}
-          </View>
-        </TouchableOpacity>
-        {isManager && (
-          <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => openRename(item)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-              <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => deleteArea(item.id, item.name || item.id)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-              <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
-            </TouchableOpacity>
-          </View>
-        )}
-        <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
-      </View>
+      <Animated.View style={{ transform: [{ scale: getAreaScale(item.id) }] }}>
+        <View style={[styles.row, lockedByOther && { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
+          <TouchableOpacity
+            style={{ flex: 1, paddingRight: 8 }}
+            onPress={() => openArea(item)}
+            disabled={lockedByOther}
+          >
+            <Text style={styles.rowTitle}>{item.name || item.id}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+              <Stars status={status} />
+              <Text style={[styles.pill, pillStyle]}>{statusLabel}</Text>
+              {lockedByOther && status !== 'done' && (
+                <Text style={[styles.pill, styles.pillLocked]}>In use by {lockName || 'another user'}</Text>
+              )}
+              {lockedByMe && status !== 'done' && (
+                <Text style={[styles.pill, styles.pillMine]}>You are in this area</Text>
+              )}
+            </View>
+          </TouchableOpacity>
+          {isManager && (
+            <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => openRename(item)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => deleteArea(item.id, item.name || item.id)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                <MaterialIcons name="delete-outline" size={18} color="#ef4444" />
+              </TouchableOpacity>
+            </View>
+          )}
+          <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
+        </View>
+      </Animated.View>
     );
   };
 
