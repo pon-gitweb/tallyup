@@ -10,7 +10,7 @@ import {
   View, ActivityIndicator, StyleSheet,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as Haptics from 'expo-haptics';
+import { hapticMedium } from '../../utils/haptics';
 import {
   collection, doc, getDocs, query, serverTimestamp,
   setDoc, where,
@@ -125,7 +125,7 @@ export default function BarcodeScannerModal({
     setPhase('loading');
     if (scanHintTimer.current) clearTimeout(scanHintTimer.current);
     setScanHintVisible(false);
-    try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    await hapticMedium();
 
     try {
       if (!venueId) throw new Error('No venue');

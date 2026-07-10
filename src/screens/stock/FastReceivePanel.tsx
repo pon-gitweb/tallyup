@@ -2,6 +2,7 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
 import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
+import { hapticMedium } from '../../utils/haptics';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
@@ -63,6 +64,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
 
+      hapticMedium(); // invoice accepted
       showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
       onClose();
     } catch (e: any) {
@@ -115,6 +117,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
         throw new Error(`FastReceive snapshot write denied: ${msg}`);
       }
 
+      hapticMedium(); // invoice accepted
       showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
       onClose();
     } catch (e: any) {

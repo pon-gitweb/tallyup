@@ -34,7 +34,7 @@ import generateLatestCountsSnapshot from '../../services/reports/generateLatestC
 import { writeDepartmentSnapshot } from '../../services/reports/snapshotWriter';
 import { incrementFullStocktakeCompleted } from '../../services/trialStocktake';
 import { startNewDepartmentCycle } from '../../services/cycles';
-import * as Haptics from 'expo-haptics';
+import { hapticSuccess, hapticMedium, hapticAchievement, hapticWarning, hapticError } from '../../utils/haptics';
 import * as Speech from 'expo-speech';
 import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
@@ -92,7 +92,6 @@ type MemberDoc = { role?: string };
 type VenueDoc = { ownerUid?: string };
 type RouteParams = { venueId?: string; departmentId: string; areaId: string; areaName?: string; isFestivalSession?: boolean; sessionLabel?: string; barName?: string; };
 
-const hapticSuccess = () => { if (Haptics?.selectionAsync) try { Haptics.selectionAsync(); } catch {} };
 const DELTA_ABS_THRESHOLD = 5;
 const DELTA_RATIO_THRESHOLD = 0.5;
 
@@ -536,6 +535,7 @@ function StockTakeAreaInventoryScreen() {
 
         if (e?.message === 'TAKEN_BY_OTHER') {
           const who = e.lockedBy || 'someone else';
+          hapticError();
           showError(`This area is currently being counted by ${who}.\n\nOnly one person can work in an area at a time.`);
           nav.goBack();
         } else {
@@ -1017,6 +1017,7 @@ function StockTakeAreaInventoryScreen() {
   const flushFlaggedVoiceProducts = () => {
     const flagged = flaggedVoiceProductsRef.current;
     if (flagged.length > 0) {
+      hapticWarning(); // non-blocking — fire and forget
       showInfo(`${flagged.length} product${flagged.length > 1 ? 's' : ''} flagged — check after your count: ${flagged.join(', ')}`);
       flaggedVoiceProductsRef.current = [];
     }
@@ -2477,10 +2478,13 @@ try {
         const isOnline = (netState as any).isConnected === true && (netState as any).isInternetReachable !== false;
 
         if (finalized) {
+          await hapticAchievement();
           showSuccess('Department complete — nice work!');
         } else if (isOnline) {
+          await hapticMedium();
           showSuccess(`${areaName || 'Area'} submitted · ${durationMsg}`);
         } else {
+          await hapticMedium();
           showInfo(`${areaName || 'Area'} saved locally · ${durationMsg} · will sync when online`);
         }
         if (!finalized) nav.navigate('Areas' as never, { departmentId } as never);
