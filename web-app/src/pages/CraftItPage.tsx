@@ -3,6 +3,9 @@ import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderB
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
+import {
+  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_ANIMATION, CHART_HEIGHT_BAR,
+} from '../chartConfig'
 import styles from './CraftItPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -199,7 +202,6 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
   }, [recipes])
 
   const confirmedWithGp = recipes.filter((r) => r.status === 'confirmed' && r.gpPercent != null).length
-  const chartTooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
 
   function handleNewRecipe() {
     setEditingId(null)
@@ -264,17 +266,16 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
         {confirmedWithGp < 3 ? (
           <p className={styles.chartEmpty}>Confirm more recipes to see GP distribution.</p>
         ) : (
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={gpBuckets} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" vertical={false} />
-              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={32} />
-              <Tooltip
-                contentStyle={chartTooltipStyle}
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
+            <BarChart data={gpBuckets} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid {...CHART_GRID_PROPS} />
+              <XAxis dataKey="bucket" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <YAxis allowDecimals={false} tick={CHART_AXIS_TICK} width={32} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                 formatter={((v: number, _name: string, props: any) => [`${v} recipe${v !== 1 ? 's' : ''}`, props?.payload?.bucket ?? '']) as any}
                 labelFormatter={(() => '') as any}
-              />
-              <Bar dataKey="count">
+                cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
+              <Bar dataKey="count" radius={[4, 4, 0, 0]} {...CHART_ANIMATION}>
                 {gpBuckets.map((entry, i) => (
                   <Cell key={i} fill={entry.fill} />
                 ))}

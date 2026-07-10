@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import {
-  LineChart, Line, BarChart, Bar, Cell,
+  LineChart, Line, Area, BarChart, Bar, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
+import {
+  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
+  CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
+} from '../chartConfig'
 import styles from './HostiHealthPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -182,8 +186,6 @@ const KPI_META: { key: keyof KpiScores; label: string; desc: string }[] = [
   { key: 'orderingIntelligence',label: 'Ordering Intelligence',desc: 'Acting on suggested orders' },
 ]
 
-const TOOLTIP_STYLE = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function HostiHealthPage({ venueId }: { venueId: string }) {
@@ -331,19 +333,28 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
               <span style={{ fontSize: 12 }}>More data coming — score updates monthly.</span>
             </p>
           ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={trendData} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} width={32} />
-                <ReferenceLine y={75} stroke={theme.success} strokeDasharray="4 3" label={{ value: 'Strong', fontSize: 10, fill: theme.success }} />
-                <ReferenceLine y={60} stroke={theme.amber} strokeDasharray="4 3" label={{ value: 'Developing', fontSize: 10, fill: theme.amber }} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
+            <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
+              <LineChart data={trendData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={theme.deepBlue} stopOpacity={0.12} />
+                    <stop offset="95%" stopColor={theme.deepBlue} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid {...CHART_GRID_PROPS} />
+                <XAxis dataKey="month" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={CHART_AXIS_TICK} width={32} axisLine={false} tickLine={false} />
+                <ReferenceLine y={75} stroke={theme.success} strokeDasharray="4 3" strokeWidth={1}
+                  label={{ value: 'Strong', fontSize: 10, fill: theme.success, position: 'right' }} />
+                <ReferenceLine y={60} stroke={theme.amber} strokeDasharray="4 3" strokeWidth={1}
+                  label={{ value: 'Developing', fontSize: 10, fill: theme.amber, position: 'right' }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={((v: number) => [`${v}/100`, 'Score']) as any}
                   labelFormatter={((m: string) => trendData.find((d) => d.month === m)?.fullMonth ?? m) as any}
-                />
-                <Line type="monotone" dataKey="score" stroke={theme.deepBlue} strokeWidth={2.5} dot={{ r: 4, fill: theme.deepBlue }} activeDot={{ r: 6 }} />
+                  cursor={{ stroke: theme.border, strokeWidth: 1 }} />
+                <Area type="monotone" dataKey="score" stroke="none" fill="url(#scoreGradient)" {...CHART_ANIMATION} />
+                <Line type="monotone" dataKey="score" stroke={theme.deepBlue} strokeWidth={2.5}
+                  dot={CHART_DOT} activeDot={{ ...CHART_ACTIVE_DOT, fill: theme.deepBlue }} {...CHART_ANIMATION} />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -352,24 +363,26 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
         {/* Chart B: KPI breakdown */}
         <div className={styles.chartCard}>
           <p className={styles.chartTitle}>KPI breakdown</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={kpiBarData} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
-              <YAxis type="category" dataKey="shortName" width={90} tick={{ fontSize: 10 }} />
-              <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
-              <ReferenceLine x={75} stroke={theme.success} strokeDasharray="4 3" />
-              <Tooltip
-                contentStyle={TOOLTIP_STYLE}
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
+            <BarChart data={kpiBarData} layout="vertical" margin={{ top: 4, right: 48, left: 0, bottom: 0 }}>
+              <CartesianGrid {...CHART_GRID_PROPS} horizontal={false} vertical={false} />
+              <YAxis type="category" dataKey="shortName" width={96} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <XAxis type="number" domain={[0, 100]} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <ReferenceLine x={75} stroke={theme.success} strokeDasharray="4 3" strokeWidth={1} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                 formatter={((v: number, _: string, p: any) => [
                   p?.payload?.hasData ? `${v}/100` : 'No data',
                   p?.payload?.name ?? '',
                 ]) as any}
                 labelFormatter={(() => '') as any}
-              />
-              <Bar dataKey="value">
+                cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
+              <Bar dataKey="value" radius={[0, 4, 4, 0]} {...CHART_ANIMATION}>
                 {kpiBarData.map((entry, i) => (
                   <Cell key={i} fill={entry.hasData ? kpiColor(entry.value) : '#e5e3de'} />
                 ))}
+                <LabelList dataKey="value" position="right" fontSize={11}
+                  formatter={((v: number) => v > 0 ? `${v}` : '') as any}
+                  style={{ fill: theme.slateMid, fontFamily: theme.fontBody }} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -381,18 +394,19 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
           {varianceRateData.length < 2 ? (
             <p className={styles.chartEmpty}>Complete more stocktakes to see variance rate trend.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={varianceRateData} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11 }} width={38} />
-                <ReferenceLine y={2} stroke={theme.success} strokeDasharray="4 3" label={{ value: 'Healthy <2%', fontSize: 10, fill: theme.success }} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
+            <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
+              <LineChart data={varianceRateData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid {...CHART_GRID_PROPS} />
+                <XAxis dataKey="month" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={(v: number) => `${v}%`} tick={CHART_AXIS_TICK} width={38} axisLine={false} tickLine={false} />
+                <ReferenceLine y={2} stroke={theme.success} strokeDasharray="4 3" strokeWidth={1}
+                  label={{ value: 'Healthy <2%', fontSize: 10, fill: theme.success, position: 'right' }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={((v: number) => [`${v}%`, 'Variance rate']) as any}
                   labelFormatter={((m: string) => varianceRateData.find((d) => d.month === m)?.fullMonth ?? m) as any}
-                />
-                <Line type="monotone" dataKey="rate" stroke={theme.error} strokeWidth={2.5} dot={{ r: 4, fill: theme.error }} activeDot={{ r: 6 }} />
+                  cursor={{ stroke: theme.border, strokeWidth: 1 }} />
+                <Line type="monotone" dataKey="rate" stroke={theme.error} strokeWidth={2.5}
+                  dot={CHART_DOT} activeDot={{ ...CHART_ACTIVE_DOT, fill: theme.error }} {...CHART_ANIMATION} />
               </LineChart>
             </ResponsiveContainer>
           )}

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { BarChart, Bar, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import {
   collection,
   doc,
@@ -11,6 +11,9 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { theme } from '../theme'
+import {
+  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_ANIMATION, CHART_HEIGHT_BAR,
+} from '../chartConfig'
 import styles from './OrdersPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -292,7 +295,6 @@ export default function OrdersPage({ venueId }: { venueId: string }) {
       .slice(0, 8)
   }, [orders])
 
-  const chartTooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
   const fmtAxisMoney = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
 
   function exportCsv() {
@@ -385,17 +387,20 @@ export default function OrdersPage({ venueId }: { venueId: string }) {
         <div className={styles.chartCard}>
           <p className={styles.chartTitle}>Order spend by supplier</p>
           <p className={styles.chartSubtitle}>Received orders only</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={supplierSpend} layout="vertical" margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
-              <YAxis type="category" dataKey="supplier" width={130} tick={{ fontSize: 11 }} />
-              <XAxis type="number" tickFormatter={fmtAxisMoney} tick={{ fontSize: 11 }} />
-              <Tooltip
-                contentStyle={chartTooltipStyle}
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
+            <BarChart data={supplierSpend} layout="vertical" margin={{ top: 4, right: 48, left: 0, bottom: 0 }}>
+              <CartesianGrid {...CHART_GRID_PROPS} horizontal={false} vertical={false} />
+              <YAxis type="category" dataKey="supplier" width={130} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <XAxis type="number" tickFormatter={fmtAxisMoney} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                 formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Total']) as any}
                 labelFormatter={((_: string, payload: any[]) => payload?.[0]?.payload?.fullSupplier ?? '') as any}
-              />
-              <Bar dataKey="total" fill={theme.deepBlue} />
+                cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
+              <Bar dataKey="total" fill={theme.deepBlue} radius={[0, 4, 4, 0]} {...CHART_ANIMATION}>
+                <LabelList dataKey="total" position="right" fontSize={11}
+                  formatter={((v: number) => `$${Math.round(v).toLocaleString('en-NZ')}`) as any}
+                  style={{ fill: theme.slateMid, fontFamily: theme.fontBody }} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

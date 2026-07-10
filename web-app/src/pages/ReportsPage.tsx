@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore'
 import {
-  BarChart, Bar, Cell, LineChart, Line,
+  BarChart, Bar, Cell, LabelList, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
+import {
+  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
+  CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
+} from '../chartConfig'
 import styles from './ReportsPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -282,7 +286,6 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
       })),
   [varianceRows])
 
-  const tooltipStyle = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
   const fmtAxis = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
 
   // Sorted + filtered variance rows
@@ -458,17 +461,17 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
               {trendData.length < 2 ? (
                 <p className={styles.chartEmpty}>Complete another stocktake to see your variance trend.</p>
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={trendData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" />
-                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                    <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11 }} width={56} />
-                    <Tooltip
-                      contentStyle={tooltipStyle}
+                <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
+                  <LineChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                    <CartesianGrid {...CHART_GRID_PROPS} />
+                    <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                    <YAxis tickFormatter={fmtAxis} tick={CHART_AXIS_TICK} width={56} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                       formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
                       labelFormatter={((label: string) => trendData.find((d) => d.label === label)?.fullLabel ?? label) as any}
-                    />
-                    <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                      cursor={{ stroke: theme.border, strokeWidth: 1 }} />
+                    <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2.5}
+                      dot={CHART_DOT} activeDot={{ ...CHART_ACTIVE_DOT, fill: trendLineColor }} {...CHART_ANIMATION} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -480,20 +483,22 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
               {topDrivers.length === 0 ? (
                 <p className={styles.chartEmpty}>Add cost prices to products to see dollar impact.</p>
               ) : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={topDrivers} layout="vertical" margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-                    <XAxis type="number" tickFormatter={fmtAxis} tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      contentStyle={tooltipStyle}
+                <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
+                  <BarChart data={topDrivers} layout="vertical" margin={{ top: 4, right: 48, left: 0, bottom: 0 }}>
+                    <CartesianGrid {...CHART_GRID_PROPS} horizontal={false} vertical={false} />
+                    <YAxis type="category" dataKey="name" width={120} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                    <XAxis type="number" tickFormatter={fmtAxis} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
                       formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
                       labelFormatter={((_: string, payload: any[]) => payload?.[0]?.payload?.fullName ?? '') as any}
-                    />
-                    <Bar dataKey="value">
+                      cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} {...CHART_ANIMATION}>
                       {topDrivers.map((entry, i) => (
                         <Cell key={i} fill={entry.shortage ? theme.error : theme.success} />
                       ))}
+                      <LabelList dataKey="value" position="right" fontSize={11}
+                        formatter={((v: number) => `$${Math.round(v).toLocaleString('en-NZ')}`) as any}
+                        style={{ fill: theme.slateMid, fontFamily: theme.fontBody }} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -1101,8 +1106,6 @@ function AnalysisTab({ venueId }: { venueId: string }) {
     return velocityData.filter(r => r.unitsPerWeek < 0.1)
   }, [velocityData, velFilter])
 
-  const TOOLTIP_STYLE = { background: '#fff', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 12 }
-
   if (loading) return <p className={styles.loading}>Loading analysis…</p>
 
   return (
@@ -1121,13 +1124,17 @@ function AnalysisTab({ venueId }: { venueId: string }) {
         ) : (
           <>
             <div className={styles.chartCard}>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={supplierData.map(r => ({ name: r.supplier.length > 14 ? r.supplier.slice(0, 14) + '…' : r.supplier, fullName: r.supplier, total: r.total }))} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e3de" horizontal={false} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
-                  <XAxis type="number" tickFormatter={(v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Total']) as any} labelFormatter={((_: string, p: any[]) => p?.[0]?.payload?.fullName ?? '') as any} />
-                  <Bar dataKey="total" fill={theme.deepBlue} />
+              <ResponsiveContainer width="100%" height={CHART_HEIGHT_BAR}>
+                <BarChart data={supplierData.map(r => ({ name: r.supplier.length > 14 ? r.supplier.slice(0, 14) + '…' : r.supplier, fullName: r.supplier, total: r.total }))} layout="vertical" margin={{ top: 4, right: 48, left: 0, bottom: 0 }}>
+                  <CartesianGrid {...CHART_GRID_PROPS} horizontal={false} vertical={false} />
+                  <YAxis type="category" dataKey="name" width={110} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                  <XAxis type="number" tickFormatter={(v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Total']) as any} labelFormatter={((_: string, p: any[]) => p?.[0]?.payload?.fullName ?? '') as any} cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
+                  <Bar dataKey="total" fill={theme.deepBlue} radius={[0, 4, 4, 0]} {...CHART_ANIMATION}>
+                    <LabelList dataKey="total" position="right" fontSize={11}
+                      formatter={((v: number) => `$${Math.round(v).toLocaleString('en-NZ')}`) as any}
+                      style={{ fill: theme.slateMid, fontFamily: theme.fontBody }} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
