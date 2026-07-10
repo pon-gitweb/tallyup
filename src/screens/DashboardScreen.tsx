@@ -12,7 +12,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  ActivityIndicator,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -572,14 +571,13 @@ export default function DashboardScreen() {
 
         <OfflineBanner />
 
-        {/* ── Unified dashboard hero ────────────────────────────────────── */}
-        {primaryState === 'inProgress' && lastArea ? (
-          /* RESUME — highest priority, shown whenever a stocktake is active */
+        {/* ── Hero — immediate utility ─────────────────────────────────────── */}
+
+        {/* RESUME — highest priority, shown whenever a stocktake is active */}
+        {primaryState === 'inProgress' && lastArea && (
           <View style={{
             backgroundColor: colours.missionSlate,
-            borderRadius: 16,
-            padding: 22,
-            marginBottom: 12,
+            borderRadius: 16, padding: 22, marginBottom: 12,
           }}>
             <Text style={{ fontSize: 11, fontWeight: '500', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.88, marginBottom: 8 }}>
               Stocktake in progress
@@ -610,93 +608,114 @@ export default function DashboardScreen() {
               <Text style={{ color: colours.missionSlate, fontWeight: '700', fontSize: 15 }}>Continue →</Text>
             </TouchableOpacity>
           </View>
-        ) : hostiHealthData ? (
-          /* HEALTH HERO — stage 1 / 2 / 3, shown when no stocktake is active */
+        )}
+
+        {/* UTILITY HERO — shown when no stocktake in progress */}
+        {primaryState !== 'inProgress' && (
+          <View style={{
+            backgroundColor: colours.navy,
+            borderRadius: 16, padding: 20, marginBottom: 12,
+          }}>
+            {stocktakeCount === 0 ? (
+              /* First-time user — get them into a stocktake immediately */
+              <>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: colours.oat, marginBottom: 6 }}>
+                  Start your first stocktake
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(245,243,238,0.65)', lineHeight: 19, marginBottom: 16 }}>
+                  Count your stock and Hosti will start building your venue intelligence.
+                </Text>
+                <TouchableOpacity
+                  style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={onOpenStockTake}
+                  disabled={busy}
+                >
+                  <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 15 }}>Start stocktake →</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              /* Returning user — show useful context + primary action */
+              <>
+                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                  {/* Stock value */}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 4 }}>
+                      Stock value
+                    </Text>
+                    <Text style={{ fontSize: 22, fontWeight: '800', color: colours.oat }}>
+                      {stockValue != null ? `$${stockValue.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
+                    </Text>
+                  </View>
+                  {/* Last stocktake */}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: 'rgba(245,243,238,0.55)', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 4 }}>
+                      Last count
+                    </Text>
+                    <Text style={{ fontSize: 22, fontWeight: '800', color: colours.oat }}>
+                      {snapshotUpdatedAt != null
+                        ? (() => {
+                            const days = Math.floor((Date.now() - snapshotUpdatedAt.getTime()) / 86_400_000);
+                            return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days}d ago`;
+                          })()
+                        : '—'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={onOpenStockTake}
+                  disabled={busy}
+                >
+                  <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 15 }}>New stocktake →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ height: 36, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 8, borderWidth: 1, borderColor: 'rgba(245,243,238,0.25)' }}
+                  onPress={onOpenReports}
+                >
+                  <Text style={{ color: 'rgba(245,243,238,0.8)', fontWeight: '600', fontSize: 13 }}>View reports →</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+
+        {/* ── Hosti Health — supporting intelligence card ───────────────────── */}
+        {hostiHealthData && (
           <TouchableOpacity
             onPress={() => nav.navigate('ProfitInsights')}
             activeOpacity={0.85}
             style={{
               backgroundColor: colours.oat,
-              borderRadius: 16,
-              padding: 22,
+              borderRadius: 14,
+              padding: 16,
               marginBottom: 12,
-              borderWidth: 1.5,
-              borderColor: colours.amber,
+              borderWidth: 1,
+              borderColor: colours.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <Text style={{ fontSize: 15, fontWeight: '800', color: colours.navy }}>🏥 Hosti Health</Text>
-              {hostiHealthData.stage === 1 ? (
-                <Text style={{ fontSize: 16, color: colours.deepBlue }}>→</Text>
-              ) : hostiHealthData.stage === 2 ? (
-                <View style={{ backgroundColor: colours.amber, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: colours.oat }}>Building</Text>
-                </View>
-              ) : (() => {
-                const labelColour = hostiHealthData.label === 'Excellent' ? colours.success
-                  : hostiHealthData.label === 'Strong' ? colours.deepBlue
-                  : hostiHealthData.label === 'Developing' ? colours.amber
-                  : colours.error;
-                return (
-                  <View style={{ backgroundColor: `${labelColour}22`, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: labelColour }}>{hostiHealthData.label}</Text>
-                  </View>
-                );
-              })()}
-            </View>
-
-            {hostiHealthData.stage === 1 ? (
-              <>
-                <Text style={{ fontSize: 13, color: colours.textSecondary, marginBottom: 8 }}>
-                  Building your baseline
-                </Text>
-                <View style={{ height: 8, backgroundColor: colours.border, borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
-                  <View style={{
-                    height: 8,
-                    width: `${(hostiHealthData.completedSteps / hostiHealthData.totalSteps) * 100}%`,
-                    backgroundColor: colours.deepBlue,
-                    borderRadius: 4,
-                  }} />
-                </View>
-                <Text style={{ fontSize: 12, color: colours.textSecondary, marginBottom: 10 }}>
-                  {hostiHealthData.completedSteps} of {hostiHealthData.totalSteps} steps complete
-                </Text>
-              </>
-            ) : hostiHealthData.stage === 2 ? (
-              <>
-                <Text style={{ fontSize: 24, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
-                  {hostiHealthData.scoreMin} – {hostiHealthData.scoreMax}
-                </Text>
-                <Text style={{ fontSize: 12, color: colours.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                  Complete one more stocktake to{'\n'}unlock your confirmed score
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={{ fontSize: 24, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>
-                  {hostiHealthData.score} / 100
-                </Text>
-                <Text style={{ fontSize: 12, color: colours.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                  {hostiHealthData.trend != null && hostiHealthData.trendDirection
-                    ? `${hostiHealthData.trendDirection === 'up' ? '↑' : hostiHealthData.trendDirection === 'down' ? '↓' : '→'} ${hostiHealthData.trend > 0 ? '+' : ''}${hostiHealthData.trend} this month`
-                    : 'Building confidence'}
-                  {hostiHealthData.estimatedImpact != null && hostiHealthData.estimatedImpact > 0
-                    ? `  ·  Est. $${hostiHealthData.estimatedImpact.toFixed(0)} rec.`
-                    : ''}
-                </Text>
-              </>
-            )}
-
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontSize: 13, color: colours.deepBlue, fontWeight: '700' }}>
-                {hostiHealthData.stage === 3 ? 'View Performance →' : 'View Profit Insights →'}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 2 }}>
+                Venue Intelligence
               </Text>
-              {hostiHealthData.stage === 3 && hostiHealthData.predictions && hostiHealthData.predictions.criticalCount > 0 && (
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colours.error, marginLeft: 6 }} />
+              {hostiHealthData.stage < 3 ? (
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colours.navy }}>
+                  {hostiHealthData.stage === 1
+                    ? 'Building your baseline…'
+                    : `${hostiHealthData.scoreMin}–${hostiHealthData.scoreMax} · one more stocktake`}
+                </Text>
+              ) : (
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colours.navy }}>
+                  Hosti Health · {hostiHealthData.score}/100
+                  {hostiHealthData.label ? ` · ${hostiHealthData.label}` : ''}
+                </Text>
               )}
             </View>
+            <Text style={{ fontSize: 18, color: colours.textSecondary }}>→</Text>
           </TouchableOpacity>
-        ) : null}
+        )}
 
         {/* ── KPI pills — real dot counts once Stage 3 lands, else building ── */}
         {hostiHealthData && (
@@ -739,35 +758,6 @@ export default function DashboardScreen() {
               );
             })}
           </ScrollView>
-        )}
-
-        {/* ── View Performance pill ── */}
-        {hostiHealthData && (
-          <TouchableOpacity
-            style={{ height: 44, borderRadius: 999, backgroundColor: colours.oat, borderWidth: 1, borderColor: colours.deepBlue, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
-            onPress={() => nav.navigate('ProfitInsights')}
-            activeOpacity={0.8}
-          >
-            <Text style={{ color: colours.deepBlue, fontWeight: '600', fontSize: 15 }}>View Performance →</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── Start new stocktake — slim pill, hidden when already counting ── */}
-        {primaryState !== 'inProgress' && (
-          <TouchableOpacity
-            style={{ height: 44, borderRadius: 999, backgroundColor: colours.missionSlate, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
-            onPress={onOpenStockTake}
-            disabled={busy}
-          >
-            {busy
-              ? <ActivityIndicator color={colours.oat} />
-              : <Text style={{ color: colours.oat, fontWeight: '600', fontSize: 15, letterSpacing: -0.075 }}>Start new stocktake →</Text>}
-          </TouchableOpacity>
-        )}
-        {primaryState === 'done' && hostiHealthData?.stage === 3 && (
-          <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 10, marginBottom: 8 }} onPress={onOpenReports}>
-            <Text style={{ color: colours.textSecondary, fontWeight: '600', fontSize: 14 }}>View reports</Text>
-          </TouchableOpacity>
         )}
 
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}
