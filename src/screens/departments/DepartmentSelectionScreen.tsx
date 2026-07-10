@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { collection, getDocs, query, orderBy, limit, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
+import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -12,6 +13,7 @@ type Dept = { id: string; name: string };
 
 export default function DepartmentSelectionScreen() {
   const nav = useNavigation<any>();
+  const c = useColours();
   const venueId = useVenueId();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
@@ -122,7 +124,7 @@ export default function DepartmentSelectionScreen() {
               </TouchableOpacity>
             </View>
           )}
-          ListEmptyComponent={<Text>No departments yet. Create one.</Text>}
+          ListEmptyComponent={<Text style={{ color: c.textSecondary, fontSize: 14, textAlign: 'center', padding: 32 }}>No areas set up yet — create your first department to get started.</Text>}
           contentContainerStyle={{ paddingBottom: 24 }}
         />
       )}

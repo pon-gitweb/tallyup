@@ -793,9 +793,9 @@ export default function DashboardScreen() {
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>Ready to set up your venue?</Text>
+                <Text style={{ fontSize: 14, fontWeight: '800', color: colours.navy, marginBottom: 4 }}>Set up your venue</Text>
                 <Text style={{ fontSize: 13, color: colours.textSecondary, lineHeight: 18, marginBottom: 12 }}>
-                  Two minutes now sets up your stock structure, PAR levels, and suppliers.
+                  When you're ready, we'll walk you through it. Takes about two minutes.
                 </Text>
               </View>
               <TouchableOpacity onPress={dismissOnboarding} style={{ padding: 4, marginLeft: 8 }}>
@@ -946,7 +946,7 @@ export default function DashboardScreen() {
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
         {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
           <>
-            <ContextNudge c={colours} message="💡 Tip: Scan an invoice to set up suppliers and products in one step — before your first stocktake." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
+            <ContextNudge c={colours} message="Got a delivery docket or invoice handy? Scan it and we'll set up your products and suppliers automatically." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
             <TouchableOpacity
               onPress={() => nav.navigate('ProductsCsvImport' as never)}
               style={{ paddingHorizontal: 16, paddingBottom: 8, marginTop: -4 }}
@@ -956,19 +956,19 @@ export default function DashboardScreen() {
           </>
         )}
         {supplierCount > 0 && productCount === 0 && !nudgeDismissed.noProducts && (
-          <ContextNudge c={colours} message="Add products to run your first stocktake and unlock AI reorder suggestions." cta="Add products →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('noProducts')} />
+          <ContextNudge c={colours} message="When you're ready, add your products and we'll take it from there — stocktakes, ordering, the lot." cta="Add products →" onCta={() => nav.navigate('Products')} onDismiss={() => dismissNudge('noProducts')} />
         )}
         {productCount > 0 && supplierCount === 0 && !nudgeDismissed.noSuppliers && (
-          <ContextNudge c={colours} message="Add a supplier to unlock ordering, AI suggestions, and invoice matching." cta="Add supplier →" onCta={() => nav.navigate('Suppliers')} onDismiss={() => dismissNudge('noSuppliers')} />
+          <ContextNudge c={colours} message="Adding a supplier unlocks ordering and invoice matching. Takes about a minute." cta="Add supplier →" onCta={() => nav.navigate('Suppliers')} onDismiss={() => dismissNudge('noSuppliers')} />
         )}
         {productCount > 0 && supplierCount > 0 && unassignedCount > 0 && !nudgeDismissed.unassigned && (
-          <ContextNudge c={colours} message={`${unassignedCount} product${unassignedCount !== 1 ? 's have' : ' has'} no supplier — assign one to improve ordering accuracy.`} cta="Review →" onCta={() => nav.navigate('Products', { filterNoSupplier: true })} onDismiss={() => dismissNudge('unassigned')} />
+          <ContextNudge c={colours} message={`${unassignedCount} product${unassignedCount !== 1 ? 's don\'t' : ' doesn\'t'} have a supplier yet — worth a quick look when you get a chance.`} cta="Review →" onCta={() => nav.navigate('Products', { filterNoSupplier: true })} onDismiss={() => dismissNudge('unassigned')} />
         )}
         {productCount > 0 && stocktakeCount === 0 && !nudgeDismissed.noStocktake && (
-          <ContextNudge c={colours} message="Complete your first stocktake to unlock variance reports, usage trends, and smart reorder levels." cta="Start →" onCta={() => nav.navigate('DepartmentSelection')} onDismiss={() => dismissNudge('noStocktake')} />
+          <ContextNudge c={colours} message="Your first stocktake sets everything in motion — reports, trends, ordering. Whenever you're ready." cta="Start →" onCta={() => nav.navigate('DepartmentSelection')} onDismiss={() => dismissNudge('noStocktake')} />
         )}
         {stocktakeCount === 1 && !nudgeDismissed.firstStocktakeDone && (
-          <ContextNudge c={colours} message="First stocktake done! View your Stock Holding Report to see what you have on hand by category." cta="View report →" onCta={() => nav.navigate('StockHolding')} onDismiss={() => dismissNudge('firstStocktakeDone')} />
+          <ContextNudge c={colours} message="First one's done. Take a look at your stock holding report — it breaks down what you have by category." cta="View report →" onCta={() => nav.navigate('StockHolding')} onDismiss={() => dismissNudge('firstStocktakeDone')} />
         )}
 
         {venueType === 'festival' && (priceChangeCount > 0 || openDisputeCount > 0) && (

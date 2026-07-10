@@ -63,7 +63,7 @@ export default function HookScreen() {
           fontSize: 16, color: 'rgba(245,243,238,0.65)',
           lineHeight: 24,
         }}>
-          Let us show you why in{'\n'}about two minutes.
+          Two minutes and you'll see exactly how.
         </Text>
       </Animated.View>
 
@@ -88,7 +88,7 @@ export default function HookScreen() {
           style={{ alignItems: 'center', paddingVertical: 12 }}
         >
           <Text style={{ color: 'rgba(245,243,238,0.45)', fontSize: 14 }}>
-            Skip — set up my venue
+            Skip to setup
           </Text>
         </TouchableOpacity>
       </Animated.View>

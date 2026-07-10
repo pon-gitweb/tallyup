@@ -1275,7 +1275,7 @@ function StockTakeAreaInventoryScreen() {
       return;
     }
     if (offline) {
-      showInfo('Voice counting needs an internet connection.');
+      showInfo('Voice needs a connection — count manually for now.');
       return;
     }
     if (voiceSessionActiveRef.current) {
@@ -1289,7 +1289,7 @@ function StockTakeAreaInventoryScreen() {
       flushFlaggedVoiceProducts();
     } else {
       if (itemsRef.current.length === 0) {
-        showInfo('Products are still loading — try again in a moment.');
+        showInfo('Just a moment — still loading your products.');
         return;
       }
 
@@ -1305,7 +1305,7 @@ function StockTakeAreaInventoryScreen() {
       }
       if (!permission?.granted) {
         console.log('[VoiceDebug] permission not granted:', permission);
-        showInfo('Microphone access needed. Enable in Settings → Privacy → Microphone.');
+        showInfo('We need microphone access for voice counting. You can enable it in your phone settings.');
         return;
       }
 
@@ -1746,12 +1746,12 @@ if (!isManager) {
 
 // Require something in the box
 if (!typed) {
-  showInfo('Please enter a quantity.'); return;
+  showInfo('Add a quantity first.'); return;
 }
 
 // If NOT a valid number, show error
 if (!/^(\d+(\.\d+)?|\.\d+)$/.test(typed)) {
-  showInfo('Please enter a valid number.'); return;
+  showInfo('That doesn\'t look right — try a number.'); return;
 }
 
 const qty = parseFloat(typed);
@@ -1771,7 +1771,7 @@ const qty = parseFloat(typed);
         hapticSuccess();
         showUndo(item.id, prevQty, prevAt);
         focusNext(item.id);
-        showSuccess('✓ Count updated and logged.');
+        showSuccess('Updated.');
       } catch (e: any) {
         toastService.error(e?.message ?? 'Approve failed.');
       }
@@ -1796,7 +1796,7 @@ const qty = parseFloat(typed);
   const bc = (quickAdd.barcode || '').trim();
 
   if (!venueId || !departmentId || !areaId) {
-    showInfo('Missing area context. Please go back and re-enter this area.');
+    showInfo('Something went wrong getting into this area. Go back and try again.');
     return;
   }
 
@@ -1842,7 +1842,7 @@ const qty = parseFloat(typed);
   const writePath = `venues/${venueId}/departments/${departmentId}/areas/${areaId}/items`;
   console.log('[Area quick add] path=', writePath, 'venueId=', venueId, 'departmentId=', departmentId, 'areaId=', areaId, 'data=', JSON.stringify(payload));
   if (!venueId || !departmentId || !areaId) {
-    showInfo('Missing area context. Please go back and re-enter this area.');
+    showInfo('Something went wrong getting into this area. Go back and try again.');
     return;
   }
 
@@ -1943,13 +1943,13 @@ const qty = parseFloat(typed);
   const qtyStr = adjQty.trim();
 
 if (!qtyStr) {
-  showInfo('Please enter a quantity.');
+  showInfo('Add a quantity first.');
   return;
 }
 
 // If NOT a valid number, show error
 if (!/^(\d+(\.\d+)?|\.\d+)$/.test(qtyStr)) {
-  showInfo('Please enter a valid number.');
+  showInfo('That doesn\'t look right — try a number.');
   return;
 }
 

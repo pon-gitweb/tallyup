@@ -29,7 +29,7 @@ export default function OnboardingRoadScreen() {
     <SafeAreaView style={S.safe}>
       <ScrollView contentContainerStyle={S.content}>
         <Text style={S.eyebrow}>Welcome to Hosti</Text>
-        <Text style={S.h1}>Let's set up your venue your way</Text>
+        <Text style={S.h1}>How would you like to start?</Text>
         <Text style={S.lead}>
           Two minutes now saves you hours later. Pick the path that fits where you are today.
         </Text>
@@ -41,7 +41,7 @@ export default function OnboardingRoadScreen() {
             New to proper stocktakes, or want a clean slate? We'll load smart starting PAR levels, set up
             your venue structure, and show you exactly what your first count will reveal.
           </Text>
-          <Text style={S.cardCta}>Let's go →</Text>
+          <Text style={S.cardCta}>Start fresh →</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[S.card, S.cardData]} onPress={() => nav.navigate('OnboardingBringData')}>

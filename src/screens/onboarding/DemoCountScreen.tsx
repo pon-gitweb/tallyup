@@ -11,13 +11,13 @@ import { useColours } from '../../context/ThemeContext';
 const DEMO_PRODUCTS = [
   { id: '1', name: 'Heineken 330ml', category: 'Beer', mode: 'manual', tip: null },
   { id: '2', name: 'Steinlager Pure 330ml', category: 'Beer', mode: 'manual', tip: null },
-  { id: '3', name: 'Corona 330ml', category: 'Beer', mode: 'manual', tip: 'Tap the count field and type the number — simple as that.' },
-  { id: '4', name: 'Absolut Vodka 1L', category: 'Spirits', mode: 'voice', tip: 'Try voice — tap the mic and say the number out loud.' },
+  { id: '3', name: 'Corona 330ml', category: 'Beer', mode: 'manual', tip: 'That\'s all there is to it.' },
+  { id: '4', name: 'Absolut Vodka 1L', category: 'Spirits', mode: 'voice', tip: 'Try saying it instead — tap the mic.' },
   { id: '5', name: 'Hendricks Gin 700ml', category: 'Spirits', mode: 'voice', tip: null },
-  { id: '6', name: 'Kahlua 1L', category: 'Spirits', mode: 'voice', tip: 'Voice saves about 2 seconds per item. On 450 products that\'s 15 minutes back.' },
-  { id: '7', name: 'House Chardonnay 750ml', category: 'Wine', mode: 'scan', tip: 'Barcode scan — point at any barcode and it fills itself in.' },
+  { id: '6', name: 'Kahlua 1L', category: 'Spirits', mode: 'voice', tip: 'On 450 products, voice counting gives you about 15 minutes back.' },
+  { id: '7', name: 'House Chardonnay 750ml', category: 'Wine', mode: 'scan', tip: 'Point at any barcode — it fills itself in.' },
   { id: '8', name: 'Cloudy Bay Sav Blanc 750ml', category: 'Wine', mode: 'scan', tip: null },
-  { id: '9', name: 'Espresso Martini Mix 1L', category: 'Cocktail', mode: 'photo', tip: 'AI shelf photo — photograph a shelf and we count for you.' },
+  { id: '9', name: 'Espresso Martini Mix 1L', category: 'Cocktail', mode: 'photo', tip: 'Point at a shelf and we\'ll have a look.' },
   { id: '10', name: 'Still Water 500ml', category: 'Non-alcoholic', mode: 'photo', tip: null },
 ];
 
