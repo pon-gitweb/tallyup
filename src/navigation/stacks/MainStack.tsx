@@ -51,6 +51,9 @@ import AiUsageScreen from '../../screens/settings/AiUsageScreen';
 import InventoryImportScreen from '../../screens/onboarding/InventoryImportScreen';
 import InventoryImportPreviewScreen from '../../screens/onboarding/InventoryImportPreviewScreen';
 import OnboardingRoadScreen from '../../screens/onboarding/OnboardingRoadScreen';
+import HookScreen from '../../screens/onboarding/HookScreen';
+import DemoCountScreen from '../../screens/onboarding/DemoCountScreen';
+import DemoResultScreen from '../../screens/onboarding/DemoResultScreen';
 import FreshStartScreen from '../../screens/onboarding/FreshStartScreen';
 import BringYourDataScreen from '../../screens/onboarding/BringYourDataScreen';
 import SetupWizardScreen from '../../screens/onboarding/SetupWizardScreen';
@@ -290,6 +293,9 @@ export default function MainStack() {
       <Stack.Screen name="OnboardingRoad" component={OnboardingRoadScreen} options={{ title: 'Welcome', headerShown: false }} />
       <Stack.Screen name="OnboardingFreshStart" component={FreshStartScreen} options={{ title: 'Fresh Start' }} />
       <Stack.Screen name="OnboardingBringData" component={BringYourDataScreen} options={{ title: 'Bring Your Data' }} />
+      <Stack.Screen name="HookScreen" component={HookScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="DemoCount" component={DemoCountScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="DemoResult" component={DemoResultScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
       <Stack.Screen name="FestivalDashboard" component={FestivalDashboardScreen} options={{ title: 'Festival Mode' }} />
       <Stack.Screen name="FestivalEventSetup" component={FestivalEventSetupScreen} options={{ title: 'Event Setup' }} />

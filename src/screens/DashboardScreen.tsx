@@ -263,6 +263,22 @@ export default function DashboardScreen() {
     }).catch(() => {});
   }, [stocktakeCount]);
 
+  // ── Show hook screen for first-time users — once only ────────────────────
+  React.useEffect(() => {
+    if (
+      onboardingRoad === null &&
+      !onboardingDismissed &&
+      stocktakeCount === 0 &&
+      onboardingRoad !== undefined // wait until loaded
+    ) {
+      // Small delay so dashboard renders first
+      const t = setTimeout(() => {
+        nav.navigate('HookScreen');
+      }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [onboardingRoad, onboardingDismissed, stocktakeCount]);
+
   // ── Contextual nudge data ──────────────────────────────────────────────────
   const [productCount, setProductCount] = React.useState<number | null>(null);
   const [unassignedCount, setUnassignedCount] = React.useState(0);
