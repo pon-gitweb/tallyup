@@ -252,7 +252,7 @@ export default function ProfitInsightsScreen() {
             </View>
 
             <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, textAlign: 'center', lineHeight: 19, marginBottom: 20 }}>
-              Your Hosti Health score will be available{'\n'}once your baseline is established.
+              Your score builds over your first three stocktakes.{'\n'}Head to the app whenever you're ready.
             </Text>
           </>
         ) : health.stage === 2 ? (
@@ -264,7 +264,7 @@ export default function ProfitInsightsScreen() {
               <Text style={{ fontSize: 14, color: c.amber, fontWeight: '700' }}>· Building confidence</Text>
             </View>
             <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, lineHeight: 19, marginBottom: 20 }}>
-              We have your first stocktake.{'\n'}Complete a second to unlock your confirmed score.
+              One more stocktake and your score unlocks.{'\n'}Keep going — you're nearly there.
             </Text>
           </>
         ) : (
@@ -278,12 +278,12 @@ export default function ProfitInsightsScreen() {
             </View>
             <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, marginBottom: 6 }}>
               {health.trend != null && health.trendDirection
-                ? `${health.trendDirection === 'up' ? '↑' : health.trendDirection === 'down' ? '↓' : '→'} ${health.trend > 0 ? '+' : ''}${health.trend} this month  ·  Confidence: ${health.confidence}`
+                ? `${health.trendDirection === 'up' ? '↑' : health.trendDirection === 'down' ? '↓' : '→'} ${health.trend > 0 ? '+' : ''}${Math.round(health.trend)} this month  ·  Confidence: ${health.confidence}`
                 : `Confidence: ${health.confidence}`}
             </Text>
             <Text style={{ fontSize: 12, color: c.textSecondary, fontFamily: theme.fontBody, marginBottom: 6 }}>
               {health.score >= 90 ? "Top-performing NZ venues score 90+. You're in excellent company." :
-                health.score >= 75 ? `Strong performance. Top NZ venues score 90+ — ${90 - health.score} points to go.` :
+                health.score >= 75 ? `Strong performance. Top NZ venues score 90+ — ${90 - Math.round(health.score)} points to go.` :
                 health.score >= 60 ? "Developing. NZ venue average sits around 65–75. You're on track." :
                 health.score >= 40 ? 'Room to improve. Most NZ venues score 65–75 with consistent stocktaking.' :
                 'Early stage. Complete more stocktakes to build your score.'}
@@ -455,7 +455,7 @@ export default function ProfitInsightsScreen() {
             <Text style={{ fontSize: 13, color: c.textSecondary, fontFamily: theme.fontBody, textAlign: 'center', lineHeight: 19 }}>
               {!monthlyScores || monthlyScores.length < 2
                 ? 'Complete another stocktake next month to see your trend.'
-                : `Last ${monthlyScores.length} months: ${monthlyScores.join(' → ')} ${
+                : `Last ${monthlyScores.length} months: ${monthlyScores.map(s => Math.round(s)).join(' → ')} ${
                     monthlyScores[monthlyScores.length - 1] >= monthlyScores[0] ? '↑' : '↓'
                   }`}
             </Text>
@@ -653,7 +653,7 @@ function KpiCard({
       </View>
       {kpiKey === 'inventoryHealth' && daysOfCover != null && (
         <Text style={{ fontSize: 11, color: c.textSecondary, marginTop: 3 }}>
-          {daysOfCover} days of cover · your target: {targetDaysOfCover ?? 10} days
+          {Math.round(daysOfCover)} days of cover · your target: {targetDaysOfCover ?? 10} days
         </Text>
       )}
       <Text style={{ fontSize: 11, color: c.deepBlue, marginTop: 4 }}>

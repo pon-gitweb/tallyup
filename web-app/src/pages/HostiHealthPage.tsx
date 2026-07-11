@@ -247,11 +247,10 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
         <div className={styles.emptyLogo}>H</div>
         <h1 className={styles.emptyTitle}>Hosti Health not yet calculated</h1>
         <p className={styles.emptyBody}>
-          Complete 3 stocktakes on the mobile app to unlock your performance score.
-          Your score will appear here automatically after each stocktake.
+          Your score appears after your third stocktake — you're one away. Head to the app whenever you're ready.
         </p>
         <p className={styles.emptyNote}>
-          Hosti Health updates each time you view the Performance screen on mobile.
+          It updates automatically each time you complete a stocktake.
         </p>
       </div>
     )
