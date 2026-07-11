@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import {
-  LineChart, Line, Area, BarChart, Bar, Cell, LabelList,
+  ComposedChart, LineChart, Line, Area, BarChart, Bar, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
@@ -342,28 +342,29 @@ export default function HostiHealthPage({ venueId }: { venueId: string }) {
             />
           ) : (
             <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
-              <LineChart data={trendData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <ComposedChart data={trendData} margin={{ top: 8, right: 40, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={theme.deepBlue} stopOpacity={0.12} />
-                    <stop offset="95%" stopColor={theme.deepBlue} stopOpacity={0} />
+                    <stop offset="0%" stopColor={theme.deepBlue} stopOpacity={0.10} />
+                    <stop offset="100%" stopColor={theme.deepBlue} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid {...CHART_GRID_PROPS} />
-                <XAxis dataKey="month" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
-                <YAxis domain={[0, 100]} tick={CHART_AXIS_TICK} width={32} axisLine={false} tickLine={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: theme.slateMid, fontFamily: theme.fontBody }} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: theme.slateMid, fontFamily: theme.fontBody }} width={32} axisLine={false} tickLine={false} />
                 <ReferenceLine y={75} stroke={theme.success} strokeDasharray="4 3" strokeWidth={1}
                   label={{ value: 'Strong', fontSize: 10, fill: theme.success, position: 'right' }} />
                 <ReferenceLine y={60} stroke={theme.amber} strokeDasharray="4 3" strokeWidth={1}
                   label={{ value: 'Developing', fontSize: 10, fill: theme.amber, position: 'right' }} />
-                <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
+                <Tooltip
+                  contentStyle={{ background: theme.white, border: `1px solid ${theme.border}`, borderRadius: 10, fontSize: 13, fontFamily: theme.fontBody, boxShadow: '0 4px 16px rgba(11,19,43,0.08)', padding: '10px 14px', color: theme.navy }}
                   formatter={((v: number) => [`${v}/100`, 'Score']) as any}
                   labelFormatter={((m: string) => trendData.find((d) => d.month === m)?.fullMonth ?? m) as any}
-                  cursor={{ stroke: theme.border, strokeWidth: 1 }} />
+                  cursor={{ stroke: '#e5e3de', strokeWidth: 1 }} />
                 <Area type="monotone" dataKey="score" stroke="none" fill="url(#scoreGradient)" {...CHART_ANIMATION} />
                 <Line type="monotone" dataKey="score" stroke={theme.deepBlue} strokeWidth={2.5}
                   dot={CHART_DOT} activeDot={{ ...CHART_ACTIVE_DOT, fill: theme.deepBlue }} {...CHART_ANIMATION} />
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </div>

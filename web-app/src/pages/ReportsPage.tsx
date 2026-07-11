@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore'
 import {
-  BarChart, Bar, Cell, LabelList, LineChart, Line,
+  BarChart, Bar, LabelList, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
@@ -503,10 +503,15 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
                       formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
                       labelFormatter={((_: string, payload: any[]) => payload?.[0]?.payload?.fullName ?? '') as any}
                       cursor={{ fill: 'rgba(11,19,43,0.03)' }} />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} {...CHART_ANIMATION}>
-                      {topDrivers.map((entry, i) => (
-                        <Cell key={i} fill={entry.shortage ? theme.error : theme.success} />
-                      ))}
+                    <Bar dataKey="value" isAnimationActive={false}
+                      shape={(props: any) => {
+                        const { x, y, width, height, index } = props
+                        const fill = topDrivers[index]?.shortage ? theme.error : theme.success
+                        return (
+                          <rect x={x} y={y} width={width} height={height} fill={fill} rx={4} ry={4}
+                            style={{ animation: 'barSlideIn 0.4s ease-out both', animationDelay: `${index * 60}ms`, transformOrigin: 'left center' }} />
+                        )
+                      }}>
                       <LabelList dataKey="value" position="right" fontSize={11}
                         formatter={((v: number) => `$${Math.round(v).toLocaleString('en-NZ')}`) as any}
                         style={{ fill: theme.slateMid, fontFamily: theme.fontBody }} />
