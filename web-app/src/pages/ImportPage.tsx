@@ -369,14 +369,18 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     setBStatus('importing')
     try {
       await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
-        source: 'csv-desktop',
-        importedAt: serverTimestamp(),
-        lineCount: bRows.length,
-        lines: bRows,
+        source: 'csv',
+        report: {
+          lines: bRows,
+          lineCount: bRows.length,
+          importedFrom: 'desktop',
+        },
+        createdAt: serverTimestamp(),
       })
       await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
       setBStatus('done')
-    } catch {
+    } catch (e: any) {
+      console.error('[ImportPage] salesReport write failed:', e?.message)
       setBError('Import failed. Please try again.')
       setBStatus('error')
     }
