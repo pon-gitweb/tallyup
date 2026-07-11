@@ -755,7 +755,9 @@ export default function ReportsIndexScreen() {
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                         <Text style={S.lineRowNeg}>
-                          {item.varianceUnits}
+                          {Number.isInteger(item.varianceUnits)
+                            ? item.varianceUnits
+                            : item.varianceUnits.toFixed(2)}
                         </Text>
                         {item.dollarVariance != null && item.dollarVariance > 0 ? (
                           <Text style={S.lineRowDollar}>

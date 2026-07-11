@@ -189,7 +189,7 @@ export async function fetchBriefing(venueId: string): Promise<BriefingData> {
 
         if (baseline == null) continue;
 
-        const varianceUnits = lastCount - baseline;
+        const varianceUnits = Math.round((lastCount - baseline) * 1000) / 1000;
         const dollar: number | null = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
         if (costPrice != null) dollarItemCount++;
 
