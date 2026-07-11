@@ -320,11 +320,10 @@ app.post("/upload-file", async (req, res) => {
       },
     });
 
-    // Get a signed download URL (valid 7 days)
-    const [downloadURL] = await file.getSignedUrl({
-      action: "read",
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
-    });
+    // Build download URL using Firebase Storage token — avoids iam.serviceAccounts.signBlob
+    const downloadToken = require("crypto").randomUUID();
+    await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: downloadToken } });
+    const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(destPath)}?alt=media&token=${downloadToken}`;
 
     console.log("[api/upload-file] OK", { uid, destPath, contentType, bytes: buffer.length });
     res.json({ ok: true, fullPath: destPath, downloadURL });
