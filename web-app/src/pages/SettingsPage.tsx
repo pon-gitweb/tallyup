@@ -170,7 +170,7 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
                     await updateDoc(doc(db, 'venues', venueId), { country: e.target.value })
                     setEditingCountry(false)
                   }}
-                  onBlur={() => setEditingCountry(false)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setEditingCountry(false) }}
                 >
                   <option value="">Select country</option>
                   <option value="NZ">New Zealand</option>

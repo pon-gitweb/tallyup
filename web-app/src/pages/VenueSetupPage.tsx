@@ -293,7 +293,7 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
                     <input ref={addRef} className={styles.inlineInput} value={newAreaName}
                       onChange={e => setNewAreaName(e.target.value)} placeholder="Area name"
                       onKeyDown={e => { if (e.key === 'Enter') addArea(dept.id); if (e.key === 'Escape') setAddingArea(null) }}
-                      onBlur={() => { if (newAreaName.trim()) addArea(dept.id); else setAddingArea(null) }}
+                      onBlur={() => setTimeout(() => setAddingArea(null), 150)}
                     />
                   </div>
                 )}
@@ -307,7 +307,7 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
               <input ref={addRef} className={styles.inlineInput} value={newDeptName}
                 onChange={e => setNewDeptName(e.target.value)} placeholder="Department name"
                 onKeyDown={e => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') setAddingDept(false) }}
-                onBlur={() => { if (newDeptName.trim()) addDept(); else setAddingDept(false) }}
+                onBlur={() => setTimeout(() => setAddingDept(false), 150)}
               />
             </div>
           ) : (

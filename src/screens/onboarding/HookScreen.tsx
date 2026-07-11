@@ -87,7 +87,7 @@ export default function HookScreen() {
           onPress={() => nav.navigate('OnboardingRoad')}
           style={{ alignItems: 'center', paddingVertical: 12 }}
         >
-          <Text style={{ color: 'rgba(245,243,238,0.45)', fontSize: 14 }}>
+          <Text style={{ color: 'rgba(245,243,238,0.75)', fontSize: 14, fontWeight: '600' }}>
             Skip to setup
           </Text>
         </TouchableOpacity>
