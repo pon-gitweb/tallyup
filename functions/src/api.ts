@@ -5929,6 +5929,130 @@ app.post("/match-sales-report", async (req, res) => {
   }
 });
 
+// ── POST /enrich-area-items ───────────────────────────────────────────────────
+// Calculates incomingQty (received since last stocktake) and soldQty (sold since
+// last stocktake) for each item in an area, then writes them back to item docs.
+// Called when a stocktake area is opened. Items already have deriveExpected()
+// which reads these fields — this populates them with real data.
+app.post("/enrich-area-items", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, departmentId, areaId } = req.body || {};
+    if (!venueId || !departmentId || !areaId) {
+      res.status(400).json({ ok: false, error: "Missing params" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+
+    // Get items in this area
+    const itemsSnap = await db
+      .collection(`venues/${venueId}/departments/${departmentId}/areas/${areaId}/items`)
+      .get();
+    if (itemsSnap.empty) { res.json({ ok: true, enriched: 0 }); return; }
+
+    // Get the last confirmed stocktake date for this area
+    const areaDoc = await db
+      .doc(`venues/${venueId}/departments/${departmentId}/areas/${areaId}`)
+      .get();
+    const lastConfirmedAt: FirebaseFirestore.Timestamp | null =
+      (areaDoc.data() as any)?.lastConfirmedAt ?? null;
+
+    // Build product name → item map for matching
+    const itemsByName: Record<string, { id: string; data: any }> = {};
+    const itemsById: Record<string, { id: string; data: any }> = {};
+    itemsSnap.forEach(d => {
+      const data = d.data() as any;
+      const name = (data.name || "").toLowerCase().trim();
+      if (name) itemsByName[name] = { id: d.id, data };
+      itemsById[d.id] = { id: d.id, data };
+    });
+
+    // ── INCOMING QTY from invoices ────────────────────────────────────────────
+    const incomingByItemId: Record<string, number> = {};
+
+    const invoiceQuery = lastConfirmedAt
+      ? db.collection(`venues/${venueId}/invoices`)
+          .where("confirmedAt", ">", lastConfirmedAt)
+          .get()
+      : db.collection(`venues/${venueId}/invoices`).limit(50).get();
+
+    const invoicesSnap = await invoiceQuery;
+    invoicesSnap.forEach(invDoc => {
+      const lines = (invDoc.data() as any)?.lines ?? [];
+      lines.forEach((line: any) => {
+        const name = (line.name || "").toLowerCase().trim();
+        const qty = Number(line.qty ?? line.quantity ?? 0);
+        if (!qty) return;
+        if (line.productId && itemsById[line.productId]) {
+          incomingByItemId[line.productId] = (incomingByItemId[line.productId] || 0) + qty;
+        } else if (itemsByName[name]) {
+          const itemId = itemsByName[name].id;
+          incomingByItemId[itemId] = (incomingByItemId[itemId] || 0) + qty;
+        }
+      });
+    });
+
+    // ── SOLD QTY from salesReportMatches ─────────────────────────────────────
+    const soldByItemId: Record<string, number> = {};
+
+    const matchesQuery = lastConfirmedAt
+      ? db.collection(`venues/${venueId}/salesReportMatches`)
+          .where("createdAt", ">", lastConfirmedAt)
+          .get()
+      : db.collection(`venues/${venueId}/salesReportMatches`).limit(50).get();
+
+    const matchesSnap = await matchesQuery;
+    matchesSnap.forEach(matchDoc => {
+      const matches = (matchDoc.data() as any)?.matches ?? [];
+      matches.forEach((m: any) => {
+        const qty = Number(m.qtySold ?? 0);
+        if (!qty) return;
+        if (m.productId && itemsById[m.productId]) {
+          soldByItemId[m.productId] = (soldByItemId[m.productId] || 0) + qty;
+        } else {
+          const name = (m.productName || m.name || "").toLowerCase().trim();
+          if (name && itemsByName[name]) {
+            const itemId = itemsByName[name].id;
+            soldByItemId[itemId] = (soldByItemId[itemId] || 0) + qty;
+          }
+        }
+      });
+    });
+
+    // ── Write enriched values back to item docs ───────────────────────────────
+    let enriched = 0;
+    const batch = db.batch();
+    itemsSnap.forEach(d => {
+      const incoming = incomingByItemId[d.id] ?? 0;
+      const sold = soldByItemId[d.id] ?? 0;
+      const current = d.data() as any;
+      if (current.incomingQty !== incoming || current.soldQty !== sold) {
+        batch.update(d.ref, {
+          incomingQty: incoming,
+          soldQty: sold,
+          enrichedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        enriched++;
+      }
+    });
+    await batch.commit();
+
+    console.log(`[enrich-area-items] ${venueId}/${departmentId}/${areaId}`, {
+      items: itemsSnap.size, enriched,
+      invoices: invoicesSnap.size, matches: matchesSnap.size,
+    });
+
+    res.json({ ok: true, enriched, items: itemsSnap.size });
+
+  } catch (e: any) {
+    console.error("[enrich-area-items] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Enrichment failed" });
+  }
+});
+
 // ── POST /process-invoice-photo ──────────────────────────────────────────────
 // Body: { venueId, storagePath }
 // Downloads image from Storage, sends to Claude Vision, extracts invoice lines.

@@ -1486,6 +1486,19 @@ function StockTakeAreaInventoryScreen() {
     }); return () => unsub();
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
+  // Enrich items with incomingQty and soldQty from invoices and sales.
+  // Non-blocking — onSnapshot auto-refreshes items when values are written back.
+  useEffect(() => {
+    if (!itemsPathOk || !venueId || !departmentId || !areaId) return;
+    getAuth().currentUser?.getIdToken().then(token => {
+      fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/enrich-area-items', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venueId, departmentId, areaId }),
+      }).catch(() => {});
+    }).catch(() => {});
+  }, [itemsPathOk, venueId, departmentId, areaId]);
+
   useEffect(() => {
     if (!itemsPathOk) return;
     const unsub = onSnapshot(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), (d) => {
