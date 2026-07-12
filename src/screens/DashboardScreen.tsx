@@ -88,7 +88,7 @@ export default function DashboardScreen() {
   const user = auth.currentUser;
   const venueId = useVenueId();
   const venueType = useVenueType();
-  const { venueIds, refresh } = useVenue();
+  const { venueIds, refresh, loading } = useVenue();
   const hasMultipleProjects = (venueIds?.length || 0) > 1;
 
   const [refreshing, setRefreshing] = useState(false);
@@ -304,6 +304,39 @@ export default function DashboardScreen() {
       )
     ).then(snap => setUnmappedPOSCount(snap.size)).catch(() => {});
   }, [venueId]);
+
+  const [showRecoveryPrompt, setShowRecoveryPrompt] = React.useState(false);
+  const [recovering, setRecovering] = React.useState(false);
+  const recoveryChecked = React.useRef(false);
+
+  React.useEffect(() => {
+    if (recoveryChecked.current) return;
+    if (!user) return;
+    if (venueId) return;
+    if (loading) return;
+
+    recoveryChecked.current = true;
+
+    const t = setTimeout(async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const response = await fetch(
+          'https://us-central1-tallyup-f1463.cloudfunctions.net/api/recover-venue',
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          }
+        );
+        const data = await response.json();
+        if (data.ok && data.recovered) {
+          setShowRecoveryPrompt(true);
+        }
+      } catch {}
+    }, 2000);
+
+    return () => clearTimeout(t);
+  }, [user, venueId, loading]);
 
   // Live counts — these are the numbers users see immediately on the
   // dashboard, so they subscribe rather than fetch once per focus. The
@@ -561,6 +594,55 @@ export default function DashboardScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       {modal}
+
+      {showRecoveryPrompt && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: colours.navy,
+          zIndex: 999,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 32,
+        }}>
+          <Text style={{ fontSize: 40, marginBottom: 20 }}>🔑</Text>
+          <Text style={{
+            fontSize: 22, fontWeight: '800', color: '#f5f3ee',
+            textAlign: 'center', marginBottom: 12,
+          }}>
+            We found your venue
+          </Text>
+          <Text style={{
+            fontSize: 15, color: 'rgba(245,243,238,0.7)',
+            textAlign: 'center', lineHeight: 22, marginBottom: 32,
+          }}>
+            Looks like you signed in differently this time. We found your
+            previous venue data and restored your access.
+          </Text>
+          <TouchableOpacity
+            onPress={async () => {
+              setRecovering(true);
+              try {
+                if (user) await user.reload();
+              } catch {}
+              setShowRecoveryPrompt(false);
+              setRecovering(false);
+            }}
+            style={{
+              backgroundColor: '#f5f3ee',
+              borderRadius: 999,
+              height: 52,
+              paddingHorizontal: 32,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ color: colours.navy, fontWeight: '800', fontSize: 16 }}>
+              {recovering ? 'Loading...' : 'Take me to my venue →'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}

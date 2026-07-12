@@ -6469,6 +6469,103 @@ app.post("/extract-festival-rider", async (req, res) => {
   }
 });
 
+// ── POST /recover-venue ────────────────────────────────────────────────────────
+// Called when a logged-in user has no venues but may have a previous account
+// with the same email. Finds the old account, copies venue access to current UID.
+app.post("/recover-venue", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const db = admin.firestore();
+
+    // Get current user's email from Firebase Auth
+    const currentUser = await admin.auth().getUser(uid);
+    const email = currentUser.email?.toLowerCase().trim();
+    if (!email) {
+      res.status(400).json({ ok: false, error: "No email on account" });
+      return;
+    }
+
+    // Check current user already has venues
+    const currentDoc = await db.collection("users").doc(uid).get();
+    const currentVenueIds: string[] = currentDoc.data()?.venueIds ?? [];
+    if (currentVenueIds.length > 0) {
+      res.json({ ok: true, recovered: false, message: "Account already has venues" });
+      return;
+    }
+
+    // Find other user docs with same email
+    const usersSnap = await db.collection("users")
+      .where("email", "==", email)
+      .get();
+
+    // Find docs with venues that aren't the current user
+    let bestVenueIds: string[] = [];
+    let bestActiveVenueId: string | null = null;
+    let sourceUid: string | null = null;
+
+    usersSnap.forEach(d => {
+      if (d.id === uid) return; // skip current user
+      const data = d.data();
+      const vIds: string[] = data?.venueIds ?? (data?.venueId ? [data.venueId] : []);
+      if (vIds.length > bestVenueIds.length) {
+        bestVenueIds = vIds;
+        bestActiveVenueId = data?.activeVenueId ?? data?.venueId ?? vIds[0] ?? null;
+        sourceUid = d.id;
+      }
+    });
+
+    if (bestVenueIds.length === 0) {
+      res.json({ ok: true, recovered: false, message: "No previous venues found" });
+      return;
+    }
+
+    // Copy venue access to current user
+    await db.collection("users").doc(uid).set({
+      venueIds: bestVenueIds,
+      venueId: bestActiveVenueId,
+      activeVenueId: bestActiveVenueId,
+      email,
+      recoveredFromUid: sourceUid,
+      recoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // Add current user as member of each recovered venue
+    await Promise.all(bestVenueIds.map(async venueId => {
+      try {
+        // Get role from old user's membership if possible
+        let role = "owner";
+        if (sourceUid) {
+          const oldMember = await db.doc(`venues/${venueId}/members/${sourceUid}`).get();
+          if (oldMember.exists) role = (oldMember.data() as any)?.role ?? "owner";
+        }
+        await db.doc(`venues/${venueId}/members/${uid}`).set({
+          role,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          recoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (e: any) {
+        console.log(`[recover-venue] member add failed for ${venueId}:`, e?.message);
+      }
+    }));
+
+    console.log("[recover-venue] SUCCESS", { uid, sourceUid, venueCount: bestVenueIds.length });
+    res.json({
+      ok: true,
+      recovered: true,
+      venueIds: bestVenueIds,
+      activeVenueId: bestActiveVenueId,
+      venueCount: bestVenueIds.length,
+    });
+
+  } catch (e: any) {
+    console.error("[recover-venue] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Recovery failed" });
+  }
+});
+
 // ── scheduleSlowMoversCheck ───────────────────────────────────────────────────
 // Runs every Monday at 8am Pacific/Auckland time.
 // Flags products with no movement in 30+ days and count > 0.
