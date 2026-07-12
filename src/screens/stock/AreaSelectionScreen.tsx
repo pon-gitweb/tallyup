@@ -356,7 +356,7 @@ function AreaSelectionInner() {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.title}>Areas</Text>
-            <Text style={styles.sub}>We couldn&apos;t find the department details.</Text>
+            <Text style={styles.sub}>We couldn't find the department details.</Text>
           </View>
           <IdentityBadge />
         </View>

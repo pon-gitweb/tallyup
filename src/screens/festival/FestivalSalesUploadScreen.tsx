@@ -702,7 +702,7 @@ export default function FestivalSalesUploadScreen() {
         {/* ── UPLOAD MAPPING ────────────────────────────────────────────── */}
         {phase === 'upload-mapping' && (
           <>
-            <Text style={S.screenTitle}>Map products &amp; bars</Text>
+            <Text style={S.screenTitle}>Map products & bars</Text>
 
             {/* Product mapping */}
             <Text style={S.sectionLabel}>PRODUCT MAPPING</Text>
