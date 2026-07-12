@@ -652,6 +652,8 @@ function StockTakeAreaInventoryScreen() {
   const [invoiceDataAvailable, setInvoiceDataAvailable] = React.useState(false);
   const [salesDataAvailable, setSalesDataAvailable] = React.useState(false);
   const [confidenceLegendDismissed, setConfidenceLegendDismissed] = React.useState(false);
+  const [enrichmentComplete, setEnrichmentComplete] = React.useState(false);
+  const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
   const [bottomBarHeight, setBottomBarHeight] = useState(64); // sensible default before first onLayout fires
 
   // Load venue products once for tier-2 search
@@ -1527,6 +1529,7 @@ function StockTakeAreaInventoryScreen() {
         if (data.ok) {
           setInvoiceDataAvailable(!!data.hasInvoiceData);
           setSalesDataAvailable(!!data.hasSalesData);
+          setEnrichmentComplete(true);
         }
       })
       .catch(() => {});
@@ -3297,6 +3300,68 @@ const openHistory = throttleAction(async (item: Item) => {
           </View>
         )}
       </View>
+
+      {/* Pre-count nudge — shows when data is missing */}
+      {!areaStarted && !nudgeDismissed && enrichmentComplete && (!invoiceDataAvailable || !salesDataAvailable) && (
+        <View style={{
+          backgroundColor: '#fffbeb',
+          borderBottomWidth: 1,
+          borderBottomColor: '#c47b2b',
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <Text style={{ fontSize: 16 }}>💡</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 4 }}>
+                {!invoiceDataAvailable && !salesDataAvailable
+                  ? 'No deliveries or sales data for this cycle'
+                  : !salesDataAvailable
+                  ? 'No sales data for this cycle'
+                  : 'No delivery data for this cycle'}
+              </Text>
+              <Text style={{ fontSize: 12, color: '#92400e', lineHeight: 17, marginBottom: 10 }}>
+                {!invoiceDataAvailable && !salesDataAvailable
+                  ? 'Expected counts are based on your last stocktake only. Add invoices and a sales report for more accurate expected counts.'
+                  : !salesDataAvailable
+                  ? 'Expected counts include deliveries but not sales. Upload a sales report or connect your POS for full accuracy.'
+                  : 'Expected counts include sales but no deliveries have been recorded this cycle.'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {!salesDataAvailable && (
+                  <TouchableOpacity
+                    onPress={() => nav.navigate('SalesImport' as never)}
+                    style={{
+                      backgroundColor: '#c47b2b',
+                      borderRadius: 999,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                      Upload sales →
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => setNudgeDismissed(true)}
+                  style={{
+                    borderRadius: 999,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderWidth: 1,
+                    borderColor: '#c47b2b',
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#92400e' }}>
+                    Count anyway
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Confidence legend — shown pre-count when invoice or sales data is available */}
       {!areaStarted && !confidenceLegendDismissed && (invoiceDataAvailable || salesDataAvailable) && (
