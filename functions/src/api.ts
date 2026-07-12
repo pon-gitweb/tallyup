@@ -2376,6 +2376,34 @@ app.get("/square/pull-sales", async (req, res) => {
         }, { merge: true });
         console.log(`[square/pull-sales] writing to venues/${venueId}/salesReportMatches/square-${date}`);
         console.log(`[square/pull-sales] matching complete`, { venueId, date, matched: matches.length, unknowns: unknowns.length });
+
+        // Write unknowns to salesReportUnknowns for POS mapping banner
+        if (unknowns.length > 0) {
+          const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
+            .where('status', '==', 'unmapped')
+            .get();
+          const existingNames = new Set(
+            existingSnap.docs.map(d => ((d.data() as any)?.line?.name || '').toLowerCase())
+          );
+
+          const newUnknowns = unknowns.filter(
+            (u: any) => !existingNames.has((u.line?.name || '').toLowerCase())
+          );
+
+          await Promise.all(newUnknowns.map((u: any) =>
+            db.collection(`venues/${venueId}/salesReportUnknowns`).add({
+              reportId: `square-${date}`,
+              line: u.line,
+              status: 'unmapped',
+              source: 'square-pull',
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            })
+          ));
+
+          if (newUnknowns.length > 0) {
+            console.log(`[square/pull-sales] wrote ${newUnknowns.length} unknowns for ${date}`);
+          }
+        }
       }
     } catch (matchErr: any) {
       console.error("[square/pull-sales] matching failed (non-fatal):", matchErr?.message);
