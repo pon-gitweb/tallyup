@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { ensureDeptSessionActive } from './activeDeptTake';
 
@@ -17,9 +17,23 @@ export async function startNewDepartmentCycle(venueId: string, departmentId: str
     const areaRef = doc(db, `venues/${venueId}/departments/${departmentId}/areas/${a.id}`);
     await setDoc(
       areaRef,
-      { startedAt: null, completedAt: null, cycleResetAt: now },
+      { startedAt: null, completedAt: null, cycleResetAt: now, lastConfirmedAt: now },
       { merge: true }
     );
+  }
+
+  // Zero out incomingQty and soldQty on all items so stale data doesn't carry forward
+  for (const a of snap.docs) {
+    const itemsSnap = await getDocs(
+      collection(db, `venues/${venueId}/departments/${departmentId}/areas/${a.id}/items`)
+    );
+    const itemBatch = writeBatch(db);
+    let hasBatch = false;
+    itemsSnap.forEach(itemDoc => {
+      itemBatch.update(itemDoc.ref, { incomingQty: 0, soldQty: 0 });
+      hasBatch = true;
+    });
+    if (hasBatch) await itemBatch.commit();
   }
 
   // Clear department completion flag

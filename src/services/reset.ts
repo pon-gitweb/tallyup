@@ -9,6 +9,7 @@ function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, no
     completedAt: null,
     cycleResetAt: now,
     updatedAt: now,
+    lastConfirmedAt: now,
   });
 }
 
@@ -44,6 +45,8 @@ export async function resetDepartment(venueId: string, departmentId: string) {
         itemBatch.update(itemDoc.ref, {
           lastCount: data.confirmedCount,
           lastCountAt: null,
+          incomingQty: 0,
+          soldQty: 0,
         });
         hasRestores = true;
       }
@@ -112,7 +115,7 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
       itemsSnap.forEach(itemDoc => {
         const data = itemDoc.data();
         if (typeof data.confirmedCount === 'number') {
-          itemBatch.update(itemDoc.ref, { lastCount: data.confirmedCount, lastCountAt: null });
+          itemBatch.update(itemDoc.ref, { lastCount: data.confirmedCount, lastCountAt: null, incomingQty: 0, soldQty: 0 });
           hasRestores = true;
         }
       });
