@@ -588,7 +588,7 @@ function DepartmentSelectionScreen() {
             <View style={{ paddingVertical: 20, alignItems: 'center' }}>
               <Text style={{ color: colours.textSecondary, textAlign: 'center' }}>
                 No departments found yet.{'\n'}
-                We&apos;ll create defaults (Bar, Kitchen, etc.) automatically
+                We'll create defaults (Bar, Kitchen, etc.) automatically
                 for new venues.
               </Text>
             </View>
