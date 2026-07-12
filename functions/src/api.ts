@@ -5493,6 +5493,44 @@ app.post("/process-invoices-csv", async (req, res) => {
     const lcCSV = await checkAiLimit(venueId, 'invoice_ocr');
     if (!lcCSV.allowed) { res.status(429).json(lcCSV.limitError); return; }
 
+    const supplierName: string = (req.body?.supplierName || '').toString().trim();
+    const supplierIdFromBody: string = (req.body?.supplierId || '').toString().trim();
+    let resolvedSupplierId = supplierIdFromBody || null;
+
+    // Find or create supplier — mirrors PDF endpoint logic
+    if (supplierName && !resolvedSupplierId) {
+      try {
+        const db = admin.firestore();
+        const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
+        const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normTarget = normalise(supplierName);
+        let matchedId: string | null = null;
+        suppSnap.forEach(d => {
+          if (!matchedId && normalise(d.data()?.name || '') === normTarget) matchedId = d.id;
+        });
+        if (matchedId) {
+          resolvedSupplierId = matchedId;
+        } else {
+          // Create new supplier
+          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
+            name: supplierName,
+            phone: null,
+            email: null,
+            address: null,
+            accountNumber: null,
+            isHoldingSupplier: false,
+            source: 'invoice-csv',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          resolvedSupplierId = newSupRef.id;
+          console.log('[api/process-invoices-csv] created new supplier', { venueId, supplierName, supplierId: resolvedSupplierId });
+        }
+      } catch (e: any) {
+        console.log('[api/process-invoices-csv] supplier find/create error', e?.message);
+      }
+    }
+
     // Download the file from Storage
     const bucket = admin.storage().bucket();
     const [fileBuffer] = await bucket.file(storagePath).download();
@@ -5504,7 +5542,7 @@ app.post("/process-invoices-csv", async (req, res) => {
 
     const payload = {
       ok: true,
-      invoice: { source: "csv", storagePath, poNumber: null },
+      invoice: { source: 'csv', storagePath, poNumber: null, supplierName, supplierId: resolvedSupplierId },
       lines,
       confidence: lines.length > 0 ? 0.8 : 0.2,
       warnings,
@@ -5518,15 +5556,15 @@ app.post("/process-invoices-csv", async (req, res) => {
     trackPriceChanges({
       venueId,
       lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
-      supplierId: req.body?.supplierId || "",
-      supplierName: req.body?.supplierName || "",
+      supplierId: resolvedSupplierId || '',
+      supplierName: supplierName || '',
       invoiceId: `csv_${storagePath}`,
     }).then(result => {
       const db = admin.firestore();
       const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
       return Promise.all(significant.map(c => flagPriceChangeToManager(
         db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
-        req.body?.supplierName || "", `csv_${storagePath}`
+        supplierName || '', `csv_${storagePath}`
       )));
     }).catch((e: any) => console.log("[api/process-invoices-csv] price tracking error", e?.message));
 
