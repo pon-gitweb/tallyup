@@ -6045,7 +6045,13 @@ app.post("/enrich-area-items", async (req, res) => {
       invoices: invoicesSnap.size, matches: matchesSnap.size,
     });
 
-    res.json({ ok: true, enriched, items: itemsSnap.size });
+    res.json({
+      ok: true,
+      enriched,
+      items: itemsSnap.size,
+      hasInvoiceData: invoicesSnap.size > 0,
+      hasSalesData: matchesSnap.size > 0,
+    });
 
   } catch (e: any) {
     console.error("[enrich-area-items] ERROR", e?.message || e);

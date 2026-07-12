@@ -122,7 +122,19 @@ type RowProps = {
   isLocked: boolean;
   isEdited: boolean;
   isHighlighted: boolean;
+  confidenceDot: 'high' | 'medium' | 'low' | null;
 };
+
+function getConfidenceDot(
+  item: Item,
+  hasInvoice: boolean,
+  hasSales: boolean
+): 'high' | 'medium' | 'low' | null {
+  if (typeof item.lastCount !== 'number') return null;
+  if (hasInvoice && hasSales) return 'high';
+  if (hasInvoice || hasSales) return 'medium';
+  return 'low';
+}
 
 const Row = React.memo(function Row({
   item,
@@ -148,6 +160,7 @@ const Row = React.memo(function Row({
   isLocked,
   isEdited,
   isHighlighted,
+  confidenceDot,
 }: RowProps) {
   const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
@@ -253,7 +266,17 @@ const Row = React.memo(function Row({
             {item.unit ? <Text style={{ fontSize: 11, color: '#6B7280' }}>{item.unit}</Text> : null}
             {item.supplierName ? <Text style={{ fontSize: 11, color: '#9CA3AF' }}>{item.supplierName}</Text> : null}
             {areaStarted && showExpected && expectedStr ? (
-              <Text style={{ fontSize: 11, color: '#0A5FFF', fontWeight: '600' }}>exp: {expectedStr}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 11, color: '#0A5FFF', fontWeight: '600' }}>
+                  exp: {expectedStr}
+                </Text>
+                {confidenceDot && (
+                  <View style={{
+                    width: 6, height: 6, borderRadius: 3,
+                    backgroundColor: confidenceDot === 'high' ? '#16a34a' : confidenceDot === 'medium' ? '#c47b2b' : '#9ca3af',
+                  }} />
+                )}
+              </View>
             ) : null}
           </View>
         </View>
@@ -626,6 +649,9 @@ function StockTakeAreaInventoryScreen() {
   const [venueProducts, setVenueProducts] = useState<any[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const bannerAnim = useRef(new Animated.Value(0)).current;
+  const [invoiceDataAvailable, setInvoiceDataAvailable] = React.useState(false);
+  const [salesDataAvailable, setSalesDataAvailable] = React.useState(false);
+  const [confidenceLegendDismissed, setConfidenceLegendDismissed] = React.useState(false);
   const [bottomBarHeight, setBottomBarHeight] = useState(64); // sensible default before first onLayout fires
 
   // Load venue products once for tier-2 search
@@ -1495,7 +1521,15 @@ function StockTakeAreaInventoryScreen() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ venueId, departmentId, areaId }),
-      }).catch(() => {});
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          setInvoiceDataAvailable(!!data.hasInvoiceData);
+          setSalesDataAvailable(!!data.hasSalesData);
+        }
+      })
+      .catch(() => {});
     }).catch(() => {});
   }, [itemsPathOk, venueId, departmentId, areaId]);
 
@@ -3264,6 +3298,43 @@ const openHistory = throttleAction(async (item: Item) => {
         )}
       </View>
 
+      {/* Confidence legend — shown pre-count when invoice or sales data is available */}
+      {!areaStarted && !confidenceLegendDismissed && (invoiceDataAvailable || salesDataAvailable) && (
+        <View style={{
+          backgroundColor: '#f9fafb',
+          borderBottomWidth: 1,
+          borderBottomColor: '#e5e7eb',
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', marginBottom: 4 }}>
+              Expected count confidence
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#16a34a' }} />
+                <Text style={{ fontSize: 11, color: '#6b7280' }}>Sales + deliveries</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#c47b2b' }} />
+                <Text style={{ fontSize: 11, color: '#6b7280' }}>Partial data</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#9ca3af' }} />
+                <Text style={{ fontSize: 11, color: '#6b7280' }}>Last count only</Text>
+              </View>
+            </View>
+          </View>
+          <TouchableOpacity onPress={() => setConfidenceLegendDismissed(true)} style={{ padding: 4 }}>
+            <Text style={{ fontSize: 18, color: '#9ca3af' }}>×</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Edit window status banner */}
       {isSubmitted && editWindowOpen && (
         <View style={{ backgroundColor: '#FEF3C7', borderBottomWidth: 1, borderBottomColor: '#F59E0B', paddingHorizontal: 16, paddingVertical: 8 }}>
@@ -3330,6 +3401,7 @@ const openHistory = throttleAction(async (item: Item) => {
             isLocked={isSubmitted && !canEdit}
             isEdited={editedItemIds.has(item.id)}
             isHighlighted={highlightedItemIds.has(item.id) || highlightedVoiceItemId === item.id}
+            confidenceDot={getConfidenceDot(item, invoiceDataAvailable, salesDataAvailable)}
           />
         )}
         ListHeaderComponent={
