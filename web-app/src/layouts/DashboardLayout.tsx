@@ -16,6 +16,7 @@ export type Page =
   | 'team'
   | 'account'
   | 'venue-setup'
+  | 'pos-mapping'
 
 type NavGroup = {
   label: string
@@ -26,11 +27,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Analyse',
     items: [
-      { key: 'hostihealth', label: 'Hosti Health', icon: '⬡' },
-      { key: 'reports',     label: 'Reports',      icon: '📊' },
-      { key: 'orders',      label: 'Orders',       icon: '🛒' },
-      { key: 'craftit',     label: 'CraftIt',      icon: '🍹' },
-      { key: 'suitee',      label: 'Ask Suitee',   icon: '✦' },
+      { key: 'hostihealth',  label: 'Hosti Health', icon: '⬡' },
+      { key: 'reports',      label: 'Reports',      icon: '📊' },
+      { key: 'orders',       label: 'Orders',       icon: '🛒' },
+      { key: 'craftit',      label: 'CraftIt',      icon: '🍹' },
+      { key: 'suitee',       label: 'Ask Suitee',   icon: '✦' },
+      { key: 'pos-mapping',  label: 'POS Mapping',  icon: '🔗' },
     ],
   },
   {

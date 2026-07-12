@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, doc, getDoc, getDocs, limit, orderBy, query } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
 import {
   BarChart, Bar, LabelList, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -109,9 +109,19 @@ function escCsv(v: unknown): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ReportsPage({ venueId }: { venueId: string }) {
+export default function ReportsPage({ venueId, onNavigate }: { venueId: string; onNavigate?: (page: string) => void }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [unmappedCount, setUnmappedCount] = useState(0)
+
+  useEffect(() => {
+    if (!venueId) return
+    getDocs(query(
+      collection(db, 'venues', venueId, 'salesReportUnknowns'),
+      where('status', '==', 'unmapped'),
+      limit(50)
+    )).then(snap => setUnmappedCount(snap.size)).catch(() => {})
+  }, [venueId])
 
   const [deptSummaries, setDeptSummaries] = useState<DeptSummary[]>([])
   const [varianceRows, setVarianceRows] = useState<VarianceRow[]>([])
@@ -385,6 +395,46 @@ export default function ReportsPage({ venueId }: { venueId: string }) {
     <div className={styles.page}>
       <h1 className={styles.heading}>Reports</h1>
       <p className={styles.subhead}>Stocktake variance, history, and price changes for your venue.</p>
+
+      {unmappedCount > 0 && (
+        <div style={{
+          background: '#fef9c3',
+          border: '1.5px solid #c47b2b',
+          borderRadius: 12,
+          padding: '12px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#92400e', fontFamily: theme.fontBody }}>
+              {unmappedCount} sales product{unmappedCount !== 1 ? 's' : ''} unmatched
+            </p>
+            <p style={{ margin: '2px 0 0', fontSize: 13, color: '#92400e', fontFamily: theme.fontBody }}>
+              Your reports are incomplete until these are mapped to your catalogue.
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate?.('pos-mapping')}
+            style={{
+              background: 'none',
+              border: '1px solid #c47b2b',
+              borderRadius: 999,
+              padding: '6px 14px',
+              fontSize: 13,
+              fontWeight: 700,
+              color: '#c47b2b',
+              cursor: 'pointer',
+              fontFamily: theme.fontBody,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Map now →
+          </button>
+        </div>
+      )}
 
       {/* ── TAB BAR ── */}
       <div className={styles.tabBar}>

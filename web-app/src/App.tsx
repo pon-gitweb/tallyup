@@ -23,6 +23,7 @@ import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
 import FestivalPurchasingPage from './pages/FestivalPurchasingPage'
 import FestivalContractsPage from './pages/FestivalContractsPage'
 import styles from './App.module.css'
+import { theme } from './theme'
 
 function App() {
   // undefined = auth state not yet resolved, null = signed out
@@ -114,7 +115,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -167,10 +168,10 @@ function App() {
       {page === 'projects' && (
         <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} />
       )}
-      {page === 'hostihealth'  && activeVenue && <HostiHealthPage venueId={activeVenue.id} />}
+      {page === 'hostihealth'  && activeVenue && <HostiHealthPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'products'     && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
       {page === 'suppliers'    && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
-      {page === 'reports'      && activeVenue && <ReportsPage venueId={activeVenue.id} />}
+      {page === 'reports'      && activeVenue && <ReportsPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'orders'       && activeVenue && <OrdersPage venueId={activeVenue.id} />}
       {page === 'craftit'      && activeVenue && <CraftItPage venueId={activeVenue.id} />}
       {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
@@ -178,6 +179,26 @@ function App() {
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
       {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
       {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
+      {page === 'pos-mapping'  && activeVenue && (
+        <div style={{ padding: 32, maxWidth: 480 }}>
+          <h2 style={{ fontFamily: theme.fontTitle, fontSize: 24, color: theme.navy, marginBottom: 8 }}>
+            POS Product Mapping
+          </h2>
+          <p style={{ color: theme.slateMid, fontFamily: theme.fontBody, marginBottom: 24, lineHeight: 1.6 }}>
+            Map your POS products to your Hosti catalogue to complete your sales intelligence.
+            Full desktop mapping is coming soon — for now, open the Hosti mobile app and go to
+            Settings → POS Integration → Map Products.
+          </p>
+          <div style={{ background: '#fff', border: `1px solid ${theme.border}`, borderRadius: 14, padding: 20 }}>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: theme.navy, fontFamily: theme.fontBody }}>
+              📱 Open on your phone
+            </p>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: theme.slateMid, fontFamily: theme.fontBody }}>
+              Settings → POS Integration → Map Products
+            </p>
+          </div>
+        </div>
+      )}
       {noVenuePages.includes(page) && !activeVenue && (
         <p className={styles.noVenue}>
           Select a project first —{' '}

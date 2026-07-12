@@ -30,6 +30,7 @@ const NUDGE_KEYS = {
   unassigned:         'tallyup_nudge_unassigned_v1',
   noStocktake:        'tallyup_nudge_no_stocktake_v1',
   firstStocktakeDone: 'tallyup_nudge_first_stocktake_done_v1',
+  unmappedPOS:        'tallyup_nudge_unmapped_pos_v1',
 };
 
 const HOOK_SCREEN_KEY = 'tallyup_hook_screen_shown_v1';
@@ -290,6 +291,19 @@ export default function DashboardScreen() {
   const [supplierCount, setSupplierCount] = React.useState<number | null>(null);
   const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
   const [hookScreenShown, setHookScreenShown] = React.useState(false);
+  const [unmappedPOSCount, setUnmappedPOSCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDocs(
+      query(
+        collection(db, 'venues', venueId, 'salesReportUnknowns'),
+        where('status', '==', 'unmapped'),
+        limit(50)
+      )
+    ).then(snap => setUnmappedPOSCount(snap.size)).catch(() => {});
+  }, [venueId]);
 
   // Live counts — these are the numbers users see immediately on the
   // dashboard, so they subscribe rather than fetch once per focus. The
@@ -942,6 +956,35 @@ export default function DashboardScreen() {
           </View>
           <Text style={{ fontSize: 20, color: colours.deepBlue, fontWeight: '300' }}>›</Text>
         </TouchableOpacity>
+
+        {/* ── Unmapped POS banner (persistent) ──────────────────────────── */}
+        {unmappedPOSCount > 0 && (
+          <TouchableOpacity
+            onPress={() => nav.navigate('POSMapping')}
+            style={{
+              backgroundColor: '#fef9c3',
+              borderRadius: 14,
+              padding: 14,
+              marginBottom: 10,
+              borderWidth: 1.5,
+              borderColor: '#c47b2b',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400e' }}>
+                {unmappedPOSCount} sales product{unmappedPOSCount > 1 ? 's' : ''} unmatched
+              </Text>
+              <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>
+                Map them to your catalogue so your sales intelligence is complete.
+              </Text>
+            </View>
+            <Text style={{ fontSize: 16, color: '#c47b2b', fontWeight: '700' }}>Map →</Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
         {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
