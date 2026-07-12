@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,10 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useVenueId } from '../../context/VenueProvider';
 import AppErrorBoundary from '../../components/AppErrorBoundary';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -29,14 +30,17 @@ function mapAuthError(e: any): string {
 
 function LoginScreenInner() {
   const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const prefillEmail = route?.params?.prefillEmail;
   const auth = getAuth();
   const venueId = useVenueId();
   const colours = useColours();
   const { fontsLoaded } = useTheme();
   const { showError, showInfo } = useToast();
   const { modal } = useConfirmModal();
+  const passRef = useRef<any>(null);
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(prefillEmail || '');
   const [pass, setPass] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,6 +57,12 @@ function LoginScreenInner() {
     return () => unsub();
   }, [auth, nav, venueId]);
 
+  useEffect(() => {
+    if (prefillEmail) {
+      setTimeout(() => passRef.current?.focus(), 300);
+    }
+  }, [prefillEmail]);
+
   const trySignIn = async () => {
     if (!email.trim() || !pass) {
       showInfo('Enter email and password.');
@@ -62,7 +72,19 @@ function LoginScreenInner() {
     try {
       await signInWithEmailAndPassword(auth, email.trim(), pass);
     } catch (e: any) {
-      showError(mapAuthError(e));
+      const code = e?.code || '';
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        Alert.alert(
+          'Account not found',
+          'No account found with this email. Would you like to create one?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Create account', onPress: () => nav.navigate('Register', { prefillEmail: email.trim() }) },
+          ]
+        );
+      } else {
+        showError(mapAuthError(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -124,6 +146,7 @@ function LoginScreenInner() {
 
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <TextInput
+                ref={passRef}
                 style={{
                   flex: 1,
                   height: 52,

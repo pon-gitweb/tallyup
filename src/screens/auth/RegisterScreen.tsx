@@ -8,11 +8,12 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { getAuth, createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 
@@ -30,9 +31,11 @@ export default function RegisterScreen() {
   const colours = useColours();
   const { fontsLoaded } = useTheme();
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const prefillEmail = route?.params?.prefillEmail;
   const { showError, showInfo } = useToast();
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(prefillEmail || '');
   const [pass, setPass] = useState('');
   const [busy, setBusy] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
@@ -85,8 +88,18 @@ export default function RegisterScreen() {
 
       navigation.navigate('EmailVerification');
     } catch (e: any) {
+      const code = e?.code || '';
       if (e?.message === 'auth-timeout') {
         showError('Connection is slow — please check your network and try again.');
+      } else if (code === 'auth/email-already-in-use') {
+        Alert.alert(
+          'Account already exists',
+          'An account with this email already exists. Would you like to sign in instead?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Sign in', onPress: () => navigation.navigate('Login', { prefillEmail: em }) },
+          ]
+        );
       } else if (e?.code) {
         showError(mapRegisterError(e));
       }
