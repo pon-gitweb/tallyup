@@ -368,7 +368,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   async function handleImportB() {
     setBStatus('importing')
     try {
-      await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
+      const ref = await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
         source: 'csv',
         report: {
           lines: bRows,
@@ -379,6 +379,16 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       })
       await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
       setBStatus('done')
+
+      // Non-blocking — trigger product matching after import succeeds
+      const API = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
+      auth.currentUser?.getIdToken().then(token =>
+        fetch(`${API}/match-sales-report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ venueId, reportId: ref.id }),
+        })
+      ).catch((e: any) => console.warn('[ImportPage] match-sales-report failed:', e?.message))
     } catch (e: any) {
       console.error('[ImportPage] salesReport write failed:', e?.message)
       setBError('Import failed. Please try again.')

@@ -259,6 +259,109 @@ function checkRateLimit(ip: string, limitPerHour: number): boolean {
   return true; // allowed
 }
 
+// ── Shared sales matching helper ──────────────────────────────────────────────
+// Matches sales report lines against venue products, writes salesReportMatches
+// and salesReportUnknowns. Called from Square webhook, pull-sales, CSV import,
+// and PDF import so all paths produce the same intelligence.
+async function matchAndStoreSalesLines(
+  db: admin.firestore.Firestore,
+  venueId: string,
+  reportId: string,
+  source: string,
+  lines: Array<{ name: string; qtySold: number; gross?: number | null; barcode?: string | null; sku?: string | null }>
+): Promise<{ matched: number; unknowns: number }> {
+  try {
+    const productsSnap = await db.collection(`venues/${venueId}/products`).get();
+    const byBarcode = new Map<string, any>();
+    const bySku = new Map<string, any>();
+    const allProducts: any[] = [];
+    productsSnap.forEach(d => {
+      const p = { id: d.id, ...d.data() as any };
+      const bc = (p.barcode || p.barCode || p.bar_code || '').toString().trim();
+      const sku = (p.sku || p.code || '').toString().trim();
+      if (bc) byBarcode.set(bc, p);
+      if (sku) bySku.set(sku, p);
+      allProducts.push(p);
+    });
+
+    // Load confirmed mappings (operator-confirmed POS → product links)
+    const mappingsSnap = await db.collection(`venues/${venueId}/posProductMappings`).get();
+    const confirmedMappings: Record<string, string> = {};
+    mappingsSnap.forEach(d => {
+      const data = d.data() as any;
+      if (data.posItemName && data.productId) {
+        confirmedMappings[data.posItemName.toLowerCase()] = data.productId;
+      }
+    });
+
+    const matches: any[] = [];
+    const unknowns: any[] = [];
+
+    for (const ln of lines) {
+      const n = (ln.name || '').toString().trim().toLowerCase();
+      if (!n) continue;
+      const b = (ln.barcode || '').toString().trim();
+      const s = (ln.sku || '').toString().trim();
+
+      let hit: any = null;
+      // Confirmed mapping wins first
+      const confirmedId = confirmedMappings[n];
+      if (confirmedId) hit = allProducts.find(p => p.id === confirmedId) ?? null;
+      // Barcode / SKU exact match
+      if (!hit && b && byBarcode.has(b)) hit = byBarcode.get(b);
+      if (!hit && s && bySku.has(s)) hit = bySku.get(s);
+      // Fuzzy name match
+      if (!hit && n) hit = allProducts.find(
+        p => (p.name || '').toString().toLowerCase().includes(n) ||
+             n.includes((p.name || '').toString().toLowerCase())
+      ) ?? null;
+
+      if (hit) {
+        matches.push({ productId: hit.id, productName: hit.name ?? null, name: ln.name, qtySold: ln.qtySold, gross: ln.gross ?? null });
+      } else {
+        unknowns.push({ line: ln });
+      }
+    }
+
+    await db.doc(`venues/${venueId}/salesReportMatches/${reportId}`).set({
+      reportId,
+      source,
+      counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
+      matches,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    if (unknowns.length > 0) {
+      const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
+        .where('status', '==', 'unmapped')
+        .get();
+      const existingNames = new Set(
+        existingSnap.docs.map(d => ((d.data() as any)?.line?.name || '').toLowerCase())
+      );
+      const newUnknowns = unknowns.filter(
+        (u: any) => !existingNames.has((u.line?.name || '').toLowerCase())
+      );
+      await Promise.all(newUnknowns.map((u: any) =>
+        db.collection(`venues/${venueId}/salesReportUnknowns`).add({
+          reportId,
+          line: u.line,
+          status: 'unmapped',
+          source,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+      ));
+    }
+
+    console.log(`[matchAndStoreSalesLines] ${source} ${reportId}`, {
+      total: lines.length, matched: matches.length, unknowns: unknowns.length,
+    });
+    return { matched: matches.length, unknowns: unknowns.length };
+  } catch (e: any) {
+    console.error('[matchAndStoreSalesLines] ERROR', e?.message);
+    return { matched: 0, unknowns: 0 };
+  }
+}
+
 // ── POST /upload-file ────────────────────────────────────────────────────────
 // Body: { destPath: string, dataUrl: string, cacheControl?: string }
 // Returns: { ok: true, fullPath: string, downloadURL: string }
@@ -2347,66 +2450,11 @@ app.get("/square/pull-sales", async (req, res) => {
     await batch.commit();
 
     // Match products for each day written
-    try {
-      const productsSnap = await db.collection(`venues/${venueId}/products`).get();
-      const allProducts: any[] = [];
-      productsSnap.forEach(d => allProducts.push({ id: d.id, ...d.data() as any }));
-
-      for (const [date, lines] of Object.entries(dailyAgg)) {
-        const lineArr = Object.entries(lines as any).map(([name, data]: [string, any]) => ({
-          name, qtySold: data.qtySold, gross: data.gross, barcode: null, sku: null,
-        }));
-        const matches: any[] = [];
-        const unknowns: any[] = [];
-        for (const ln of lineArr) {
-          const n = (ln.name || '').toLowerCase();
-          const hit = allProducts.find(
-            p => (p.name || '').toLowerCase().includes(n) || n.includes((p.name || '').toLowerCase())
-          );
-          if (hit) matches.push({ productId: hit.id, productName: hit.name, name: ln.name, qtySold: ln.qtySold, gross: ln.gross });
-          else unknowns.push({ line: ln });
-        }
-        await db.doc(`venues/${venueId}/salesReportMatches/square-${date}`).set({
-          reportId: `square-${date}`,
-          source: 'square',
-          date,
-          counts: { total: lineArr.length, matched: matches.length, unknowns: unknowns.length },
-          matches,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        console.log(`[square/pull-sales] writing to venues/${venueId}/salesReportMatches/square-${date}`);
-        console.log(`[square/pull-sales] matching complete`, { venueId, date, matched: matches.length, unknowns: unknowns.length });
-
-        // Write unknowns to salesReportUnknowns for POS mapping banner
-        if (unknowns.length > 0) {
-          const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
-            .where('status', '==', 'unmapped')
-            .get();
-          const existingNames = new Set(
-            existingSnap.docs.map(d => ((d.data() as any)?.line?.name || '').toLowerCase())
-          );
-
-          const newUnknowns = unknowns.filter(
-            (u: any) => !existingNames.has((u.line?.name || '').toLowerCase())
-          );
-
-          await Promise.all(newUnknowns.map((u: any) =>
-            db.collection(`venues/${venueId}/salesReportUnknowns`).add({
-              reportId: `square-${date}`,
-              line: u.line,
-              status: 'unmapped',
-              source: 'square-pull',
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            })
-          ));
-
-          if (newUnknowns.length > 0) {
-            console.log(`[square/pull-sales] wrote ${newUnknowns.length} unknowns for ${date}`);
-          }
-        }
-      }
-    } catch (matchErr: any) {
-      console.error("[square/pull-sales] matching failed (non-fatal):", matchErr?.message);
+    for (const [date, lines] of Object.entries(dailyAgg)) {
+      const lineArr = Object.entries(lines as any).map(([name, data]: [string, any]) => ({
+        name, qtySold: data.qtySold, gross: data.gross, barcode: null, sku: null,
+      }));
+      await matchAndStoreSalesLines(db, venueId, `square-${date}`, 'square-pull', lineArr);
     }
 
     res.json({
@@ -2565,82 +2613,14 @@ app.post("/square/webhook", async (req, res) => {
     }, { merge: true });
 
     // Step 6: Match sales lines to venue products (server-side)
-    // Mirrors client matchSalesToProducts but uses Admin SDK
-    try {
+    {
       const db = admin.firestore();
-      const productsSnap = await db.collection(`venues/${venueId}/products`).get();
-      const byBarcode = new Map<string, any>();
-      const bySku = new Map<string, any>();
-      const allProducts: any[] = [];
-
-      productsSnap.forEach(d => {
-        const p = { id: d.id, ...d.data() as any };
-        const bc = (p.barcode || p.barCode || p.bar_code || '').toString().trim();
-        const sku = (p.sku || p.code || '').toString().trim();
-        if (bc) byBarcode.set(bc, p);
-        if (sku) bySku.set(sku, p);
-        allProducts.push(p);
-      });
-
-      const matches: any[] = [];
-      const unknowns: any[] = [];
-
-      for (const ln of updatedLines) {
-        const b = (ln.barcode || '').toString().trim();
-        const s = (ln.sku || '').toString().trim();
-        const n = (ln.name || '').toString().trim().toLowerCase();
-
-        let hit: any = null;
-        if (!hit && b && byBarcode.has(b)) hit = byBarcode.get(b);
-        if (!hit && s && bySku.has(s)) hit = bySku.get(s);
-        if (!hit && n) hit = allProducts.find(
-          p => (p.name || '').toString().toLowerCase().includes(n) ||
-               n.includes((p.name || '').toString().toLowerCase())
-        );
-
-        if (hit) {
-          matches.push({
-            productId: hit.id,
-            productName: hit.name || null,
-            name: ln.name || null,
-            qtySold: Number(ln.qtySold || 0),
-            gross: ln.gross ?? null,
-            net: null,
-            tax: null,
-          });
-        } else {
-          unknowns.push({ line: ln });
-        }
-      }
-
-      const matchDocId = `square-${date}`;
-      await db.doc(`venues/${venueId}/salesReportMatches/${matchDocId}`).set({
-        reportId: matchDocId,
-        source: 'square-webhook',
-        date,
-        counts: {
-          total: updatedLines.length,
-          matched: matches.length,
-          unknowns: unknowns.length,
-        },
-        matches,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-
-      for (const u of unknowns) {
-        await db.collection(`venues/${venueId}/salesReportUnknowns`).add({
-          reportId: matchDocId,
-          line: u.line,
-          status: 'unmapped',
-          source: 'square-webhook',
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-
-      console.log(`[square/webhook] matched ${matches.length}/${updatedLines.length} products`, { venueId, date });
-    } catch (matchErr: any) {
-      // Non-fatal — sales data is already written, matching can be retried
-      console.error("[square/webhook] matching failed (non-fatal):", matchErr?.message);
+      await matchAndStoreSalesLines(db, venueId, `square-${date}`, 'square-webhook',
+        updatedLines.map((ln: any) => ({
+          name: ln.name, qtySold: Number(ln.qtySold || 0), gross: ln.gross ?? null,
+          barcode: ln.barcode ?? null, sku: ln.sku ?? null,
+        }))
+      );
     }
 
     console.log("[square/webhook] updated salesReports", { venueId, date, itemCount: lineItems.length });
@@ -5885,9 +5865,67 @@ ${pdfText.slice(0, 8000)}`,
       lines,
       warnings: extracted.warnings || [],
     });
+
+    // Non-blocking — store report and run matching after response sent
+    if (lines.length > 0) {
+      const db = admin.firestore();
+      db.collection(`venues/${venueId}/salesReports`).add({
+        source: 'pdf',
+        report: { lines, lineCount: lines.length, importedFrom: 'desktop' },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).then(ref =>
+        matchAndStoreSalesLines(db, venueId, ref.id, 'manual-pdf', lines.map((l: any) => ({
+          name: l.name,
+          qtySold: Number(l.qtySold ?? 0),
+          gross: l.gross ?? null,
+          barcode: l.barcode ?? null,
+          sku: l.sku ?? null,
+        })))
+      ).catch((e: any) => console.error('[process-sales-pdf] post-match error:', e?.message));
+    }
   } catch (e: any) {
     console.error("[process-sales-pdf]", e?.message);
     res.status(500).json({ ok: false, error: e?.message || "Sales PDF processing failed" });
+  }
+});
+
+// ── POST /match-sales-report ──────────────────────────────────────────────────
+// Runs product matching on an existing salesReports doc.
+// Called from desktop after CSV import completes (non-blocking fire-and-forget).
+app.post("/match-sales-report", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, reportId } = req.body || {};
+    if (!venueId || !reportId) {
+      res.status(400).json({ ok: false, error: "Missing venueId or reportId" }); return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const reportSnap = await db.doc(`venues/${venueId}/salesReports/${reportId}`).get();
+    if (!reportSnap.exists) {
+      res.status(404).json({ ok: false, error: "Report not found" }); return;
+    }
+
+    const data = reportSnap.data() as any;
+    const rawLines: any[] = data?.report?.lines ?? data?.lines ?? [];
+
+    const result = await matchAndStoreSalesLines(db, venueId, reportId, 'manual-csv',
+      rawLines.map((l: any) => ({
+        name: l.name,
+        qtySold: Number(l.qty ?? l.qtySold ?? 0),
+        gross: l.revenue ?? l.gross ?? null,
+        barcode: l.barcode ?? null,
+        sku: l.sku ?? null,
+      }))
+    );
+
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    console.error("[match-sales-report] ERROR", e?.message);
+    res.status(500).json({ ok: false, error: e?.message || "Matching failed" });
   }
 });
 
