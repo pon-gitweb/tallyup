@@ -51,8 +51,10 @@ async function updateStockAndCreateInvoice(
 
   if (orderLines.length === 0) return warnings;
 
-  // Find matching area items across all departments and increment lastCount
+  // Find matching area items across all departments and update stock
   try {
+    const venueSnap = await getDoc(doc(db, 'venues', venueId));
+    const isFestival = (venueSnap.data() as any)?.venueType === 'festival';
     const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
     const stockBatch = writeBatch(db);
     let stockUpdates = 0;
@@ -74,8 +76,10 @@ async function updateStockAndCreateInvoice(
           );
           if (matchedLine && matchedLine.qty > 0) {
             stockBatch.update(itemDoc.ref, {
-              lastCount: increment(matchedLine.qty),
-              lastCountAt: serverTimestamp(),
+              ...(isFestival
+                ? { lastCount: increment(matchedLine.qty), lastCountAt: serverTimestamp() }
+                : { incomingQty: increment(matchedLine.qty) }
+              ),
               ...(uid ? { lastCountBy: uid } : {}),
               updatedAt: serverTimestamp(),
             });

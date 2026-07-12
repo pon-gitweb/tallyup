@@ -6,7 +6,7 @@
  */
 import { getApp } from 'firebase/app';
 import {
-  getFirestore, doc, collection, addDoc, getDocs, writeBatch,
+  getFirestore, doc, getDoc, collection, addDoc, getDocs, writeBatch,
   serverTimestamp, increment, Timestamp,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -85,10 +85,12 @@ export async function createCreditNote(input: CreditNoteInput): Promise<{ ok: bo
     });
     await lineBatch.commit();
 
-    // Reverse stock — for each credit line, subtract the returned quantity
-    // from the matching department/area item's lastCount. qty is already
-    // negative, so incrementing by qty subtracts it (mirrors receive.ts).
+    // Reverse stock — subtract returned quantity from matching item.
+    // Festival: decrement lastCount (live stock model).
+    // Venue: decrement incomingQty (physical count model).
     try {
+      const venueSnap = await getDoc(doc(db, 'venues', venueId));
+      const isFestival = (venueSnap.data() as any)?.venueType === 'festival';
       const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
       const stockBatch = writeBatch(db);
       let stockUpdates = 0;
@@ -110,8 +112,10 @@ export async function createCreditNote(input: CreditNoteInput): Promise<{ ok: bo
             );
             if (matchedLine) {
               stockBatch.update(itemDoc.ref, {
-                lastCount: increment(matchedLine.qty),
-                lastCountAt: serverTimestamp(),
+                ...(isFestival
+                  ? { lastCount: increment(matchedLine.qty), lastCountAt: serverTimestamp() }
+                  : { incomingQty: increment(matchedLine.qty) }
+                ),
                 ...(uid ? { lastCountBy: uid } : {}),
                 updatedAt: serverTimestamp(),
               });

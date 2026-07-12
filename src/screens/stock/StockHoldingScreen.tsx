@@ -132,6 +132,13 @@ export default function StockHoldingScreen() {
 
       // Aggregate counts from all area items — completedAt not required
       // After a reset, lastCount is restored from confirmedCount so data still exists
+      function estimatedOnHand(item: any): number {
+        const last = typeof item.lastCount === 'number' ? item.lastCount : 0;
+        const incoming = typeof item.incomingQty === 'number' ? item.incomingQty : 0;
+        const sold = typeof item.soldQty === 'number' ? item.soldQty : 0;
+        return last + incoming - sold;
+      }
+
       const rowMap: Record<string, HoldingRow> = {};
       let hasAnyIncomplete = false;
       const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
@@ -157,7 +164,7 @@ export default function StockHoldingScreen() {
             const category = item.category ?? item.categorySuggested ?? prod?.category ?? 'Uncategorised';
             const costPrice = typeof item.costPrice === 'number' ? item.costPrice : prod?.costPrice;
             if (rowMap[key]) {
-              rowMap[key].count += item.lastCount;
+              rowMap[key].count += estimatedOnHand(item);
               if (costPrice != null) {
                 rowMap[key].costPrice = costPrice;
                 rowMap[key].value = rowMap[key].count * costPrice;
@@ -166,10 +173,10 @@ export default function StockHoldingScreen() {
               rowMap[key] = {
                 name: nameRaw,
                 category,
-                count: item.lastCount,
+                count: estimatedOnHand(item),
                 unit: item.unit,
                 costPrice,
-                value: costPrice != null ? item.lastCount * costPrice : undefined,
+                value: costPrice != null ? estimatedOnHand(item) * costPrice : undefined,
               };
             }
           });
@@ -360,10 +367,11 @@ export default function StockHoldingScreen() {
       {/* Header */}
       <View style={s.header}>
         <View style={{ flex: 1 }}>
-          <Text style={s.title}>Stock Holding</Text>
+          <Text style={s.title}>Estimated Stock on Hand</Text>
           <Text style={s.subtitle}>
             {grandCount} units
             {grandValue != null ? ` · ${fmtVal(grandValue)} total value` : ''}
+            {'\n'}Last count + deliveries received − sales since last stocktake
           </Text>
         </View>
         <TouchableOpacity style={s.sortBtn} onPress={toggleSort}>

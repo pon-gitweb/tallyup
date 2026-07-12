@@ -674,6 +674,8 @@ async function incrementStockFromLines(
   }
   if (byProductId.size === 0 && byName.size === 0) return 0;
 
+  const venueDoc = await db.doc(`venues/${venueId}`).get();
+  const isFestival = venueDoc.data()?.venueType === 'festival';
   const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
   const batch = db.batch();
   let updates = 0;
@@ -695,8 +697,10 @@ async function incrementStockFromLines(
         }
         if (qty) {
           batch.update(itemDoc.ref, {
-            lastCount: admin.firestore.FieldValue.increment(qty),
-            lastCountAt: now,
+            ...(isFestival
+              ? { lastCount: admin.firestore.FieldValue.increment(qty), lastCountAt: now }
+              : { incomingQty: admin.firestore.FieldValue.increment(qty) }
+            ),
             lastCountBy: uid,
             updatedAt: now,
           });

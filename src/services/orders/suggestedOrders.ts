@@ -257,7 +257,7 @@ export async function buildSuggestedOrdersInMemory(
         // Only items with lastCountAt set have been genuinely counted; items
         // counted as 0 still appear (they're genuinely empty) and remain included.
         if (!v?.lastCountAt) return;
-        const qty = n(v?.lastCount, 0);
+        const qty = n(v?.lastCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
         onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
       });
     }

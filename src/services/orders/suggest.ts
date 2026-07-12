@@ -95,7 +95,7 @@ export async function buildSuggestedOrdersInMemory(
         const v:any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
         if (!pid) return;
-        const qty = n(v?.lastCount, 0);
+        const qty = n(v?.lastCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
         onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
       });
     }
