@@ -150,6 +150,7 @@ const Row = React.memo(function Row({
 }: RowProps) {
   const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
+  const countFieldScale = useRef(new Animated.Value(1)).current;
   const expectedNum = deriveExpected(item);
   const expectedStr = expectedNum != null ? String(expectedNum) : '';
   const countedNow = countedInThisCycle(item);
@@ -1459,7 +1460,6 @@ function StockTakeAreaInventoryScreen() {
   const listRef = useRef<FlatList>(null);
 
   const [focusedInputId, setFocusedInputId] = useState<string | null>(null);
-  const countFieldScale = useRef(new Animated.Value(1)).current;
   // Mirrors focusedInputId but isn't cleared on blur — gives toolbar-level actions
   // (not tied to a specific row) a stable "which item was the user just working on" signal.
   const [lastTouchedItemId, setLastTouchedItemId] = useState<string | null>(null);
