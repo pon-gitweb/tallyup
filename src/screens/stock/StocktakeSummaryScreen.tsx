@@ -42,7 +42,7 @@ type Props = {
   itemsCounted: number;
   itemsMissed: number;
   totalValue: number;
-  windowHours: number;
+  windowHours?: number;
   items: SummaryItem[];
 };
 
@@ -138,7 +138,7 @@ function StocktakeSummaryScreen() {
 
   const {
     departmentName, submittedAt, itemsCounted,
-    itemsMissed, totalValue, windowHours, items = [],
+    itemsMissed, totalValue, windowHours = 0, items = [],
   } = (route.params || {}) as Props;
 
   useEffect(() => {

@@ -4546,23 +4546,21 @@ const openHistory = throttleAction(async (item: Item) => {
         initialUnit={countingUnitForItem?.countingUnit as any ?? undefined}
         initialCaseSize={countingUnitForItem?.caseSize ?? undefined}
         suggestedCaseSize={countingUnitPending?.caseSize ?? undefined}
-        onSave={async (config) => {
+        onSave={(config) => {
           setCountingUnitVisible(false);
           if (countingUnitForItem) {
-            // Updating existing item's counting unit
-            try {
-              await updateDoc(
-                doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', countingUnitForItem.id),
-                { countingUnit: config.countingUnit, caseSize: config.caseSize ?? null, updatedAt: serverTimestamp() }
-              );
-            } catch (e: any) { toastService.error(e?.message || 'Could not update.'); }
+            updateDoc(
+              doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items', countingUnitForItem.id),
+              { countingUnit: config.countingUnit, caseSize: config.caseSize ?? null, updatedAt: serverTimestamp() }
+            ).catch((e: any) => toastService.error(e?.message || 'Could not update.'));
             setCountingUnitForItem(null);
           } else if (countingUnitPending) {
-            try { await countingUnitPending.write(config); } catch (error: any) {
+            const pending = countingUnitPending;
+            setCountingUnitPending(null);
+            pending.write(config).catch((error: any) => {
               console.error('[AreaInventory] write failed:', error);
               toastService.error('Could not add product. Please try again.');
-            }
-            setCountingUnitPending(null);
+            });
           }
         }}
         onCancel={() => {
