@@ -9,6 +9,12 @@ export type VarianceLine = {
   dollarVariance: number | null; // positive, or null when item has no cost price
   deptName: string;
   areaName: string;
+  // Session 6 — variance split (optional: only populated in summary screen)
+  incomingQty?: number;
+  soldQty?: number;
+  explainedUnits?: number;
+  unexplainedUnits?: number;
+  unexplainedDollars?: number | null;
 };
 
 export type TrendItem = {

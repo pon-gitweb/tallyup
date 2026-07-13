@@ -304,12 +304,24 @@ function StocktakeSummaryScreen() {
                 if (!countedInCycle || lastCount === null) continue;
                 const baseline = confirmedCount != null ? confirmedCount : parLevel;
                 if (baseline == null) continue;
-                const varianceUnits = lastCount - baseline;
+                const incomingQty = typeof d.incomingQty === 'number' ? d.incomingQty : 0;
+                const soldQty = typeof d.soldQty === 'number' ? d.soldQty : 0;
+                const fullExpected = baseline + incomingQty - soldQty;
+                const varianceUnits = Math.round((lastCount - fullExpected) * 1000) / 1000;
+                const explainedUnits = incomingQty - soldQty;
+                const unexplainedUnits = Math.round(varianceUnits * 1000) / 1000;
                 const dollarVariance = costPrice != null ? Math.abs(varianceUnits) * costPrice : null;
+                const unexplainedDollars = costPrice != null ? Math.abs(unexplainedUnits) * costPrice : null;
                 if (varianceUnits < 0) {
-                  allShortages.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+                  allShortages.push({
+                    itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName,
+                    incomingQty, soldQty, explainedUnits, unexplainedUnits, unexplainedDollars,
+                  });
                 } else if (varianceUnits > 0) {
-                  allExcesses.push({ itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName });
+                  allExcesses.push({
+                    itemId: itemDoc.id, name, varianceUnits, dollarVariance, deptName, areaName,
+                    incomingQty, soldQty, explainedUnits, unexplainedUnits, unexplainedDollars,
+                  });
                 }
               }
             } catch {}
@@ -494,11 +506,51 @@ function StocktakeSummaryScreen() {
                 </View>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>{shortagesExpanded ? '▲' : '▼'}</Text>
               </TouchableOpacity>
+              {shortages.some(s => (s.incomingQty ?? 0) > 0 || (s.soldQty ?? 0) > 0) && (
+                <View style={{
+                  backgroundColor: '#fff9f9',
+                  borderRadius: 10,
+                  padding: 10,
+                  borderWidth: 1,
+                  borderColor: '#fee2e2',
+                  gap: 6,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151' }}>Variance breakdown</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#6b7280' }}>💰 Sales explained</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#16a34a' }}>
+                      -{shortages.reduce((s, i) => s + Math.max(0, i.soldQty ?? 0), 0).toFixed(0)} units
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#6b7280' }}>📦 Deliveries factored</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#1b4f72' }}>
+                      +{shortages.reduce((s, i) => s + Math.max(0, i.incomingQty ?? 0), 0).toFixed(0)} units
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#fee2e2', paddingTop: 6 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>⚠️ Unexplained loss</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#dc2626' }}>
+                      {shortages.reduce((s, i) => s + Math.abs(i.unexplainedUnits ?? i.varianceUnits), 0).toFixed(0)} units
+                      {shortages.some(i => i.unexplainedDollars != null)
+                        ? ` · $${shortages.reduce((s, i) => s + (i.unexplainedDollars ?? 0), 0).toFixed(2)}`
+                        : ''}
+                    </Text>
+                  </View>
+                </View>
+              )}
               {(shortagesExpanded ? shortages : shortages.slice(0, 3)).map((item, i) => (
                 <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{item.name}</Text>
                     <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.areaName}</Text>
+                    {item.unexplainedUnits !== undefined && item.unexplainedUnits !== item.varianceUnits && (
+                      <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
+                        {Math.abs(item.unexplainedUnits).toFixed(1)} unexplained
+                        {(item.soldQty ?? 0) > 0 ? ` · ${item.soldQty} sold` : ''}
+                        {(item.incomingQty ?? 0) > 0 ? ` · ${item.incomingQty} received` : ''}
+                      </Text>
+                    )}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ color: c.error, fontWeight: '800', fontSize: 13 }}>{item.varianceUnits}</Text>
@@ -536,11 +588,39 @@ function StocktakeSummaryScreen() {
                 </View>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>{excessesExpanded ? '▲' : '▼'}</Text>
               </TouchableOpacity>
+              {excesses.some(s => (s.incomingQty ?? 0) > 0 || (s.soldQty ?? 0) > 0) && (
+                <View style={{
+                  backgroundColor: '#f0fdf4',
+                  borderRadius: 10,
+                  padding: 10,
+                  borderWidth: 1,
+                  borderColor: '#bbf7d0',
+                  gap: 6,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151' }}>Variance breakdown</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ fontSize: 12, color: '#6b7280' }}>Unexplained excess</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: '#16a34a' }}>
+                      {excesses.reduce((s, i) => s + Math.abs(i.unexplainedUnits ?? i.varianceUnits), 0).toFixed(0)} units
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#6b7280' }}>
+                    Possible causes: unrecorded deliveries, miscounts, or stock returned from another area.
+                  </Text>
+                </View>
+              )}
               {(excessesExpanded ? excesses : excesses.slice(0, 3)).map((item, i) => (
                 <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={{ color: c.text, fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{item.name}</Text>
                     <Text style={{ color: c.textSecondary, fontSize: 11 }}>{item.areaName}</Text>
+                    {item.unexplainedUnits !== undefined && item.unexplainedUnits !== item.varianceUnits && (
+                      <Text style={{ fontSize: 11, color: '#9ca3af', marginTop: 1 }}>
+                        {Math.abs(item.unexplainedUnits).toFixed(1)} unexplained
+                        {(item.soldQty ?? 0) > 0 ? ` · ${item.soldQty} sold` : ''}
+                        {(item.incomingQty ?? 0) > 0 ? ` · ${item.incomingQty} received` : ''}
+                      </Text>
+                    )}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ color: c.success, fontWeight: '800', fontSize: 13 }}>+{item.varianceUnits}</Text>
