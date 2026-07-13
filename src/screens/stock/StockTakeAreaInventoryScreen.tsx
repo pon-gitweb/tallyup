@@ -2241,7 +2241,7 @@ try {
           itemsCounted: counted.length,
           itemsMissed: missed.length,
           totalValue: venueValue,
-          windowHours: roundedHours,
+          windowHours: windowHours, // pass unrounded — summary screen rounds internally
           items: counted.slice(0, 20).map(i => ({ name: i.name, counted: i.lastCount || 0, unit: i.unit, costPrice: i.costPrice })),
         } as never);
         return true;
