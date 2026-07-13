@@ -156,6 +156,7 @@ function DepartmentSelectionScreen() {
   const [q, setQ] = useState('');
   const dq = useDebouncedValue(q, 150);
   const [stocktakeIntroSeen, setStocktakeIntroSeen] = useState(true);
+  const [showDataNudge, setShowDataNudge] = useState(false);
 
   // Stocktake intro (shown once on first visit)
   useEffect(() => {
@@ -169,6 +170,29 @@ function DepartmentSelectionScreen() {
     const t = setTimeout(() => setLoadingTimeout(true), 5000);
     return () => clearTimeout(t);
   }, [loading]);
+
+  // Post-reset data nudge — shown once per cycle if sales or invoices are missing
+  useEffect(() => {
+    if (!venueId) return;
+    (async () => {
+      try {
+        const { getDoc: gd, getDocs, collection, query, where, limit } = await import('firebase/firestore');
+        const venueSnap = await gd(doc(db, 'venues', venueId));
+        const cycleResetAt = (venueSnap.data() as any)?.cycleResetAt;
+        if (!cycleResetAt) return;
+        const resetMs = cycleResetAt.toMillis?.() ?? cycleResetAt._seconds * 1000;
+        const nudgeKey = `tallyup_data_nudge_v1_${venueId}_${resetMs}`;
+        const seen = await AsyncStorage.getItem(nudgeKey);
+        if (seen) return;
+        const [salesSnap, invoiceSnap] = await Promise.all([
+          getDocs(query(collection(db, 'venues', venueId, 'salesReportMatches'), where('createdAt', '>', cycleResetAt), limit(1))),
+          getDocs(query(collection(db, 'venues', venueId, 'invoices'), where('confirmedAt', '>', cycleResetAt), limit(1))),
+        ]);
+        if (salesSnap.empty || invoiceSnap.empty) setShowDataNudge(true);
+        await AsyncStorage.setItem(nudgeKey, '1');
+      } catch {}
+    })();
+  }, [venueId]);
 
   // Role gate
   const [isManager, setIsManager] = useState(false);
@@ -536,6 +560,51 @@ function DepartmentSelectionScreen() {
           blurOnSubmit={false}
         />
       </View>
+
+      {showDataNudge && (
+        <View style={{
+          backgroundColor: '#fffbeb',
+          borderRadius: 12,
+          padding: 14,
+          marginHorizontal: 16,
+          marginBottom: 12,
+          borderWidth: 1.5,
+          borderColor: '#c47b2b',
+          flexDirection: 'row',
+          gap: 10,
+          alignItems: 'flex-start',
+        }}>
+          <Text style={{ fontSize: 18, marginTop: 1 }}>💡</Text>
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400e' }}>
+              Before you count
+            </Text>
+            <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
+              For accurate expected counts, add any recent invoices and upload a sales report for this period.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+              <TouchableOpacity
+                onPress={() => { setShowDataNudge(false); nav.navigate('Invoices' as never); }}
+                style={{ backgroundColor: '#c47b2b', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>Add invoice →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setShowDataNudge(false); nav.navigate('SalesImport' as never); }}
+                style={{ backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: '#c47b2b' }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#92400e' }}>Upload sales →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowDataNudge(false)}
+                style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+              >
+                <Text style={{ fontSize: 12, color: '#92400e', opacity: 0.6 }}>Skip</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* List */}
       {loading ? (
