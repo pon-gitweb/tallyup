@@ -19,6 +19,21 @@ export function parseSpokenCount(
   const direct = parseFloat(text);
   if (!isNaN(direct) && direct >= 0) return direct;
 
+  // STT sometimes returns space-separated digits instead of the full number
+  // e.g. "twelve" → "1 2", "twenty four" → "2 4"
+  const digitSequenceMatch = text.match(/^(\d)(\s+\d)+$/);
+  if (digitSequenceMatch) {
+    const joined = parseFloat(text.replace(/\s+/g, ''));
+    if (!isNaN(joined) && joined >= 0) return joined;
+  }
+
+  // Same issue in word form: "one two" → 12, "two four" → 24
+  const wordDigits = text.split(/\s+/).map(w => DIGIT_WORDS[w]);
+  if (wordDigits.length > 1 && wordDigits.every(d => d !== undefined)) {
+    const joined = parseFloat(wordDigits.join(''));
+    if (!isNaN(joined)) return joined;
+  }
+
   // "half" → 0.5
   if (text === 'half' || text === 'a half')
     return 0.5;

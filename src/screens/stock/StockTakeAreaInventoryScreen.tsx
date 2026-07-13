@@ -933,7 +933,7 @@ function StockTakeAreaInventoryScreen() {
   // anywhere in this voice flow; this is the standard going forward.
   const startListening = () => {
     try {
-      ExpoSpeechRecognitionModule.start({ lang: 'en-NZ', interimResults: false, continuous: false });
+      ExpoSpeechRecognitionModule.start({ lang: voiceLangRef.current || 'en-AU', interimResults: false, continuous: false });
     } catch (e: any) {
       console.log('[VoiceDebug] start threw:', e?.message || e);
     }
