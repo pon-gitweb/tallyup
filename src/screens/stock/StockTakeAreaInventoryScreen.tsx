@@ -2940,7 +2940,12 @@ const openHistory = throttleAction(async (item: Item) => {
     }
     const already = items.find(it => it.name?.toLowerCase() === (product.name || '').toLowerCase());
     if (already) { showInfo(`${product.name} is already in this area.`); return; }
+
+    // Close venue search modal first — iOS cannot show two slide Modals simultaneously
+    setVenueSearchOpen(false);
+
     await ensureAreaStarted();
+
     setCountingUnitPending({
       name: product.name || '',
       unit: product.unit || undefined,
@@ -2975,6 +2980,9 @@ const openHistory = throttleAction(async (item: Item) => {
         hapticSuccess();
       },
     });
+
+    // iOS needs the first modal's dismiss animation to finish before the second can open
+    await new Promise(resolve => setTimeout(resolve, Platform.OS === 'ios' ? 500 : 0));
     setCountingUnitVisible(true);
   };
 
@@ -2988,6 +2996,7 @@ const openHistory = throttleAction(async (item: Item) => {
   // Batch add from VenueProductSearchModal multi-select
   const handleBatchVenueProductsSelected = async (products: any[]) => {
     if (!venueId || !departmentId || !areaId || !products.length) return;
+    setVenueSearchOpen(false);
     const newProducts = products.filter(p =>
       !items.find(it => it.name?.toLowerCase() === (p.name || '').toLowerCase())
     );
