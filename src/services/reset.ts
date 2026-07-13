@@ -11,6 +11,7 @@ function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, no
     cycleResetAt: now,
     updatedAt: now,
     lastConfirmedAt: now,
+    editWindowClosesAt: null,
   });
 }
 

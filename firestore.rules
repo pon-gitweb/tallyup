@@ -374,7 +374,9 @@ service cloud.firestore {
               request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
               request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt']) ||
               request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt']) ||
-              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt'])
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt','editWindowClosesAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt','editWindowClosesAt'])
             );
           allow update: if hasVenueRole(venueId, ['manager','owner']) && (
             request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
@@ -384,7 +386,9 @@ service cloud.firestore {
                 request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
                 request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt']) ||
                 request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt']) ||
-                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt'])
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt']) ||
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt','editWindowClosesAt']) ||
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt','editWindowClosesAt'])
               )
             ) ||
             (
