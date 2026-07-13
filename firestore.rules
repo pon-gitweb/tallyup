@@ -235,6 +235,11 @@ service cloud.firestore {
         && (request.resource.data.cycleResetAt is timestamp)
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp);
 
+      // Stocktake active flag — set by any member when starting a count, cleared on reset
+      allow update: if isVenueMember(venueId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['stocktakeActive', 'stocktakeActiveAt']);
+
       // Venue name (owner only)
       allow update: if hasVenueRole(venueId, ['owner'])
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name'])

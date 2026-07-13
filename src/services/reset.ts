@@ -125,10 +125,10 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
   }
 
   // Clear stocktake active flag
-  await setDoc(doc(db, 'venues', venueId), {
+  await updateDoc(doc(db, 'venues', venueId), {
     stocktakeActive: false,
     stocktakeActiveAt: null,
-  }, { merge: true });
+  });
 
   // Process any invoices queued during the stocktake
   try {
