@@ -2471,7 +2471,7 @@ try {
           doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId),
           {
             completedAt: serverTimestamp(),
-            editWindowClosesAt: Timestamp.fromMillis(Date.now() + (60 * 60 * 1000)),
+            editWindowClosesAt: Timestamp.fromMillis(Date.now() + (48 * 60 * 60 * 1000)),
             editWindowOpen: true,
             edits: [],
             countSessionSegments,

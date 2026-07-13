@@ -75,6 +75,14 @@ function StocktakeSummaryScreen() {
   const [varianceLoaded, setVarianceLoaded] = useState(false);
   const [shortagesExpanded, setShortagesExpanded] = useState(false);
   const [excessesExpanded, setExcessesExpanded] = useState(false);
+  const [reconciliationAdjustments, setReconciliationAdjustments] = React.useState<Array<{
+    id: string;
+    description: string;
+    addedAt: number;
+    itemChanges: Array<{ name: string; before: number; after: number }>;
+  }>>([]);
+  const [reconciliationClosesAt, setReconciliationClosesAt] = React.useState<number | null>(null);
+  const [reconciliationOpen, setReconciliationOpen] = React.useState(false);
 
   const valueAnim = useRef(new Animated.Value(0)).current;
   const [displayValue, setDisplayValue] = useState(0);
@@ -84,6 +92,32 @@ function StocktakeSummaryScreen() {
   const [displayExcessValue, setDisplayExcessValue] = useState(0);
   const [showCelebration, setShowCelebration] = useState(false);
   const celebrationOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!venueId) return;
+    (async () => {
+      try {
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        let latestClosesAt: number | null = null;
+        await Promise.all(deptsSnap.docs.map(async deptDoc => {
+          const areasSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
+          );
+          areasSnap.docs.forEach(areaDoc => {
+            const d = areaDoc.data() as any;
+            const closesAt = d.editWindowClosesAt?.toMillis?.() ?? null;
+            if (closesAt && (!latestClosesAt || closesAt > latestClosesAt)) {
+              latestClosesAt = closesAt;
+            }
+          });
+        }));
+        if (latestClosesAt) {
+          setReconciliationClosesAt(latestClosesAt);
+          setReconciliationOpen(latestClosesAt > Date.now());
+        }
+      } catch {}
+    })();
+  }, [venueId]);
 
   const handleNewCycle = () => {
     confirm({
@@ -625,6 +659,95 @@ function StocktakeSummaryScreen() {
             style={{ backgroundColor: c.primaryLight, borderRadius: 10, padding: 10, alignItems: 'center', marginTop: 4 }}>
             <Text style={{ color: c.primary, fontWeight: '800', fontSize: 13 }}>Review & update PAR levels →</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Reconciliation Window ─────────────────────────────────────────── */}
+      {!isFirst && reconciliationClosesAt && (
+        <View style={{
+          backgroundColor: reconciliationOpen ? '#fffbeb' : '#f9fafb',
+          borderRadius: 14,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: reconciliationOpen ? '#c47b2b' : '#e5e1d8',
+          gap: 10,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 18 }}>{reconciliationOpen ? '🔓' : '🔒'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 15, fontWeight: '900', color: c.navy }}>
+                {reconciliationOpen ? 'Reconciliation open' : 'Reconciliation closed'}
+              </Text>
+              <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 2 }}>
+                {reconciliationOpen
+                  ? (() => {
+                      const hoursLeft = Math.max(0, Math.round((reconciliationClosesAt - Date.now()) / 3_600_000));
+                      const minsLeft = Math.max(0, Math.round((reconciliationClosesAt - Date.now()) / 60_000));
+                      return hoursLeft > 0
+                        ? `Closes in ${hoursLeft}h — add missing data to update your variance`
+                        : `Closes in ${minsLeft}m — add missing data to update your variance`;
+                    })()
+                  : `Closed ${new Date(reconciliationClosesAt).toLocaleString('en-NZ', { dateStyle: 'short', timeStyle: 'short' })}`
+                }
+              </Text>
+            </View>
+          </View>
+
+          {reconciliationOpen && (
+            <View style={{ gap: 8 }}>
+              <Text style={{ fontSize: 13, color: '#92400e', lineHeight: 18 }}>
+                Add missing invoices or a sales report and your variance will update automatically. Your counts don't change — only the expected values update.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => nav.navigate('Invoices' as never)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#c47b2b',
+                    borderRadius: 10,
+                    padding: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
+                    Add invoice →
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => nav.navigate('SalesImport' as never)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#fff',
+                    borderRadius: 10,
+                    padding: 10,
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: '#c47b2b',
+                  }}
+                >
+                  <Text style={{ color: '#92400e', fontWeight: '700', fontSize: 13 }}>
+                    Add sales report →
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {reconciliationAdjustments.length > 0 && (
+            <View style={{ borderTopWidth: 1, borderTopColor: '#e5e1d8', paddingTop: 10, gap: 6 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Adjustments applied
+              </Text>
+              {reconciliationAdjustments.map((adj, i) => (
+                <View key={i} style={{ gap: 2 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: c.navy }}>{adj.description}</Text>
+                  <Text style={{ fontSize: 12, color: c.textSecondary }}>
+                    {new Date(adj.addedAt).toLocaleString('en-NZ', { dateStyle: 'short', timeStyle: 'short' })}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
