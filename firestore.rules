@@ -372,7 +372,9 @@ service cloud.firestore {
 
           allow update: if isVenueMember(venueId) && isCycleReset() && (
               request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
-              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt']) ||
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt'])
             );
           allow update: if hasVenueRole(venueId, ['manager','owner']) && (
             request.resource.data.diff(resource.data).changedKeys().hasOnly(['completedAt']) ||
@@ -380,7 +382,9 @@ service cloud.firestore {
             (
               isCycleReset() && (
                 request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt']) ||
-                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt'])
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt']) ||
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','lastConfirmedAt']) ||
+                request.resource.data.diff(resource.data).changedKeys().hasOnly(['startedAt','completedAt','cycleResetAt','updatedAt','lastConfirmedAt'])
               )
             ) ||
             (
@@ -599,6 +603,14 @@ service cloud.firestore {
 
             // Allow stock count increments from order receive — area may already be closed
             allow update: if isVenueMember(venueId) && isOrderReceiveUpdate();
+
+            // Cycle reset — restore lastCount from confirmedCount, zero incomingQty/soldQty
+            // Queued invoice processing — increment incomingQty after stocktake ends
+            // Enrich function writes incomingQty/soldQty/enrichedAt (admin SDK bypasses rules,
+            // but rule added here for defence-in-depth if called via client SDK)
+            allow update: if isVenueMember(venueId)
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['lastCount', 'lastCountAt', 'incomingQty', 'soldQty', 'enrichedAt']);
 
             allow delete: if isVenueMember(venueId) && areaOpen();
           }
