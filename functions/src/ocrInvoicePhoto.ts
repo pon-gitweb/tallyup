@@ -676,6 +676,7 @@ async function incrementStockFromLines(
 
   const venueDoc = await db.doc(`venues/${venueId}`).get();
   const isFestival = venueDoc.data()?.venueType === 'festival';
+  const stocktakeActive = !isFestival && !!(venueDoc.data()?.stocktakeActive);
   const deptsSnap = await db.collection(`venues/${venueId}/departments`).get();
   const batch = db.batch();
   let updates = 0;
@@ -696,15 +697,35 @@ async function incrementStockFromLines(
           if (itemName && byName.has(itemName)) qty = byName.get(itemName);
         }
         if (qty) {
-          batch.update(itemDoc.ref, {
-            ...(isFestival
-              ? { lastCount: admin.firestore.FieldValue.increment(qty), lastCountAt: now }
-              : { incomingQty: admin.firestore.FieldValue.increment(qty) }
-            ),
-            lastCountBy: uid,
-            updatedAt: now,
-          });
-          updates++;
+          if (isFestival) {
+            batch.update(itemDoc.ref, {
+              lastCount: admin.firestore.FieldValue.increment(qty),
+              lastCountAt: now,
+              lastCountBy: uid,
+              updatedAt: now,
+            });
+            updates++;
+          } else if (stocktakeActive) {
+            // Queue for post-stocktake application
+            const pathParts = itemDoc.ref.path.split('/');
+            const deptId = pathParts[3];
+            const areaId = pathParts[5];
+            await db.collection(`venues/${venueId}/queuedInvoices`).add({
+              itemId: itemDoc.id,
+              departmentId: deptId,
+              areaId: areaId,
+              qty,
+              source: 'photo-invoice',
+              queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          } else {
+            batch.update(itemDoc.ref, {
+              incomingQty: admin.firestore.FieldValue.increment(qty),
+              lastCountBy: uid,
+              updatedAt: now,
+            });
+            updates++;
+          }
         }
       }
     }

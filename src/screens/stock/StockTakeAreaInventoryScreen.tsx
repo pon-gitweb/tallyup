@@ -1675,6 +1675,11 @@ function StockTakeAreaInventoryScreen() {
         const now = Date.now();
         setLocalStartedAtMs(now);
         await updateDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId), { startedAt: serverTimestamp() });
+        // Mark venue as having an active stocktake — freezes invoice incomingQty writes
+        updateDoc(doc(db, 'venues', venueId!), {
+          stocktakeActive: true,
+          stocktakeActiveAt: serverTimestamp(),
+        }).catch(() => {});
       } else {
         const ms = data.startedAt?.toMillis ? data.startedAt.toMillis() : (data.startedAt?._seconds ? data.startedAt._seconds * 1000 : null);
         if (ms) setLocalStartedAtMs(ms);

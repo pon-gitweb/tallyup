@@ -1,5 +1,6 @@
 import {
-  collection, getDocs, writeBatch, doc, serverTimestamp, query, where
+  collection, getDocs, writeBatch, doc, serverTimestamp, query, where,
+  setDoc, updateDoc, increment, deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
@@ -121,5 +122,36 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
       });
       if (hasRestores) await itemBatch.commit();
     }
+  }
+
+  // Clear stocktake active flag
+  await setDoc(doc(db, 'venues', venueId), {
+    stocktakeActive: false,
+    stocktakeActiveAt: null,
+  }, { merge: true });
+
+  // Process any invoices queued during the stocktake
+  try {
+    const queueSnap = await getDocs(
+      collection(db, 'venues', venueId, 'queuedInvoices')
+    );
+    if (!queueSnap.empty) {
+      for (const qDoc of queueSnap.docs) {
+        const data = qDoc.data() as any;
+        const itemRef = doc(db,
+          'venues', venueId,
+          'departments', data.departmentId,
+          'areas', data.areaId,
+          'items', data.itemId
+        );
+        await updateDoc(itemRef, {
+          incomingQty: increment(data.qty),
+        });
+        await deleteDoc(qDoc.ref);
+      }
+      console.log(`[Reset] processed ${queueSnap.size} queued invoices`);
+    }
+  } catch (e: any) {
+    console.warn('[Reset] queued invoice processing failed (non-fatal):', e?.message);
   }
 }

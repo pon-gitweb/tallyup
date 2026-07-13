@@ -54,7 +54,9 @@ async function updateStockAndCreateInvoice(
   // Find matching area items across all departments and update stock
   try {
     const venueSnap = await getDoc(doc(db, 'venues', venueId));
-    const isFestival = (venueSnap.data() as any)?.venueType === 'festival';
+    const venueData = venueSnap.data() as any;
+    const isFestival = venueData?.venueType === 'festival';
+    const stocktakeActive = !isFestival && !!venueData?.stocktakeActive;
     const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
     const stockBatch = writeBatch(db);
     let stockUpdates = 0;
@@ -65,7 +67,7 @@ async function updateStockAndCreateInvoice(
         const itemsSnap = await getDocs(
           collection(db, 'venues', venueId, 'departments', dep.id, 'areas', area.id, 'items'),
         );
-        itemsSnap.forEach(itemDoc => {
+        for (const itemDoc of itemsSnap.docs) {
           const item = itemDoc.data() as any;
           const itemProductId = String(item.productId || item.productLinkId || '');
           const itemName = (item.name || '').toLowerCase().trim();
@@ -75,17 +77,37 @@ async function updateStockAndCreateInvoice(
             (l.name && itemName && l.name.toLowerCase().trim() === itemName),
           );
           if (matchedLine && matchedLine.qty > 0) {
-            stockBatch.update(itemDoc.ref, {
-              ...(isFestival
-                ? { lastCount: increment(matchedLine.qty), lastCountAt: serverTimestamp() }
-                : { incomingQty: increment(matchedLine.qty) }
-              ),
-              ...(uid ? { lastCountBy: uid } : {}),
-              updatedAt: serverTimestamp(),
-            });
-            stockUpdates++;
+            if (isFestival) {
+              stockBatch.update(itemDoc.ref, {
+                lastCount: increment(matchedLine.qty),
+                lastCountAt: serverTimestamp(),
+                ...(uid ? { lastCountBy: uid } : {}),
+                updatedAt: serverTimestamp(),
+              });
+              stockUpdates++;
+            } else if (stocktakeActive) {
+              // Queue — will be applied to incomingQty on cycle reset
+              const pathParts = itemDoc.ref.path.split('/');
+              const deptId = pathParts[3];
+              const aId = pathParts[5];
+              await addDoc(collection(db, 'venues', venueId, 'queuedInvoices'), {
+                itemId: itemDoc.id,
+                departmentId: deptId,
+                areaId: aId,
+                qty: matchedLine.qty,
+                source: 'invoice',
+                queuedAt: serverTimestamp(),
+              });
+            } else {
+              stockBatch.update(itemDoc.ref, {
+                incomingQty: increment(matchedLine.qty),
+                ...(uid ? { lastCountBy: uid } : {}),
+                updatedAt: serverTimestamp(),
+              });
+              stockUpdates++;
+            }
           }
-        });
+        }
       }
     }
 

@@ -3,6 +3,8 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { getApp } from 'firebase/app';
 import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
@@ -66,6 +68,17 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
         setBusy(false);
         return;
       }
+
+      // Inform operator if a stocktake is active — delivery will be queued server-side
+      try {
+        const db = getFirestore(getApp());
+        const venueSnap = await getDoc(doc(db, 'venues', venueId));
+        if (!!(venueSnap.data() as any)?.stocktakeActive) {
+          showInfo(
+            'A stocktake is in progress. This delivery will be recorded and applied to your stock after the count is complete.'
+          );
+        }
+      } catch {}
 
       const filename = `fast-receive-${Date.now()}.jpg`;
       const up = await uploadFastInvoice(venueId, uri, filename, 'image/jpeg');
