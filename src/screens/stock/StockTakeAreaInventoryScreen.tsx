@@ -2407,6 +2407,9 @@ try {
 
       setSubmittingArea(true);
       try {
+        const _windowStartMs = startedAtMs ?? Date.now();
+        const _windowMs = Date.now() - _windowStartMs;
+        const windowHours = _windowMs > 0 ? _windowMs / (1000 * 60 * 60) : 0;
         await ensureAreaStarted();
 
         // Write all items from localQty — entered items use their value, unset items get 0
