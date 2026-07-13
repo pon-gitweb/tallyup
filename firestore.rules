@@ -923,10 +923,6 @@ service cloud.firestore {
         allow read: if isVenueMember(venueId);
       }
 
-      match /areas/{areaId}/items/{itemId} {
-        allow read: if isVenueMember(venueId);
-      }
-
       match /sessions/{sessionId} {
         allow get, list: if isVenueMember(venueId);
         allow create, update: if isVenueMember(venueId)
