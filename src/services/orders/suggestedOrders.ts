@@ -311,6 +311,28 @@ export async function buildSuggestedOrdersInMemory(
     }
   }
 
+  // Calculate actual cycle duration from area lastConfirmedAt timestamps
+  let cycleDays = 7;
+  try {
+    let latestConfirmedMs = 0;
+    for (const dep of depsSnap.docs) {
+      const areasSnap2 = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
+      areasSnap2.forEach(a => {
+        const lca = (a.data() as any)?.lastConfirmedAt;
+        const ms = lca?.toMillis?.() ?? (typeof lca === 'number' ? lca : 0);
+        if (ms > latestConfirmedMs) latestConfirmedMs = ms;
+      });
+    }
+    if (latestConfirmedMs > 0) {
+      const daysSince = (Date.now() - latestConfirmedMs) / (1000 * 60 * 60 * 24);
+      cycleDays = Math.min(90, Math.max(1, Math.round(daysSince)));
+    }
+  } catch {}
+
+  const hasSalesData = Object.values(soldByDept).some(dept =>
+    Object.values(dept).some(qty => qty > 0)
+  );
+
   const buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }> = {};
   const unassigned: { lines: SuggestedLine[] } = { lines: [] };
   const intelligence: SuggestedLine[] = [];
@@ -358,7 +380,6 @@ export async function buildSuggestedOrdersInMemory(
             : Math.round(needed))
         : 0;
 
-      const cycleDays = 7;
       const totalSold = n((soldByDept[depId] || {})[pid], 0);
       const velocityPerDay = totalSold > 0 && cycleDays > 0
         ? Math.round((totalSold / cycleDays) * 10) / 10
@@ -433,6 +454,8 @@ export async function buildSuggestedOrdersInMemory(
     totalLines,
     generatedAt: new Date().toISOString(),
     stockCycleKey: stockCycleKey || null,
+    cycleDays,
+    hasSalesData,
   };
 
   return {

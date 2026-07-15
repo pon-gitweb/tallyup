@@ -721,70 +721,110 @@ export default function SuggestedOrderScreen(){
 
                 {intelligence.length > 0 && (
                   <View style={{ marginTop: 20, gap: 8, width: '100%' }}>
-                    {intelligence.filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low').length > 0 && (
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
-                        Worth watching
-                      </Text>
-                    )}
-                    {intelligence
-                      .filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low')
-                      .sort((a:any, b:any) => (a.daysOfCover ?? 99) - (b.daysOfCover ?? 99))
-                      .map((item:any) => (
-                        <View key={item.productId} style={{
-                          backgroundColor: item.coverStatus === 'critical' ? '#fef2f2' : '#fffbeb',
-                          borderRadius: 10,
-                          padding: 12,
-                          borderLeftWidth: 3,
-                          borderLeftColor: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b',
-                        }}>
-                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>
-                            {item.productName}
-                          </Text>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                            <Text style={{ fontSize: 12, color: '#6b7280' }}>
-                              On hand: {item.onHandQty} · PAR: {item.usedPar}
-                            </Text>
-                            {item.daysOfCover !== null && (
-                              <Text style={{
-                                fontSize: 12, fontWeight: '700',
-                                color: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b',
-                              }}>
-                                ~{item.daysOfCover}d cover
-                              </Text>
-                            )}
-                          </View>
-                          {item.velocityPerDay !== null && (
-                            <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                              Using ~{item.velocityPerDay}/day · PAR covers normal usage
-                              {item.coverStatus === 'critical' ? ' — consider ordering soon' : ''}
-                            </Text>
-                          )}
-                        </View>
-                      ))
-                    }
 
-                    {intelligence.filter((i:any) => i.coverStatus === 'ok').length > 0 && (
-                      <View style={{ marginTop: 8 }}>
+                    {!snapshot?._meta?.hasSalesData && (
+                      <View style={{
+                        backgroundColor: '#f0f9ff',
+                        borderRadius: 10,
+                        padding: 12,
+                        borderLeftWidth: 3,
+                        borderLeftColor: '#1b4f72',
+                        marginBottom: 8,
+                      }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1b4f72' }}>
+                          No sales data this cycle
+                        </Text>
+                        <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>
+                          Connect your POS or upload a sales report to see velocity and days-of-cover intelligence.
+                        </Text>
+                      </View>
+                    )}
+
+                    {intelligence.filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low').length > 0 && (
+                      <>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
-                          Well covered
+                          Worth watching
                         </Text>
                         {intelligence
-                          .filter((i:any) => i.coverStatus === 'ok')
+                          .filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low')
+                          .sort((a:any, b:any) => (a.daysOfCover ?? 99) - (b.daysOfCover ?? 99))
                           .map((item:any) => (
                             <View key={item.productId} style={{
-                              flexDirection: 'row', justifyContent: 'space-between',
-                              paddingVertical: 8,
-                              borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+                              backgroundColor: item.coverStatus === 'critical' ? '#fef2f2' : '#fffbeb',
+                              borderRadius: 10, padding: 12,
+                              borderLeftWidth: 3,
+                              borderLeftColor: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b',
+                              marginBottom: 6,
                             }}>
-                              <Text style={{ fontSize: 13, color: '#111827', flex: 1 }}>{item.productName}</Text>
-                              <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: '600' }}>
-                                {item.daysOfCover !== null ? `~${item.daysOfCover}d` : '✓'}
-                              </Text>
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>{item.productName}</Text>
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                                <Text style={{ fontSize: 12, color: '#6b7280' }}>On hand: {item.onHandQty} · PAR: {item.usedPar}</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b' }}>
+                                  ~{item.daysOfCover}d cover
+                                </Text>
+                              </View>
+                              {item.velocityPerDay !== null && (
+                                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                                  Using ~{item.velocityPerDay}/day · PAR covers normal usage{item.coverStatus === 'critical' ? ' — consider ordering soon' : ''}
+                                </Text>
+                              )}
                             </View>
                           ))
                         }
-                      </View>
+                      </>
                     )}
+
+                    {intelligence.filter((i:any) => i.coverStatus === 'ok').length > 0 && (
+                      <>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }}>
+                          Well covered
+                        </Text>
+                        {intelligence.filter((i:any) => i.coverStatus === 'ok').map((item:any) => (
+                          <View key={item.productId} style={{
+                            flexDirection: 'row', justifyContent: 'space-between',
+                            paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+                          }}>
+                            <Text style={{ fontSize: 13, color: '#111827', flex: 1 }}>{item.productName}</Text>
+                            <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: '600' }}>
+                              {item.daysOfCover !== null ? '~' + item.daysOfCover + 'd' : 'OK'}
+                            </Text>
+                          </View>
+                        ))}
+                      </>
+                    )}
+
+                    {intelligence.filter((i:any) => i.coverStatus === 'unknown').length > 0 && (
+                      <>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }}>
+                          Stock on hand vs PAR
+                        </Text>
+                        {intelligence
+                          .filter((i:any) => i.coverStatus === 'unknown')
+                          .sort((a:any, b:any) => {
+                            const aRatio = (a.onHandQty ?? 0) / (a.usedPar ?? 6);
+                            const bRatio = (b.onHandQty ?? 0) / (b.usedPar ?? 6);
+                            return aRatio - bRatio;
+                          })
+                          .map((item:any) => {
+                            const ratio = (item.onHandQty ?? 0) / (item.usedPar ?? 6);
+                            const col = ratio < 0.5 ? '#dc2626' : ratio < 1 ? '#c47b2b' : '#16a34a';
+                            return (
+                              <View key={item.productId} style={{
+                                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                                paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+                              }}>
+                                <Text style={{ fontSize: 13, color: '#111827', flex: 1 }}>{item.productName}</Text>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={{ fontSize: 13, fontWeight: '700', color: col }}>{item.onHandQty ?? 0} on hand</Text>
+                                  <Text style={{ fontSize: 11, color: '#6b7280' }}>PAR: {item.usedPar}</Text>
+                                </View>
+                              </View>
+                            );
+                          })
+                        }
+                      </>
+                    )}
+
                   </View>
                 )}
               </>
