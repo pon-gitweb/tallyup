@@ -56,33 +56,37 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
   const [hits, setHits] = useState<ProductHit[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Fetch product hits by name prefix
+  // Load all products once and filter client-side \u2014 avoids case-sensitivity issue
+  // with Firestore orderBy prefix queries
   useEffect(() => {
-    let stop=false;
+    let stop = false;
     (async () => {
       if (!venueId || !term.trim()) { setHits([]); return; }
       setLoading(true);
       try {
         const db = getFirestore(getApp());
         const col = collection(db, 'venues', venueId, 'products');
-        const q = query(col, orderBy('name'), startAt(term), endAt(term + '\uf8ff'), limit(25));
-        const snap = await getDocs(q);
+        const snap = await getDocs(query(col, limit(500)));
         if (stop) return;
+        const search = term.trim().toLowerCase();
         const list: ProductHit[] = [];
         snap.forEach(d => {
-          const x:any = d.data() || {};
-          list.push({
-            id: d.id,
-            name: x.name ?? '(unnamed)',
-            packSize: x.packSize ?? x.pack?.size ?? null,
-            packUnit: x.packUnit ?? x.pack?.unit ?? null,
-            packPrice: x.packPrice ?? x.price ?? null,
-            supplierName: x.supplierName ?? null,
-          });
+          const x: any = d.data() || {};
+          const name: string = x.name ?? '(unnamed)';
+          if (name.toLowerCase().includes(search)) {
+            list.push({
+              id: d.id,
+              name,
+              packSize: x.packSize ?? x.pack?.size ?? null,
+              packUnit: x.packUnit ?? x.pack?.unit ?? null,
+              packPrice: x.packPrice ?? x.price ?? null,
+              supplierName: x.supplierName ?? null,
+            });
+          }
         });
-        setHits(list);
-      } catch {
-        setHits([]);
+        if (!stop) setHits(list.slice(0, 25).sort((a, b) => a.name.localeCompare(b.name)));
+      } catch (e) {
+        if (!stop) setHits([]);
       } finally {
         if (!stop) setLoading(false);
       }
