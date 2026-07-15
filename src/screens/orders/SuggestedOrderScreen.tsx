@@ -691,9 +691,42 @@ export default function SuggestedOrderScreen(){
             )}
           </View>
         )}
+        {intelligence.length > 0 && rows.length > 0 && (
+          <View style={{ marginHorizontal: 16, marginBottom: 16 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+              Stock intelligence
+            </Text>
+            {intelligence.filter((i:any) => i.coverStatus === 'unknown').length > 0 && (
+              <View style={{ backgroundColor: '#f9fafb', borderRadius: 12, padding: 12, marginBottom: 8 }}>
+                <Text style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>
+                  No sales data this cycle — showing on hand vs PAR
+                </Text>
+                {intelligence
+                  .filter((i:any) => i.coverStatus === 'unknown')
+                  .sort((a:any, b:any) => (a.onHandQty ?? 0) - (b.onHandQty ?? 0))
+                  .map((item:any) => {
+                    const ratio = (item.onHandQty ?? 0) / (item.usedPar ?? 6);
+                    const colour = ratio < 0.5 ? '#dc2626' : ratio < 1 ? '#c47b2b' : '#16a34a';
+                    return (
+                      <View key={item.productId} style={{
+                        flexDirection: 'row', justifyContent: 'space-between',
+                        paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#e5e7eb'
+                      }}>
+                        <Text style={{ fontSize: 13, color: '#0b132b', flex: 1 }}>{item.productName}</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: colour }}>
+                          {item.onHandQty ?? 0} / PAR {item.usedPar}
+                        </Text>
+                      </View>
+                    );
+                  })
+                }
+              </View>
+            )}
+          </View>
+        )}
       </View>
     );
-  },[snapshot,selectedDeptId,depts]);
+  },[snapshot,selectedDeptId,depts,intelligence,rows]);
 
   return (
     <View style={S.wrap}>
