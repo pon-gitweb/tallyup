@@ -164,7 +164,7 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
               <div className={styles.editRow}>
                 <select
                   className={styles.editInput}
-                  defaultValue={venue?.country ?? ''}
+                  value={venue?.country ?? ''}
                   autoFocus
                   onChange={async (e) => {
                     await updateDoc(doc(db, 'venues', venueId), { country: e.target.value })

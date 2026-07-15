@@ -148,6 +148,16 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
     if (!name) return
     await addDoc(collection(db, 'venues', venueId, 'departments', deptId, 'areas'), { name, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
     setNewAreaName(''); setAddingArea(null)
+
+    // Manually refresh areas for this department — onSnapshot only watches departments,
+    // not subcollection areas, so new areas don't appear automatically
+    const areaSnap = await getDocs(
+      query(collection(db, 'venues', venueId, 'departments', deptId, 'areas'), orderBy('createdAt', 'asc'))
+    )
+    setStructure(prev => prev.map(d => d.id === deptId
+      ? { ...d, areas: areaSnap.docs.map(a => ({ id: a.id, name: (a.data() as any).name || a.id })) }
+      : d
+    ))
   }
 
   async function renameDept(deptId: string, name: string) {
