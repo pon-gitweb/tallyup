@@ -1,4 +1,6 @@
 // Identical style to products: POST to Express with storage fullPath
+import { getAuth } from 'firebase/auth';
+
 type ProcessInvoicesCsvArgs = { venueId: string; orderId: string; storagePath: string };
 type ParsedInvoicePayload = any;
 
@@ -7,10 +9,13 @@ const BASE = ((typeof process !== 'undefined' && (process as any).env?.EXPO_PUBL
   ? String((process as any).env.EXPO_PUBLIC_AI_URL)
   : _FALLBACK).replace(/\/+$/, '');
 
-async function postJson(url:string, body:any) {
+async function postJson(url: string, body: any) {
+  const idToken = await getAuth().currentUser?.getIdToken().catch(() => null);
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (idToken) headers['authorization'] = `Bearer ${idToken}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   return res;

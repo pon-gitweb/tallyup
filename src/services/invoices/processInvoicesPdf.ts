@@ -1,3 +1,5 @@
+import { getAuth } from 'firebase/auth';
+
 const API_BASE =
   process.env.EXPO_PUBLIC_AI_URL ||
   'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
@@ -15,9 +17,13 @@ export async function processInvoicesPdfREST(input: {
   orderId: string;
   storagePath: string;
 }): Promise<PdfProcessResult> {
+  const idToken = await getAuth().currentUser?.getIdToken().catch(() => null);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (idToken) headers['authorization'] = `Bearer ${idToken}`;
+
   const res = await fetch(`${API_BASE}/api/process-invoices-pdf`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(input),
   });
 
