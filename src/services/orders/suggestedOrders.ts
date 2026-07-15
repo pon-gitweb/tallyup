@@ -204,6 +204,7 @@ export async function buildSuggestedOrdersInMemory(
     supplierName?: string | undefined;
     packSize?: number | null;
     cost?: number;
+    category?: string;
   };
   const prodMeta: Record<string, ProdMeta> = {};
   productsSnap.forEach((d) => {
@@ -224,6 +225,7 @@ export async function buildSuggestedOrdersInMemory(
       supplierName: sname,
       packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
       cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
+      category: s(v?.category || v?.categorySuggested || ''),
     };
   });
 
@@ -253,11 +255,13 @@ export async function buildSuggestedOrdersInMemory(
         const v: any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
         if (!pid) return;
-        // Skip items never counted — lastCount=null means unknown, not zero.
-        // Only items with lastCountAt set have been genuinely counted; items
-        // counted as 0 still appear (they're genuinely empty) and remain included.
-        if (!v?.lastCountAt) return;
-        const qty = n(v?.lastCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
+        // Include item if it has ever been counted (lastCount is a number)
+        // OR if it has a confirmedCount from a completed stocktake.
+        // Skip only if truly never interacted with.
+        const hasCount = typeof v?.lastCount === 'number' || typeof v?.confirmedCount === 'number';
+        if (!hasCount) return;
+        const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
+        const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
         onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
       });
     }
@@ -281,7 +285,16 @@ export async function buildSuggestedOrdersInMemory(
           : Number.isFinite(meta.par)
           ? Number(meta.par)
           : undefined;
-      const usedPar = Number.isFinite(parDeptRaw) ? Number(parDeptRaw) : defaultPar;
+      const categoryPar = (() => {
+        const cat = (meta.category || '').toLowerCase();
+        if (cat.includes('beer') || cat.includes('cider') || cat.includes('rtd')) return 12;
+        if (cat.includes('spirit') || cat.includes('whisky') || cat.includes('vodka') || cat.includes('gin') || cat.includes('rum')) return 6;
+        if (cat.includes('wine') || cat.includes('champagne') || cat.includes('prosecco')) return 6;
+        if (cat.includes('non') || cat.includes('soft') || cat.includes('water') || cat.includes('juice')) return 12;
+        if (cat.includes('cocktail') || cat.includes('mix') || cat.includes('syrup')) return 4;
+        return defaultPar;
+      })();
+      const usedPar = Number.isFinite(parDeptRaw) ? Number(parDeptRaw) : categoryPar;
 
       const onHandQty = n(onHandDept[pid], 0);
       const needed = Math.max(0, usedPar - onHandQty);
