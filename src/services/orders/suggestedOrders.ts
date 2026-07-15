@@ -260,25 +260,21 @@ export async function buildSuggestedOrdersInMemory(
       itemsSnap.forEach((it) => {
         const v: any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
-        const itemName = s(v?.name || '').toLowerCase();
+        const itemName = s(v?.name || '').toLowerCase().trim();
 
-        // Include item if it has ever been counted (lastCount is a number)
-        // OR if it has a confirmedCount from a completed stocktake.
-        // Skip only if truly never interacted with.
         const hasCount = typeof v?.lastCount === 'number' || typeof v?.confirmedCount === 'number';
         if (!hasCount) return;
+
         const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
         const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
         const soldQty = n(v?.soldQty, 0);
 
         if (pid) {
-          // Linked item — index by productId
           onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
           soldByDept[depId] = soldByDept[depId] || {};
           soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldQty;
         } else if (itemName) {
-          // Unlinked item — index by name for name-based matching
-          const nameKey = `name:${itemName}`;
+          const nameKey = `__name__${itemName}`;
           onHand[depId][nameKey] = (onHand[depId][nameKey] || 0) + qty;
           soldByDept[depId] = soldByDept[depId] || {};
           soldByDept[depId][nameKey] = (soldByDept[depId][nameKey] || 0) + soldQty;
@@ -290,23 +286,28 @@ export async function buildSuggestedOrdersInMemory(
   // Build name → productId map for unlinked item resolution
   const productIdByNameKey: Record<string, string> = {};
   productsSnap.forEach(d => {
-    const name = s((d.data() as any)?.name || '').toLowerCase();
-    if (name) productIdByNameKey[`name:${name}`] = d.id;
+    const name = s((d.data() as any)?.name || '').toLowerCase().trim();
+    if (name) productIdByNameKey[`__name__${name}`] = d.id;
   });
 
-  // Resolve name-keyed onHand entries to productIds where possible
+  // Resolve name-keyed onHand entries to productIds where possible.
+  // If the name matches a catalogue product, merge into that product's bucket.
+  // If not, keep the __name__ key and add a prodMeta stub so the item still
+  // appears in the intelligence array (don't silently discard counted items).
   for (const depId of Object.keys(onHand)) {
     for (const key of Object.keys(onHand[depId])) {
-      if (key.startsWith('name:')) {
-        const pid = productIdByNameKey[key];
-        if (pid) {
-          onHand[depId][pid] = (onHand[depId][pid] || 0) + onHand[depId][key];
-          if (soldByDept[depId]?.[key]) {
-            soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldByDept[depId][key];
-          }
+      if (!key.startsWith('__name__')) continue;
+      const pid = productIdByNameKey[key];
+      if (pid) {
+        onHand[depId][pid] = (onHand[depId][pid] || 0) + onHand[depId][key];
+        if (soldByDept[depId]?.[key]) {
+          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldByDept[depId][key];
         }
         delete onHand[depId][key];
         if (soldByDept[depId]?.[key]) delete soldByDept[depId][key];
+      } else if (!prodMeta[key]) {
+        // No catalogue match — synthesize a display name from the raw item name
+        prodMeta[key] = { name: key.slice(8) }; // strip '__name__' prefix
       }
     }
   }
