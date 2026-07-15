@@ -2504,14 +2504,18 @@ try {
         const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
         const isOnline = (netState as any).isConnected === true && (netState as any).isInternetReachable !== false;
 
-        if (finalized) {
-          showSuccess('Department complete — nice work!');
-        } else if (isOnline) {
-          showSuccess(`${areaName || 'Area'} submitted · ${durationMsg}`);
+        if (!finalized) {
+          // Navigate first — immediate response feels faster
+          nav.navigate('Areas' as never, { departmentId } as never);
+          if (isOnline) {
+            showSuccess(`${areaName || 'Area'} submitted · ${durationMsg}`);
+          } else {
+            showInfo(`${areaName || 'Area'} saved locally · ${durationMsg} · will sync when online`);
+          }
         } else {
-          showInfo(`${areaName || 'Area'} saved locally · ${durationMsg} · will sync when online`);
+          // Department complete — maybeFinalizeDepartment handles navigation to summary
+          showSuccess('Department complete — nice work!');
         }
-        if (!finalized) nav.navigate('Areas' as never, { departmentId } as never);
       } catch (e: any) {
         toastService.error(e?.message ?? 'Could not complete area.');
       } finally {
