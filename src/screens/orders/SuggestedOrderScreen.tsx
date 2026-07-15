@@ -75,6 +75,7 @@ export default function SuggestedOrderScreen(){
   const [loadError,setLoadError]=useState(false);
   const [rows,setRows]=useState<BucketRow[]>([]);
   const [snapshot,setSnapshot]=useState<any>(null);
+  const [intelligence,setIntelligence]=useState<any[]>([]);
 
   const [existingKeys,setExistingKeys]=useState<Set<string>>(new Set());
   const [supplierPreview,setSupplierPreview]=useState<any>(null);
@@ -126,7 +127,8 @@ export default function SuggestedOrderScreen(){
     });
     const unassigned={lines:unPool};
     const meta = compat && compat._meta ? compat._meta : null;
-    return {buckets:real,unassigned,_meta:meta};
+    const intelligence = Array.isArray(compat?.intelligence) ? compat.intelligence : [];
+    return {buckets:real,unassigned,_meta:meta,intelligence};
   },[]);
 
   // Real per-cycle dedupe: read suggestionKey set from Firestore, scoped by stockCycleKey when available.
@@ -250,6 +252,7 @@ export default function SuggestedOrderScreen(){
     const sorted=tmp.filter(r=>r.id!=='unassigned').sort((a,b)=>(b.itemsCount||0)-(a.itemsCount||0));
     setRows(uIdx>=0?[tmp[uIdx],...sorted]:sorted);
     setSnapshot({buckets,unassigned,_meta});
+    setIntelligence(Array.isArray(snapCompat?.intelligence) ? snapCompat.intelligence : []);
   },[db,venueId,selectedDeptId]);
 
   const doRefreshRaw=useCallback(async()=>{
@@ -706,15 +709,84 @@ export default function SuggestedOrderScreen(){
           <View style={S.empty}>
             {loadError ? (
               <>
-                <Text style={S.emptyTitle}>Couldn’t load suggestions</Text>
+                <Text style={S.emptyTitle}>Couldn't load suggestions</Text>
                 <Text style={S.emptyText}>Check your connection and pull down to try again.</Text>
               </>
             ) : (
               <>
-                <Text style={S.emptyTitle}>All items are at or above PAR</Text>
+                <Text style={S.emptyTitle}>You're well stocked right now.</Text>
                 <Text style={S.emptyText}>
-                  Based on your most recent stock takes and per-dept PARs, there’s nothing to top up right now.
+                  All items are at or above PAR. Based on your recent usage, here's how long your stock will last.
                 </Text>
+
+                {intelligence.length > 0 && (
+                  <View style={{ marginTop: 20, gap: 8, width: '100%' }}>
+                    {intelligence.filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low').length > 0 && (
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                        Worth watching
+                      </Text>
+                    )}
+                    {intelligence
+                      .filter((i:any) => i.coverStatus === 'critical' || i.coverStatus === 'low')
+                      .sort((a:any, b:any) => (a.daysOfCover ?? 99) - (b.daysOfCover ?? 99))
+                      .map((item:any) => (
+                        <View key={item.productId} style={{
+                          backgroundColor: item.coverStatus === 'critical' ? '#fef2f2' : '#fffbeb',
+                          borderRadius: 10,
+                          padding: 12,
+                          borderLeftWidth: 3,
+                          borderLeftColor: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b',
+                        }}>
+                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>
+                            {item.productName}
+                          </Text>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                            <Text style={{ fontSize: 12, color: '#6b7280' }}>
+                              On hand: {item.onHandQty} · PAR: {item.usedPar}
+                            </Text>
+                            {item.daysOfCover !== null && (
+                              <Text style={{
+                                fontSize: 12, fontWeight: '700',
+                                color: item.coverStatus === 'critical' ? '#dc2626' : '#c47b2b',
+                              }}>
+                                ~{item.daysOfCover}d cover
+                              </Text>
+                            )}
+                          </View>
+                          {item.velocityPerDay !== null && (
+                            <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                              Using ~{item.velocityPerDay}/day · PAR covers normal usage
+                              {item.coverStatus === 'critical' ? ' — consider ordering soon' : ''}
+                            </Text>
+                          )}
+                        </View>
+                      ))
+                    }
+
+                    {intelligence.filter((i:any) => i.coverStatus === 'ok').length > 0 && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                          Well covered
+                        </Text>
+                        {intelligence
+                          .filter((i:any) => i.coverStatus === 'ok')
+                          .map((item:any) => (
+                            <View key={item.productId} style={{
+                              flexDirection: 'row', justifyContent: 'space-between',
+                              paddingVertical: 8,
+                              borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+                            }}>
+                              <Text style={{ fontSize: 13, color: '#111827', flex: 1 }}>{item.productName}</Text>
+                              <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: '600' }}>
+                                {item.daysOfCover !== null ? `~${item.daysOfCover}d` : '✓'}
+                              </Text>
+                            </View>
+                          ))
+                        }
+                      </View>
+                    )}
+                  </View>
+                )}
               </>
             )}
           </View>

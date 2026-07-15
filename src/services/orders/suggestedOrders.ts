@@ -26,6 +26,11 @@ export type SuggestedLine = {
   deptId?: string | null;
   deptName?: string | null;
   qtyDept?: number | null;
+  onHandQty?: number;
+  usedPar?: number;
+  velocityPerDay?: number | null;
+  daysOfCover?: number | null;
+  coverStatus?: 'critical' | 'low' | 'ok' | 'unknown';
 };
 
 /** Re-usable: turn any Firestore timestamp/number/string into YYYYMMDD-HHMMSS (UTC). */
@@ -232,6 +237,7 @@ export async function buildSuggestedOrdersInMemory(
   // Per-dept on-hand ONLY from items that exist in that department
   dlog('reading departments/areas/items');
   const onHand: Record<string, Record<string, number>> = {};
+  const soldByDept: Record<string, Record<string, number>> = {};
   for (const dep of depsSnap.docs) {
     const depId = dep.id;
     onHand[depId] = onHand[depId] || {};
@@ -263,12 +269,15 @@ export async function buildSuggestedOrdersInMemory(
         const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
         const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
         onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
+        soldByDept[depId] = soldByDept[depId] || {};
+        soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + n(v?.soldQty, 0);
       });
     }
   }
 
   const buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }> = {};
   const unassigned: { lines: SuggestedLine[] } = { lines: [] };
+  const intelligence: SuggestedLine[] = [];
 
   for (const dep of departments) {
     const depId = dep.id;
@@ -298,7 +307,7 @@ export async function buildSuggestedOrdersInMemory(
 
       const onHandQty = n(onHandDept[pid], 0);
       const needed = Math.max(0, usedPar - onHandQty);
-      if (needed <= 0) continue;
+      const needsOrder = needed > 0;
 
       const sid = s(meta.supplierId || '');
       const sname = s(
@@ -307,10 +316,25 @@ export async function buildSuggestedOrdersInMemory(
       );
       const pack = Number.isFinite(meta.packSize) ? Number(meta.packSize) : null;
       const cost = n(meta.cost, 0);
-      const qtyDept =
-        pack && pack > 0 && roundToPack
-          ? Math.ceil(needed / pack) * pack
-          : Math.round(needed);
+      const qtyDept = needsOrder
+        ? (pack && pack > 0 && roundToPack
+            ? Math.ceil(needed / pack) * pack
+            : Math.round(needed))
+        : 0;
+
+      const cycleDays = 7;
+      const totalSold = n((soldByDept[depId] || {})[pid], 0);
+      const velocityPerDay = totalSold > 0 && cycleDays > 0
+        ? Math.round((totalSold / cycleDays) * 10) / 10
+        : null;
+      const daysOfCover = velocityPerDay && velocityPerDay > 0 && onHandQty > 0
+        ? Math.round(onHandQty / velocityPerDay)
+        : null;
+      const coverStatus: SuggestedLine['coverStatus'] =
+        daysOfCover === null ? 'unknown'
+        : daysOfCover <= 2 ? 'critical'
+        : daysOfCover <= 7 ? 'low'
+        : 'ok';
 
       const line: SuggestedLine = {
         productId: pid,
@@ -329,13 +353,21 @@ export async function buildSuggestedOrdersInMemory(
         deptId: depId,
         deptName: dep.name,
         qtyDept,
+        onHandQty,
+        usedPar,
+        velocityPerDay,
+        daysOfCover,
+        coverStatus,
       };
 
-      if (!sid) {
-        unassigned.lines.push(line);
-      } else {
-        if (!buckets[sid]) buckets[sid] = { supplierName: sname, lines: [] };
-        buckets[sid].lines.push(line);
+      intelligence.push(line);
+      if (needsOrder) {
+        if (!sid) {
+          unassigned.lines.push(line);
+        } else {
+          if (!buckets[sid]) buckets[sid] = { supplierName: sname, lines: [] };
+          buckets[sid].lines.push(line);
+        }
       }
     }
   }
@@ -370,6 +402,7 @@ export async function buildSuggestedOrdersInMemory(
   return {
     buckets,
     unassigned,
+    intelligence,
     _meta: meta,
   };
 }
