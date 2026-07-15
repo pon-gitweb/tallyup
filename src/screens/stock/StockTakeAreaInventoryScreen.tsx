@@ -1662,8 +1662,16 @@ function StockTakeAreaInventoryScreen() {
     const targetIdx = nextUncountedIdx > -1 ? nextUncountedIdx : -1;
     if (targetIdx === -1) { Keyboard.dismiss(); setFocusedInputId(null); return; }
     const nextId = filtered[targetIdx].id;
-    try { listRef.current?.scrollToIndex({ index: targetIdx + 1, animated: true }); } catch {}
     setTimeout(() => inputRefs.current[nextId]?.focus?.(), 80);
+    setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({
+          index: targetIdx,
+          animated: true,
+          viewPosition: 0.3,
+        });
+      } catch {}
+    }, 200);
   };
 
   const ensureAreaStarted = async () => {
@@ -3232,7 +3240,7 @@ const openHistory = throttleAction(async (item: Item) => {
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 110 : 0}
       >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <View style={{ flex: 1 }}>
