@@ -94,7 +94,7 @@ export default function EmailVerificationScreen({ navigation }: any) {
           disabled={checking}
         >
           {checking
-            ? <ActivityIndicator color={c.surface} />
+            ? <Text style={[styles.primaryBtnText, { color: c.surface, fontFamily: theme.fontBodySemiBold }]}>Checking...</Text>
             : <Text style={[styles.primaryBtnText, { color: c.surface, fontFamily: theme.fontBodySemiBold }]}>
                 ✓ I've verified my email
               </Text>

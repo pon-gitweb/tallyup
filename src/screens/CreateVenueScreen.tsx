@@ -18,6 +18,7 @@ export default function CreateVenueScreen() {
   const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
   const [country, setCountry] = useState<'NZ' | 'AU'>('NZ');
   const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState('');
   const [error, setError] = useState<string | null>(null);
   const navigation = useNavigation<any>();
 
@@ -30,10 +31,16 @@ export default function CreateVenueScreen() {
     if (!projectType) { setError('Please choose whether this is a venue or a festival.'); return; }
 
     setBusy(true);
+    setBusyMsg('Setting up your venue...');
     console.log('[CreateVenue] start', JSON.stringify({ name }));
 
     const timeoutId = setTimeout(() => {
+      setBusyMsg('Almost there...');
+    }, 4000);
+
+    const hardTimeoutId = setTimeout(() => {
       setBusy(false);
+      setBusyMsg('');
       Alert.alert(
         'Taking longer than usual',
         'Your project is being set up. Please wait a moment then reopen the app.'
@@ -109,6 +116,8 @@ export default function CreateVenueScreen() {
       }
 
       clearTimeout(timeoutId);
+      clearTimeout(hardTimeoutId);
+      setBusyMsg('');
 
       // Clear stale device state from any previous venue/account on this device.
       // lastKnownVenueType must reflect the NEW venue so the HomeRouter timeout
@@ -129,6 +138,8 @@ export default function CreateVenueScreen() {
       });
     } catch (e: any) {
       clearTimeout(timeoutId);
+      clearTimeout(hardTimeoutId);
+      setBusyMsg('');
       console.log('[CreateVenue] error', JSON.stringify({ code: e?.code || e?.name, msg: e?.message || String(e) }));
       showError(`Could not create project: ${e?.message || 'Missing or insufficient permissions.'}`);
     } finally {
@@ -307,8 +318,11 @@ export default function CreateVenueScreen() {
           }}
         >
           {busy
-            ? <ActivityIndicator color={c.surface} />
-            : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>Create project</Text>}
+            ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>{busyMsg || 'Creating...'}</Text>
+              </View>
+            : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>Create venue →</Text>}
         </TouchableOpacity>
 
         <TouchableOpacity
