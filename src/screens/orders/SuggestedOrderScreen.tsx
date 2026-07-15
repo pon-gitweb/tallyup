@@ -264,7 +264,7 @@ export default function SuggestedOrderScreen(){
       return;
     }
     try {
-      const compat:any=await OrdersService.buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:6 });
+      const compat:any=await OrdersService.buildSuggestedOrdersInMemory(venueId,{ roundToPack:true, defaultParIfMissing:1 });
       const graduated=normalizeCompat(compat);
       await computeRowsFromSnapshot(graduated);
       const cycleKey = graduated?._meta?.stockCycleKey || null;
