@@ -260,7 +260,8 @@ export async function buildSuggestedOrdersInMemory(
       itemsSnap.forEach((it) => {
         const v: any = it.data() || {};
         const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
-        if (!pid) return;
+        const itemName = s(v?.name || '').toLowerCase();
+
         // Include item if it has ever been counted (lastCount is a number)
         // OR if it has a confirmedCount from a completed stocktake.
         // Skip only if truly never interacted with.
@@ -268,10 +269,45 @@ export async function buildSuggestedOrdersInMemory(
         if (!hasCount) return;
         const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
         const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
-        onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
-        soldByDept[depId] = soldByDept[depId] || {};
-        soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + n(v?.soldQty, 0);
+        const soldQty = n(v?.soldQty, 0);
+
+        if (pid) {
+          // Linked item — index by productId
+          onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
+          soldByDept[depId] = soldByDept[depId] || {};
+          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldQty;
+        } else if (itemName) {
+          // Unlinked item — index by name for name-based matching
+          const nameKey = `name:${itemName}`;
+          onHand[depId][nameKey] = (onHand[depId][nameKey] || 0) + qty;
+          soldByDept[depId] = soldByDept[depId] || {};
+          soldByDept[depId][nameKey] = (soldByDept[depId][nameKey] || 0) + soldQty;
+        }
       });
+    }
+  }
+
+  // Build name → productId map for unlinked item resolution
+  const productIdByNameKey: Record<string, string> = {};
+  productsSnap.forEach(d => {
+    const name = s((d.data() as any)?.name || '').toLowerCase();
+    if (name) productIdByNameKey[`name:${name}`] = d.id;
+  });
+
+  // Resolve name-keyed onHand entries to productIds where possible
+  for (const depId of Object.keys(onHand)) {
+    for (const key of Object.keys(onHand[depId])) {
+      if (key.startsWith('name:')) {
+        const pid = productIdByNameKey[key];
+        if (pid) {
+          onHand[depId][pid] = (onHand[depId][pid] || 0) + onHand[depId][key];
+          if (soldByDept[depId]?.[key]) {
+            soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldByDept[depId][key];
+          }
+        }
+        delete onHand[depId][key];
+        if (soldByDept[depId]?.[key]) delete soldByDept[depId][key];
+      }
     }
   }
 
