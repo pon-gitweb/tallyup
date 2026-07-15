@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getAuth, signOut } from 'firebase/auth';
 import { db } from '../services/firebase';
 import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
@@ -11,6 +12,7 @@ import { useToast } from '../components/common/Toast';
 export default function CreateVenueScreen() {
   const c = useColours();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { showError } = useToast();
   const [name, setName] = useState('');
   const [projectType, setProjectType] = useState<'venue' | 'festival' | null>(null);
@@ -142,176 +144,189 @@ export default function CreateVenueScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: c.oat }}>
-      <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 12 }}>
-        Create a new project
-      </Text>
-      <Text style={{ color: c.slateMid, fontFamily: theme.fontBody, lineHeight: 20 }}>
-        Enter a name and choose what kind of project this is. We'll add default departments and areas; you can edit them later in Settings.
-      </Text>
-
-      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
-        What kind of project?
-      </Text>
-
-      <View style={styles.typeRow}>
-        <TouchableOpacity
-          onPress={() => { setProjectType('venue'); setError(null); }}
-          disabled={busy}
-          style={[
-            styles.typeCard,
-            {
-              backgroundColor: projectType === 'venue' ? c.deepBlue : c.surface,
-              borderColor: projectType === 'venue' ? c.deepBlue : c.border,
-            },
-          ]}
-        >
-          <Text style={{ fontSize: 28, marginBottom: 6 }}>🍺</Text>
-          <Text style={[
-            styles.typeLabel,
-            { fontFamily: theme.fontBodySemiBold, color: projectType === 'venue' ? '#ffffff' : c.missionSlate },
-          ]}>
-            Venue
-          </Text>
-          <Text style={[
-            { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
-            { color: projectType === 'venue' ? 'rgba(255,255,255,0.8)' : c.slateMid },
-          ]}>
-            Bar, restaurant, café, hotel
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => { setProjectType('festival'); setError(null); }}
-          disabled={busy}
-          style={[
-            styles.typeCard,
-            {
-              backgroundColor: projectType === 'festival' ? c.deepBlue : c.surface,
-              borderColor: projectType === 'festival' ? c.deepBlue : c.border,
-            },
-          ]}
-        >
-          <Text style={{ fontSize: 28, marginBottom: 6 }}>🎪</Text>
-          <Text style={[
-            styles.typeLabel,
-            { fontFamily: theme.fontBodySemiBold, color: projectType === 'festival' ? '#ffffff' : c.missionSlate },
-          ]}>
-            Festival
-          </Text>
-          <Text style={[
-            { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
-            { color: projectType === 'festival' ? 'rgba(255,255,255,0.8)' : c.slateMid },
-          ]}>
-            Single day, multi-day, or seasonal event
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
-        Country
-      </Text>
-
-      <View style={styles.chipRow}>
-        <TouchableOpacity
-          onPress={() => setCountry('NZ')}
-          disabled={busy}
-          style={[
-            styles.chip,
-            {
-              backgroundColor: country === 'NZ' ? c.deepBlue : c.surface,
-              borderColor: country === 'NZ' ? c.deepBlue : c.border,
-            },
-          ]}
-        >
-          <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'NZ' ? c.primaryText : c.missionSlate }}>
-            New Zealand
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setCountry('AU')}
-          disabled={busy}
-          style={[
-            styles.chip,
-            {
-              backgroundColor: country === 'AU' ? c.deepBlue : c.surface,
-              borderColor: country === 'AU' ? c.deepBlue : c.border,
-            },
-          ]}
-        >
-          <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'AU' ? c.primaryText : c.missionSlate }}>
-            Australia
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
-        {projectType === 'festival' ? 'Festival name' : projectType === 'venue' ? 'Venue name' : 'Project name'}
-      </Text>
-
-      <TextInput
-        placeholder={
-          projectType === 'festival' ? 'e.g. Shipwrecked 2027'
-          : projectType === 'venue' ? 'e.g. Harbourside Bar'
-          : 'e.g. Harbourside Bar or Shipwrecked 2027'
-        }
-        placeholderTextColor={c.slateMid}
-        value={name}
-        onChangeText={(t) => { setName(t); setError(null); }}
-        style={{
-          backgroundColor: c.surface,
-          color: c.navy,
-          paddingHorizontal: 12,
-          paddingVertical: 12,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: c.border,
-          marginBottom: 20,
-          fontFamily: theme.fontBody,
-          fontSize: 15,
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: c.oat }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingTop: insets.top + 16,
+          paddingBottom: insets.bottom + 24,
+          paddingHorizontal: 24,
         }}
-        autoCapitalize="words"
-        autoFocus
-        editable={!busy}
-      />
-
-      {error && (
-        <Text style={{ color: c.error, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
-          {error}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 12 }}>
+          Create a new project
         </Text>
-      )}
+        <Text style={{ color: c.slateMid, fontFamily: theme.fontBody, lineHeight: 20 }}>
+          Enter a name and choose what kind of project this is. We'll add default departments and areas; you can edit them later in Settings.
+        </Text>
 
-      <TouchableOpacity
-        onPress={handleCreate}
-        disabled={busy}
-        style={{
-          backgroundColor: busy ? c.border : c.deepBlue,
-          paddingVertical: 14,
-          borderRadius: 10,
-          alignItems: 'center',
-        }}
-      >
-        {busy
-          ? <ActivityIndicator color={c.surface} />
-          : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>Create project</Text>}
-      </TouchableOpacity>
+        <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+          What kind of project?
+        </Text>
 
-      <TouchableOpacity
-        onPress={handleBackToLogin}
-        disabled={busy}
-        style={{
-          marginTop: 24,
-          paddingVertical: 10,
-          borderRadius: 10,
-          alignItems: 'center',
-          borderColor: c.border,
-          borderWidth: 1,
-        }}
-      >
-        <Text style={{ color: c.slateMid, fontFamily: theme.fontBody }}>Back to Login</Text>
-      </TouchableOpacity>
-    </View>
+        <View style={styles.typeRow}>
+          <TouchableOpacity
+            onPress={() => { setProjectType('venue'); setError(null); }}
+            disabled={busy}
+            style={[
+              styles.typeCard,
+              {
+                backgroundColor: projectType === 'venue' ? c.deepBlue : c.surface,
+                borderColor: projectType === 'venue' ? c.deepBlue : c.border,
+              },
+            ]}
+          >
+            <Text style={{ fontSize: 28, marginBottom: 6 }}>🍺</Text>
+            <Text style={[
+              styles.typeLabel,
+              { fontFamily: theme.fontBodySemiBold, color: projectType === 'venue' ? '#ffffff' : c.missionSlate },
+            ]}>
+              Venue
+            </Text>
+            <Text style={[
+              { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
+              { color: projectType === 'venue' ? 'rgba(255,255,255,0.8)' : c.slateMid },
+            ]}>
+              Bar, restaurant, café, hotel
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => { setProjectType('festival'); setError(null); }}
+            disabled={busy}
+            style={[
+              styles.typeCard,
+              {
+                backgroundColor: projectType === 'festival' ? c.deepBlue : c.surface,
+                borderColor: projectType === 'festival' ? c.deepBlue : c.border,
+              },
+            ]}
+          >
+            <Text style={{ fontSize: 28, marginBottom: 6 }}>🎪</Text>
+            <Text style={[
+              styles.typeLabel,
+              { fontFamily: theme.fontBodySemiBold, color: projectType === 'festival' ? '#ffffff' : c.missionSlate },
+            ]}>
+              Festival
+            </Text>
+            <Text style={[
+              { fontSize: 12, textAlign: 'center', marginTop: 4, fontFamily: theme.fontBody },
+              { color: projectType === 'festival' ? 'rgba(255,255,255,0.8)' : c.slateMid },
+            ]}>
+              Single day, multi-day, or seasonal event
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+          Country
+        </Text>
+
+        <View style={styles.chipRow}>
+          <TouchableOpacity
+            onPress={() => setCountry('NZ')}
+            disabled={busy}
+            style={[
+              styles.chip,
+              {
+                backgroundColor: country === 'NZ' ? c.deepBlue : c.surface,
+                borderColor: country === 'NZ' ? c.deepBlue : c.border,
+              },
+            ]}
+          >
+            <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'NZ' ? c.primaryText : c.missionSlate }}>
+              New Zealand
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setCountry('AU')}
+            disabled={busy}
+            style={[
+              styles.chip,
+              {
+                backgroundColor: country === 'AU' ? c.deepBlue : c.surface,
+                borderColor: country === 'AU' ? c.deepBlue : c.border,
+              },
+            ]}
+          >
+            <Text style={{ fontFamily: theme.fontBodySemiBold, fontSize: 14, color: country === 'AU' ? c.primaryText : c.missionSlate }}>
+              Australia
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={{ color: c.missionSlate, marginTop: 20, marginBottom: 10, fontSize: 15, fontFamily: theme.fontBodySemiBold }}>
+          {projectType === 'festival' ? 'Festival name' : projectType === 'venue' ? 'Venue name' : 'Project name'}
+        </Text>
+
+        <TextInput
+          placeholder={
+            projectType === 'festival' ? 'e.g. Shipwrecked 2027'
+            : projectType === 'venue' ? 'e.g. Harbourside Bar'
+            : 'e.g. Harbourside Bar or Shipwrecked 2027'
+          }
+          placeholderTextColor={c.slateMid}
+          value={name}
+          onChangeText={(t) => { setName(t); setError(null); }}
+          style={{
+            backgroundColor: c.surface,
+            color: c.navy,
+            paddingHorizontal: 12,
+            paddingVertical: 12,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: c.border,
+            marginBottom: 20,
+            fontFamily: theme.fontBody,
+            fontSize: 15,
+          }}
+          autoCapitalize="words"
+          autoFocus
+          editable={!busy}
+        />
+
+        {error && (
+          <Text style={{ color: c.error, fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
+            {error}
+          </Text>
+        )}
+
+        <TouchableOpacity
+          onPress={handleCreate}
+          disabled={busy}
+          style={{
+            backgroundColor: busy ? c.border : c.deepBlue,
+            paddingVertical: 14,
+            borderRadius: 10,
+            alignItems: 'center',
+          }}
+        >
+          {busy
+            ? <ActivityIndicator color={c.surface} />
+            : <Text style={{ color: c.surface, fontWeight: '700', fontSize: 15, fontFamily: theme.fontBodySemiBold }}>Create project</Text>}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleBackToLogin}
+          disabled={busy}
+          style={{
+            marginTop: 24,
+            paddingVertical: 10,
+            borderRadius: 10,
+            alignItems: 'center',
+            borderColor: c.border,
+            borderWidth: 1,
+          }}
+        >
+          <Text style={{ color: c.slateMid, fontFamily: theme.fontBody }}>Back to Login</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
