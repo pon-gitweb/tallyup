@@ -104,7 +104,12 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       });
 
       if (result.attached) {
-        showSuccess(`Invoice photo matched to order ${result.orderId} — ${(parsed?.lines || []).length} lines reconciled.`);
+        if (result?.unmatchedLines?.length > 0) {
+          const names = result.unmatchedLines.map((l: any) => l.name).join(', ');
+          showInfo(`Invoice saved. ${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
+        } else {
+          showSuccess('✓ Invoice received and matched to your order.');
+        }
       } else if (hasLines) {
         showInfo(`Photo processed — ${parsed.lines.length} product lines found. Review in Invoices → Fast Receives Pending.`);
       } else {
@@ -211,7 +216,12 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       });
 
       if (result.attached) {
-        showSuccess(`Attached to order ${result.orderId} and sent for reconciliation.`);
+        if (result?.unmatchedLines?.length > 0) {
+          const names = result.unmatchedLines.map((l: any) => l.name).join(', ');
+          showInfo(`Invoice saved. ${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
+        } else {
+          showSuccess('✓ Invoice received and matched to your order.');
+        }
         onClose();
       } else {
         const nLines = Array.isArray(parsed?.lines) ? parsed.lines.length : 0;

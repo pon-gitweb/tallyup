@@ -29,12 +29,12 @@ async function updateStockAndCreateInvoice(
   venueId: string,
   orderId: string,
   uid: string | null,
-): Promise<string[]> {
+): Promise<{ warnings: string[]; unmatchedLines: Array<{name: string; qty: number}> }> {
   const warnings: string[] = [];
 
   // Read order header + lines
   const orderSnap = await getDoc(doc(db, 'venues', venueId, 'orders', orderId));
-  if (!orderSnap.exists()) return warnings;
+  if (!orderSnap.exists()) return { warnings, unmatchedLines: [] };
   const orderData = orderSnap.data() as any;
 
   const linesSnap = await getDocs(collection(db, 'venues', venueId, 'orders', orderId, 'lines'));
@@ -49,7 +49,7 @@ async function updateStockAndCreateInvoice(
     });
   });
 
-  if (orderLines.length === 0) return warnings;
+  if (orderLines.length === 0) return { warnings, unmatchedLines: [] };
 
   // Find matching area items across all departments and update stock
   try {
@@ -58,6 +58,7 @@ async function updateStockAndCreateInvoice(
     const isFestival = venueData?.venueType === 'festival';
     const stocktakeActive = !isFestival && !!venueData?.stocktakeActive;
     const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+    const matchedProductIds = new Set<string>();
     const stockBatch = writeBatch(db);
     let stockUpdates = 0;
 
@@ -77,6 +78,7 @@ async function updateStockAndCreateInvoice(
             (l.name && itemName && l.name.toLowerCase().trim() === itemName),
           );
           if (matchedLine && matchedLine.qty > 0) {
+            matchedProductIds.add(matchedLine.productId || matchedLine.name.toLowerCase());
             if (isFestival) {
               stockBatch.update(itemDoc.ref, {
                 lastCount: increment(matchedLine.qty),
@@ -125,6 +127,14 @@ async function updateStockAndCreateInvoice(
     warnings.push(`Stock update failed: ${e?.message || 'unknown error'}`);
   }
 
+  const unmatchedLines = orderLines.filter(l =>
+    !matchedProductIds.has(l.productId || l.name.toLowerCase())
+  ).map(l => ({ name: l.name, qty: l.qty }));
+
+  if (unmatchedLines.length > 0) {
+    console.log('[receive] unmatched lines:', unmatchedLines.map(l => l.name));
+  }
+
   // Create invoice document for this delivery
   try {
     const now = Timestamp.now();
@@ -169,7 +179,7 @@ async function updateStockAndCreateInvoice(
     warnings.push(`Invoice creation failed: ${e?.message || 'unknown error'}`);
   }
 
-  return warnings;
+  return { warnings, unmatchedLines };
 }
 
 async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:string; orderId:string; parsed: Parsed }) {
@@ -213,7 +223,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
   const saved = await saveReconciliation(venueId, orderId, reconciled);
 
   // 3) Update stock counts + create invoice document
-  const stockWarnings = await updateStockAndCreateInvoice(db, venueId, orderId, uid);
+  const { warnings: stockWarnings, unmatchedLines } = await updateStockAndCreateInvoice(db, venueId, orderId, uid);
 
   // 4) Mark invoiced (fully received + invoice created)
   await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
@@ -226,6 +236,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
   return {
     ok: true,
     reconciliationId: saved?.id || reconciled?.reconciliationId || null,
+    unmatchedLines: unmatchedLines.length > 0 ? unmatchedLines : undefined,
     ...(stockWarnings.length > 0 ? { stockUpdateWarnings: stockWarnings } : {}),
   };
 }

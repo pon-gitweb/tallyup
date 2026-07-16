@@ -97,7 +97,7 @@ function humanizeInvoiceError(err: any) {
     return 'The invoice reader had a temporary problem. Please try again, or receive manually if it keeps happening.';
   }
 
-  // Fallback to the raw message if it’s reasonably short; otherwise generic
+  // Fallback to the raw message if it's reasonably short; otherwise generic
   if (raw && raw.length <= 140) return raw;
   return 'Something went wrong while reading the invoice. Please try again or use Manual Receive.';
 }
@@ -495,7 +495,7 @@ export default function OrderDetailScreen() {
     if (!csvReview) return;
     autoConfirmedRef.current = true;
     try{
-      await OrdersService.finalizeReceiveFromCsv({
+      const result = await OrdersService.finalizeReceiveFromCsv({
         venueId,
         orderId,
         parsed: {
@@ -506,7 +506,17 @@ export default function OrderDetailScreen() {
           warnings: csvReview.warnings
         }
       });
-      showSuccess('✓ Invoice posted. Order marked received.');
+      if (result?.unmatchedLines?.length > 0) {
+        const names = result.unmatchedLines.map((l: any) => `• ${l.name} (${l.qty})`).join('\n');
+        showSuccess('✓ Invoice posted. Order marked received.');
+        Alert.alert(
+          `${result.unmatchedLines.length} line${result.unmatchedLines.length > 1 ? 's' : ''} not matched`,
+          `These invoice lines weren't found in your areas — stock wasn't updated for them:\n\n${names}\n\nAdd these products to an area to track them next time.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        showSuccess('✓ Invoice posted. Order marked received.');
+      }
       setReceiveOpen(false);
       setCsvReview(null);
       nav.goBack();
@@ -520,7 +530,7 @@ export default function OrderDetailScreen() {
   const postPdfReview = useCallback(async () => {
     if (!pdfReview) return;
     try{
-      await OrdersService.finalizeReceiveFromPdf({
+      const result = await OrdersService.finalizeReceiveFromPdf({
         venueId,
         orderId,
         parsed: {
@@ -531,7 +541,17 @@ export default function OrderDetailScreen() {
           warnings: pdfReview.warnings
         }
       });
-      showSuccess('✓ Invoice posted. Order marked received.');
+      if (result?.unmatchedLines?.length > 0) {
+        const names = result.unmatchedLines.map((l: any) => `• ${l.name} (${l.qty})`).join('\n');
+        showSuccess('✓ Invoice posted. Order marked received.');
+        Alert.alert(
+          `${result.unmatchedLines.length} line${result.unmatchedLines.length > 1 ? 's' : ''} not matched`,
+          `These invoice lines weren't found in your areas — stock wasn't updated for them:\n\n${names}\n\nAdd these products to an area to track them next time.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        showSuccess('✓ Invoice posted. Order marked received.');
+      }
       setReceiveOpen(false);
       setPdfReview(null);
       nav.goBack();
@@ -631,7 +651,7 @@ export default function OrderDetailScreen() {
                   if (weirdMsg) {
                     Alert.alert(
                       'Check before posting',
-                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn’t look right.`,
+                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn't look right.`,
                       [
                         { text:'Cancel', style:'cancel' },
                         { text:'Manual Receive', onPress:()=>setManualOpen(true) },
@@ -681,7 +701,7 @@ export default function OrderDetailScreen() {
                   if (weirdMsg) {
                     Alert.alert(
                       'Check before posting',
-                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn’t look right.`,
+                      `${weirdMsg}\n\nYou can go back to Manual Receive if this doesn't look right.`,
                       [
                         { text:'Cancel', style:'cancel' },
                         { text:'Manual Receive', onPress:()=>setManualOpen(true) },

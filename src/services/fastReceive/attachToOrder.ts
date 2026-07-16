@@ -44,11 +44,18 @@ export async function tryAttachToOrderOrSavePending(args: {
       confidence: parsed?.confidence ?? null,
       warnings: parsed?.warnings ?? [],
     };
-    const done = payload.invoice.source === 'csv'
+    const res = payload.invoice.source === 'csv'
       ? await finalizeReceiveFromCsv({ venueId, orderId, parsed: payload })
       : await finalizeReceiveFromPdf({ venueId, orderId, parsed: payload });
 
-    return { attached: !!done?.ok, orderId, savedPending: false };
+    return {
+      ok: res?.ok ?? false,
+      attached: !!res?.ok,
+      orderId,
+      savedPending: false,
+      unmatchedLines: res?.unmatchedLines,
+      error: res?.error,
+    };
   }
 
   // 3) If not found and caller forbids fallback, exit without duplicating pending
