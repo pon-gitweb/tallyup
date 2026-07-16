@@ -188,6 +188,61 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     console.log("[trackPriceChanges] committed", { venueId, ops, changed, created, invoiceId });
   }
 
+  // After batch.commit() — link area items to resolved products and update costPrice
+  if (Object.keys(productMap).length > 0) {
+    try {
+      const depsSnap = await db.collection(`venues/${venueId}/departments`).get();
+      const itemBatch = db.batch();
+      let itemOps = 0;
+
+      for (const dep of depsSnap.docs) {
+        const areasSnap = await db.collection(`venues/${venueId}/departments/${dep.id}/areas`).get();
+        for (const area of areasSnap.docs) {
+          const itemsSnap = await db
+            .collection(`venues/${venueId}/departments/${dep.id}/areas/${area.id}/items`)
+            .get();
+          for (const itemDoc of itemsSnap.docs) {
+            if (itemOps >= 400) break;
+            const item = itemDoc.data() as any;
+            const itemName = (item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+            for (const [lineName, resolvedProductId] of Object.entries(productMap)) {
+              const normLine = lineName.toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (itemName && normLine && (itemName === normLine || itemName.includes(normLine) || normLine.includes(itemName))) {
+                const prodSnap = await db.doc(`venues/${venueId}/products/${resolvedProductId}`).get();
+                const resolvedCostPrice = (prodSnap.data() as any)?.costPrice ?? null;
+
+                const updates: any = {
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                };
+                if (!item.productId && resolvedProductId) {
+                  updates.productId = resolvedProductId;
+                }
+                if (resolvedCostPrice && !item.costPrice) {
+                  updates.costPrice = resolvedCostPrice;
+                  updates.costPriceSource = 'invoice';
+                  updates.costPriceUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+                }
+                if (Object.keys(updates).length > 1) {
+                  itemBatch.update(itemDoc.ref, updates);
+                  itemOps++;
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (itemOps > 0) {
+        await itemBatch.commit();
+        console.log(`[trackPriceChanges] linked ${itemOps} area item(s) to venue products`);
+      }
+    } catch (e: any) {
+      console.log('[trackPriceChanges] area item linking failed (non-fatal):', e?.message);
+    }
+  }
+
   // FIX 3: Write supplier links to product/suppliers subcollection (best-effort)
   if (supplierId && supplierId !== "") {
     for (const line of priced) {
