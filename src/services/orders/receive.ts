@@ -10,7 +10,7 @@
 import { getApp } from 'firebase/app';
 import {
   getFirestore, doc, updateDoc, serverTimestamp,
-  collection, getDocs, getDoc, addDoc, increment, writeBatch, Timestamp,
+  collection, getDocs, getDoc, addDoc, setDoc, increment, writeBatch, Timestamp,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { reconcileInvoiceREST } from '../invoices/reconcile';
@@ -198,6 +198,43 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
     }
   } catch (e: any) {
     console.warn('[receive] duplicate check failed (continuing):', e?.message);
+  }
+
+  // 0b) Invoice-level dedup — prevent same invoice being processed twice
+  // Uses PO number (most reliable) or storage path as dedup key
+  const invoiceDedupeKey = (() => {
+    const po = (parsed?.invoice?.poNumber || '').toString().trim();
+    const path = (parsed?.invoice?.storagePath || '').toString().trim();
+    if (po && po.length > 2) return `po_${venueId}_${po.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
+    if (path) return `path_${venueId}_${path.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
+    return null;
+  })();
+
+  if (invoiceDedupeKey) {
+    try {
+      const dedupRef = doc(db, 'venues', venueId, 'processedInvoices', invoiceDedupeKey);
+      const dedupSnap = await getDoc(dedupRef);
+      if (dedupSnap.exists()) {
+        const existing = dedupSnap.data() as any;
+        console.log('[receive] duplicate invoice detected:', invoiceDedupeKey, existing);
+        return {
+          ok: false,
+          error: `This invoice has already been processed${existing.orderId ? ` (Order ${existing.orderId.slice(-6)})` : ''}. If this is a different delivery, ask your supplier for a new PO number.`,
+          duplicate: true,
+        };
+      }
+      // Mark as processing immediately to prevent race conditions
+      await setDoc(dedupRef, {
+        venueId,
+        orderId,
+        poNumber: parsed?.invoice?.poNumber || null,
+        storagePath: parsed?.invoice?.storagePath || null,
+        source: parsed?.invoice?.source || 'unknown',
+        processedAt: serverTimestamp(),
+      });
+    } catch (e: any) {
+      console.warn('[receive] invoice dedup check failed (continuing):', e?.message);
+    }
   }
 
   // 1) Reconcile on server (authoritative)

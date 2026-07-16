@@ -96,6 +96,9 @@ function humanizeInvoiceError(err: any) {
   if (lower.includes('http 500') || lower.includes('status 500')) {
     return 'The invoice reader had a temporary problem. Please try again, or receive manually if it keeps happening.';
   }
+  if (lower.includes('already been processed')) {
+    return raw;
+  }
 
   // Fallback to the raw message if it's reasonably short; otherwise generic
   if (raw && raw.length <= 140) return raw;
@@ -522,7 +525,15 @@ export default function OrderDetailScreen() {
       nav.goBack();
     }catch(e:any){
       autoConfirmedRef.current = false;
-      showError(humanizeInvoiceError(e));
+      if (e?.message?.includes('already been processed') || e?.duplicate) {
+        Alert.alert(
+          'Invoice already received',
+          e?.message || 'This invoice has already been processed for this venue.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        showError(humanizeInvoiceError(e));
+      }
     }
   }, [csvReview, venueId, orderId, nav, showSuccess, showError]);
 
@@ -556,7 +567,15 @@ export default function OrderDetailScreen() {
       setPdfReview(null);
       nav.goBack();
     }catch(e:any){
-      showError(humanizeInvoiceError(e));
+      if (e?.message?.includes('already been processed') || e?.duplicate) {
+        Alert.alert(
+          'Invoice already received',
+          e?.message || 'This invoice has already been processed for this venue.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        showError(humanizeInvoiceError(e));
+      }
     }
   }, [pdfReview, venueId, orderId, nav, showSuccess, showError]);
 
