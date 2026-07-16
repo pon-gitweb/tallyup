@@ -5,7 +5,13 @@ const API_BASE =
   'https://us-central1-tallyup-f1463.cloudfunctions.net/api';
 
 export type PdfProcessResult = {
-  invoice: { source: 'pdf'; storagePath: string; poNumber?: string | null };
+  invoice: {
+    source: 'pdf';
+    storagePath: string;
+    poNumber?: string | null;
+    invoiceDate?: string | null;
+    deliveryDate?: string | null;
+  };
   lines: Array<{ code?: string; name: string; qty: number; unitPrice?: number }>;
   matchReport: { warnings?: string[] } | null;
   confidence: number;

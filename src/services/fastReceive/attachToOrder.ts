@@ -53,6 +53,8 @@ export async function tryAttachToOrderOrSavePending(args: {
       attached: !!res?.ok,
       orderId,
       savedPending: false,
+      priorPeriod: res?.priorPeriod,
+      message: res?.message,
       unmatchedLines: res?.unmatchedLines,
       error: res?.error,
     };

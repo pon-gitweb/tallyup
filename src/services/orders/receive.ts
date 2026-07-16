@@ -17,7 +17,13 @@ import { reconcileInvoiceREST } from '../invoices/reconcile';
 import { saveReconciliation } from '../invoices/reconciliationStore';
 
 type Parsed = {
-  invoice?: { source?: 'csv'|'pdf'|'manual'|string; storagePath?: string; poNumber?: string|null } | null;
+  invoice?: {
+    source?: 'csv'|'pdf'|'manual'|string;
+    storagePath?: string;
+    poNumber?: string|null;
+    invoiceDate?: string|null;
+    deliveryDate?: string|null;
+  } | null;
   lines?: Array<{ code?:string; name:string; qty:number; unitPrice?:number }>;
   matchReport?: any;
   confidence?: number | null;
@@ -237,6 +243,74 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
     }
   }
 
+  // 0c) Invoice date range classification
+  let invoicePeriod: 'current' | 'reconciliation' | 'prior' = 'current';
+  let periodMessage: string | null = null;
+
+  try {
+    const rawDate = parsed?.invoice?.deliveryDate || parsed?.invoice?.invoiceDate;
+    if (rawDate) {
+      const invoiceDate = new Date(rawDate);
+      const now = new Date();
+      const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+      if (!isNaN(invoiceDate.getTime()) && invoiceDate <= now && invoiceDate >= twoYearsAgo) {
+        const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        let latestConfirmedAt: Date | null = null;
+        let latestEditWindowClosesAt: Date | null = null;
+
+        await Promise.all(depsSnap.docs.map(async depDoc => {
+          const areasSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', depDoc.id, 'areas')
+          );
+          areasSnap.forEach(areaDoc => {
+            const d = areaDoc.data() as any;
+            const lca = d.lastConfirmedAt?.toDate?.() ?? null;
+            if (lca && (!latestConfirmedAt || lca > latestConfirmedAt)) latestConfirmedAt = lca;
+            const ewc = d.editWindowClosesAt?.toDate?.() ?? null;
+            if (ewc && (!latestEditWindowClosesAt || ewc > latestEditWindowClosesAt)) latestEditWindowClosesAt = ewc;
+          });
+        }));
+
+        if (latestConfirmedAt && invoiceDate < latestConfirmedAt) {
+          const reconciliationOpen = latestEditWindowClosesAt && latestEditWindowClosesAt > now;
+          if (reconciliationOpen) {
+            invoicePeriod = 'reconciliation';
+            periodMessage = `This invoice is from your previous stock cycle. It's been applied to update your completed stocktake variance.`;
+          } else {
+            invoicePeriod = 'prior';
+            const cycleDate = (latestConfirmedAt as Date).toLocaleDateString('en-NZ', { dateStyle: 'medium' });
+            periodMessage = `This invoice predates your last stocktake (${cycleDate}). It's been recorded for your accounts but won't affect your current stock counts.`;
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[receive] date classification failed (continuing as current):', e?.message);
+  }
+
+  if (invoicePeriod === 'prior') {
+    try {
+      await addDoc(collection(db, 'venues', venueId, 'invoices'), {
+        orderId,
+        supplierId: null,
+        supplierName: null,
+        source: parsed?.invoice?.source || 'unknown',
+        storagePath: parsed?.invoice?.storagePath || null,
+        poNumber: parsed?.invoice?.poNumber || null,
+        invoiceDate: parsed?.invoice?.invoiceDate || null,
+        status: 'prior-period',
+        priorPeriod: true,
+        confirmedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        ...(uid ? { createdBy: uid } : {}),
+      });
+    } catch (e: any) {
+      console.warn('[receive] prior period invoice record failed:', e?.message);
+    }
+    return { ok: true, priorPeriod: true, message: periodMessage };
+  }
+
   // 1) Reconcile on server (authoritative)
   const reconciled = await reconcileInvoiceREST(venueId, orderId, {
     invoice: {
@@ -273,6 +347,8 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
   return {
     ok: true,
     reconciliationId: saved?.id || reconciled?.reconciliationId || null,
+    invoicePeriod,
+    periodMessage: periodMessage ?? undefined,
     unmatchedLines: unmatchedLines.length > 0 ? unmatchedLines : undefined,
     ...(stockWarnings.length > 0 ? { stockUpdateWarnings: stockWarnings } : {}),
   };

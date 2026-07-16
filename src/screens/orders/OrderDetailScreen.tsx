@@ -509,20 +509,31 @@ export default function OrderDetailScreen() {
           warnings: csvReview.warnings
         }
       });
-      if (result?.unmatchedLines?.length > 0) {
+      if (result?.priorPeriod) {
+        Alert.alert(
+          'Invoice recorded',
+          result.message || 'This invoice has been recorded for your accounts.',
+          [{ text: 'OK' }]
+        );
+      } else if (result?.unmatchedLines?.length > 0) {
         const names = result.unmatchedLines.map((l: any) => `• ${l.name} (${l.qty})`).join('\n');
-        showSuccess('✓ Invoice posted. Order marked received.');
+        showSuccess(result?.periodMessage ? `✓ ${result.periodMessage}` : '✓ Invoice posted. Order marked received.');
         Alert.alert(
           `${result.unmatchedLines.length} line${result.unmatchedLines.length > 1 ? 's' : ''} not matched`,
-          `These invoice lines weren't found in your areas — stock wasn't updated for them:\n\n${names}\n\nAdd these products to an area to track them next time.`,
+          `These invoice lines weren't found in your areas:\n\n${names}\n\nAdd these products to an area to track them next time.`,
           [{ text: 'OK' }]
         );
       } else {
-        showSuccess('✓ Invoice posted. Order marked received.');
+        const msg = result?.periodMessage
+          ? `✓ ${result.periodMessage}`
+          : '✓ Invoice posted. Order marked received.';
+        showSuccess(msg);
       }
-      setReceiveOpen(false);
-      setCsvReview(null);
-      nav.goBack();
+      if (!result?.priorPeriod) {
+        setReceiveOpen(false);
+        setCsvReview(null);
+        nav.goBack();
+      }
     }catch(e:any){
       autoConfirmedRef.current = false;
       if (e?.message?.includes('already been processed') || e?.duplicate) {
@@ -552,20 +563,31 @@ export default function OrderDetailScreen() {
           warnings: pdfReview.warnings
         }
       });
-      if (result?.unmatchedLines?.length > 0) {
+      if (result?.priorPeriod) {
+        Alert.alert(
+          'Invoice recorded',
+          result.message || 'This invoice has been recorded for your accounts.',
+          [{ text: 'OK' }]
+        );
+      } else if (result?.unmatchedLines?.length > 0) {
         const names = result.unmatchedLines.map((l: any) => `• ${l.name} (${l.qty})`).join('\n');
-        showSuccess('✓ Invoice posted. Order marked received.');
+        showSuccess(result?.periodMessage ? `✓ ${result.periodMessage}` : '✓ Invoice posted. Order marked received.');
         Alert.alert(
           `${result.unmatchedLines.length} line${result.unmatchedLines.length > 1 ? 's' : ''} not matched`,
-          `These invoice lines weren't found in your areas — stock wasn't updated for them:\n\n${names}\n\nAdd these products to an area to track them next time.`,
+          `These invoice lines weren't found in your areas:\n\n${names}\n\nAdd these products to an area to track them next time.`,
           [{ text: 'OK' }]
         );
       } else {
-        showSuccess('✓ Invoice posted. Order marked received.');
+        const msg = result?.periodMessage
+          ? `✓ ${result.periodMessage}`
+          : '✓ Invoice posted. Order marked received.';
+        showSuccess(msg);
       }
-      setReceiveOpen(false);
-      setPdfReview(null);
-      nav.goBack();
+      if (!result?.priorPeriod) {
+        setReceiveOpen(false);
+        setPdfReview(null);
+        nav.goBack();
+      }
     }catch(e:any){
       if (e?.message?.includes('already been processed') || e?.duplicate) {
         Alert.alert(

@@ -104,11 +104,16 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       });
 
       if (result.attached) {
-        if (result?.unmatchedLines?.length > 0) {
+        if (result?.priorPeriod) {
+          showInfo(result.message || 'Invoice recorded for accounts — predates your last stocktake.');
+        } else if (result?.unmatchedLines?.length > 0) {
           const names = result.unmatchedLines.map((l: any) => l.name).join(', ');
-          showInfo(`Invoice saved. ${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
+          showSuccess('✓ Invoice received.');
+          showInfo(`${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
         } else {
-          showSuccess('✓ Invoice received and matched to your order.');
+          showSuccess(result?.periodMessage
+            ? `✓ ${result.periodMessage}`
+            : '✓ Invoice received and matched to your order.');
         }
       } else if (hasLines) {
         showInfo(`Photo processed — ${parsed.lines.length} product lines found. Review in Invoices → Fast Receives Pending.`);
@@ -216,11 +221,16 @@ export default function FastReceivePanel({ onClose }:{ onClose: ()=>void }) {
       });
 
       if (result.attached) {
-        if (result?.unmatchedLines?.length > 0) {
+        if (result?.priorPeriod) {
+          showInfo(result.message || 'Invoice recorded for accounts — predates your last stocktake.');
+        } else if (result?.unmatchedLines?.length > 0) {
           const names = result.unmatchedLines.map((l: any) => l.name).join(', ');
-          showInfo(`Invoice saved. ${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
+          showSuccess('✓ Invoice received.');
+          showInfo(`${result.unmatchedLines.length} product${result.unmatchedLines.length > 1 ? 's' : ''} not in your areas: ${names}`);
         } else {
-          showSuccess('✓ Invoice received and matched to your order.');
+          showSuccess(result?.periodMessage
+            ? `✓ ${result.periodMessage}`
+            : '✓ Invoice received and matched to your order.');
         }
         onClose();
       } else {
