@@ -2542,6 +2542,28 @@ app.post("/square/webhook", async (req, res) => {
       return;
     }
 
+    const paymentId = payment?.id;
+
+    // Payment-level idempotency — Square retries webhooks up to 3 times on failure
+    // Use payment.id as dedup key to prevent double-counting on retry
+    if (paymentId) {
+      const db = admin.firestore();
+      const paymentRef = db.doc(`venues/${venueId}/processedPayments/${paymentId}`);
+      const paymentSnap = await paymentRef.get();
+      if (paymentSnap.exists) {
+        console.log('[square/webhook] duplicate payment, skipping:', paymentId);
+        res.json({ ok: true, skipped: true, reason: 'payment already processed' });
+        return;
+      }
+      // Mark as processed immediately — before any downstream writes
+      // Prevents race condition if Square sends concurrent retries
+      await paymentRef.set({
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        venueId,
+        squareOrderId: payment?.order_id || null,
+      });
+    }
+
     const orderId = payment?.order_id;
     const locationId = payment?.location_id;
     const createdAt = payment?.created_at || new Date().toISOString();

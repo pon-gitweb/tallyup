@@ -1210,6 +1210,11 @@ service cloud.firestore {
         allow read, write: if isVenueMember(venueId);
       }
 
+      match /processedPayments/{paymentId} {
+        allow read: if isVenueMember(venueId);
+        allow write: if false; // written by Cloud Function only
+      }
+
       match /processedStocktakes/{hash} {
         allow read, write: if isVenueMember(venueId);
       }
