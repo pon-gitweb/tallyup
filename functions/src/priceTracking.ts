@@ -50,6 +50,8 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
     invoiceId = `inv_${Date.now()}`,
     invoiceDocId,
   } = opts;
+  const cleanSupplierId = supplierId && supplierId.trim() ? supplierId.trim() : null;
+  const cleanSupplierName = supplierName && supplierName.trim() ? supplierName.trim() : null;
   const db = admin.firestore();
 
   // Reject lines with no price, zero price, or suspiciously high prices (likely totals, not unit prices)
@@ -106,8 +108,8 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
             date: admin.firestore.FieldValue.serverTimestamp(),
             oldPrice: existing,
             newPrice: unitPrice,
-            supplierId,
-            supplierName,
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
             invoiceId,
             changePercent,
             direction: unitPrice > existing ? "increase" : "decrease",
@@ -142,8 +144,8 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
           date: admin.firestore.FieldValue.serverTimestamp(),
           oldPrice: null,
           newPrice: unitPrice,
-          supplierId,
-          supplierName,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
           invoiceId,
           changePercent: null,
           direction: "initial",
@@ -218,8 +220,8 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
           costPriceSource: 'invoice',
           lastInvoicePrice: unitPrice,
           lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
-          supplierId,
-          supplierName,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
           inductionSource: 'invoice-price-tracking',
           inductionStatus: 'pending',
           priceChanged: false,
@@ -295,21 +297,21 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
   }
 
   // FIX 3: Write supplier links to product/suppliers subcollection (best-effort)
-  if (supplierId && supplierId !== "") {
+  if (cleanSupplierId) {
     for (const line of priced) {
       const unitPrice = line.unitPrice as number;
       const matched = products.find(p => namesMatch(p.name || "", line.name));
       if (!matched) continue;
       const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
       const unitCost = cs ? unitPrice / cs : unitPrice;
-      const supplierRef = db.doc(`venues/${venueId}/products/${matched.id}/suppliers/${supplierId}`);
+      const supplierRef = db.doc(`venues/${venueId}/products/${matched.id}/suppliers/${cleanSupplierId}`);
       try {
         const snap = await supplierRef.get();
         if (!snap.exists) {
           const hasPreferred = !!(matched.primarySupplierId);
           await supplierRef.set({
-            supplierId,
-            supplierName,
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
             unitCost,
             caseSize: cs,
             caseCost: cs ? unitPrice : null,
@@ -325,8 +327,8 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
           });
           if (!hasPreferred) {
             await db.doc(`venues/${venueId}/products/${matched.id}`).update({
-              primarySupplierId: supplierId,
-              primarySupplierName: supplierName,
+              primarySupplierId: cleanSupplierId,
+              primarySupplierName: cleanSupplierName,
             });
           }
         } else {
