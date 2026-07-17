@@ -366,17 +366,46 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   }
 
   async function handleImportB() {
+    if (!venueId) { setBError('No venue selected.'); return; }
     setBStatus('importing')
     try {
+      // Dedup — prevent same sales report being imported twice
+      // Hash: line count + first 5 product names (mirrors mobile deduplication.ts)
+      function djb2(str: string): string {
+        let h = 5381;
+        for (let i = 0; i < str.length; i++) {
+          h = Math.imul(h, 33) ^ str.charCodeAt(i);
+        }
+        return (h >>> 0).toString(36);
+      }
+      const hashKey = djb2([
+        String(bRows.length),
+        bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
+      ].join('::'));
+
+      const dedupRef = doc(db, 'venues', venueId, 'processedSalesReports', hashKey);
+      const dedupSnap = await getDoc(dedupRef);
+      if (dedupSnap.exists()) {
+        const existing = dedupSnap.data() as any;
+        const dateStr = existing.processedAt?.toDate?.()?.toLocaleDateString('en-NZ') || 'previously';
+        setBError(`This sales report was already imported on ${dateStr}.`);
+        setBStatus('error');
+        return;
+      }
+
       const ref = await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
         source: 'csv',
-        report: {
-          lines: bRows,
-          lineCount: bRows.length,
-          importedFrom: 'desktop',
-        },
+        report: { lines: bRows, lineCount: bRows.length, importedFrom: 'desktop' },
         createdAt: serverTimestamp(),
       })
+
+      // Write dedup fingerprint
+      await setDoc(dedupRef, {
+        lineCount: bRows.length,
+        reportId: ref.id,
+        processedAt: serverTimestamp(),
+      });
+
       await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
       setBStatus('done')
 
@@ -390,7 +419,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         })
       ).catch((e: any) => console.warn('[ImportPage] match-sales-report failed:', e?.message))
     } catch (e: any) {
-      console.error('[ImportPage] salesReport write failed:', e?.message)
+      console.error('[ImportPage] handleImportB failed:', e?.message, e?.code, e)
       setBError('Import failed. Please try again.')
       setBStatus('error')
     }
