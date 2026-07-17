@@ -893,6 +893,16 @@ service cloud.firestore {
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
 
+      match /productMatchCandidates/{docId} {
+        allow read:   if isVenueMember(venueId);
+        allow create: if isVenueMember(venueId);
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys()
+               .hasOnly(['status','reviewedAt','reviewedBy'])
+          && request.resource.data.status in ['dismissed'];
+        allow delete: if false;
+      }
+
       match /recipes/{recipeId} {
         allow read: if isVenueMember(venueId);
         allow create: if hasVenueRole(venueId, ['manager','owner'])

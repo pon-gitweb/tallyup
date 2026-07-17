@@ -1945,6 +1945,19 @@ const qty = parseFloat(typed);
             console.warn('[addQuickItem] global catalogue write failed:', e?.message);
           }
         }
+        // Fire-and-forget: persist "maybe match" candidate for manager review
+        if (matchResult.match && matchResult.confidence >= 0.6 && matchResult.confidence < 0.85) {
+          addDoc(collection(db, 'venues', venueId, 'productMatchCandidates'), {
+            newProductId: newProdRef.id,
+            newProductName: nm,
+            candidateProductId: matchResult.match.id,
+            candidateProductName: matchResult.match.name,
+            confidence: matchResult.confidence,
+            source: 'quick-add',
+            status: 'pending',
+            createdAt: serverTimestamp(),
+          }).catch((e: any) => console.warn('[addQuickItem] candidate match write failed:', e?.message));
+        }
       }
     } catch {
       // Non-fatal — area item still created without productId

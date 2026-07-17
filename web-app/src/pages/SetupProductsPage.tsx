@@ -4,12 +4,14 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore'
-import { db } from '../firebase'
+import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
 
 type Product = {
@@ -22,6 +24,16 @@ type Product = {
   supplierName: string | null
   parLevel: number | null
   gstPercent: number | null
+}
+
+type MatchCandidate = {
+  id: string
+  newProductId: string
+  newProductName: string
+  candidateProductId: string
+  candidateProductName: string
+  confidence: number
+  createdAt: any
 }
 
 type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel'
@@ -536,6 +548,31 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(new Set())
   const [showDuplicates, setShowDuplicates] = useState(false)
 
+  const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[]>([])
+  const [showCandidates, setShowCandidates] = useState(false)
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'venues', venueId, 'productMatchCandidates'), where('status', '==', 'pending')),
+      (snap) => setMatchCandidates(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))),
+      () => {}
+    )
+    return unsub
+  }, [venueId])
+
+  async function dismissCandidate(id: string) {
+    const user = auth.currentUser
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'productMatchCandidates', id), {
+        status: 'dismissed',
+        reviewedBy: { uid: user?.uid || null, name: user?.displayName || 'Manager' },
+        reviewedAt: serverTimestamp(),
+      })
+    } catch (e) {
+      console.error('[SetupProductsPage] dismiss candidate failed', e)
+    }
+  }
+
   const duplicatePairs = useMemo(
     () => findDuplicatePairs(products).filter(
       ([a, b]) => !dismissedPairs.has([a.id, b.id].sort().join(':'))
@@ -699,6 +736,118 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {matchCandidates.length > 0 && (
+        <div style={{
+          background: '#fffbeb',
+          border: '1.5px solid #c47b2b',
+          borderRadius: 12,
+          padding: '14px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 14,
+        }}>
+          <span style={{ fontSize: 20, marginTop: 2 }}>🔍</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#92400e' }}>
+              {matchCandidates.length} possible match{matchCandidates.length !== 1 ? 'es' : ''} from counting
+            </p>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#92400e', opacity: 0.85 }}>
+              These products were created during a stock count and may already exist under a similar name.
+            </p>
+            <button
+              onClick={() => setShowCandidates(v => !v)}
+              style={{
+                background: 'none',
+                border: '1px solid #c47b2b',
+                borderRadius: 999,
+                padding: '5px 14px',
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#92400e',
+                cursor: 'pointer',
+              }}
+            >
+              {showCandidates ? 'Hide matches ↑' : 'Review matches →'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCandidates && matchCandidates.length > 0 && (
+        <div style={{
+          background: '#fff',
+          border: '1px solid #e5e3de',
+          borderRadius: 12,
+          marginBottom: 20,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid #e5e3de',
+            background: '#fffbeb',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#92400e' }}>
+              Possible matches from counting — keep both or dismiss
+            </span>
+            <button
+              onClick={() => setShowCandidates(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#92400e' }}
+            >
+              ×
+            </button>
+          </div>
+          {matchCandidates.map((c) => (
+            <div key={c.id} style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid #f0ede6',
+              display: 'grid',
+              gridTemplateColumns: '1fr 60px 1fr auto',
+              gap: 12,
+              alignItems: 'center',
+            }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
+                  {c.newProductName}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>New from count</p>
+              </div>
+              <div style={{ textAlign: 'center', fontSize: 11, color: '#6B7280' }}>
+                <div>vs</div>
+                <div style={{ marginTop: 2, fontWeight: 600, color: '#c47b2b' }}>
+                  {Math.round(c.confidence * 100)}%
+                </div>
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
+                  {c.candidateProductName}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>Existing product</p>
+              </div>
+              <button
+                onClick={() => dismissCandidate(c.id)}
+                title="Keep both as separate products"
+                style={{
+                  background: 'none',
+                  border: '1px solid #e5e3de',
+                  borderRadius: 8,
+                  padding: '4px 10px',
+                  fontSize: 11,
+                  color: '#6B7280',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Keep both
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
