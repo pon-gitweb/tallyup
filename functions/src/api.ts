@@ -5510,14 +5510,23 @@ app.post("/process-invoices-csv", async (req, res) => {
       try {
         const db = admin.firestore();
         const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-        const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const normTarget = normalise(supplierName);
+        const candNorm = normNameForMatch(supplierName);
         let matchedId: string | null = null;
-        suppSnap.forEach(d => {
-          if (!matchedId && normalise(d.data()?.name || '') === normTarget) matchedId = d.id;
-        });
+        let bestScore = 0;
+        for (const sd of suppSnap.docs) {
+          const sn = normNameForMatch((sd.data() as any)?.name || '');
+          // Exact normalised match first — highest confidence
+          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
+          // Fuzzy match — same threshold as PDF path (0.85)
+          const sc = tokenJaccardMatch(supplierName, (sd.data() as any)?.name || '');
+          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
+        }
+        // Only use match if above threshold
+        if (matchedId && bestScore < 0.85) matchedId = null;
         if (matchedId) {
           resolvedSupplierId = matchedId;
+          // CSV invoices don't carry contact details — nothing to enrich here,
+          // but structure mirrors PDF path for future contact-field extraction
         } else {
           // Create new supplier
           const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
