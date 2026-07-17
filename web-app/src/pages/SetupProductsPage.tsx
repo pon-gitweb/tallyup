@@ -49,6 +49,46 @@ function isIncomplete(p: Product): boolean {
   return false
 }
 
+function normaliseName(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function findDuplicatePairs(products: Product[]): Array<[Product, Product]> {
+  const pairs: Array<[Product, Product]> = []
+  const seen = new Set<string>()
+
+  for (let i = 0; i < products.length; i++) {
+    for (let j = i + 1; j < products.length; j++) {
+      const a = products[i]
+      const b = products[j]
+      const pairKey = [a.id, b.id].sort().join(':')
+      if (seen.has(pairKey)) continue
+
+      const na = normaliseName(a.name)
+      const nb = normaliseName(b.name)
+      if (!na || !nb || na.length < 4 || nb.length < 4) continue
+
+      const exactMatch = na === nb
+      const subMatch =
+        (na.includes(nb) || nb.includes(na)) &&
+        Math.min(na.length, nb.length) >= 5
+      const shorter = na.length < nb.length ? na : nb
+      const longer = na.length >= nb.length ? na : nb
+      let si = 0, matches = 0
+      for (let li = 0; li < longer.length && si < shorter.length; li++) {
+        if (longer[li] === shorter[si]) { matches++; si++ }
+      }
+      const seqMatch = matches / shorter.length >= 0.85
+
+      if (exactMatch || subMatch || seqMatch) {
+        pairs.push([a, b])
+        seen.add(pairKey)
+      }
+    }
+  }
+  return pairs
+}
+
 function displayValue(p: Product, field: EditableField): string {
   switch (field) {
     case 'name':         return p.name || ''
@@ -493,6 +533,16 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const missingSupplier = useMemo(() => products.filter(p => !p.supplierName || p.supplierName === 'Unassigned').length, [products])
   const missingUnit = useMemo(() => products.filter(p => !p.unit).length, [products])
 
+  const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(new Set())
+  const [showDuplicates, setShowDuplicates] = useState(false)
+
+  const duplicatePairs = useMemo(
+    () => findDuplicatePairs(products).filter(
+      ([a, b]) => !dismissedPairs.has([a.id, b.id].sort().join(':'))
+    ),
+    [products, dismissedPairs]
+  )
+
   return (
     <div>
       <h1 className={styles.heading}>Products</h1>
@@ -535,6 +585,120 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               Click any product to fill in missing details. Cost prices unlock variance reporting.
             </p>
           </div>
+        </div>
+      )}
+
+      {duplicatePairs.length > 0 && (
+        <div style={{
+          background: '#fef2f2',
+          border: '1.5px solid #dc2626',
+          borderRadius: 12,
+          padding: '14px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 14,
+        }}>
+          <span style={{ fontSize: 20, marginTop: 2 }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#991b1b' }}>
+              {duplicatePairs.length} possible duplicate{duplicatePairs.length !== 1 ? 's' : ''} found
+            </p>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#991b1b', opacity: 0.85 }}>
+              These products have very similar names and may be the same item counted twice.
+            </p>
+            <button
+              onClick={() => setShowDuplicates(v => !v)}
+              style={{
+                background: 'none',
+                border: '1px solid #dc2626',
+                borderRadius: 999,
+                padding: '5px 14px',
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#dc2626',
+                cursor: 'pointer',
+              }}
+            >
+              {showDuplicates ? 'Hide duplicates ↑' : 'Review duplicates →'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showDuplicates && duplicatePairs.length > 0 && (
+        <div style={{
+          background: '#fff',
+          border: '1px solid #e5e3de',
+          borderRadius: 12,
+          marginBottom: 20,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid #e5e3de',
+            background: '#fef2f2',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#991b1b' }}>
+              Possible duplicates — review and dismiss or keep both
+            </span>
+            <button
+              onClick={() => setShowDuplicates(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#991b1b' }}
+            >
+              ×
+            </button>
+          </div>
+          {duplicatePairs.map(([a, b]) => {
+            const pairKey = [a.id, b.id].sort().join(':')
+            return (
+              <div key={pairKey} style={{
+                padding: '12px 16px',
+                borderBottom: '1px solid #f0ede6',
+                display: 'grid',
+                gridTemplateColumns: '1fr 40px 1fr auto',
+                gap: 12,
+                alignItems: 'center',
+              }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
+                    {a.name}
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>
+                    {[a.supplierName, a.unit, a.costPrice != null ? `$${a.costPrice}` : null].filter(Boolean).join(' · ') || 'No details'}
+                  </p>
+                </div>
+                <div style={{ textAlign: 'center', fontSize: 11, color: '#6B7280' }}>vs</div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
+                    {b.name}
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>
+                    {[b.supplierName, b.unit, b.costPrice != null ? `$${b.costPrice}` : null].filter(Boolean).join(' · ') || 'No details'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setDismissedPairs(prev => new Set([...prev, pairKey]))}
+                  title="Not a duplicate — dismiss"
+                  style={{
+                    background: 'none',
+                    border: '1px solid #e5e3de',
+                    borderRadius: 8,
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    color: '#6B7280',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Not a duplicate
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
