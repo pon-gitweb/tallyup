@@ -585,7 +585,8 @@ async function createUnpricedProducts(
       supplierId: supplierId || null,
       supplierName: supplierName || null,
       active: true,
-      source: "invoice-scan",
+      inductionSource: 'invoice-photo',
+      inductionStatus: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });

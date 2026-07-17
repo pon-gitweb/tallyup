@@ -416,6 +416,7 @@ export default function EditProductScreen() {
 
       active: !!form.active,
       updatedAt: (serverTimestamp ? serverTimestamp() : new Date()),
+      ...(editingId ? {} : { inductionSource: 'manual', inductionStatus: 'complete' }),
 
       // Expiry date: convert YYYY-MM-DD string to Firestore Timestamp (or null)
       expiryDate: (() => {

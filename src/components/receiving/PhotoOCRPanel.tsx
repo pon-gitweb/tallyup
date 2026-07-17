@@ -348,6 +348,7 @@ export default function PhotoOCRPanel({ onParsed }: Props) {
               inductionSource: 'invoice-scan',
               inductionStatus: 'pending',
               createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
             });
           }
           setPackingSlipResult((prev: any) => (prev ? { ...prev, unmatchedLines: [] } : prev));
