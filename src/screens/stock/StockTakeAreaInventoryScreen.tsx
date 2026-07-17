@@ -51,7 +51,7 @@ import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
-import { findMatchingProduct } from '../../services/matching';
+import { matchProductInList } from '../../services/matching';
 import { ScaleService } from '../../services/scale/ScaleService';
 import { toBaseUnit } from '../../services/units';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
@@ -1923,7 +1923,7 @@ const qty = parseFloat(typed);
     // Find or create a venue product so the area item has a productId link
     let productId: string | null = null;
     try {
-      const matchResult = await findMatchingProduct(venueId, { name: nm });
+      const matchResult = matchProductInList(venueProductsRef.current, { name: nm });
       if (matchResult.match && matchResult.confidence >= 0.85) {
         productId = matchResult.match.id;
       } else {
@@ -1937,6 +1937,13 @@ const qty = parseFloat(typed);
           updatedAt: nowTs,
         });
         productId = newProdRef.id;
+        setVenueProducts(prev => [...prev, {
+          id: newProdRef.id,
+          name: nm,
+          unit: unit || null,
+          supplierName: supplier || null,
+          ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
+        }]);
         // Best-effort: contribute to global catalogue when a barcode was provided
         if (bc) {
           try {
@@ -2892,6 +2899,11 @@ const openHistory = throttleAction(async (item: Item) => {
     await ensureAreaStarted();
     let added = 0;
     let skipped = 0;
+    // Local mutable snapshot so products created earlier in this batch are
+    // immediately visible to matching for later iterations — no dependency
+    // on React state flush or the ref-mirror effect running between awaits.
+    const localProducts = [...venueProductsRef.current];
+    const newlyCreated: any[] = [];
     for (const p of products) {
       const displayName = [p.name, p.brand, p.size].filter(Boolean).join(' ').trim() || p.name;
       const alreadyExists = items.some(it => it.name?.toLowerCase() === displayName.toLowerCase());
@@ -2900,7 +2912,7 @@ const openHistory = throttleAction(async (item: Item) => {
       // Find or create venue product for productId link
       let productId: string | null = null;
       try {
-        const matchResult = await findMatchingProduct(venueId, { name: displayName });
+        const matchResult = matchProductInList(localProducts, { name: displayName });
         if (matchResult.match && matchResult.confidence >= 0.85) {
           productId = matchResult.match.id;
         } else {
@@ -2913,6 +2925,9 @@ const openHistory = throttleAction(async (item: Item) => {
             updatedAt: serverTimestamp(),
           });
           productId = newProdRef.id;
+          const newProd = { id: newProdRef.id, name: displayName, unit: p.size || null, category: p.category || null };
+          localProducts.push(newProd);
+          newlyCreated.push(newProd);
         }
       } catch {
         // Non-fatal — area item still created without productId
@@ -2923,6 +2938,10 @@ const openHistory = throttleAction(async (item: Item) => {
         { name: displayName, unit: p.size || null, productId: productId ?? null, inductionStatus: 'pending', inductionSource: 'shelf-scan', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
       );
       added++;
+    }
+    // Sync newly created products to React state once, after the batch.
+    if (newlyCreated.length > 0) {
+      setVenueProducts(prev => [...prev, ...newlyCreated]);
     }
     if (skipped > 0) {
       showSuccess(`✓ ${added} product${added !== 1 ? 's' : ''} added, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
