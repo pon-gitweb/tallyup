@@ -652,7 +652,8 @@ function StockTakeAreaInventoryScreen() {
   const [invoiceDataAvailable, setInvoiceDataAvailable] = React.useState(false);
   const [salesDataAvailable, setSalesDataAvailable] = React.useState(false);
   const [confidenceLegendDismissed, setConfidenceLegendDismissed] = React.useState(false);
-  const [enrichmentComplete, setEnrichmentComplete] = React.useState(false);
+  const [enrichmentStatus, setEnrichmentStatus] = React.useState<'pending' | 'success' | 'failed'>('pending');
+  const enrichmentInflight = useRef(false);
   const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
   const [bottomBarHeight, setBottomBarHeight] = useState(64); // sensible default before first onLayout fires
 
@@ -1516,25 +1517,38 @@ function StockTakeAreaInventoryScreen() {
 
   // Enrich items with incomingQty and soldQty from invoices and sales.
   // Non-blocking — onSnapshot auto-refreshes items when values are written back.
-  useEffect(() => {
-    if (!itemsPathOk || !venueId || !departmentId || !areaId) return;
-    getAuth().currentUser?.getIdToken().then(token => {
-      fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/enrich-area-items', {
+  // runEnrichment is also called by the retry tap in the failure indicator.
+  const runEnrichment = useCallback(async () => {
+    if (enrichmentInflight.current || !venueId || !departmentId || !areaId) return;
+    enrichmentInflight.current = true;
+    setEnrichmentStatus('pending');
+    try {
+      const token = await getAuth().currentUser?.getIdToken();
+      if (!token) { setEnrichmentStatus('failed'); return; }
+      const r = await fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/enrich-area-items', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ venueId, departmentId, areaId }),
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (data.ok) {
-          setInvoiceDataAvailable(!!data.hasInvoiceData);
-          setSalesDataAvailable(!!data.hasSalesData);
-          setEnrichmentComplete(true);
-        }
-      })
-      .catch(() => {});
-    }).catch(() => {});
-  }, [itemsPathOk, venueId, departmentId, areaId]);
+      });
+      const data = await r.json();
+      if (data.ok) {
+        setInvoiceDataAvailable(!!data.hasInvoiceData);
+        setSalesDataAvailable(!!data.hasSalesData);
+        setEnrichmentStatus('success');
+      } else {
+        setEnrichmentStatus('failed');
+      }
+    } catch {
+      setEnrichmentStatus('failed');
+    } finally {
+      enrichmentInflight.current = false;
+    }
+  }, [venueId, departmentId, areaId]);
+
+  useEffect(() => {
+    if (!itemsPathOk) return;
+    runEnrichment();
+  }, [itemsPathOk, runEnrichment]);
 
   useEffect(() => {
     if (!itemsPathOk) return;
@@ -3397,6 +3411,30 @@ const openHistory = throttleAction(async (item: Item) => {
             <Text style={{ fontSize: 18, color: '#9ca3af' }}>×</Text>
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* Enrichment failure indicator — independent of areaStarted/legendDismissed,
+          relevant for the whole session while expected-qty numbers are in use */}
+      {enrichmentStatus === 'failed' && (
+        <TouchableOpacity
+          onPress={runEnrichment}
+          activeOpacity={0.7}
+          style={{
+            backgroundColor: colours.surface,
+            borderBottomWidth: 1,
+            borderBottomColor: colours.warning,
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <Text style={{ fontSize: 14, color: colours.warning }}>i</Text>
+          <Text style={{ flex: 1, fontSize: 12, color: colours.warning }}>
+            Expected quantities may be incomplete — couldn't check recent invoices or sales. Tap to retry.
+          </Text>
+        </TouchableOpacity>
       )}
 
       {/* Edit window status banner */}
