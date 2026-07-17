@@ -20,6 +20,24 @@ import { inferDefaultPAR, getPARDescription } from '../../services/parDefaults';
 import { markStepComplete } from '../../services/guide/SetupGuideService';
 import type { ExtractionResult, ExtractedProduct } from './InventoryImportScreen';
 
+type AreaRef = { deptId: string; areaId: string; areaName: string };
+type AreaMapResult = { byName: Record<string, AreaRef>; defaultArea: AreaRef | null };
+
+async function loadVenueAreaMap(db: ReturnType<typeof getFirestore>, venueId: string): Promise<AreaMapResult> {
+  const byName: Record<string, AreaRef> = {};
+  let defaultArea: AreaRef | null = null;
+  const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  for (const deptDoc of deptSnap.docs) {
+    const areaSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+    for (const areaDoc of areaSnap.docs) {
+      const entry: AreaRef = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: (areaDoc.data() as any).name || 'Area' };
+      byName[entry.areaName.toLowerCase()] = entry;
+      if (!defaultArea) defaultArea = entry;
+    }
+  }
+  return { byName, defaultArea };
+}
+
 function InventoryImportPreviewScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
@@ -31,6 +49,8 @@ function InventoryImportPreviewScreen() {
   const [importing, setImporting] = useState(false);
   const [showImportGuide, setShowImportGuide] = useState(false);
   const [importGuideCount, setImportGuideCount] = useState(0);
+  const [areaMap, setAreaMap] = useState<AreaMapResult>({ byName: {}, defaultArea: null });
+  const [areaMapLoaded, setAreaMapLoaded] = useState(false);
 
   // Group products by area/department
   const grouped = useMemo(() => {
@@ -42,6 +62,17 @@ function InventoryImportPreviewScreen() {
     }
     return groups;
   }, [products]);
+
+  React.useEffect(() => {
+    loadVenueAreaMap(db, venueId)
+      .then((map) => { setAreaMap(map); setAreaMapLoaded(true); })
+      .catch(() => setAreaMapLoaded(true)); // degrade gracefully — don't block import indefinitely
+  }, [db, venueId]);
+
+  const unmatchedAreaKeys = useMemo(() => {
+    if (!areaMapLoaded || !areaMap.defaultArea) return new Set<string>();
+    return new Set(Object.keys(grouped).filter(key => !areaMap.byName[key.toLowerCase()]));
+  }, [grouped, areaMap, areaMapLoaded]);
 
   const onRemove = useCallback((name: string) => {
     setProducts(prev => prev.filter(p => p.name !== name));
@@ -95,19 +126,7 @@ function InventoryImportPreviewScreen() {
 
       // FIX 4: Create area items with productId links
       try {
-        const deptSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-        // Build area name → {deptId, areaId} map for matching; track first area as default
-        type AreaRef = { deptId: string; areaId: string; areaName: string };
-        const areaByName: Record<string, AreaRef> = {};
-        let defaultArea: AreaRef | null = null;
-        for (const deptDoc of deptSnap.docs) {
-          const areaSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
-          for (const areaDoc of areaSnap.docs) {
-            const entry: AreaRef = { deptId: deptDoc.id, areaId: areaDoc.id, areaName: (areaDoc.data() as any).name || 'Area' };
-            areaByName[(entry.areaName).toLowerCase()] = entry;
-            if (!defaultArea) defaultArea = entry;
-          }
-        }
+        const { byName: areaByName, defaultArea } = await loadVenueAreaMap(db, venueId);
         if (defaultArea) {
           // Group products by resolved target area
           const byArea = new Map<string, { area: AreaRef; refs: typeof productRefs }>();
@@ -215,6 +234,17 @@ function InventoryImportPreviewScreen() {
         </View>
       )}
 
+      {areaMapLoaded && unmatchedAreaKeys.size > 0 && areaMap.defaultArea && (
+        <View style={{ backgroundColor: '#FEF3C7', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#FDE68A' }}>
+          <Text style={{ fontWeight: '800', color: '#92400E', marginBottom: 4 }}>
+            {unmatchedAreaKeys.size} area{unmatchedAreaKeys.size !== 1 ? 's' : ''} from your file don't match your venue
+          </Text>
+          <Text style={{ color: '#92400E', fontSize: 13 }}>
+            Products in those groups will be placed in "{areaMap.defaultArea.areaName}". You can move them to the right area after importing.
+          </Text>
+        </View>
+      )}
+
       {/* Product groups */}
       <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>
         Review your products — remove anything that doesn't look right
@@ -223,8 +253,17 @@ function InventoryImportPreviewScreen() {
       {Object.entries(grouped).map(([area, items]) => (
         <View key={area} style={{ backgroundColor: themeColours.surface, borderRadius: 14, borderWidth: 1, borderColor: themeColours.border, overflow: 'hidden' }}>
           {/* Area header */}
-          <View style={{ backgroundColor: themeColours.primaryLight, padding: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontWeight: '900', color: themeColours.accent }}>{area}</Text>
+          <View style={{ backgroundColor: themeColours.primaryLight, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, flexWrap: 'wrap' }}>
+              <Text style={{ fontWeight: '900', color: themeColours.accent }}>{area}</Text>
+              {areaMapLoaded && unmatchedAreaKeys.has(area) && areaMap.defaultArea && (
+                <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: '#FDE68A' }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#92400E' }}>
+                    {'->'} {areaMap.defaultArea.areaName}
+                  </Text>
+                </View>
+              )}
+            </View>
             <Text style={{ color: themeColours.textSecondary, fontSize: 12 }}>{items.length} items</Text>
           </View>
           {/* Items */}
@@ -268,8 +307,8 @@ function InventoryImportPreviewScreen() {
       ))}
 
       {/* Import button */}
-      <TouchableOpacity onPress={onConfirm} disabled={importing}
-        style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 18, alignItems: 'center' }}>
+      <TouchableOpacity onPress={onConfirm} disabled={importing || !areaMapLoaded}
+        style={{ backgroundColor: themeColours.primary, borderRadius: 12, padding: 18, alignItems: 'center', opacity: areaMapLoaded ? 1 : 0.5 }}>
         {importing
           ? <ActivityIndicator color={themeColours.primaryText} />
           : <Text style={{ color: themeColours.primaryText, fontWeight: '900', fontSize: 16 }}>
@@ -277,6 +316,11 @@ function InventoryImportPreviewScreen() {
             </Text>
         }
       </TouchableOpacity>
+      {!areaMapLoaded && (
+        <Text style={{ color: themeColours.textSecondary, fontSize: 12, textAlign: 'center', marginTop: -8 }}>
+          Checking your venue's areas...
+        </Text>
+      )}
 
       <TouchableOpacity onPress={() => nav.goBack()} style={{ alignItems: 'center', padding: 8 }}>
         <Text style={{ color: themeColours.textSecondary, fontSize: 13 }}>Start over with a different file</Text>
