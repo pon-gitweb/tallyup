@@ -351,6 +351,13 @@ service cloud.firestore {
               request.resource.data.currentLock == null
             );
 
+          allow update: if hasVenueRole(venueId, ['manager','owner'])
+            && request.resource.data.diff(resource.data).changedKeys()
+                 .hasOnly(['currentLock','lockForceReleasedBy','lockForceReleasedAt'])
+            && request.resource.data.currentLock == null
+            && request.resource.data.lockForceReleasedBy is map
+            && request.resource.data.lockForceReleasedAt is timestamp;
+
           function areaOpen() {
             return !(
               resource.data.keys().hasAny(['completedAt']) &&
@@ -655,6 +662,13 @@ service cloud.firestore {
             request.resource.data.currentLock is map ||
             request.resource.data.currentLock == null
           );
+
+        allow update: if hasVenueRole(venueId, ['manager','owner'])
+          && request.resource.data.diff(resource.data).changedKeys()
+               .hasOnly(['currentLock','lockForceReleasedBy','lockForceReleasedAt'])
+          && request.resource.data.currentLock == null
+          && request.resource.data.lockForceReleasedBy is map
+          && request.resource.data.lockForceReleasedAt is timestamp;
 
         function areaOpen() {
           return !(

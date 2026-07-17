@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { db } from '../../services/firebase';
 import {
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot,
-  doc, serverTimestamp
+  doc, serverTimestamp, runTransaction
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import IdentityBadge from '../../components/IdentityBadge';
@@ -215,7 +215,7 @@ function AreaSelectionInner() {
 
     // Hard lock at selection level: if someone else holds the lock, block.
     if (lockUid && lockUid !== uid) {
-      showInfo(`“${area.name || area.id}” is currently being counted by ${lockName || 'another user'}.`);
+      showInfo(`"${area.name || area.id}" is currently being counted by ${lockName || 'another user'}.`);
       return;
     }
 
@@ -237,6 +237,35 @@ function AreaSelectionInner() {
       },
     });
   }, [venueId, departmentId, confirm, showError]);
+
+  function forceReleaseLock(area: AreaRow) {
+    const lock = (area.currentLock || {}) as any;
+    const lockName = lock.name || 'another user';
+    confirm({
+      title: 'Release lock?',
+      message: `${lockName} is currently counting "${area.name || area.id}". Any counts they have open but not yet confirmed will be lost.`,
+      confirmLabel: 'Release lock',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const areaRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', area.id);
+          const currentUser = getAuth().currentUser;
+          await runTransaction(db, async (tx) => {
+            const snap = await tx.get(areaRef);
+            if (!snap.exists()) throw new Error('Area not found');
+            tx.update(areaRef, {
+              currentLock: null,
+              lockForceReleasedBy: { uid: currentUser?.uid || null, name: currentUser?.displayName || 'Manager' },
+              lockForceReleasedAt: serverTimestamp(),
+            });
+          });
+          showSuccess(`Lock released — "${area.name || area.id}" is now available.`);
+        } catch (e: any) {
+          showError(e?.message || 'Could not release lock — please try again.');
+        }
+      },
+    });
+  }
 
   async function addArea() {
     if (!newName.trim()) {
@@ -335,6 +364,11 @@ function AreaSelectionInner() {
           </TouchableOpacity>
           {isManager && (
             <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
+              {lockedByOther && (
+                <TouchableOpacity onPress={() => forceReleaseLock(item)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                  <MaterialIcons name="lock-open" size={18} color={colours.warning} />
+                </TouchableOpacity>
+              )}
               <TouchableOpacity onPress={() => openRename(item)} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
                 <MaterialIcons name="edit" size={18} color={colours.textSecondary} />
               </TouchableOpacity>
