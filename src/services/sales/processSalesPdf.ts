@@ -10,9 +10,13 @@ function apiBase(): string {
 }
 
 async function postJson(url: string, body: any) {
+  const { getAuth } = await import('firebase/auth');
+  const idToken = await getAuth().currentUser?.getIdToken().catch(() => null);
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (idToken) headers['authorization'] = `Bearer ${idToken}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   return res;
