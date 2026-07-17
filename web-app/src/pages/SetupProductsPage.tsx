@@ -488,10 +488,55 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     )
   }
 
+  const incompleteCount = useMemo(() => products.filter(isIncomplete).length, [products])
+  const missingCostPrice = useMemo(() => products.filter(p => p.costPrice == null).length, [products])
+  const missingSupplier = useMemo(() => products.filter(p => !p.supplierName || p.supplierName === 'Unassigned').length, [products])
+  const missingUnit = useMemo(() => products.filter(p => !p.unit).length, [products])
+
   return (
     <div>
       <h1 className={styles.heading}>Products</h1>
       <p className={styles.subhead}>Add and edit products with a real keyboard.</p>
+
+      {incompleteCount > 0 && (
+        <div style={{
+          background: '#fffbeb',
+          border: '1.5px solid #c47b2b',
+          borderRadius: 12,
+          padding: '14px 16px',
+          marginBottom: 20,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 14,
+        }}>
+          <span style={{ fontSize: 20, marginTop: 2 }}>📋</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#92400e' }}>
+              {incompleteCount} product{incompleteCount !== 1 ? 's' : ''} missing details
+            </p>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+              {missingCostPrice > 0 && (
+                <span style={{ fontSize: 12, color: '#92400e' }}>
+                  💰 {missingCostPrice} missing cost price
+                </span>
+              )}
+              {missingSupplier > 0 && (
+                <span style={{ fontSize: 12, color: '#92400e' }}>
+                  🤝 {missingSupplier} unassigned supplier
+                </span>
+              )}
+              {missingUnit > 0 && (
+                <span style={{ fontSize: 12, color: '#92400e' }}>
+                  📏 {missingUnit} missing unit
+                </span>
+              )}
+            </div>
+            <p style={{ margin: '8px 0 0', fontSize: 12, color: '#92400e', opacity: 0.8 }}>
+              Click any product to fill in missing details. Cost prices unlock variance reporting.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className={styles.importSection}>
         <p className={styles.importLabel}>Bulk import from CSV</p>

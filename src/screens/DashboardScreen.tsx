@@ -31,6 +31,7 @@ const NUDGE_KEYS = {
   noStocktake:        'tallyup_nudge_no_stocktake_v1',
   firstStocktakeDone: 'tallyup_nudge_first_stocktake_done_v1',
   unmappedPOS:        'tallyup_nudge_unmapped_pos_v1',
+  incompleteProducts: 'tallyup_nudge_incomplete_products_v1',
 };
 
 const HOOK_SCREEN_KEY = 'tallyup_hook_screen_shown_v1';
@@ -292,6 +293,7 @@ export default function DashboardScreen() {
   const [nudgeDismissed, setNudgeDismissed] = React.useState<Record<string, boolean>>({});
   const [hookScreenShown, setHookScreenShown] = React.useState(false);
   const [unmappedPOSCount, setUnmappedPOSCount] = React.useState(0);
+  const [incompleteProductCount, setIncompleteProductCount] = React.useState(0);
 
   React.useEffect(() => {
     if (!venueId) return;
@@ -507,6 +509,26 @@ export default function DashboardScreen() {
       if (v !== null) setHookScreenShown(true);
     }).catch(() => {});
   }, []);
+
+  React.useEffect(() => {
+    if (!venueId) return;
+    const db = getFirestore();
+    getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
+      let count = 0;
+      snap.forEach(d => {
+        const p = d.data() as any;
+        const missing =
+          !p.unit ||
+          !p.packSize ||
+          p.gstPercent == null ||
+          !p.supplierName ||
+          p.supplierName === 'Unassigned' ||
+          !p.category;
+        if (missing) count++;
+      });
+      setIncompleteProductCount(count);
+    }).catch(() => {});
+  }, [venueId]);
 
   function dismissNudge(key: string) {
     setNudgeDismissed(prev => ({ ...prev, [key]: true }));
@@ -1065,6 +1087,34 @@ export default function DashboardScreen() {
               </Text>
             </View>
             <Text style={{ fontSize: 16, color: '#c47b2b', fontWeight: '700' }}>Map →</Text>
+          </TouchableOpacity>
+        )}
+
+        {incompleteProductCount > 0 && (
+          <TouchableOpacity
+            onPress={() => nav.navigate('Products' as never)}
+            style={{
+              backgroundColor: '#fffbeb',
+              borderRadius: 14,
+              padding: 14,
+              marginBottom: 10,
+              borderWidth: 1.5,
+              borderColor: '#c47b2b',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <Text style={{ fontSize: 20 }}>📋</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#92400e' }}>
+                {incompleteProductCount} product{incompleteProductCount > 1 ? 's' : ''} missing details
+              </Text>
+              <Text style={{ fontSize: 12, color: '#92400e', marginTop: 2 }}>
+                Add unit, pack size, GST% or supplier to unlock full variance reporting.
+              </Text>
+            </View>
+            <Text style={{ fontSize: 16, color: '#c47b2b', fontWeight: '700' }}>Fix →</Text>
           </TouchableOpacity>
         )}
 
