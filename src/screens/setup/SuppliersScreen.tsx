@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -21,6 +22,7 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, addDoc, getDocs, query, where, limit, serverTimestamp as fsServerTimestamp, doc, setDoc } from 'firebase/firestore';
 
@@ -243,7 +245,23 @@ export default function SuppliersScreen() {
                 setFormVisible(false);
                 await load();
               } catch (e2: any) {
-                showError(e2?.message || 'Could not save supplier.');
+                if (e2?.message?.startsWith('SIMILAR_EXISTS:')) {
+                  const db2 = getFirestore(getApp());
+                  try {
+                    await addDoc(collection(db2, 'venues', venueId, 'suppliers'), {
+                      ...payload,
+                      createdAt: fsServerTimestamp(),
+                      updatedAt: fsServerTimestamp(),
+                    });
+                    showSuccess(`${name.trim()} added.`);
+                    setFormVisible(false);
+                    await load();
+                  } catch (err: any) {
+                    showError(err?.message || 'Could not save supplier.');
+                  }
+                } else {
+                  showError(e2?.message || 'Could not save supplier.');
+                }
               } finally { setSaving(false); }
             },
           });
@@ -255,7 +273,45 @@ export default function SuppliersScreen() {
         await load();
       }
     } catch (e: any) {
-      showError(e?.message || 'Could not save supplier.');
+      if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
+        const parts = e.message.split(':');
+        const similarName = parts[1];
+        Alert.alert(
+          'Similar supplier exists',
+          `"${similarName}" is already in your suppliers list. Are you sure you want to add another?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Add anyway',
+              onPress: async () => {
+                try {
+                  const db = getFirestore(getApp());
+                  await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+                    name: name.trim(),
+                    email: email.trim() || null,
+                    phone: phone.trim() || null,
+                    accountNumber: accountNumber.trim() || null,
+                    orderingMethod,
+                    portalUrl: portalUrl.trim() || null,
+                    defaultLeadDays: leadDays.trim() ? Number(leadDays) || 2 : 2,
+                    orderCutoffLocalTime: orderCutoffLocalTime.trim() || null,
+                    mergeWindowHours: mergeNum,
+                    createdAt: fsServerTimestamp(),
+                    updatedAt: fsServerTimestamp(),
+                  });
+                  showSuccess(`${name.trim()} added.`);
+                  setFormVisible(false);
+                  await load();
+                } catch (err: any) {
+                  showError(err?.message || 'Could not add supplier.');
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        showError(e?.message || 'Could not save supplier.');
+      }
     } finally {
       setSaving(false);
     }
@@ -671,7 +727,7 @@ export default function SuppliersScreen() {
             <View style={styles.captureCard}>
               <Text style={styles.captureTitle}>Fast add from photo</Text>
               <Text style={styles.captureHint}>
-                Take a photo of an invoice and we’ll auto-fill
+                Take a photo of an invoice and we'll auto-fill
                 what we can for this supplier.
               </Text>
 
@@ -826,8 +882,8 @@ export default function SuppliersScreen() {
             <View style={{ height: 4 }} />
             <Text style={styles.section}>Order Timing Policy (optional)</Text>
             <Text style={styles.hintSmall}>
-              Use this if the supplier has a daily cutoff (e.g. “orders before
-              4pm go on tomorrow’s truck”) or if you want Hosti to hold and
+              Use this if the supplier has a daily cutoff (e.g. "orders before
+              4pm go on tomorrow's truck") or if you want Hosti to hold and
               merge orders for a few hours.
             </Text>
 
@@ -858,7 +914,7 @@ export default function SuppliersScreen() {
                 up to date.
               </Text>
               <Text style={styles.toolsTextSmall}>
-                Later, we’ll expand this to use uploaded catalogues and scanned
+                Later, we'll expand this to use uploaded catalogues and scanned
                 invoices to keep pricing in sync automatically.
               </Text>
             </View>

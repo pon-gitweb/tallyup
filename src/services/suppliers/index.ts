@@ -42,17 +42,36 @@ export async function listSuppliers(venueId: string): Promise<Supplier[]> {
 
 export async function createSupplier(venueId: string, data: Omit<Supplier, 'id'>) {
   const db = getFirestore(getApp());
-  // Minimal required: name
-  const payload: any = {
-    name: (data.name || '').trim(),
-  };
+  const name = (data.name || '').trim();
+  if (!name) throw new Error('Supplier name is required');
+
+  const existing = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+  const normNew = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  for (const d of existing.docs) {
+    const existingName = ((d.data() as any).name || '').trim();
+    const normExisting = existingName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!normExisting || normExisting.length < 3) continue;
+
+    if (normExisting === normNew) {
+      throw new Error(`A supplier named "${existingName}" already exists. Please edit the existing supplier instead.`);
+    }
+
+    if (
+      (normNew.includes(normExisting) || normExisting.includes(normNew)) &&
+      Math.min(normNew.length, normExisting.length) >= 5
+    ) {
+      throw new Error(`SIMILAR_EXISTS:${existingName}:${d.id}`);
+    }
+  }
+
+  const payload: any = { name };
   if (data.email !== undefined) payload.email = data.email || null;
   if (data.phone !== undefined) payload.phone = data.phone || null;
   if (data.orderingMethod) payload.orderingMethod = data.orderingMethod;
   if (data.portalUrl !== undefined) payload.portalUrl = data.portalUrl || null;
   if (data.defaultLeadDays !== undefined) payload.defaultLeadDays = Number(data.defaultLeadDays) || null;
 
-  // NEW optional fields:
   if (typeof data.orderCutoffLocalTime === 'string') payload.orderCutoffLocalTime = data.orderCutoffLocalTime || null;
   if (data.mergeWindowHours !== undefined) {
     const n = Number(data.mergeWindowHours);

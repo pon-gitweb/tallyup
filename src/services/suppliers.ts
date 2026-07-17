@@ -39,6 +39,22 @@ export async function listSuppliers(venueId: string): Promise<Supplier[]> {
 }
 
 export async function createSupplier(venueId: string, data: Supplier): Promise<string> {
+  const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+  const normNew = (data.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const d of snap.docs) {
+    const existingName = ((d.data() as any).name || '').trim();
+    const normExisting = existingName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!normExisting || normExisting.length < 3) continue;
+    if (normExisting === normNew) {
+      throw new Error(`A supplier named "${existingName}" already exists. Please edit the existing supplier instead.`);
+    }
+    if (
+      (normNew.includes(normExisting) || normExisting.includes(normNew)) &&
+      Math.min(normNew.length, normExisting.length) >= 5
+    ) {
+      throw new Error(`SIMILAR_EXISTS:${existingName}:${d.id}`);
+    }
+  }
   const ref = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
     name: data.name,
     email: data.email ?? null,
@@ -47,12 +63,9 @@ export async function createSupplier(venueId: string, data: Supplier): Promise<s
     orderingMethod: data.orderingMethod ?? 'email',
     portalUrl: data.portalUrl ?? null,
     defaultLeadDays: data.defaultLeadDays ?? 2,
-
-    // New timing policy fields (optional)
     orderCutoffLocalTime: data.orderCutoffLocalTime ?? null,
     mergeWindowHours:
       typeof data.mergeWindowHours === 'number' ? data.mergeWindowHours : null,
-
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });

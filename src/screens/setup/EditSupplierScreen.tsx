@@ -10,7 +10,7 @@ export default function EditSupplierScreen() {
   const route = useRoute<any>();
   const venueId = useVenueId();
   const { supplierId, supplier }: { supplierId?: string|null; supplier?: Supplier } = route.params || {};
-  const { showError } = useToast();
+  const { showError, showInfo } = useToast();
 
   const [name, setName] = useState(supplier?.name || '');
   const [email, setEmail] = useState(supplier?.email || '');
@@ -46,7 +46,13 @@ export default function EditSupplierScreen() {
       }
       nav.goBack();
     } catch (e: any) {
-      showError(e?.message || 'Unknown error');
+      if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
+        const similarName = e.message.split(':')[1];
+        showInfo(`Note: "${similarName}" already exists — created anyway.`);
+        nav.goBack();
+      } else {
+        showError(e?.message || 'Unknown error');
+      }
     } finally {
       setBusy(false);
     }

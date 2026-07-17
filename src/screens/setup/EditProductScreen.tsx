@@ -331,7 +331,22 @@ export default function EditProductScreen() {
       setNewSupplierEmail('');
       setNewSupplierPhone('');
     } catch (e: any) {
-      showError(e?.message || 'Could not save supplier — please try again.');
+      if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
+        const parts = e.message.split(':');
+        const similarName = parts[1];
+        const existingId = parts[2];
+        showInfo(`Note: "${similarName}" already exists — linked instead.`);
+        const linked: Supplier = { id: existingId, name: similarName };
+        setSuppliers((prev: any) => prev.some((s: any) => s.id === existingId) ? prev : [linked, ...prev]);
+        setForm((p: any) => ({ ...p, supplierId: existingId, supplierName: similarName }));
+        setShowSupplierModal(false);
+        setAddingSupplier(false);
+        setNewSupplierName('');
+        setNewSupplierEmail('');
+        setNewSupplierPhone('');
+      } else {
+        showError(e?.message || 'Could not save supplier — please try again.');
+      }
     } finally {
       setSavingSupplier(false);
     }
@@ -392,7 +407,7 @@ export default function EditProductScreen() {
       // as a separate null/empty category.
       supplierName: clean(form.supplierName) || 'Unassigned',
 
-      // keep hints for UI; they’re safe to store or ignore
+      // keep hints for UI; they're safe to store or ignore
       supplierNameSuggested: form.supplierNameSuggested || null,
       supplierGlobalId: form.supplierGlobalId || null,
       categorySuggested: form.categorySuggested || null,
@@ -723,7 +738,7 @@ export default function EditProductScreen() {
               <Text style={[styles.hintDim, { color: colours.textSecondary }]}>Catalog source: {form.supplierGlobalId}</Text>
             )}
             <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 6 }]}>
-              This does not link a venue supplier. Use “Supplier Tools” on the Products screen to set a preferred supplier.
+              This does not link a venue supplier. Use "Supplier Tools" on the Products screen to set a preferred supplier.
             </Text>
           </View>
         ) : null}

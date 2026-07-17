@@ -68,8 +68,15 @@ export async function adoptGlobalCatalogToVenue(args: {
     venueSupplierId = existing.id;
     venueSupplierName = existing.name || displayName;
   } else {
-    // Brand new supplier for this venue
-    venueSupplierId = await createSupplier(venueId, { name: displayName } as any);
+    try {
+      venueSupplierId = await createSupplier(venueId, { name: displayName } as any);
+    } catch (e: any) {
+      if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
+        const parts = e.message.split(':');
+        venueSupplierId = parts[2];
+        venueSupplierName = parts[1] || displayName;
+      } else throw e;
+    }
   }
 
   if (!venueSupplierId) {

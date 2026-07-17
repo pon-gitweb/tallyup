@@ -33,7 +33,7 @@ export default function SupplierEditScreen() {
   );
 
   const [busy, setBusy] = useState(false);
-  const { showError } = useToast();
+  const { showError, showInfo } = useToast();
 
   async function onSave() {
     if (!venueId) { showError('Attach or create a venue first.'); return; }
@@ -67,7 +67,13 @@ export default function SupplierEditScreen() {
       }
       nav.goBack();
     } catch (e: any) {
-      showError(e?.message || 'Unknown error');
+      if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
+        const similarName = e.message.split(':')[1];
+        showInfo(`Note: "${similarName}" already exists — created anyway.`);
+        nav.goBack();
+      } else {
+        showError(e?.message || 'Unknown error');
+      }
     } finally {
       setBusy(false);
     }
