@@ -74,3 +74,4 @@ web/app/
 
 # Claude Code runtime lock file
 .claude/scheduled_tasks.lock
+.firebase/
