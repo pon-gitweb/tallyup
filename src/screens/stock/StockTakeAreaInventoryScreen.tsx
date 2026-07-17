@@ -493,7 +493,7 @@ function StockTakeAreaInventoryScreen() {
 
   const [isManager, setIsManager] = useState(false);
 
-  // Remember “last area” per department for resume in AreaSelection
+  // Remember "last area" per department for resume in AreaSelection
   useEffect(() => {
     if (!AS) return;
     if (!venueId || !departmentId || !areaId) return;
@@ -1837,7 +1837,7 @@ const qty = parseFloat(typed);
     if (needsDeltaConfirm(item.lastCount ?? null, qty)) {
       confirm({
         title: 'Large change',
-        message: `Approve “${item.name}” from ${item.lastCount ?? 0} → ${qty}?`,
+        message: `Approve "${item.name}" from ${item.lastCount ?? 0} → ${qty}?`,
         confirmLabel: 'Approve',
         destructive: true,
         onConfirm: throttleAction(doApprove),
@@ -1966,7 +1966,7 @@ const qty = parseFloat(typed);
     const docRef = await addDoc(colRef, payload);
 
     console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
-    showSuccess(`✓ “${nm}” added to this area.`);
+    showSuccess(`✓ "${nm}" added to this area.`);
 
     // Clear name, qty, supplier — keep unit (user likely counting same type of product)
     setAddingName('');
@@ -2909,23 +2909,42 @@ const openHistory = throttleAction(async (item: Item) => {
     const barcode = (product as any).barcode?.trim() || null;
     const _cu = getAuth().currentUser;
 
-    // Write to venue products so the barcode scanner can find it next time
     let venueProductId: string | null = null;
     try {
-      const prodRef = await addDoc(collection(db, 'venues', venueId!, 'products'), {
-        name: displayName,
-        brand: (product as any).brand || null,
-        size: (product as any).size || null,
-        category: (product as any).category || null,
-        unit: product.unit || null,
-        barcode: barcode,
-        barcodeNumber: barcode,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const normName = displayName.toLowerCase().trim();
+      const existingSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId!, 'products'),
+          where('name', '>=', displayName),
+          where('name', '<=', displayName + ''),
+          limit(5)
+        )
+      );
+      const existing = existingSnap.docs.find(d => {
+        const pName = ((d.data() as any).name || '').toLowerCase().trim();
+        return pName === normName || pName.includes(normName) || normName.includes(pName);
       });
-      venueProductId = prodRef.id;
+      if (existing) {
+        venueProductId = existing.id;
+        console.log('[QuickAdd] reusing existing product:', existing.id, displayName);
+      } else {
+        const prodRef = await addDoc(collection(db, 'venues', venueId!, 'products'), {
+          name: displayName,
+          brand: (product as any).brand || null,
+          size: (product as any).size || null,
+          category: (product as any).category || null,
+          unit: product.unit || null,
+          barcode: barcode,
+          barcodeNumber: barcode,
+          inductionSource: 'product-photo',
+          inductionStatus: 'pending',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        venueProductId = prodRef.id;
+      }
     } catch (e: any) {
-      console.warn('[ProductPhoto] venue product write failed (non-fatal):', e?.message);
+      console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', e?.message);
     }
 
     await addDoc(
@@ -3156,7 +3175,7 @@ const openHistory = throttleAction(async (item: Item) => {
             fontSize: 12,
           }}
         >
-          We’ll show you any missing items that will be saved as 0 before you
+          We'll show you any missing items that will be saved as 0 before you
           finalise.
         </Text>
       </TouchableOpacity>}
@@ -3853,7 +3872,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); setTimeout(()=>toggleFlagRecount(it), 0); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEF3C7', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#92400E' }}>
-                {menuFor?.flagRecount ? 'Unflag “Recount”' : 'Flag for recount'}
+                {menuFor?.flagRecount ? 'Unflag "Recount"' : 'Flag for recount'}
               </Text>
             </TouchableOpacity>
 
@@ -4154,7 +4173,7 @@ const openHistory = throttleAction(async (item: Item) => {
                 >
                   <Text style={{ fontWeight: '700' }}>{it.name}</Text>
                   <Text style={{ color: '#92400E' }}>
-                    Marked “Recount”
+                    Marked "Recount"
                   </Text>
                 </TouchableOpacity>
               ))
@@ -4232,11 +4251,11 @@ const openHistory = throttleAction(async (item: Item) => {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
           <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, width: '84%' }}>
             <Text style={{ fontWeight: '600', fontSize: 16, marginBottom: 8 }}>
-              What does “Started at” mean?
+              What does "Started at" mean?
             </Text>
             <Text style={{ fontSize: 14, lineHeight: 20 }}>
-              “Started at” is when this area’s stock take was first opened.
-              “Last activity” is the most recent count update for any item in this area.
+              "Started at" is when this area's stock take was first opened.
+              "Last activity" is the most recent count update for any item in this area.
               This helps Managers see timing and progress at a glance.
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14 }}>
@@ -4255,7 +4274,7 @@ const openHistory = throttleAction(async (item: Item) => {
             <Text style={{ fontWeight: '700', fontSize: 16, marginBottom: 8 }}>How to get started</Text>
             <Text style={{ fontSize: 14, lineHeight: 20, marginBottom: 12 }}>
               Add your products manually, or scan barcodes and attach suppliers later.
-              You’ll see “Expected” values once PARs are set, and the Review panel shows changes before submit.
+              You'll see "Expected" values once PARs are set, and the Review panel shows changes before submit.
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
               <TouchableOpacity onPress={() => setLearnOpen(false)} style={{ padding: 10 }}>
