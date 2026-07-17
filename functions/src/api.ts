@@ -323,13 +323,21 @@ async function matchAndStoreSalesLines(
       }
     }
 
-    await db.doc(`venues/${venueId}/salesReportMatches/${reportId}`).set({
-      reportId,
-      source,
-      counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
-      matches,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    const matchRef = db.doc(`venues/${venueId}/salesReportMatches/${reportId}`);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(matchRef);
+      const data: any = {
+        reportId,
+        source,
+        counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
+        matches,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (!snap.exists) {
+        data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      tx.set(matchRef, data, { merge: true });
+    });
 
     if (unknowns.length > 0) {
       const existingSnap = await db.collection(`venues/${venueId}/salesReportUnknowns`)
