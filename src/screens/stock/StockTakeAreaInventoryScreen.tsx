@@ -13,7 +13,7 @@ import { uploadShelfScanPhoto } from "../../services/shelfScan/uploadShelfScanPh
 import { createShelfScanJob } from "../../services/shelfScan/createShelfScanJob";
 import { uploadStockTakePhoto } from "../../services/stocktake/uploadStockTakePhoto";
 import { createStockTakePhotoDoc } from "../../services/stocktake/stockTakePhotos";
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal,
   Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ActivityIndicator, ScrollView, Platform, Animated, Easing
