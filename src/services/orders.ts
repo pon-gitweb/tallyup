@@ -3,8 +3,6 @@
 
 /* Draft creation (header + /lines subcollection) */
 export { createDraftOrderWithLines } from './orders/create'; // if your file is src/services/orders/create.ts
-export { createDraftsFromSuggestions } from './orders/createDraftsFromSuggestions';
-
 /* Product smart updates used by Suggested Orders (supplier/PAR) */
 export { setParSmart, setSupplierSmart } from './orders/manage';
 

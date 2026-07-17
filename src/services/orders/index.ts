@@ -16,9 +16,6 @@ export type {
 /* ---------- Suggestions ---------- */
 export { buildSuggestedOrdersInMemory } from './suggest';
 
-/* ---------- Create from suggestions ---------- */
-export { createDraftsFromSuggestions } from './createDraftsFromSuggestions';
-
 /* ---------- Draft creation & mutations ---------- */
 export { createDraftOrderWithLines } from './create';
 export {
