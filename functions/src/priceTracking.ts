@@ -161,25 +161,76 @@ export async function trackPriceChanges(opts: PriceTrackingOptions): Promise<{ c
         ops += 2;
       }
     } else {
-      // No matching product — create a new one
-      const newRef = db.collection(`venues/${venueId}/products`).doc();
-      productMap[line.name] = newRef.id;
-      batch.set(newRef, {
-        name: line.name,
-        costPrice: unitPrice,
-        costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        costPriceSource: "invoice",
-        lastInvoicePrice: unitPrice,
-        lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
-        supplierId,
-        supplierName,
-        priceChanged: false,
-        ...caseSizeFields,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Secondary dedup check before creating — catch near-duplicates
+      // that namesMatch missed (e.g. "Heineken 330ml" vs "Heineken Lager 330ml")
+      const normLine = normalizeName(line.name);
+      const nearDuplicate = products.find(p => {
+        const np = normalizeName(p.name || '');
+        if (!np || !normLine || np.length < 4 || normLine.length < 4) return false;
+        if (np.includes(normLine) || normLine.includes(np)) return true;
+        // Levenshtein-lite: if strings share 80%+ of characters in order
+        const shorter = np.length < normLine.length ? np : normLine;
+        const longer = np.length >= normLine.length ? np : normLine;
+        let si = 0;
+        let matches = 0;
+        for (let li = 0; li < longer.length && si < shorter.length; li++) {
+          if (longer[li] === shorter[si]) { matches++; si++; }
+        }
+        return matches / shorter.length >= 0.85;
       });
-      ops++;
-      created++;
+
+      if (nearDuplicate) {
+        // Near-duplicate found — update price on existing product instead of creating
+        console.log(`[trackPriceChanges] near-duplicate found: "${line.name}" → "${nearDuplicate.name}" (${nearDuplicate.id})`);
+        productMap[line.name] = nearDuplicate.id;
+        const productRef = db.doc(`venues/${venueId}/products/${nearDuplicate.id}`);
+        const existing: number | null = typeof nearDuplicate.costPrice === 'number' ? nearDuplicate.costPrice : null;
+        if (existing != null && Math.abs((unitPrice - existing) / existing) > 0.01) {
+          batch.update(productRef, {
+            costPrice: unitPrice,
+            costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastInvoicePrice: unitPrice,
+            lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...caseSizeFields,
+          });
+          ops++;
+          changed++;
+        } else if (existing == null) {
+          batch.update(productRef, {
+            costPrice: unitPrice,
+            costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastInvoicePrice: unitPrice,
+            lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ...caseSizeFields,
+          });
+          ops++;
+        }
+      } else {
+        // Genuinely new product — create it
+        const newRef = db.collection(`venues/${venueId}/products`).doc();
+        productMap[line.name] = newRef.id;
+        batch.set(newRef, {
+          name: line.name,
+          costPrice: unitPrice,
+          costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          costPriceSource: 'invoice',
+          lastInvoicePrice: unitPrice,
+          lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
+          supplierId,
+          supplierName,
+          inductionSource: 'invoice-price-tracking',
+          inductionStatus: 'pending',
+          priceChanged: false,
+          ...caseSizeFields,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        ops++;
+        created++;
+        console.log(`[trackPriceChanges] new product created: "${line.name}"`);
+      }
     }
   }
 
