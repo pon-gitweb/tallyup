@@ -241,6 +241,7 @@ function AreaSelectionInner() {
   function forceReleaseLock(area: AreaRow) {
     const lock = (area.currentLock || {}) as any;
     const lockName = lock.name || 'another user';
+    const targetUid = lock.uid || null;
     confirm({
       title: 'Release lock?',
       message: `${lockName} is currently counting "${area.name || area.id}". Any counts they have open but not yet confirmed will be lost.`,
@@ -253,6 +254,8 @@ function AreaSelectionInner() {
           await runTransaction(db, async (tx) => {
             const snap = await tx.get(areaRef);
             if (!snap.exists()) throw new Error('Area not found');
+            const liveLock = (snap.data()?.currentLock || {}) as any;
+            if (liveLock.uid !== targetUid) throw new Error('LOCK_CHANGED');
             tx.update(areaRef, {
               currentLock: null,
               lockForceReleasedBy: { uid: currentUser?.uid || null, name: currentUser?.displayName || 'Manager' },
@@ -261,7 +264,11 @@ function AreaSelectionInner() {
           });
           showSuccess(`Lock released — "${area.name || area.id}" is now available.`);
         } catch (e: any) {
-          showError(e?.message || 'Could not release lock — please try again.');
+          if (e?.message === 'LOCK_CHANGED') {
+            showInfo("This area's lock has changed — refreshing.");
+          } else {
+            showError(e?.message || 'Could not release lock — please try again.');
+          }
         }
       },
     });
