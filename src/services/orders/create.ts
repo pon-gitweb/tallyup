@@ -36,7 +36,8 @@ export async function createDraftOrderWithLines(
   supplierId: string,
   lines: DraftOrderLineInput[],
   notes?: string | null,
-  supplierNameHint?: string | null
+  supplierNameHint?: string | null,
+  origin?: string | null,
 ): Promise<{ id: string }> {
   if (!venueId) throw new Error('createDraftOrderWithLines: venueId required');
   if (!supplierId) throw new Error('createDraftOrderWithLines: supplierId required');
@@ -90,8 +91,8 @@ export async function createDraftOrderWithLines(
     lineCount: itemsCount,
     totals: { subtotal },
     notes: notes ?? null,
-    origin: 'suggested',
-    source: 'suggestedOrders',
+    origin: origin ?? 'manual',
+    source: origin ?? 'manual',
     poNumber: poNumber ?? null,
     createdAt: now,
     updatedAt: now,

@@ -14,6 +14,7 @@ import {
   finalizeReceiveFromPdf,
   finalizeReceiveFromCsv,
 } from '../../services/orders/receive';
+import { createDraftOrderWithLines as createDraftOrderWithLinesLegacy } from '../../services/orders/create';
 
 export const OrdersService = {
   finalizeReceiveFromPdf,
@@ -21,6 +22,7 @@ export const OrdersService = {
   submitOrHoldDraftOrder: (...args: Parameters<typeof OrdersRepo.submitOrHoldDraftOrder>) => OrdersRepo.submitOrHoldDraftOrder(...args),
   submitDraftOrder: (...args: Parameters<typeof OrdersRepo.submitDraftOrder>) => OrdersRepo.submitDraftOrder(...args),
   deleteDraft: (...args: Parameters<typeof OrdersRepo.deleteDraft>) => OrdersRepo.deleteDraft(...args),
+  createDraftOrderWithLines: createDraftOrderWithLinesLegacy,
   runAISuggest: runAISuggestLegacy,
   buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
 

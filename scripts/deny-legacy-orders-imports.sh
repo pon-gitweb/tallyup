@@ -4,7 +4,7 @@ set -euo pipefail
 # Block committing legacy orders imports from UI layers.
 # UI code should import from `src/domain/orders` instead.
 TARGETS_REGEX='^(src/(screens|components)/.*\.(ts|tsx|js|jsx))$'
-BAD_IMPORT_REGEX='(from\s+["'\''](\.\./)+services/orders/|from\s+["'\'']src/services/orders/)'
+BAD_IMPORT_REGEX='(from\s+["'\''](\.\./)+services/orders[/'\''"]|from\s+["'\'']src/services/orders[/'\''"])'
 
 staged="$(git diff --cached --name-only || true)"
 bad_files=""

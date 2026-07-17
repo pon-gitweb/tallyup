@@ -10,7 +10,7 @@ import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { listSuppliers, Supplier } from '../../services/suppliers';
 import { listProducts, Product } from '../../services/products'; // keeps existing API
-import { createDraftOrderWithLines, OrderLine } from '../../services/orders';
+import { OrdersService, OrderLine } from '../../domain/orders';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 
 type Line = OrderLine & { key: string };
@@ -132,7 +132,7 @@ export default function NewOrderScreen() {
       return;
     }
     try {
-      const { id } = await createDraftOrderWithLines(venueId, supplierId, nonZero, note || null, supplierNameParam ?? null);
+      const { id } = await OrdersService.createDraftOrderWithLines(venueId, supplierId, nonZero, note || null, supplierNameParam ?? null, 'manual');
       showSuccess('Order saved as a draft.');
       // Optionally jump to editor
       // nav.navigate('OrderEditor', { orderId: id, supplierName: supplierNameParam ?? 'Supplier' });
