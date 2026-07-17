@@ -268,7 +268,8 @@ async function matchAndStoreSalesLines(
   venueId: string,
   reportId: string,
   source: string,
-  lines: Array<{ name: string; qtySold: number; gross?: number | null; barcode?: string | null; sku?: string | null }>
+  lines: Array<{ name: string; qtySold: number; gross?: number | null; barcode?: string | null; sku?: string | null }>,
+  period?: { start?: string | null; end?: string | null } | null
 ): Promise<{ matched: number; unknowns: number }> {
   try {
     const productsSnap = await db.collection(`venues/${venueId}/products`).get();
@@ -329,6 +330,7 @@ async function matchAndStoreSalesLines(
       const data: any = {
         reportId,
         source,
+        period: period || null,
         counts: { total: lines.length, matched: matches.length, unknowns: unknowns.length },
         matches,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2462,7 +2464,7 @@ app.get("/square/pull-sales", async (req, res) => {
       const lineArr = Object.entries(lines as any).map(([name, data]: [string, any]) => ({
         name, qtySold: data.qtySold, gross: data.gross, barcode: null, sku: null,
       }));
-      await matchAndStoreSalesLines(db, venueId, `square-${date}`, 'square-pull', lineArr);
+      await matchAndStoreSalesLines(db, venueId, `square-${date}`, 'square-pull', lineArr, { start: date, end: date });
     }
 
     res.json({
@@ -2649,7 +2651,8 @@ app.post("/square/webhook", async (req, res) => {
         updatedLines.map((ln: any) => ({
           name: ln.name, qtySold: Number(ln.qtySold || 0), gross: ln.gross ?? null,
           barcode: ln.barcode ?? null, sku: ln.sku ?? null,
-        }))
+        })),
+        { start: date, end: date }
       );
     }
 
@@ -5950,6 +5953,7 @@ app.post("/match-sales-report", async (req, res) => {
 
     const data = reportSnap.data() as any;
     const rawLines: any[] = data?.report?.lines ?? data?.lines ?? [];
+    const period = data?.report?.period || data?.period || null;
 
     const result = await matchAndStoreSalesLines(db, venueId, reportId, 'manual-csv',
       rawLines.map((l: any) => ({
@@ -5958,7 +5962,8 @@ app.post("/match-sales-report", async (req, res) => {
         gross: l.revenue ?? l.gross ?? null,
         barcode: l.barcode ?? null,
         sku: l.sku ?? null,
-      }))
+      })),
+      period
     );
 
     res.json({ ok: true, ...result });
