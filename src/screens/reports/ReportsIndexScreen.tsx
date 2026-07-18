@@ -971,7 +971,17 @@ export default function ReportsIndexScreen() {
             const allRecs = latestSnapshots.flatMap(s => (s.recommendations || []).slice(0, 3));
             const tierMin = Math.min(...latestSnapshots.map(s => s.dataCompleteness?.tier ?? 1));
             const unpricedTotal = latestSnapshots.reduce((sum, s) => sum + (s.summary?.itemsWithNoPrice ?? 0), 0);
-            if (!allFindings.length && !allPODisc.length && !allRecs.length) return null;
+            const minQualityScore = Math.min(...latestSnapshots.map(s => s.dataQualityScore ?? 100));
+            const issueCountMap: Record<string, number> = {};
+            for (const s of latestSnapshots) {
+              for (const issue of (s.validationIssues || [])) {
+                issueCountMap[issue] = (issueCountMap[issue] ?? 0) + 1;
+              }
+            }
+            const qualityIssues = Object.entries(issueCountMap).map(([issue, count]) =>
+              count > 1 ? `${issue} (${count} departments)` : issue
+            );
+            if (!allFindings.length && !allPODisc.length && !allRecs.length && minQualityScore >= 100) return null;
             return (
               <>
                 {(allFindings.length > 0 || allPODisc.length > 0) && (
@@ -1009,6 +1019,11 @@ export default function ReportsIndexScreen() {
                   {unpricedTotal > 0 && (
                     <Text style={[S.laneEmpty, { color: c.slateMid }]}>
                       {unpricedTotal} product{unpricedTotal !== 1 ? 's' : ''} have no cost price — add prices to unlock dollar variance
+                    </Text>
+                  )}
+                  {minQualityScore < 100 && (
+                    <Text style={[S.laneEmpty, { color: c.stellarAmber, marginTop: 8 }]}>
+                      Data quality: {minQualityScore}/100{qualityIssues.length > 0 ? ' — ' + qualityIssues.join(' · ') : ''}
                     </Text>
                   )}
                 </Lane>
