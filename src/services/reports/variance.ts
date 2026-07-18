@@ -1,9 +1,10 @@
 /**
  * Variance + shrinkage reports.
  *
- * This file has two paths:
- *  - Legacy sync math for tests (computeVarianceFromData)
- *  - Async path that uses data adapters + varianceEngine.computeUnified
+ * computeVarianceSnapshot reads precomputed snapshot docs written by
+ * snapshotWriter.ts (departments/{deptId}/snapshots/cycle-{N}), not live
+ * item docs — live docs have confirmedCount stamped to lastCount after cycle
+ * completion, so reading them directly always yields zero variance.
  *
  * Screens use:
  *  - computeVarianceSnapshot(venueId, opts?) -> shortages/excesses totals
