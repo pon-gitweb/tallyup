@@ -22,7 +22,7 @@ export async function uploadInvoicePdf(orderId: string): Promise<{ fullPath: str
     const ts = Date.now();
     const destPath = `uploads/${venueId}/invoices/${orderId}/${ts}-${safeName}`;
 
-    return await uploadUriViaApi({ fileUri: uri, destPath, contentType: 'application/pdf' });
+    return await uploadUriViaApi({ venueId, fileUri: uri, destPath, contentType: 'application/pdf' });
   } catch (e: any) {
     console.log('[uploadInvoicePdf] failed', e?.message || e);
     Alert.alert('Invoice PDF', String(e?.message || e));

@@ -11,7 +11,7 @@ export async function uploadInvoiceCsv(venueId: string, orderId: string, fileUri
 
   const safe = fileName.replace(/[^\w.\-]+/g, '_').slice(0, 80);
   const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safe}`;
-  return uploadUriViaApi({ fileUri, destPath, contentType: 'text/csv' });
+  return uploadUriViaApi({ venueId, fileUri, destPath, contentType: 'text/csv' });
 }
 
 /**
@@ -25,5 +25,5 @@ export async function uploadInvoicePdf(venueId: string, orderId: string, fileUri
 
   const safe = fileName.replace(/[^\w.\-]+/g, '_').slice(0, 80);
   const destPath = `uploads/${venueId}/orders/${orderId}/invoices/${Date.now()}-${safe}`;
-  return uploadUriViaApi({ fileUri, destPath, contentType: 'application/pdf' });
+  return uploadUriViaApi({ venueId, fileUri, destPath, contentType: 'application/pdf' });
 }

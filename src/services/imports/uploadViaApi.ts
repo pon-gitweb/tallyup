@@ -28,9 +28,10 @@ async function postJson(url: string, body: any) {
   return res;
 }
 
-export async function uploadUriViaApi(opts: { fileUri: string; destPath: string; contentType: string; cacheControl?: string }) {
-  const { fileUri, destPath, contentType, cacheControl } = opts;
+export async function uploadUriViaApi(opts: { venueId: string; fileUri: string; destPath: string; contentType: string; cacheControl?: string }) {
+  const { venueId, fileUri, destPath, contentType, cacheControl } = opts;
   if (!BASE) throw new Error('Missing AI base URL');
+  if (!venueId) throw new Error('uploadUriViaApi: missing venueId');
   if (!fileUri) throw new Error('uploadUriViaApi: missing fileUri');
   if (!destPath) throw new Error('uploadUriViaApi: missing destPath');
   if (!contentType) throw new Error('uploadUriViaApi: missing contentType');
@@ -42,10 +43,10 @@ export async function uploadUriViaApi(opts: { fileUri: string; destPath: string;
   const primary = `${BASE}/upload-file`;
   const fallback = `${BASE}/api/upload-file`;
 
-  let res = await postJson(primary, { destPath, dataUrl, cacheControl });
+  let res = await postJson(primary, { venueId, destPath, dataUrl, cacheControl });
   if (res.status === 404) {
     if (__DEV__) console.log('[uploadViaApi] primary 404, trying fallback', fallback);
-    res = await postJson(fallback, { destPath, dataUrl, cacheControl });
+    res = await postJson(fallback, { venueId, destPath, dataUrl, cacheControl });
   }
 
   if (!res.ok) {

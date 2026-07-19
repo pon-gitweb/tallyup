@@ -21,7 +21,7 @@ export async function importProductsPdf(): Promise<{ fullPath: string; downloadU
     const ts = Date.now();
     const destPath = `uploads/${venueId}/products/imports/${ts}-${safeName}`;
 
-    const out = await uploadUriViaApi({ fileUri: uri, destPath, contentType: 'application/pdf' });
+    const out = await uploadUriViaApi({ venueId, fileUri: uri, destPath, contentType: 'application/pdf' });
     return out;
   } catch (e: any) {
     console.log('[ImportProductsPDF] failed', e?.message || e);

@@ -373,7 +373,7 @@ async function matchAndStoreSalesLines(
 }
 
 // ── POST /upload-file ────────────────────────────────────────────────────────
-// Body: { destPath: string, dataUrl: string, cacheControl?: string }
+// Body: { venueId: string, destPath: string, dataUrl: string, cacheControl?: string }
 // Returns: { ok: true, fullPath: string, downloadURL: string }
 app.post("/upload-file", async (req, res) => {
   try {
