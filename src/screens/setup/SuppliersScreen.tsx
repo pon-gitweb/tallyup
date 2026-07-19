@@ -16,7 +16,7 @@ import {
   Keyboard,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
@@ -647,6 +647,7 @@ export default function SuppliersScreen() {
         animationType="slide"
         onRequestClose={() => setFormVisible(false)}
       >
+        <SafeAreaProvider>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -944,10 +945,12 @@ export default function SuppliersScreen() {
         </View>
         </KeyboardAvoidingView>
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
 
       {/* FIX 4: Supplier detail modal with linked products */}
       <Modal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
+        <SafeAreaProvider>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
         <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -1033,6 +1036,7 @@ export default function SuppliersScreen() {
           </View>
         </View>
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
 
       {modal}
