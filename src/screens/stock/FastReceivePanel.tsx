@@ -23,7 +23,9 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
 
   // CAMERA: capture, upload JPEG, create pending snapshot (OCR comes later)
   const takePhoto = useCallback(async () => {
+    if (busy) return;
     try {
+      setBusy(true);
       if (!venueId) throw new Error('Not ready: no venue selected');
 
       const cam = await ImagePicker.requestCameraPermissionsAsync();
@@ -39,7 +41,6 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      setBusy(true);
       const asset = photo.assets[0];
       const filename = `invoice_${Date.now()}.jpg`;
 
@@ -72,11 +73,13 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose]);
+  }, [venueId, onClose, busy]);
 
   // LIBRARY: pick existing photo, upload JPEG, create pending snapshot
   const pickPhotoFromLibrary = useCallback(async () => {
+    if (busy) return;
     try {
+      setBusy(true);
       if (!venueId) throw new Error('Not ready: no venue selected');
 
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -92,7 +95,6 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      setBusy(true);
       const asset = photo.assets[0];
       const filename = `invoice_${Date.now()}.jpg`;
 
@@ -125,11 +127,13 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose]);
+  }, [venueId, onClose, busy]);
 
   // CSV/PDF upload
   const pickAndProcess = useCallback(async () => {
+    if (busy) return;
     try {
+      setBusy(true);
       const res = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'application/pdf'],
         multiple: false,
@@ -144,8 +148,6 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       if (!a.uri?.startsWith('file')) {
         throw new Error('Selected file is not a local file. Please save it to this device first, then choose it again.');
       }
-
-      setBusy(true);
 
       const up = await uploadFastInvoice(
         venueId,
@@ -231,7 +233,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose]);
+  }, [venueId, onClose, busy]);
 
   const quickTip = useMemo(() => {
     return "Tip: If the scan finds ≥5 lines and ≥50 items, we'll prompt for item check-off. Fewer lines/items can be quick-confirmed.";
