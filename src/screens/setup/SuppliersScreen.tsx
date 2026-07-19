@@ -647,6 +647,7 @@ export default function SuppliersScreen() {
         animationType="slide"
         onRequestClose={() => setFormVisible(false)}
       >
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
@@ -942,10 +943,12 @@ export default function SuppliersScreen() {
           )}
         </View>
         </KeyboardAvoidingView>
+        </SafeAreaView>
       </Modal>
 
       {/* FIX 4: Supplier detail modal with linked products */}
       <Modal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
         <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <Text style={{ fontSize: 20, fontWeight: '800' }}>{detailSupplier?.name}</Text>
@@ -1029,6 +1032,7 @@ export default function SuppliersScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </SafeAreaView>
       </Modal>
 
       {modal}
