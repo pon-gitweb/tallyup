@@ -56,6 +56,9 @@ export default function NewOrderStartScreen() {
       <View style={styles.center}>
         <Text style={styles.title}>No suppliers yet</Text>
         <Text style={styles.muted}>Add suppliers to begin creating manual orders.</Text>
+        <TouchableOpacity onPress={() => nav.navigate('Suppliers')} style={styles.ctaBtn}>
+          <Text style={styles.ctaText}>Add a supplier</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -87,4 +90,6 @@ const styles = StyleSheet.create({
   name: { fontSize: 16 },
   chev: { fontSize: 22, color: '#999' },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: '#e5e5e5', marginLeft: 16 },
+  ctaBtn: { marginTop: 20, backgroundColor: '#0A84FF', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 24 },
+  ctaText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });
