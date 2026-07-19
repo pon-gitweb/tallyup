@@ -3660,33 +3660,37 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Request Adjustment Modal */}
       <Modal visible={!!adjModalFor} animationType="slide" onRequestClose={() => setAdjModalFor(null)} transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
-            <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 10 }}>Request Adjustment</Text>
-            <Text style={{ marginBottom: 8, color: '#555' }}>
-              Item: {adjModalFor?.name}{'\n'}
-              Current saved qty: {adjModalFor?.lastCount ?? '—'}
-            </Text>
-            <View style={{ marginBottom: 10 }}>
-              <Text style={{ fontWeight: '600', marginBottom: 4 }}>Proposed qty</Text>
-              <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="decimal-pad" inputMode="decimal"
-                style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+              <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 10 }}>Request Adjustment</Text>
+                <Text style={{ marginBottom: 8, color: '#555' }}>
+                  Item: {adjModalFor?.name}{'\n'}
+                  Current saved qty: {adjModalFor?.lastCount ?? '—'}
+                </Text>
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={{ fontWeight: '600', marginBottom: 4 }}>Proposed qty</Text>
+                  <TextInput value={adjQty} onChangeText={setAdjQty} placeholder="e.g. 21" keyboardType="decimal-pad" inputMode="decimal"
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
+                </View>
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason</Text>
+                  <TextInput value={adjReason} onChangeText={setAdjReason} placeholder="Brief reason"
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
+                </View>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <TouchableOpacity onPress={() => setAdjModalFor(null)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
+                    <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={submitAdjustment} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
+                    <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
-            <View style={{ marginBottom: 10 }}>
-              <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason</Text>
-              <TextInput value={adjReason} onChangeText={setAdjReason} placeholder="Brief reason"
-                style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }} />
-            </View>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity onPress={() => setAdjModalFor(null)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
-                <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={submitAdjustment} style={{ padding: 12, borderRadius: 10, backgroundColor: '#6A1B9A', flex: 1 }}>
-                <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Submit request</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Bluetooth Scale Modal */}
@@ -3811,112 +3815,120 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* Manager Override Modal */}
       <Modal visible={overrideModalOpen} animationType="slide" transparent onRequestClose={() => setOverrideModalOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
-            <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 8 }}>Manager override</Text>
-            <Text style={{ color: '#6B7280', marginBottom: 12 }}>
-              The edit window has closed. You can make corrections — all changes will be logged with your name and reason.
-            </Text>
-            <View style={{ marginBottom: 12 }}>
-              <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason for override</Text>
-              <TextInput
-                value={overrideReasonInput}
-                onChangeText={setOverrideReasonInput}
-                placeholder="e.g. Miscounted during handover"
-                style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }}
-                autoFocus
-              />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
+              <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', marginBottom: 8 }}>Manager override</Text>
+                <Text style={{ color: '#6B7280', marginBottom: 12 }}>
+                  The edit window has closed. You can make corrections — all changes will be logged with your name and reason.
+                </Text>
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ fontWeight: '600', marginBottom: 4 }}>Reason for override</Text>
+                  <TextInput
+                    value={overrideReasonInput}
+                    onChangeText={setOverrideReasonInput}
+                    placeholder="e.g. Miscounted during handover"
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 10 }}
+                    autoFocus
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity onPress={() => setOverrideModalOpen(false)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
+                    <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!overrideReasonInput.trim()) { showInfo('Please enter a reason for the override.'); return; }
+                      setCurrentOverrideReason(overrideReasonInput.trim());
+                      setOverrideActive(true);
+                      setOverrideModalOpen(false);
+                      // Write override fields to area doc
+                      const cu = getAuth().currentUser;
+                      updateDoc(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), {
+                        managerOverride: true,
+                        overrideBy: cu?.uid ?? 'unknown',
+                        overrideAt: serverTimestamp(),
+                        overrideReason: overrideReasonInput.trim(),
+                      }).catch(() => {});
+                    }}
+                    style={{ padding: 12, borderRadius: 10, backgroundColor: '#374151', flex: 1 }}
+                  >
+                    <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Unlock for editing</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity onPress={() => setOverrideModalOpen(false)} style={{ padding: 12, borderRadius: 10, backgroundColor: '#ECEFF1', flex: 1 }}>
-                <Text style={{ textAlign: 'center', fontWeight: '700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  if (!overrideReasonInput.trim()) { showInfo('Please enter a reason for the override.'); return; }
-                  setCurrentOverrideReason(overrideReasonInput.trim());
-                  setOverrideActive(true);
-                  setOverrideModalOpen(false);
-                  // Write override fields to area doc
-                  const cu = getAuth().currentUser;
-                  updateDoc(doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId), {
-                    managerOverride: true,
-                    overrideBy: cu?.uid ?? 'unknown',
-                    overrideAt: serverTimestamp(),
-                    overrideReason: overrideReasonInput.trim(),
-                  }).catch(() => {});
-                }}
-                style={{ padding: 12, borderRadius: 10, backgroundColor: '#374151', flex: 1 }}
-              >
-                <Text style={{ textAlign: 'center', color: '#fff', fontWeight: '800' }}>Unlock for editing</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Edit Item Modal */}
       <Modal visible={!!editFor} animationType="slide" transparent onRequestClose={()=>setEditFor(null)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
-            <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Edit item</Text>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1 }}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+              <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16 }}>
+                <Text style={{ fontSize:18, fontWeight:'800', marginBottom:8 }}>Edit item</Text>
 
-            <View style={{ gap:10 }}>
-              <View>
-                <Text style={{ fontWeight:'600', marginBottom:4 }}>Name</Text>
-                <TextInput
-                  value={editName}
-                  onChangeText={setEditName}
-                  placeholder="Item name"
-                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-                />
-              </View>
+                <View style={{ gap:10 }}>
+                  <View>
+                    <Text style={{ fontWeight:'600', marginBottom:4 }}>Name</Text>
+                    <TextInput
+                      value={editName}
+                      onChangeText={setEditName}
+                      placeholder="Item name"
+                      style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                    />
+                  </View>
 
-              <View style={{ flexDirection:'row', gap:8 }}>
-                <View style={{ flex:1 }}>
-                  <Text style={{ fontWeight:'600', marginBottom:4 }}>Unit</Text>
-                  <TextInput
-                    value={editUnit}
-                    onChangeText={setEditUnit}
-                    placeholder="e.g. bottles, kg"
-                    style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-                  />
+                  <View style={{ flexDirection:'row', gap:8 }}>
+                    <View style={{ flex:1 }}>
+                      <Text style={{ fontWeight:'600', marginBottom:4 }}>Unit</Text>
+                      <TextInput
+                        value={editUnit}
+                        onChangeText={setEditUnit}
+                        placeholder="e.g. bottles, kg"
+                        style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                      />
+                    </View>
+                    <View style={{ flex:1 }}>
+                      <Text style={{ fontWeight:'600', marginBottom:4 }}>Supplier</Text>
+                      <TextInput
+                        value={editSupplier}
+                        onChangeText={setEditSupplier}
+                        placeholder="Supplier name"
+                        style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                      />
+                    </View>
+                  </View>
+
+                  <View>
+                    <Text style={{ fontWeight:'600', marginBottom:4 }}>Par level</Text>
+                    <TextInput
+                      ref={editParRef}
+                      value={editPar}
+                      onChangeText={setEditPar}
+                      placeholder="e.g. 24"
+                      keyboardType="decimal-pad"
+                      inputMode="decimal"
+                      style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
+                    />
+                  </View>
                 </View>
-                <View style={{ flex:1 }}>
-                  <Text style={{ fontWeight:'600', marginBottom:4 }}>Supplier</Text>
-                  <TextInput
-                    value={editSupplier}
-                    onChangeText={setEditSupplier}
-                    placeholder="Supplier name"
-                    style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-                  />
-                </View>
-              </View>
 
-              <View>
-                <Text style={{ fontWeight:'600', marginBottom:4 }}>Par level</Text>
-                <TextInput
-                  ref={editParRef}
-                  value={editPar}
-                  onChangeText={setEditPar}
-                  placeholder="e.g. 24"
-                  keyboardType="decimal-pad"
-                  inputMode="decimal"
-                  style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#ddd', borderRadius:10 }}
-                />
+                <View style={{ flexDirection:'row', gap:10, marginTop:14 }}>
+                  <TouchableOpacity onPress={()=>setEditFor(null)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
+                    <Text style={{ textAlign:'center', fontWeight:'700' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={saveEditItem} style={{ padding:12, borderRadius:10, backgroundColor:'#0A84FF', flex:1 }}>
+                    <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Save</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
-
-            <View style={{ flexDirection:'row', gap:10, marginTop:14 }}>
-              <TouchableOpacity onPress={()=>setEditFor(null)} style={{ padding:12, borderRadius:10, backgroundColor:'#ECEFF1', flex:1 }}>
-                <Text style={{ textAlign:'center', fontWeight:'700' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={saveEditItem} style={{ padding:12, borderRadius:10, backgroundColor:'#0A84FF', flex:1 }}>
-                <Text style={{ textAlign:'center', color:'#fff', fontWeight:'800' }}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Long-press action sheet */}
@@ -4456,77 +4468,81 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* ✏️ Quick Add manual sub-modal */}
       <Modal visible={quickAddSheetOpen} animationType="slide" transparent onRequestClose={()=>setQuickAddSheetOpen(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-          <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
-            <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1 }}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+              <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
+                <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
 
-            <TextInput
-              ref={nameInputRef}
-              value={addingName}
-              onChangeText={setAddingName}
-              placeholder="Product name (required)"
-              autoFocus
-              style={{
-                borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                paddingHorizontal:12, paddingVertical:10, fontSize:15,
-                color:'#0f172a', marginBottom:10,
-              }}
-              returnKeyType="next"
-              blurOnSubmit={false}
-            />
+                <TextInput
+                  ref={nameInputRef}
+                  value={addingName}
+                  onChangeText={setAddingName}
+                  placeholder="Product name (required)"
+                  autoFocus
+                  style={{
+                    borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                    paddingHorizontal:12, paddingVertical:10, fontSize:15,
+                    color:'#0f172a', marginBottom:10,
+                  }}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                />
 
-            <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
-              <TextInput
-                value={addingUnit}
-                onChangeText={setAddingUnit}
-                placeholder="Unit (e.g. bottles)"
-                style={{
-                  flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                  paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
-                }}
-                returnKeyType="next"
-                blurOnSubmit={false}
-              />
-              <TextInput
-                value={addingQty}
-                onChangeText={setAddingQty}
-                placeholder="Count now"
-                keyboardType="decimal-pad"
-                inputMode="decimal"
-                style={{
-                  flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                  paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
-                }}
-                returnKeyType="done"
-                blurOnSubmit={false}
-                onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
-              />
+                <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
+                  <TextInput
+                    value={addingUnit}
+                    onChangeText={setAddingUnit}
+                    placeholder="Unit (e.g. bottles)"
+                    style={{
+                      flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                      paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
+                    }}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    value={addingQty}
+                    onChangeText={setAddingQty}
+                    placeholder="Count now"
+                    keyboardType="decimal-pad"
+                    inputMode="decimal"
+                    style={{
+                      flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                      paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
+                    }}
+                    returnKeyType="done"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
+                  />
+                </View>
+
+                <TextInput
+                  value={addingBarcode}
+                  onChangeText={setAddingBarcode}
+                  placeholder="Barcode (optional)"
+                  keyboardType="number-pad"
+                  style={{
+                    borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                    paddingHorizontal:12, paddingVertical:10, fontSize:14,
+                    color:'#0f172a', marginBottom:10,
+                  }}
+                  returnKeyType="done"
+                  blurOnSubmit={false}
+                />
+
+                <TouchableOpacity
+                  onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
+                  style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
+                >
+                  <Text style={{ color:'#fff', fontWeight:'800', fontSize:15 }}>Add to area</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={()=>setQuickAddSheetOpen(false)} style={{ paddingVertical:12, alignItems:'center' }}>
+                  <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-
-            <TextInput
-              value={addingBarcode}
-              onChangeText={setAddingBarcode}
-              placeholder="Barcode (optional)"
-              keyboardType="number-pad"
-              style={{
-                borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                paddingHorizontal:12, paddingVertical:10, fontSize:14,
-                color:'#0f172a', marginBottom:10,
-              }}
-              returnKeyType="done"
-              blurOnSubmit={false}
-            />
-
-            <TouchableOpacity
-              onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
-              style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
-            >
-              <Text style={{ color:'#fff', fontWeight:'800', fontSize:15 }}>Add to area</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={()=>setQuickAddSheetOpen(false)} style={{ paddingVertical:12, alignItems:'center' }}>
-              <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
 
