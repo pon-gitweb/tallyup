@@ -4456,7 +4456,7 @@ const openHistory = throttleAction(async (item: Item) => {
 
       {/* ✏️ Quick Add manual sub-modal */}
       <Modal visible={quickAddSheetOpen} animationType="slide" transparent onRequestClose={()=>setQuickAddSheetOpen(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
             <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
 
@@ -4527,9 +4527,9 @@ const openHistory = throttleAction(async (item: Item) => {
               <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
-    
+
       <ShelfScanModal
         visible={captureShelfOpen}
         onClose={() => setCaptureShelfOpen(false)}
