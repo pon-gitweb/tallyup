@@ -5440,21 +5440,53 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
   const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   if (!lines.length) return [];
 
-  // Detect header row
-  const headerRaw = lines[0].toLowerCase();
-  const cols = headerRaw.split(',').map((s) => s.trim());
+  // Quote-aware CSV field split — handles commas inside double-quoted fields
+  function splitCsvLine(raw: string): string[] {
+    const fields: string[] = [];
+    let cur = '';
+    let inQuote = false;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (ch === '"') {
+        inQuote = !inQuote;
+      } else if (ch === ',' && !inQuote) {
+        fields.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    fields.push(cur.trim());
+    return fields;
+  }
 
-  // Map common column names
-  const nameIdx = cols.findIndex((c) => /name|description|product|item/i.test(c));
-  const qtyIdx = cols.findIndex((c) => /qty|quantity|units|count/i.test(c));
-  const priceIdx = cols.findIndex((c) => /price|cost|unit.?price|rate/i.test(c));
-  const codeIdx = cols.findIndex((c) => /code|sku|barcode/i.test(c));
+  // Scan up to first 20 lines for the real header row (handles preamble metadata rows)
+  let headerLineIdx = -1;
+  let nameIdx = -1;
+  let qtyIdx = -1;
+  let priceIdx = -1;
+  let codeIdx = -1;
+
+  const scanWindow = Math.min(20, lines.length);
+  for (let i = 0; i < scanWindow; i++) {
+    const cols = splitCsvLine(lines[i].toLowerCase());
+    const ni = cols.findIndex((c) => /name|description|product|item/i.test(c));
+    const qi = cols.findIndex((c) => /qty|quantity|units|count/i.test(c));
+    if (ni >= 0 && qi >= 0) {
+      headerLineIdx = i;
+      nameIdx = ni;
+      qtyIdx = qi;
+      priceIdx = cols.findIndex((c) => /price|cost|unit.?price|rate/i.test(c));
+      codeIdx = cols.findIndex((c) => /code|sku|barcode/i.test(c));
+      break;
+    }
+  }
 
   // If we can identify columns, use them
   if (nameIdx >= 0 && qtyIdx >= 0) {
     const out: Array<{ name: string; qty: number; unitPrice?: number; code?: string }> = [];
-    for (const raw of lines.slice(1)) {
-      const parts = raw.split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+    for (const raw of lines.slice(headerLineIdx + 1)) {
+      const parts = splitCsvLine(raw);
       const name = parts[nameIdx] || '';
       const qty = Number(parts[qtyIdx]);
       const unitPrice = priceIdx >= 0 ? Number(parts[priceIdx]) : undefined;
@@ -5466,10 +5498,10 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
     return out;
   }
 
-  // Fallback: try to infer from raw data rows (name, qty, price)
+  // Fallback: treat lines[0] as header, infer from raw data rows (name, qty, price)
   const out: Array<{ name: string; qty: number; unitPrice?: number }> = [];
   for (const raw of lines.slice(1)) {
-    const parts = raw.split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+    const parts = splitCsvLine(raw);
     if (parts.length < 2) continue;
     const name = parts[0];
     const qty = Number(parts[1]);
