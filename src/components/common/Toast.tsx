@@ -25,10 +25,16 @@ type ToastContextType = {
   showInfo: (message: string) => void;
 };
 
+type ToastRenderContextType = {
+  visible: boolean;
+  config: ToastConfig;
+  translateY: Animated.Value;
+};
+
 const ToastContext = createContext<ToastContextType | null>(null);
+const ToastRenderContext = createContext<ToastRenderContextType | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const c = useColours();
   const [visible, setVisible] = useState(false);
   const [config, setConfig] = useState<ToastConfig>({ message: '', variant: 'success' });
   const translateY = useRef(new Animated.Value(-100)).current;
@@ -83,30 +89,40 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     toastService.register({ show, showError, showSuccess });
   }, [show, showError, showSuccess]);
 
+  return (
+    <ToastContext.Provider value={{ show, showError, showSuccess, showInfo }}>
+      <ToastRenderContext.Provider value={{ visible, config, translateY }}>
+        <View style={styles.wrapper}>
+          {children}
+          <ToastHost />
+        </View>
+      </ToastRenderContext.Provider>
+    </ToastContext.Provider>
+  );
+}
+
+export function ToastHost() {
+  const c = useColours();
+  const ctx = useContext(ToastRenderContext);
+  if (!ctx) return null;
+  const { visible, config, translateY } = ctx;
+
   const bgColor = {
     success: '#2d6a4f',
     error: '#c0392b',
     info: c.missionSlate ?? '#3b3f4a',
   }[config.variant ?? 'success'];
 
+  if (!visible) return null;
+
   return (
-    <ToastContext.Provider value={{ show, showError, showSuccess, showInfo }}>
-      <View style={styles.wrapper}>
-        {children}
-        {visible && (
-          <Animated.View
-            style={[
-              styles.toast,
-              { backgroundColor: bgColor, transform: [{ translateY }] },
-            ]}
-          >
-            <Text style={styles.toastText} numberOfLines={2}>
-              {config.message}
-            </Text>
-          </Animated.View>
-        )}
-      </View>
-    </ToastContext.Provider>
+    <Animated.View
+      style={[styles.toast, { backgroundColor: bgColor, transform: [{ translateY }] }]}
+    >
+      <Text style={styles.toastText} numberOfLines={2}>
+        {config.message}
+      </Text>
+    </Animated.View>
   );
 }
 

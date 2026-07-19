@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, View, Text, ScrollView, TouchableOpacity, Modal, SafeAreaView } from 'react-native';
+import { ToastHost } from '../../components/common/Toast';
 import { getOfflineInvoiceQueue } from '../fastReceive/FastReceivePanel';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -146,6 +147,7 @@ export default function InvoicesScreen() {
             <View style={{ width: 60 }} />
           </View>
           <FastReceivePanel onClose={() => setShowFastReceive(false)} />
+          <ToastHost />
         </SafeAreaView>
       </Modal>
 
