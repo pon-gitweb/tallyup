@@ -13,7 +13,12 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  Platform,
 } from 'react-native';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
@@ -156,7 +161,11 @@ export default function FastReceiveDetailModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex:1, backgroundColor:'#fff' }}>
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }} edges={['top','left','right']}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1 }}>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+              <View style={{ flex:1 }}>
         <View style={S.header}>
           <TouchableOpacity onPress={onClose}><Text style={S.back}>‹ Back</Text></TouchableOpacity>
           <Text style={S.title}>Snapshot {item?.id ?? ''}</Text>
@@ -251,7 +260,11 @@ export default function FastReceiveDetailModal({
             <Text style={[S.btnText, { color:'#111' }]}>Close</Text>
           </TouchableOpacity>
         </View>
-      </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }
