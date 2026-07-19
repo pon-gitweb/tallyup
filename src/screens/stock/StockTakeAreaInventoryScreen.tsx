@@ -3157,7 +3157,7 @@ const openHistory = throttleAction(async (item: Item) => {
         { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
         /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
         { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
-        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => nameInputRef.current?.focus() },
+        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => { setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setQuickAddSheetOpen(true); setTimeout(() => nameInputRef.current?.focus(), 100); } },
       ].map(card => (
         <TouchableOpacity
           key={card.icon}
@@ -3383,6 +3383,10 @@ const openHistory = throttleAction(async (item: Item) => {
                   const term = unifiedSearch.trim();
                   setUnifiedSearch('');
                   setAddingName(term);
+                  setAddingUnit('');
+                  setAddingQty('');
+                  setAddingBarcode('');
+                  setQuickAddSheetOpen(true);
                   setTimeout(() => nameInputRef.current?.focus(), 100);
                 }}
                 style={{ paddingHorizontal: 12, paddingVertical: 12 }}
