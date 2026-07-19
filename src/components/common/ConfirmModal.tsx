@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
   },
   btn: {
     flex: 1,
-    height: 52,
+    minHeight: 52,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
