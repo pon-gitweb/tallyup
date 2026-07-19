@@ -3,6 +3,7 @@ import * as admin from "firebase-admin";
 import { trackPriceChanges } from "./priceTracking";
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
+import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
 
 type ParsedLine = {
   name: string;
@@ -594,67 +595,6 @@ async function createUnpricedProducts(
   }
 }
 
-// ── Supplier resolution (find-or-create by fuzzy name match) ──────────────────
-
-async function resolveSupplier(
-  db: admin.firestore.Firestore,
-  venueId: string,
-  supplierName: string | null,
-  extra: {
-    hintSupplierId?: string;
-    phone?: string | null;
-    email?: string | null;
-    address?: string | null;
-    accountNumber?: string | null;
-  } = {},
-): Promise<{ supplierId: string; supplierName: string }> {
-  if (!supplierName) return { supplierId: extra.hintSupplierId || "", supplierName: "" };
-
-  let resolvedSupplierId: string = extra.hintSupplierId || "";
-  let resolvedSupplierName: string = supplierName;
-  try {
-    const suppliersSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-    const candNorm = normNameInline(supplierName);
-    let matchedId: string | null = null;
-    let bestScore = 0;
-    for (const sd of suppliersSnap.docs) {
-      const sn = normNameInline((sd.data() as any).name || "");
-      if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
-      const sc = tokenJaccardInline(supplierName, (sd.data() as any).name || "");
-      if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
-    }
-    if (matchedId && bestScore >= 0.85) {
-      resolvedSupplierId = matchedId;
-      const existingDoc = suppliersSnap.docs.find(d => d.id === matchedId);
-      if (existingDoc) {
-        resolvedSupplierName = (existingDoc.data() as any).name || supplierName;
-        const ex = existingDoc.data() as any;
-        const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-        if (!ex.phone && extra.phone) upd.phone = extra.phone;
-        if (!ex.email && extra.email) upd.email = extra.email;
-        if (!ex.address && extra.address) upd.address = extra.address;
-        if (!ex.accountNumber && extra.accountNumber) upd.accountNumber = extra.accountNumber;
-        if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
-      }
-    } else {
-      const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
-        name: supplierName,
-        phone: extra.phone || null,
-        email: extra.email || null,
-        address: extra.address || null,
-        accountNumber: extra.accountNumber || null,
-        isHoldingSupplier: false,
-        source: "invoice-scan",
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      resolvedSupplierId = newSupRef.id;
-    }
-  } catch (e: any) {
-    console.log("[ocrInvoicePhoto] supplier find/create error", e?.message);
-  }
-  return { supplierId: resolvedSupplierId, supplierName: resolvedSupplierName };
-}
 
 // ── Stock increment helper — goods always increment stock on arrival ──────────
 
@@ -972,16 +912,21 @@ async function processTaxInvoice(
   }
 
   // Resolve supplier FIRST so invoice document has the correct supplierId
-  const { supplierId: resolvedSupplierId, supplierName: resolvedSupplierName } = await resolveSupplier(
-    db, venueId, payload.supplierName,
-    {
-      hintSupplierId: data?.supplierId || "",
-      phone: payload.supplierPhone,
-      email: payload.supplierEmail,
-      address: payload.supplierAddress,
-      accountNumber: invoice?.supplierAccountNumber,
-    },
-  );
+  const ocrMeta: SupplierMeta = {
+    name: payload.supplierName || "",
+    phone: payload.supplierPhone || null,
+    email: payload.supplierEmail || null,
+    address: payload.supplierAddress || null,
+    accountNumber: invoice?.supplierAccountNumber || null,
+  };
+  let resolvedSupplierId: string = data?.supplierId || "";
+  let resolvedSupplierName = "";
+  if (ocrMeta.name) {
+    const resolution = await resolveSupplierShared(db, venueId, ocrMeta);
+    const committed = await commitSupplierResolution(db, venueId, resolution, ocrMeta, 'invoice-scan');
+    resolvedSupplierId = committed.supplierId;
+    resolvedSupplierName = committed.supplierName;
+  }
 
   // ── Duplicate invoice check ─────────────────────────────────────────────────
   if (payload.invoiceNumber) {

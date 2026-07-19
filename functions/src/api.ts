@@ -6,6 +6,7 @@ import cors = require("cors");
 import Stripe from "stripe";
 import { trackPriceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
+import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
 
 const app = express();
@@ -5436,9 +5437,15 @@ function extractLinesFromText(text: string): Array<{ name: string; qty: number; 
   return out;
 }
 
-function parseCsvText(text: string): Array<{ name: string; qty: number; unitPrice?: number; code?: string }> {
-  const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  if (!lines.length) return [];
+type ParsedCsv = {
+  lines: Array<{ name: string; qty: number; unitPrice?: number; code?: string }>;
+  supplierMeta: { name: string; phone: string | null; email: string | null; address: string | null; accountNumber: string | null };
+};
+
+function parseCsvText(text: string): ParsedCsv {
+  const emptyMeta = { name: '', phone: null as string | null, email: null as string | null, address: null as string | null, accountNumber: null as string | null };
+  const rawLines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (!rawLines.length) return { lines: [], supplierMeta: emptyMeta };
 
   // Quote-aware CSV field split — handles commas inside double-quoted fields
   function splitCsvLine(raw: string): string[] {
@@ -5460,16 +5467,26 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
     return fields;
   }
 
-  // Scan up to first 20 lines for the real header row (handles preamble metadata rows)
+  // Scan up to first 20 lines: collect preamble metadata and find the real header row
   let headerLineIdx = -1;
   let nameIdx = -1;
   let qtyIdx = -1;
   let priceIdx = -1;
   let codeIdx = -1;
+  const supplierMeta = { ...emptyMeta };
 
-  const scanWindow = Math.min(20, lines.length);
+  const scanWindow = Math.min(20, rawLines.length);
   for (let i = 0; i < scanWindow; i++) {
-    const cols = splitCsvLine(lines[i].toLowerCase());
+    const colsOrig = splitCsvLine(rawLines[i]);
+    const cols = colsOrig.map(c => c.toLowerCase());
+    const label = cols[0] || '';
+    if (colsOrig.length >= 2 && colsOrig[1]) {
+      if (/^supplier$/.test(label)) supplierMeta.name = colsOrig[1];
+      else if (/^phone$|^tel$|^telephone$/.test(label)) supplierMeta.phone = colsOrig[1];
+      else if (/^email$/.test(label)) supplierMeta.email = colsOrig[1];
+      else if (/^address$/.test(label)) supplierMeta.address = colsOrig[1];
+      else if (/^account(?: number| no)?$/.test(label)) supplierMeta.accountNumber = colsOrig[1];
+    }
     const ni = cols.findIndex((c) => /name|description|product|item/i.test(c));
     const qi = cols.findIndex((c) => /qty|quantity|units|count/i.test(c));
     if (ni >= 0 && qi >= 0) {
@@ -5485,7 +5502,7 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
   // If we can identify columns, use them
   if (nameIdx >= 0 && qtyIdx >= 0) {
     const out: Array<{ name: string; qty: number; unitPrice?: number; code?: string }> = [];
-    for (const raw of lines.slice(headerLineIdx + 1)) {
+    for (const raw of rawLines.slice(headerLineIdx + 1)) {
       const parts = splitCsvLine(raw);
       const name = parts[nameIdx] || '';
       const qty = Number(parts[qtyIdx]);
@@ -5495,12 +5512,12 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
       out.push({ name, qty, unitPrice: (unitPrice && Number.isFinite(unitPrice)) ? unitPrice : undefined, code: code || undefined });
       if (out.length >= 200) break;
     }
-    return out;
+    return { lines: out, supplierMeta };
   }
 
-  // Fallback: treat lines[0] as header, infer from raw data rows (name, qty, price)
+  // Fallback: treat rawLines[0] as header, infer from raw data rows (name, qty, price)
   const out: Array<{ name: string; qty: number; unitPrice?: number }> = [];
-  for (const raw of lines.slice(1)) {
+  for (const raw of rawLines.slice(1)) {
     const parts = splitCsvLine(raw);
     if (parts.length < 2) continue;
     const name = parts[0];
@@ -5510,7 +5527,7 @@ function parseCsvText(text: string): Array<{ name: string; qty: number; unitPric
     out.push({ name, qty, unitPrice: (unitPrice && Number.isFinite(unitPrice)) ? unitPrice : undefined });
     if (out.length >= 200) break;
   }
-  return out;
+  return { lines: out, supplierMeta };
 }
 
 // ── Price change flags for manager review ─────────────────────────────────────
@@ -5566,65 +5583,35 @@ app.post("/process-invoices-csv", async (req, res) => {
     const lcCSV = await checkAiLimit(venueId, 'invoice_ocr');
     if (!lcCSV.allowed) { res.status(429).json(lcCSV.limitError); return; }
 
-    const supplierName: string = (req.body?.supplierName || '').toString().trim();
-    const supplierIdFromBody: string = (req.body?.supplierId || '').toString().trim();
-    let resolvedSupplierId = supplierIdFromBody || null;
-
-    // Find or create supplier — mirrors PDF endpoint logic
-    if (supplierName && !resolvedSupplierId) {
-      try {
-        const db = admin.firestore();
-        const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-        const candNorm = normNameForMatch(supplierName);
-        let matchedId: string | null = null;
-        let bestScore = 0;
-        for (const sd of suppSnap.docs) {
-          const sn = normNameForMatch((sd.data() as any)?.name || '');
-          // Exact normalised match first — highest confidence
-          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
-          // Fuzzy match — same threshold as PDF path (0.85)
-          const sc = tokenJaccardMatch(supplierName, (sd.data() as any)?.name || '');
-          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
-        }
-        // Only use match if above threshold
-        if (matchedId && bestScore < 0.85) matchedId = null;
-        if (matchedId) {
-          resolvedSupplierId = matchedId;
-          // CSV invoices don't carry contact details — nothing to enrich here,
-          // but structure mirrors PDF path for future contact-field extraction
-        } else {
-          // Create new supplier
-          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
-            name: supplierName,
-            phone: null,
-            email: null,
-            address: null,
-            accountNumber: null,
-            isHoldingSupplier: false,
-            source: 'invoice-csv',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          resolvedSupplierId = newSupRef.id;
-          console.log('[api/process-invoices-csv] created new supplier', { venueId, supplierName, supplierId: resolvedSupplierId });
-        }
-      } catch (e: any) {
-        console.log('[api/process-invoices-csv] supplier find/create error', e?.message);
-      }
-    }
-
     // Download the file from Storage
     const bucket = admin.storage().bucket();
     const [fileBuffer] = await bucket.file(storagePath).download();
     const csvText = fileBuffer.toString("utf-8");
 
-    const lines = filterInvoiceLines(parseCsvText(csvText));
+    const { lines: rawLines, supplierMeta } = parseCsvText(csvText);
+    const lines = filterInvoiceLines(rawLines);
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items could be parsed from this CSV.");
 
+    // Resolve supplier from preamble metadata extracted by parseCsvText
+    let resolvedSupplierId: string | null = (req.body?.supplierId || '').toString().trim() || null;
+    let resolvedSupplierName = supplierMeta.name;
+    if (supplierMeta.name && !resolvedSupplierId) {
+      try {
+        const db = admin.firestore();
+        const resolution = await resolveSupplier(db, venueId, supplierMeta);
+        const committed = await commitSupplierResolution(db, venueId, resolution, supplierMeta, 'invoice-csv');
+        resolvedSupplierId = committed.supplierId;
+        resolvedSupplierName = committed.supplierName;
+        console.log('[api/process-invoices-csv] supplier resolved', { venueId, supplierName: resolvedSupplierName, supplierId: resolvedSupplierId });
+      } catch (e: any) {
+        console.log('[api/process-invoices-csv] supplier find/create error', e?.message);
+      }
+    }
+
     const payload = {
       ok: true,
-      invoice: { source: 'csv', storagePath, poNumber: null, supplierName, supplierId: resolvedSupplierId },
+      invoice: { source: 'csv', storagePath, poNumber: null, supplierName: resolvedSupplierName, supplierId: resolvedSupplierId },
       lines,
       confidence: lines.length > 0 ? 0.8 : 0.2,
       warnings,
@@ -5639,14 +5626,14 @@ app.post("/process-invoices-csv", async (req, res) => {
       venueId,
       lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
       supplierId: resolvedSupplierId || '',
-      supplierName: supplierName || '',
+      supplierName: resolvedSupplierName || '',
       invoiceId: `csv_${storagePath}`,
     }).then(result => {
       const db = admin.firestore();
       const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
       return Promise.all(significant.map(c => flagPriceChangeToManager(
         db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
-        supplierName || '', `csv_${storagePath}`
+        resolvedSupplierName || '', `csv_${storagePath}`
       )));
     }).catch((e: any) => console.log("[api/process-invoices-csv] price tracking error", e?.message));
 
@@ -5752,47 +5739,22 @@ app.post("/process-invoices-pdf", async (req, res) => {
     console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName });
     res.json(payload);
 
-    // FIX 2: Find or create venue supplier from extracted details (non-blocking)
     let resolvedSupplierIdPdf: string = req.body?.supplierId || "";
+    let resolvedSupplierNamePdf = supplierName;
     if (supplierName) {
       try {
         const db = admin.firestore();
-        const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-        const candNorm = normNameForMatch(supplierName);
-        let matchedId: string | null = null;
-        let bestScore = 0;
-        for (const sd of suppSnap.docs) {
-          const sn = normNameForMatch((sd.data() as any).name || "");
-          if (sn === candNorm && sn.length > 0) { matchedId = sd.id; bestScore = 1.0; break; }
-          const sc = tokenJaccardMatch(supplierName, (sd.data() as any).name || "");
-          if (sc > bestScore) { bestScore = sc; matchedId = sd.id; }
-        }
-        if (matchedId && bestScore >= 0.85) {
-          resolvedSupplierIdPdf = matchedId;
-          const existingDoc = suppSnap.docs.find(d => d.id === matchedId);
-          if (existingDoc) {
-            const ex = existingDoc.data() as any;
-            const upd: any = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-            if (!ex.phone && payload.invoice.supplierPhone) upd.phone = payload.invoice.supplierPhone;
-            if (!ex.email && payload.invoice.supplierEmail) upd.email = payload.invoice.supplierEmail;
-            if (!ex.address && payload.invoice.supplierAddress) upd.address = payload.invoice.supplierAddress;
-            if (!ex.accountNumber && payload.invoice.supplierAccountNumber) upd.accountNumber = payload.invoice.supplierAccountNumber;
-            if (Object.keys(upd).length > 1) await db.doc(`venues/${venueId}/suppliers/${matchedId}`).update(upd);
-          }
-        } else {
-          const newSupRef = await db.collection(`venues/${venueId}/suppliers`).add({
-            name: supplierName,
-            phone: payload.invoice.supplierPhone || null,
-            email: payload.invoice.supplierEmail || null,
-            address: payload.invoice.supplierAddress || null,
-            accountNumber: payload.invoice.supplierAccountNumber || null,
-            isHoldingSupplier: false,
-            source: "invoice-pdf",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          resolvedSupplierIdPdf = newSupRef.id;
-        }
+        const pdfMeta = {
+          name: supplierName,
+          phone: payload.invoice.supplierPhone || null,
+          email: payload.invoice.supplierEmail || null,
+          address: payload.invoice.supplierAddress || null,
+          accountNumber: payload.invoice.supplierAccountNumber || null,
+        };
+        const resolution = await resolveSupplier(db, venueId, pdfMeta);
+        const committed = await commitSupplierResolution(db, venueId, resolution, pdfMeta, 'invoice-pdf');
+        resolvedSupplierIdPdf = committed.supplierId;
+        resolvedSupplierNamePdf = committed.supplierName;
       } catch (e: any) {
         console.log("[api/process-invoices-pdf] supplier find/create error", e?.message);
       }
@@ -5804,14 +5766,14 @@ app.post("/process-invoices-pdf", async (req, res) => {
       venueId,
       lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
       supplierId: resolvedSupplierIdPdf,
-      supplierName: supplierName || req.body?.supplierName || "",
+      supplierName: resolvedSupplierNamePdf || supplierName || "",
       invoiceId: pdfInvoiceId,
     }).then(result => {
       const db = admin.firestore();
       const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
       return Promise.all(significant.map(c => flagPriceChangeToManager(
         db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
-        supplierName || req.body?.supplierName || "", pdfInvoiceId
+        resolvedSupplierNamePdf || supplierName || "", pdfInvoiceId
       )));
     }).catch((e: any) => console.log("[api/process-invoices-pdf] price tracking error", e?.message));
 
