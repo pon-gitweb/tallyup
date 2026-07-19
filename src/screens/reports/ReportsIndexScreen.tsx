@@ -1405,7 +1405,7 @@ function makeStyles(c: any) {
     alignItems: 'center',
   },
   headerTitle: {
-    color: c.surface,
+    color: c.text,
     fontSize: 20,
     fontWeight: '700',
   },
@@ -1427,7 +1427,7 @@ function makeStyles(c: any) {
     marginBottom: 24,
   },
   emptyTitle: {
-    color: c.surface,
+    color: c.text,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 8,
@@ -1522,7 +1522,7 @@ function makeStyles(c: any) {
     borderBottomColor: c.border,
   },
   lineRowName: {
-    color: c.surface,
+    color: c.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1562,7 +1562,7 @@ function makeStyles(c: any) {
     marginRight: 12,
   },
   trendName: {
-    color: c.surface,
+    color: c.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1631,7 +1631,7 @@ function makeStyles(c: any) {
     borderBottomColor: c.border,
   },
   areaName: {
-    color: c.surface,
+    color: c.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1682,7 +1682,7 @@ function makeStyles(c: any) {
     borderBottomColor: c.border,
   },
   insightHeadline: {
-    color: c.surface,
+    color: c.text,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 6,
@@ -1738,7 +1738,7 @@ function makeStyles(c: any) {
     paddingBottom: 12,
   },
   modalTitle: {
-    color: c.surface,
+    color: c.text,
     fontSize: 18,
     fontWeight: '700',
   },
@@ -1877,7 +1877,7 @@ function makeSStyles(c: any) {
     borderBottomWidth: 1,
     borderBottomColor: c.border,
   },
-  title: { fontSize: 18, fontWeight: '800', color: c.surface },
+  title: { fontSize: 18, fontWeight: '800', color: c.text },
   subtitle: { fontSize: 12, color: c.slateMid, marginTop: 2 },
   badge: {
     backgroundColor: c.border,
@@ -1920,7 +1920,7 @@ function makeSStyles(c: any) {
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 14,
-    color: c.surface,
+    color: c.text,
     borderWidth: 1,
     borderColor: c.border,
   },
