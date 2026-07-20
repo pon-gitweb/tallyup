@@ -5,7 +5,7 @@ import { ParsedInvoicePayload } from './reconciliationStore.types'; // keep or r
 
 export async function persistFastReceiveSnapshot(args: {
   venueId: string;
-  source: 'csv'|'pdf'|'manual';
+  source: 'csv'|'pdf'|'manual'|'photo';
   storagePath: string;
   payload: ParsedInvoicePayload | any;
   parsedPo?: string | null;
