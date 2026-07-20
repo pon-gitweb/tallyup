@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { trackPriceChanges } from "./priceTracking";
+import { proposeInvoiceChanges, ProposedAction } from "./priceTracking";
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
@@ -549,19 +549,21 @@ function tokenJaccardInline(a: string, b: string): number {
 
 // ── Unpriced product creation ─────────────────────────────────────────────────
 
-async function createUnpricedProducts(
+async function processUnpricedLines(
   db: admin.firestore.Firestore,
   venueId: string,
   unpricedLines: ParsedLine[],
-  supplierId: string,
-  supplierName: string,
-): Promise<void> {
+  supplierId: string | null,
+  supplierName: string | null,
+  invoiceId: string,
+): Promise<ProposedAction[]> {
   const productsSnap = await db.collection(`venues/${venueId}/products`).get();
   const existingProds = productsSnap.docs.map(d => ({
     id: d.id,
     name: (d.data() as any).name || "",
     supplierId: (d.data() as any).supplierId || null,
   }));
+  const newProposals: ProposedAction[] = [];
   for (const line of unpricedLines) {
     if (!line.name?.trim()) continue;
     const matchedProd = existingProds.find(ep => {
@@ -580,19 +582,19 @@ async function createUnpricedProducts(
       }
       continue;
     }
-    const newRef = await db.collection(`venues/${venueId}/products`).add({
-      name: line.name.trim(),
-      unit: line.unit || null,
+    // Genuinely new — surface as proposal rather than auto-creating
+    newProposals.push({
+      id: `${invoiceId}:newProduct:${line.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+      type: 'newProduct',
+      lineName: line.name.trim(),
+      unitPrice: null,
+      qty: line.qty,
+      caseSize: line.caseSize != null && line.caseSize > 0 ? line.caseSize : null,
       supplierId: supplierId || null,
       supplierName: supplierName || null,
-      active: true,
-      inductionSource: 'invoice-photo',
-      inductionStatus: 'pending',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    existingProds.push({ id: newRef.id, name: line.name.trim(), supplierId });
   }
+  return newProposals;
 }
 
 
@@ -894,6 +896,7 @@ async function processTaxInvoice(
     matchedOrderNumber: null as string | null,
     priceChanges: [] as any[],
     hasPriceChanges: false,
+    proposals: [] as ProposedAction[],
     documentType: "TAX_INVOICE" as DocumentType,
     ok: true,
   };
@@ -921,11 +924,22 @@ async function processTaxInvoice(
   };
   let resolvedSupplierId: string = data?.supplierId || "";
   let resolvedSupplierName = "";
+  let supplierCandidate: { name: string; phone: string|null; email: string|null; address: string|null; accountNumber: string|null } | undefined;
   if (ocrMeta.name) {
     const resolution = await resolveSupplierShared(db, venueId, ocrMeta);
-    const committed = await commitSupplierResolution(db, venueId, resolution, ocrMeta, 'invoice-scan');
-    resolvedSupplierId = committed.supplierId;
-    resolvedSupplierName = committed.supplierName;
+    if (resolution.kind === 'matched') {
+      const committed = await commitSupplierResolution(db, venueId, resolution, ocrMeta, 'invoice-scan');
+      resolvedSupplierId = committed.supplierId;
+      resolvedSupplierName = committed.supplierName;
+    } else {
+      supplierCandidate = {
+        name: ocrMeta.name,
+        phone: ocrMeta.phone,
+        email: ocrMeta.email,
+        address: ocrMeta.address,
+        accountNumber: ocrMeta.accountNumber,
+      };
+    }
   }
 
   // ── Duplicate invoice check ─────────────────────────────────────────────────
@@ -1029,32 +1043,24 @@ async function processTaxInvoice(
     }).catch(() => {});
   }
 
-  // Track price changes — awaited to guarantee costPrice is written before function returns
+  // Propose price changes — auto-writes (touches + initial prices) committed immediately;
+  // price changes and new products surfaced as proposals for user review
+  const invoiceId = payload.invoiceNumber || `ocr_${Date.now()}`;
   let productMap: Record<string, string> = {};
   try {
-    const priceResult = await trackPriceChanges({
+    const priceResult = await proposeInvoiceChanges({
       venueId,
       lines,
       supplierId: resolvedSupplierId,
       supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
-      invoiceId: payload.invoiceNumber || `ocr_${Date.now()}`,
+      invoiceId,
       invoiceDocId,
     });
-    productMap = priceResult.productMap || {};
-    const priceChangeSummary = (priceResult.changedLines || []).map((c) => ({
-      name: c.productName,
-      productId: c.productId,
-      oldPrice: c.oldPrice,
-      newPrice: c.newPrice,
-      changePercent: c.changePercent,
-      direction: c.direction,
-      qty: c.qty,
-      caseSize: c.caseSize,
-    }));
-    payload.priceChanges = priceChangeSummary;
-    payload.hasPriceChanges = priceChangeSummary.length > 0;
+    productMap = priceResult.autoProductMap || {};
+    payload.proposals = payload.proposals.concat(priceResult.proposals);
+    payload.hasPriceChanges = priceResult.proposals.some((p: ProposedAction) => p.type === 'priceChange');
 
-    // Link matched productIds back into the saved invoice line items
+    // Link confidently-matched productIds back into the saved invoice line items immediately
     if (invoiceDocId && Object.keys(productMap).length > 0) {
       try {
         const invRef = db.doc(`venues/${venueId}/invoices/${invoiceDocId}`);
@@ -1075,13 +1081,20 @@ async function processTaxInvoice(
     // Non-fatal — invoice was saved correctly but product costPrice may not have updated
   }
 
-  // Create venue products for unpriced lines (awaited, non-fatal)
+  // Propose new products for genuinely new unpriced lines; auto-backfill supplierId on existing matches
   const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));
   if (unpricedLines.length > 0) {
     try {
-      await createUnpricedProducts(db, venueId, unpricedLines, resolvedSupplierId, resolvedSupplierName);
+      const unpricedProposals = await processUnpricedLines(
+        db, venueId, unpricedLines,
+        resolvedSupplierId || null, resolvedSupplierName || null,
+        invoiceId,
+      );
+      if (unpricedProposals.length > 0) {
+        payload.proposals = payload.proposals.concat(unpricedProposals);
+      }
     } catch (error: any) {
-      console.error("[ocrInvoice] product creation failed:", error?.message);
+      console.error("[ocrInvoice] unpriced product processing failed:", error?.message);
     }
   }
 
@@ -1296,6 +1309,9 @@ async function processTaxInvoice(
   payload.documentStorageRef = shouldRequestInvoice ? documentStoragePath : null;
   payload.supplierId = resolvedSupplierId || null;
   payload.invoiceDocId = invoiceDocId || null;
+  if (supplierCandidate) {
+    payload.supplierCandidate = supplierCandidate;
+  }
   return payload;
 }
 

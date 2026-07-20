@@ -381,7 +381,7 @@ export type ProposedAction =
       id: string;
       type: "newProduct";
       lineName: string;
-      unitPrice: number;
+      unitPrice: number | null;
       qty: number;
       caseSize: number | null;
       supplierId: string | null;
@@ -467,6 +467,7 @@ async function applyAreaItemLinking(
 export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise<{
   autoApplied: { linked: number };
   proposals: ProposedAction[];
+  autoProductMap: Record<string, string>;
 }> {
   const {
     venueId,
@@ -484,7 +485,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     (l.unitPrice as number) > 0 &&
     (l.unitPrice as number) < 10000
   );
-  if (!priced.length) return { autoApplied: { linked: 0 }, proposals: [] };
+  if (!priced.length) return { autoApplied: { linked: 0 }, proposals: [], autoProductMap: {} };
 
   const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
   const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -659,7 +660,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     }
   }
 
-  return { autoApplied: { linked }, proposals };
+  return { autoApplied: { linked }, proposals, autoProductMap };
 }
 
 export async function commitInvoiceChanges(
@@ -765,7 +766,12 @@ export async function commitInvoiceChanges(
       const newRef = db.collection(`venues/${venueId}/products`).doc();
       const cs = proposal.caseSize;
       const caseSizeFields = cs
-        ? { caseSize: cs, unitCost: proposal.unitPrice / cs, caseCost: proposal.unitPrice }
+        ? {
+            caseSize: cs,
+            ...(proposal.unitPrice != null
+              ? { unitCost: proposal.unitPrice / cs, caseCost: proposal.unitPrice }
+              : {}),
+          }
         : {};
       batch.set(newRef, {
         name: proposal.lineName,
