@@ -191,7 +191,9 @@ async function updateStockAndCreateInvoice(
 async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:string; orderId:string; parsed: Parsed }) {
   const { venueId, orderId, parsed } = args;
   const db = getFirestore(getApp());
-  const uid = getAuth()?.currentUser?.uid || null;
+  const currentUser = getAuth()?.currentUser || null;
+  const uid = currentUser?.uid || null;
+  const uidName = currentUser?.displayName || currentUser?.email || null;
 
   // 0) Duplicate receive protection — bail if already invoiced/received
   try {
@@ -341,7 +343,8 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
     status: 'invoiced',
     receivedAt: serverTimestamp(),
     invoicedAt: serverTimestamp(),
-    lastReconciliationId: saved?.id || reconciled?.reconciliationId || null
+    lastReconciliationId: saved?.id || reconciled?.reconciliationId || null,
+    receivedBy: { uid, name: uidName }
   });
 
   return {
