@@ -1570,7 +1570,7 @@ export const ocrInvoicePhoto = functions
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-opus-4-7",
         max_tokens: 4096,
         system: "You are reading a hospitality invoice photo. Extract ALL text you can see exactly as written, preserving the layout as much as possible. Include supplier name, invoice number, date, and all line items with their quantities and prices. Do not summarise — return the full text content.",
         messages: [{
