@@ -485,9 +485,11 @@ function ProposalCard({ proposal, decision, onDecide }: any) {
       : `First time — $${proposal.newPrice.toFixed(2)}`;
   } else if (proposal.type === 'newProduct') {
     heading = `${proposal.lineName} — add as new product?`;
-    detail = proposal.caseSize
-      ? `$${proposal.unitPrice.toFixed(2)} / $${(proposal.unitPrice / proposal.caseSize).toFixed(2)} per unit`
-      : `$${proposal.unitPrice.toFixed(2)}`;
+    detail = proposal.unitPrice == null
+      ? 'No price detected — will need a price added later'
+      : proposal.caseSize
+        ? `$${proposal.unitPrice.toFixed(2)} / $${(proposal.unitPrice / proposal.caseSize).toFixed(2)} per unit`
+        : `$${proposal.unitPrice.toFixed(2)}`;
   } else if (proposal.type === 'supplierLink') {
     heading = proposal.wouldBecomePreferred
       ? `Set as preferred supplier for ${proposal.productName}`
