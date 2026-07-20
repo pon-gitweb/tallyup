@@ -4,7 +4,7 @@ import * as nodemailer from "nodemailer";
 import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
-import { trackPriceChanges } from "./priceTracking";
+import { proposeInvoiceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
@@ -5593,21 +5593,36 @@ app.post("/process-invoices-csv", async (req, res) => {
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items could be parsed from this CSV.");
 
-    // Resolve supplier from preamble metadata extracted by parseCsvText
+    // Resolve supplier — matched suppliers are auto-committed; unmatched candidates
+    // are returned in supplierCandidate for the client review screen
     let resolvedSupplierId: string | null = (req.body?.supplierId || '').toString().trim() || null;
     let resolvedSupplierName = supplierMeta.name;
+    let supplierCandidate: { name: string; phone: string | null; email: string | null; address: string | null; accountNumber: string | null } | undefined;
     if (supplierMeta.name && !resolvedSupplierId) {
       try {
         const db = admin.firestore();
         const resolution = await resolveSupplier(db, venueId, supplierMeta);
-        const committed = await commitSupplierResolution(db, venueId, resolution, supplierMeta, 'invoice-csv');
-        resolvedSupplierId = committed.supplierId;
-        resolvedSupplierName = committed.supplierName;
-        console.log('[api/process-invoices-csv] supplier resolved', { venueId, supplierName: resolvedSupplierName, supplierId: resolvedSupplierId });
+        if (resolution.kind === 'matched') {
+          const committed = await commitSupplierResolution(db, venueId, resolution, supplierMeta, 'invoice-csv');
+          resolvedSupplierId = committed.supplierId;
+          resolvedSupplierName = committed.supplierName;
+          console.log('[api/process-invoices-csv] supplier resolved', { venueId, supplierName: resolvedSupplierName, supplierId: resolvedSupplierId });
+        } else {
+          supplierCandidate = { name: supplierMeta.name, phone: supplierMeta.phone, email: supplierMeta.email, address: supplierMeta.address, accountNumber: supplierMeta.accountNumber };
+          console.log('[api/process-invoices-csv] new supplier candidate', { venueId, name: supplierMeta.name });
+        }
       } catch (e: any) {
         console.log('[api/process-invoices-csv] supplier find/create error', e?.message);
       }
     }
+
+    const priceResult = await proposeInvoiceChanges({
+      venueId,
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
+      supplierId: resolvedSupplierId || '',
+      supplierName: resolvedSupplierName || '',
+      invoiceId: `csv_${storagePath}`,
+    });
 
     const payload = {
       ok: true,
@@ -5615,27 +5630,13 @@ app.post("/process-invoices-csv", async (req, res) => {
       lines,
       confidence: lines.length > 0 ? 0.8 : 0.2,
       warnings,
+      ...(supplierCandidate ? { supplierCandidate } : {}),
+      proposals: priceResult.proposals,
     };
 
     trackAiCall(venueId, 'invoice_ocr').catch(() => {});
-    console.log("[api/process-invoices-csv] OK", { uid, venueId, storagePath, linesCount: lines.length });
+    console.log("[api/process-invoices-csv] OK", { uid, venueId, storagePath, linesCount: lines.length, proposals: priceResult.proposals.length });
     res.json(payload);
-
-    // Track price changes non-blocking
-    trackPriceChanges({
-      venueId,
-      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
-      supplierId: resolvedSupplierId || '',
-      supplierName: resolvedSupplierName || '',
-      invoiceId: `csv_${storagePath}`,
-    }).then(result => {
-      const db = admin.firestore();
-      const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
-      return Promise.all(significant.map(c => flagPriceChangeToManager(
-        db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
-        resolvedSupplierName || '', `csv_${storagePath}`
-      )));
-    }).catch((e: any) => console.log("[api/process-invoices-csv] price tracking error", e?.message));
 
   } catch (e: any) {
     console.error("[api/process-invoices-csv] ERROR", e?.message || e);
@@ -5712,6 +5713,45 @@ app.post("/process-invoices-pdf", async (req, res) => {
     const warnings: string[] = [];
     if (!lines.length) warnings.push("No line items detected — please review manually.");
 
+    // Resolve supplier — matched suppliers are auto-committed; unmatched candidates
+    // are returned in supplierCandidate for the client review screen
+    const pdfMeta = {
+      name: supplierName ?? "",
+      phone: invoiceData?.supplier.phone || null,
+      email: invoiceData?.supplier.email || null,
+      address: invoiceData?.supplier.address || null,
+      accountNumber: invoiceData?.supplier.accountNumber || null,
+    };
+    let resolvedSupplierIdPdf: string | null = (req.body?.supplierId || '').toString().trim() || null;
+    let resolvedSupplierNamePdf: string | null = supplierName ?? null;
+    let supplierCandidatePdf: typeof pdfMeta | undefined;
+    if (pdfMeta.name && !resolvedSupplierIdPdf) {
+      try {
+        const db = admin.firestore();
+        const resolution = await resolveSupplier(db, venueId, pdfMeta);
+        if (resolution.kind === 'matched') {
+          const committed = await commitSupplierResolution(db, venueId, resolution, pdfMeta, 'invoice-pdf');
+          resolvedSupplierIdPdf = committed.supplierId;
+          resolvedSupplierNamePdf = committed.supplierName;
+          console.log('[api/process-invoices-pdf] supplier resolved', { venueId, supplierName: resolvedSupplierNamePdf, supplierId: resolvedSupplierIdPdf });
+        } else {
+          supplierCandidatePdf = pdfMeta;
+          console.log('[api/process-invoices-pdf] new supplier candidate', { venueId, name: pdfMeta.name });
+        }
+      } catch (e: any) {
+        console.log("[api/process-invoices-pdf] supplier find/create error", e?.message);
+      }
+    }
+
+    const pdfInvoiceId = poNumber || `pdf_${storagePath}`;
+    const priceResultPdf = await proposeInvoiceChanges({
+      venueId,
+      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
+      supplierId: resolvedSupplierIdPdf || '',
+      supplierName: resolvedSupplierNamePdf || supplierName || '',
+      invoiceId: pdfInvoiceId,
+    });
+
     const payload = {
       ok: true,
       invoice: {
@@ -5721,11 +5761,12 @@ app.post("/process-invoices-pdf", async (req, res) => {
         invoiceNumber: invoiceNumber ?? null,
         invoiceDate: invoiceData?.invoice.date ?? null,
         deliveryDate: deliveryDate ?? null,
-        supplierName: supplierName ?? null,
+        supplierName: resolvedSupplierNamePdf ?? supplierName ?? null,
         supplierPhone: invoiceData?.supplier.phone ?? null,
         supplierEmail: invoiceData?.supplier.email ?? null,
         supplierAddress: invoiceData?.supplier.address ?? null,
         supplierAccountNumber: invoiceData?.supplier.accountNumber ?? null,
+        supplierId: resolvedSupplierIdPdf ?? null,
         customerName: invoiceData?.customer.name ?? null,
         totalAmount: invoiceData?.invoice.total ?? null,
         gstAmount: invoiceData?.invoice.gst ?? null,
@@ -5733,49 +5774,13 @@ app.post("/process-invoices-pdf", async (req, res) => {
       lines,
       confidence: lines.length > 0 ? 0.8 : 0.2,
       warnings,
+      ...(supplierCandidatePdf ? { supplierCandidate: supplierCandidatePdf } : {}),
+      proposals: priceResultPdf.proposals,
     };
 
     trackAiCall(venueId, 'invoice_ocr').catch(() => {});
-    console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName });
+    console.log("[api/process-invoices-pdf] OK", { uid, venueId, storagePath, linesCount: lines.length, poNumber, supplierName: resolvedSupplierNamePdf, proposals: priceResultPdf.proposals.length });
     res.json(payload);
-
-    let resolvedSupplierIdPdf: string = req.body?.supplierId || "";
-    let resolvedSupplierNamePdf = supplierName;
-    if (supplierName) {
-      try {
-        const db = admin.firestore();
-        const pdfMeta = {
-          name: supplierName,
-          phone: payload.invoice.supplierPhone || null,
-          email: payload.invoice.supplierEmail || null,
-          address: payload.invoice.supplierAddress || null,
-          accountNumber: payload.invoice.supplierAccountNumber || null,
-        };
-        const resolution = await resolveSupplier(db, venueId, pdfMeta);
-        const committed = await commitSupplierResolution(db, venueId, resolution, pdfMeta, 'invoice-pdf');
-        resolvedSupplierIdPdf = committed.supplierId;
-        resolvedSupplierNamePdf = committed.supplierName;
-      } catch (e: any) {
-        console.log("[api/process-invoices-pdf] supplier find/create error", e?.message);
-      }
-    }
-
-    // Track price changes non-blocking
-    const pdfInvoiceId = poNumber || `pdf_${storagePath}`;
-    trackPriceChanges({
-      venueId,
-      lines: lines.map((l: any) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, caseSize: l.caseSize ?? null })),
-      supplierId: resolvedSupplierIdPdf,
-      supplierName: resolvedSupplierNamePdf || supplierName || "",
-      invoiceId: pdfInvoiceId,
-    }).then(result => {
-      const db = admin.firestore();
-      const significant = (result.changedLines || []).filter(c => Math.abs(c.changePercent) >= 5);
-      return Promise.all(significant.map(c => flagPriceChangeToManager(
-        db, venueId, c.productId, c.productName, c.oldPrice, c.newPrice, c.changePercent,
-        resolvedSupplierNamePdf || supplierName || "", pdfInvoiceId
-      )));
-    }).catch((e: any) => console.log("[api/process-invoices-pdf] price tracking error", e?.message));
 
   } catch (e: any) {
     console.error("[api/process-invoices-pdf] ERROR", e?.message || e);
