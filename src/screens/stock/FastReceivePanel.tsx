@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
+import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
 import { processInvoicesCsv } from '../../services/invoices/processInvoicesCsv';
 import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
@@ -21,7 +22,32 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const { confirm, modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
 
-  // CAMERA: capture, upload JPEG, create pending snapshot (OCR comes later)
+  const processScannedPhoto = useCallback(async (uri: string) => {
+    const filename = `invoice_${Date.now()}.jpg`;
+    const result = await scanInvoicePhoto({ venueId, photoUri: uri, filename });
+    const save = await persistFastReceiveSnapshot({
+      venueId,
+      source: 'photo',
+      storagePath: result.invoice.storagePath,
+      payload: result,
+      parsedPo: result.invoice.poNumber,
+    });
+    if (!save || save.ok !== true) {
+      throw new Error(`FastReceive snapshot write denied: ${(save && save.error) ? String(save.error) : 'unknown error'}`);
+    }
+    hapticMedium();
+    const nLines = result.lines.length;
+    const nProposals = Array.isArray(result.proposals) ? result.proposals.length : 0;
+    if (nLines > 0) {
+      const proposalSuffix = nProposals > 0 ? `, ${nProposals} change${nProposals === 1 ? '' : 's'} to review` : '';
+      showSuccess(`✓ Invoice scanned — ${nLines} item${nLines === 1 ? '' : 's'} found${proposalSuffix}. Open Fast Receives (Pending) to review.`);
+    } else {
+      showSuccess('✓ Photo saved — no items detected. Review manually in Fast Receives (Pending).');
+    }
+    onClose();
+  }, [venueId, showSuccess, onClose]);
+
+  // CAMERA: capture, scan invoice with Claude, persist snapshot
   const takePhoto = useCallback(async () => {
     if (busy) return;
     try {
@@ -41,41 +67,16 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      const asset = photo.assets[0];
-      const filename = `invoice_${Date.now()}.jpg`;
-
-      const up = await uploadFastInvoice(venueId, asset.uri, filename, 'image/jpeg' as any);
-
-      const payload = {
-        invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
-        lines: [],
-        confidence: null,
-        warnings: ['OCR not yet enabled: review photo and attach to order manually.'],
-      };
-
-      const save = await persistFastReceiveSnapshot({
-        venueId,
-        source: 'photo',
-        storagePath: up.fullPath,
-        payload,
-        parsedPo: null,
-      });
-      if (!save || save.ok !== true) {
-        const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied: ${msg}`);
-      }
-
-      hapticMedium(); // invoice accepted
-      showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
-      onClose();
+      await processScannedPhoto(photo.assets[0].uri);
     } catch (e: any) {
-      showError(String(e?.message || e) || 'Photo capture failed');
+      const msg = String(e?.message || e);
+      showError(msg.replace(/^scanInvoicePhoto:\s*/i, '') || 'Photo capture failed');
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose, busy]);
+  }, [venueId, showInfo, showError, processScannedPhoto, busy]);
 
-  // LIBRARY: pick existing photo, upload JPEG, create pending snapshot
+  // LIBRARY: pick existing photo, scan invoice with Claude, persist snapshot
   const pickPhotoFromLibrary = useCallback(async () => {
     if (busy) return;
     try {
@@ -95,39 +96,14 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      const asset = photo.assets[0];
-      const filename = `invoice_${Date.now()}.jpg`;
-
-      const up = await uploadFastInvoice(venueId, asset.uri, filename, 'image/jpeg' as any);
-
-      const payload = {
-        invoice: { source: 'photo', storagePath: up.fullPath, poNumber: null },
-        lines: [],
-        confidence: null,
-        warnings: ['OCR not yet enabled: review photo and attach to order manually.'],
-      };
-
-      const save = await persistFastReceiveSnapshot({
-        venueId,
-        source: 'photo',
-        storagePath: up.fullPath,
-        payload,
-        parsedPo: null,
-      });
-      if (!save || save.ok !== true) {
-        const msg = (save && save.error) ? String(save.error) : 'unknown error';
-        throw new Error(`FastReceive snapshot write denied: ${msg}`);
-      }
-
-      hapticMedium(); // invoice accepted
-      showSuccess('✓ Photo saved — snapshot created under Fast Receives (Pending). You can attach it to a submitted order from Stock Control.');
-      onClose();
+      await processScannedPhoto(photo.assets[0].uri);
     } catch (e: any) {
-      showError(String(e?.message || e) || 'Photo select failed');
+      const msg = String(e?.message || e);
+      showError(msg.replace(/^scanInvoicePhoto:\s*/i, '') || 'Photo select failed');
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose, busy]);
+  }, [venueId, showInfo, showError, processScannedPhoto, busy]);
 
   // CSV/PDF upload
   const pickAndProcess = useCallback(async () => {
