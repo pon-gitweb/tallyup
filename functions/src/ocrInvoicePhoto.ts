@@ -1504,6 +1504,7 @@ async function handleCreditNoteOcr(
 
 export const ocrInvoicePhoto = functions
   .region("us-central1")
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY"] })
   .https.onCall(async (data, context) => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
