@@ -4,7 +4,7 @@ import * as nodemailer from "nodemailer";
 import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
-import { proposeInvoiceChanges } from "./priceTracking";
+import { proposeInvoiceChanges, commitInvoiceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
@@ -5785,6 +5785,159 @@ app.post("/process-invoices-pdf", async (req, res) => {
   } catch (e: any) {
     console.error("[api/process-invoices-pdf] ERROR", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || "PDF processing failed" });
+  }
+});
+
+// ── POST /commit-invoice-decisions ───────────────────────────────────────────
+// Body: { venueId, snapshotId, acceptedProposalIds, acceptSupplierCandidate }
+// Returns: { ok, supplierId, supplierName, changed, created, skipped }
+app.post("/commit-invoice-decisions", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, snapshotId, acceptedProposalIds, acceptSupplierCandidate } = req.body || {};
+    if (!venueId || !snapshotId || !Array.isArray(acceptedProposalIds)) {
+      res.status(400).json({ ok: false, error: "Missing venueId, snapshotId, or acceptedProposalIds" });
+      return;
+    }
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+    const snapRef = db.doc(`venues/${venueId}/fastReceives/${snapshotId}`);
+    const snapDoc = await snapRef.get();
+    if (!snapDoc.exists) {
+      res.status(404).json({ ok: false, error: "Snapshot not found" });
+      return;
+    }
+    const data = snapDoc.data() as any;
+    const payload = data?.payload;
+    if (!payload?.invoice) {
+      res.status(400).json({ ok: false, error: "Snapshot has no valid payload" });
+      return;
+    }
+
+    // Step 2: Resolve supplier
+    // If supplierId was already resolved at propose-time, use it directly.
+    // If the user accepted a new candidate, re-verify at commit time — another
+    // process may have created the supplier in the propose-to-commit window.
+    let resolvedSupplierId: string | null = payload.invoice.supplierId || null;
+    let resolvedSupplierName: string | null = payload.invoice.supplierName || null;
+
+    if (!resolvedSupplierId && acceptSupplierCandidate && payload.supplierCandidate?.name) {
+      const meta = {
+        name: payload.supplierCandidate.name,
+        phone: payload.supplierCandidate.phone || null,
+        email: payload.supplierCandidate.email || null,
+        address: payload.supplierCandidate.address || null,
+        accountNumber: payload.supplierCandidate.accountNumber || null,
+      };
+      const sourceLower = (payload.invoice.source || '').toLowerCase();
+      const source = sourceLower === 'csv' ? 'invoice-csv' as const
+        : sourceLower === 'photo' ? 'invoice-scan' as const
+        : 'invoice-pdf' as const;
+      try {
+        const resolution = await resolveSupplier(db, venueId, meta);
+        const committed = await commitSupplierResolution(db, venueId, resolution, meta, source);
+        resolvedSupplierId = committed.supplierId || null;
+        resolvedSupplierName = committed.supplierName || null;
+        console.log('[api/commit-invoice-decisions] supplier resolved/created', { venueId, resolvedSupplierId, resolvedSupplierName });
+      } catch (e: any) {
+        console.log('[api/commit-invoice-decisions] supplier resolution error (non-fatal)', e?.message);
+      }
+    }
+
+    // Step 3: Filter accepted proposals and determine invoiceId
+    const allProposals: any[] = Array.isArray(payload.proposals) ? payload.proposals : [];
+    const acceptedProposals = allProposals.filter((p: any) => acceptedProposalIds.includes(p.id));
+    const skippedProposalIds = allProposals
+      .filter((p: any) => !acceptedProposalIds.includes(p.id))
+      .map((p: any) => p.id);
+
+    // Extract invoiceId from the first proposal's id prefix (format: ${invoiceId}:type:...)
+    // This guarantees consistency with whatever was used at propose time.
+    // Fall back to reconstruction if no proposals exist.
+    let invoiceId: string;
+    if (allProposals.length > 0) {
+      invoiceId = allProposals[0].id.split(':')[0];
+    } else {
+      const storagePath = payload.invoice.storagePath || '';
+      const source = (payload.invoice.source || '').toLowerCase();
+      const poNumber = payload.invoice.poNumber || null;
+      invoiceId = source === 'csv' ? `csv_${storagePath}` : (poNumber || `pdf_${storagePath}`);
+    }
+
+    const commitResult = await commitInvoiceChanges(
+      venueId,
+      acceptedProposals,
+      {
+        supplierId: resolvedSupplierId || undefined,
+        supplierName: resolvedSupplierName || undefined,
+        invoiceId,
+      },
+    );
+
+    // Step 4: Flag significant price changes to manager (best-effort, per-proposal try/catch)
+    for (const proposal of acceptedProposals) {
+      try {
+        if (proposal.type === 'priceChange') {
+          if (Math.abs(proposal.changePercent) >= 5) {
+            await flagPriceChangeToManager(
+              db, venueId,
+              proposal.productId, proposal.productName,
+              proposal.oldPrice, proposal.newPrice, proposal.changePercent,
+              resolvedSupplierName || '', invoiceId,
+            );
+          }
+        } else if (proposal.type === 'nearDuplicateMatch' && proposal.existingPrice != null) {
+          const changePercent = Math.round(
+            ((proposal.newPrice - proposal.existingPrice) / proposal.existingPrice) * 10000
+          ) / 100;
+          if (Math.abs(changePercent) >= 5) {
+            await flagPriceChangeToManager(
+              db, venueId,
+              proposal.candidateProductId, proposal.candidateProductName,
+              proposal.existingPrice, proposal.newPrice, changePercent,
+              resolvedSupplierName || '', invoiceId,
+            );
+          }
+        }
+      } catch (e: any) {
+        console.log('[api/commit-invoice-decisions] flagPriceChangeToManager error (non-fatal)', e?.message);
+      }
+    }
+
+    // Step 5: Record decisions on the snapshot doc (additive — does not touch `status`)
+    await snapRef.update({
+      inductionDecisions: {
+        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        acceptedProposalIds,
+        skippedProposalIds,
+        supplierAccepted: !!acceptSupplierCandidate,
+        resolvedSupplierId: resolvedSupplierId ?? null,
+      },
+    });
+
+    console.log('[api/commit-invoice-decisions] OK', {
+      venueId, snapshotId,
+      accepted: acceptedProposals.length,
+      skipped: skippedProposalIds.length,
+      changed: commitResult.changed,
+      created: commitResult.created,
+    });
+
+    res.json({
+      ok: true,
+      supplierId: resolvedSupplierId,
+      supplierName: resolvedSupplierName,
+      changed: commitResult.changed,
+      created: commitResult.created,
+      skipped: skippedProposalIds.length,
+    });
+
+  } catch (e: any) {
+    console.error("[api/commit-invoice-decisions] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Commit decisions failed" });
   }
 });
 
