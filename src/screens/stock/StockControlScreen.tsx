@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   TextInput,
 } from 'react-native';
-import { useToast } from '../../components/common/Toast';
+import { useToast, ToastHost } from '../../components/common/Toast';
 import { useNavigation } from '@react-navigation/native';
 import IdentityBadge from '../../components/IdentityBadge';
 import { getAuth } from 'firebase/auth';
@@ -561,6 +561,7 @@ export default function StockControlScreen() {
             <View style={{ width: 60 }} />
           </View>
           <FastReceivePanel onClose={() => setShowFastReceive(false)} />
+          <ToastHost />
         </SafeAreaView>
       </Modal>
 
@@ -579,6 +580,7 @@ export default function StockControlScreen() {
             <View style={{ width: 60 }} />
           </View>
           <FastReceivesReviewPanel onClose={() => setShowFastReview(false)} />
+          <ToastHost />
         </SafeAreaView>
       </Modal>
 
