@@ -1121,7 +1121,7 @@ export default function DashboardScreen() {
         {/* ── Contextual nudges ─────────────────────────────────────────── */}
         {supplierCount === 0 && productCount === 0 && !nudgeDismissed.invoiceFirst && (
           <>
-            <ContextNudge c={colours} message="Got a delivery docket or invoice handy? Scan it and we'll set up your products and suppliers automatically." cta="Scan invoice →" onCta={() => nav.navigate('Orders')} onDismiss={() => dismissNudge('invoiceFirst')} />
+            <ContextNudge c={colours} message="Got a delivery docket or invoice handy? Scan it and we'll set up your products and suppliers automatically." cta="Scan invoice →" onCta={() => nav.navigate('Invoices')} onDismiss={() => dismissNudge('invoiceFirst')} />
             <TouchableOpacity
               onPress={() => nav.navigate('ProductsCsvImport' as never)}
               style={{ paddingHorizontal: 16, paddingBottom: 8, marginTop: -4 }}
