@@ -22,6 +22,18 @@ import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
+import { commitInvoiceDecisions } from '../../services/fastReceive/commitInvoiceDecisions';
+
+type ProposedAction =
+  | { id: string; type: 'priceChange'; productId: string; productName: string; lineName: string;
+      oldPrice: number; newPrice: number; changePercent: number; direction: 'increase'|'decrease';
+      qty: number; caseSize: number|null }
+  | { id: string; type: 'nearDuplicateMatch'; candidateProductId: string; candidateProductName: string;
+      lineName: string; existingPrice: number|null; newPrice: number; qty: number; caseSize: number|null }
+  | { id: string; type: 'newProduct'; lineName: string; unitPrice: number; qty: number;
+      caseSize: number|null; supplierId: string|null; supplierName: string|null }
+  | { id: string; type: 'supplierLink'; productId: string; productName: string; supplierId: string;
+      supplierName: string|null; unitCost: number; caseSize: number|null; wouldBecomePreferred: boolean };
 
 type FastRec = {
   id: string;
@@ -30,11 +42,22 @@ type FastRec = {
   parsedPo?: string|null;
   status?: 'pending'|'attached'|'reconciled';
   createdAt?: any; // Timestamp
+  inductionDecisions?: {
+    acceptedProposalIds: string[];
+    skippedProposalIds: string[];
+    supplierAccepted: boolean;
+    resolvedSupplierId: string|null;
+    resolvedAt?: any;
+  };
   payload?: {
-    invoice?: { source?: string; storagePath?: string; poNumber?: string|null };
+    invoice?: { source?: string; storagePath?: string; poNumber?: string|null;
+                supplierId?: string|null; supplierName?: string|null };
     lines?: Array<{ name: string; qty: number; unitPrice?: number }>;
     confidence?: number|null;
     warnings?: string[];
+    supplierCandidate?: { name: string; phone: string|null; email: string|null;
+                          address: string|null; accountNumber: string|null };
+    proposals?: ProposedAction[];
   };
 };
 
@@ -56,6 +79,11 @@ export default function FastReceiveDetailModal({
   // Editable copy of the OCR lines
   const [draftLines, setDraftLines] = useState<any[]>([]);
 
+  // Decision state — kept separate so TextInput edits never re-render these
+  const [supplierDecision, setSupplierDecision] = useState<'accept'|'skip'|null>(null);
+  const [proposalDecisions, setProposalDecisions] = useState<Record<string, 'accept'|'skip'>>({});
+  const [committing, setCommitting] = useState(false);
+
   useEffect(() => {
     if (item && Array.isArray(item?.payload?.lines)) {
       const cloned = item.payload.lines.map((l: any) => ({ ...l }));
@@ -63,6 +91,11 @@ export default function FastReceiveDetailModal({
     } else {
       setDraftLines([]);
     }
+  }, [item?.id]);
+
+  useEffect(() => {
+    setSupplierDecision(null);
+    setProposalDecisions({});
   }, [item?.id]);
 
   const po = useMemo(
@@ -96,6 +129,21 @@ export default function FastReceiveDetailModal({
     }
     return { count: n, extTotal: sum };
   }, [lines]);
+
+  const proposals = useMemo<ProposedAction[]>(
+    () => (Array.isArray(item?.payload?.proposals) ? item.payload.proposals : []),
+    [item],
+  );
+  const supplierCandidate = useMemo(() => item?.payload?.supplierCandidate ?? null, [item]);
+  const resolvedSupplierId = useMemo(() => item?.payload?.invoice?.supplierId ?? null, [item]);
+  const inductionDecisions = useMemo(() => item?.inductionDecisions ?? null, [item]);
+  const needsSupplierDecision = !resolvedSupplierId && !!supplierCandidate;
+  const hasReviewItems = proposals.length > 0 || !!supplierCandidate;
+  const allDecided = useMemo(() => {
+    if (!hasReviewItems || !!inductionDecisions) return true;
+    if (needsSupplierDecision && supplierDecision === null) return false;
+    return proposals.every(p => p.id in proposalDecisions);
+  }, [hasReviewItems, inductionDecisions, needsSupplierDecision, supplierDecision, proposals, proposalDecisions]);
 
   const updateLine = useCallback((idx: number, patch: { qty?: string; unitPrice?: string }) => {
     setDraftLines(prev => {
@@ -159,6 +207,42 @@ export default function FastReceiveDetailModal({
     }
   }, [venueId, item, lines, onAttached]);
 
+  const acceptAll = useCallback(() => {
+    const next: Record<string, 'accept'|'skip'> = {};
+    for (const p of proposals) next[p.id] = 'accept';
+    setProposalDecisions(next);
+  }, [proposals]);
+
+  const setProposalDecision = useCallback((id: string, decision: 'accept'|'skip') => {
+    setProposalDecisions(prev => ({ ...prev, [id]: decision }));
+  }, []);
+
+  const commitChanges = useCallback(async () => {
+    try {
+      if (!venueId || !item) throw new Error('No venue or snapshot');
+      setCommitting(true);
+      const acceptedIds = proposals
+        .filter(p => proposalDecisions[p.id] === 'accept')
+        .map(p => p.id);
+      const result = await commitInvoiceDecisions({
+        venueId,
+        snapshotId: item.id,
+        acceptedProposalIds: acceptedIds,
+        acceptSupplierCandidate: supplierDecision === 'accept',
+      });
+      const total = (result.changed ?? 0) + (result.created ?? 0);
+      const skipped = result.skipped ?? 0;
+      showSuccess(
+        `Applied ${total} change${total === 1 ? '' : 's'}${skipped ? `, ${skipped} skipped` : ''}.`
+      );
+      onClose();
+    } catch (e: any) {
+      showError(String(e?.message || e));
+    } finally {
+      setCommitting(false);
+    }
+  }, [venueId, item, proposals, proposalDecisions, supplierDecision, onClose]);
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaProvider>
@@ -183,6 +267,61 @@ export default function FastReceiveDetailModal({
               <Text style={S.kv}>Lines: <Text style={S.v}>{totals.count}</Text></Text>
               <Text style={S.kv}>Estimated Total: <Text style={S.v}>${totals.extTotal.toFixed(2)}</Text></Text>
             </View>
+
+            {/* Supplier — shown only when relevant */}
+            {!!resolvedSupplierId && (
+              <View style={S.block}>
+                <Text style={S.blockTitle}>Supplier</Text>
+                <Text style={S.kv}>Matched: <Text style={S.v}>{item?.payload?.invoice?.supplierName || '—'}</Text></Text>
+              </View>
+            )}
+            {!resolvedSupplierId && !!supplierCandidate && !inductionDecisions && (
+              <View style={[S.block, { backgroundColor:'#fffbeb', borderColor:'#fcd34d' }]}>
+                <Text style={[S.blockTitle, { color:'#92400e' }]}>New supplier detected</Text>
+                <Text style={[S.kv, { color:'#92400e', fontWeight:'700', marginBottom:4 }]}>
+                  {supplierCandidate.name}
+                </Text>
+                {!!supplierCandidate.phone && (
+                  <Text style={[S.kv, { color:'#92400e' }]}>Phone: {supplierCandidate.phone}</Text>
+                )}
+                {!!supplierCandidate.email && (
+                  <Text style={[S.kv, { color:'#92400e' }]}>Email: {supplierCandidate.email}</Text>
+                )}
+                {!!supplierCandidate.address && (
+                  <Text style={[S.kv, { color:'#92400e' }]}>Address: {supplierCandidate.address}</Text>
+                )}
+                <View style={S.decisionRow}>
+                  {supplierDecision === null ? (
+                    <>
+                      <TouchableOpacity
+                        style={[S.smallBtn, { backgroundColor:'#16a34a' }]}
+                        onPress={() => setSupplierDecision('accept')}
+                      >
+                        <Text style={S.smallBtnText}>Add supplier</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[S.smallBtn, { backgroundColor:'#6B7280' }]}
+                        onPress={() => setSupplierDecision('skip')}
+                      >
+                        <Text style={S.smallBtnText}>Skip</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={{ color: supplierDecision === 'accept' ? '#16a34a' : '#6B7280', fontWeight:'700', flex:1, fontSize:13 }}>
+                        {supplierDecision === 'accept' ? '✓ Will be added' : '— Skipped'}
+                      </Text>
+                      <TouchableOpacity
+                        style={[S.smallBtn, { backgroundColor:'#E5E7EB' }]}
+                        onPress={() => setSupplierDecision(null)}
+                      >
+                        <Text style={[S.smallBtnText, { color:'#374151' }]}>Change</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </View>
+            )}
 
             <View style={S.block}>
               <Text style={S.blockTitle}>Lines (editable)</Text>
@@ -241,24 +380,87 @@ export default function FastReceiveDetailModal({
                 ))}
               </View>
             )}
+
+            {/* Proposed changes — interactive, shown only when not yet resolved */}
+            {!inductionDecisions && proposals.length > 0 && (
+              <View style={S.block}>
+                <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                  <Text style={S.blockTitle}>
+                    {proposals.length} change{proposals.length === 1 ? '' : 's'} to review
+                  </Text>
+                  <TouchableOpacity
+                    style={[S.smallBtn, { backgroundColor:'#2563EB' }]}
+                    onPress={acceptAll}
+                  >
+                    <Text style={S.smallBtnText}>Accept All</Text>
+                  </TouchableOpacity>
+                </View>
+                {proposals.map(p => (
+                  <ProposalCard
+                    key={p.id}
+                    proposal={p}
+                    decision={proposalDecisions[p.id] ?? null}
+                    onDecide={setProposalDecision}
+                  />
+                ))}
+              </View>
+            )}
+
+            {/* Already-resolved — read-only summary shown when decisions were previously committed */}
+            {!!inductionDecisions && hasReviewItems && (
+              <View style={[S.block, { backgroundColor:'#f0fdf4', borderColor:'#86efac' }]}>
+                <Text style={[S.blockTitle, { color:'#166534' }]}>Changes Reviewed</Text>
+                <Text style={S.kv}>
+                  Accepted: <Text style={S.v}>{inductionDecisions.acceptedProposalIds?.length ?? 0}</Text>
+                </Text>
+                <Text style={S.kv}>
+                  Skipped: <Text style={S.v}>{inductionDecisions.skippedProposalIds?.length ?? 0}</Text>
+                </Text>
+                {inductionDecisions.resolvedAt?.toDate && (
+                  <Text style={S.kv}>
+                    Reviewed: <Text style={S.v}>
+                      {inductionDecisions.resolvedAt.toDate().toLocaleDateString('en-NZ')}
+                    </Text>
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
         </ScrollView>
 
-        <View style={S.footer}>
-          <TouchableOpacity
-            disabled={busy}
-            onPress={tryAttach}
-            style={[S.btn, { backgroundColor:'#111' }]}
-          >
-            <Text style={S.btnText}>{busy ? 'Attaching…' : 'Try Attach to Order'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            disabled={busy}
-            onPress={onClose}
-            style={[S.btn, { backgroundColor:'#F3F4F6' }]}
-          >
-            <Text style={[S.btnText, { color:'#111' }]}>Close</Text>
-          </TouchableOpacity>
+        <View style={[S.footer, { flexDirection:'column', gap:8 }]}>
+          {hasReviewItems && !inductionDecisions && (
+            <TouchableOpacity
+              disabled={committing || !allDecided}
+              onPress={commitChanges}
+              style={{
+                padding:14,
+                borderRadius:12,
+                alignItems:'center',
+                justifyContent:'center',
+                backgroundColor: allDecided ? '#16a34a' : '#9CA3AF',
+                opacity: committing ? 0.7 : 1,
+              }}
+            >
+              <Text style={S.btnText}>{committing ? 'Applying…' : 'Confirm Changes'}</Text>
+            </TouchableOpacity>
+          )}
+          <View style={{ flexDirection:'row', gap:10 }}>
+            <TouchableOpacity
+              disabled={busy || committing}
+              onPress={tryAttach}
+              style={[S.btn, { backgroundColor:'#111' }]}
+            >
+              <Text style={S.btnText}>{busy ? 'Attaching…' : 'Try Attach to Order'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              disabled={busy || committing}
+              onPress={onClose}
+              style={[S.btn, { backgroundColor:'#F3F4F6' }]}
+            >
+              <Text style={[S.btnText, { color:'#111' }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
         </View>
               </View>
             </TouchableWithoutFeedback>
@@ -266,6 +468,71 @@ export default function FastReceiveDetailModal({
         </SafeAreaView>
       </SafeAreaProvider>
     </Modal>
+  );
+}
+
+function ProposalCard({ proposal, decision, onDecide }: any) {
+  let heading = '';
+  let detail = '';
+
+  if (proposal.type === 'priceChange') {
+    heading = `${proposal.productName}: $${proposal.oldPrice.toFixed(2)} → $${proposal.newPrice.toFixed(2)}`;
+    detail = `${proposal.direction === 'increase' ? '↑' : '↓'} ${Math.abs(proposal.changePercent).toFixed(1)}%`;
+  } else if (proposal.type === 'nearDuplicateMatch') {
+    heading = `'${proposal.lineName}' looks like '${proposal.candidateProductName}'`;
+    detail = proposal.existingPrice != null
+      ? `Price: $${proposal.existingPrice.toFixed(2)} → $${proposal.newPrice.toFixed(2)}`
+      : `First time — $${proposal.newPrice.toFixed(2)}`;
+  } else if (proposal.type === 'newProduct') {
+    heading = `${proposal.lineName} — add as new product?`;
+    detail = proposal.caseSize
+      ? `$${proposal.unitPrice.toFixed(2)} / $${(proposal.unitPrice / proposal.caseSize).toFixed(2)} per unit`
+      : `$${proposal.unitPrice.toFixed(2)}`;
+  } else if (proposal.type === 'supplierLink') {
+    heading = proposal.wouldBecomePreferred
+      ? `Set as preferred supplier for ${proposal.productName}`
+      : `Link supplier to ${proposal.productName}`;
+    detail = proposal.caseSize
+      ? `$${proposal.unitCost.toFixed(2)}/unit · $${(proposal.unitCost * proposal.caseSize).toFixed(2)}/case`
+      : `$${proposal.unitCost.toFixed(2)}/unit`;
+  }
+
+  const decided = decision !== null && decision !== undefined;
+  return (
+    <View style={S.proposalCard}>
+      <Text style={{ color:'#92400e', fontWeight:'700', fontSize:13, marginBottom:2 }}>{heading}</Text>
+      {!!detail && <Text style={{ color:'#92400e', fontSize:12, marginBottom:6 }}>{detail}</Text>}
+      <View style={S.decisionRow}>
+        {!decided ? (
+          <>
+            <TouchableOpacity
+              style={[S.smallBtn, { backgroundColor:'#16a34a' }]}
+              onPress={() => onDecide(proposal.id, 'accept')}
+            >
+              <Text style={S.smallBtnText}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.smallBtn, { backgroundColor:'#6B7280' }]}
+              onPress={() => onDecide(proposal.id, 'skip')}
+            >
+              <Text style={S.smallBtnText}>Skip</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={{ color: decision === 'accept' ? '#16a34a' : '#6B7280', fontWeight:'700', flex:1, fontSize:13 }}>
+              {decision === 'accept' ? '✓ Accepted' : '— Skipped'}
+            </Text>
+            <TouchableOpacity
+              style={[S.smallBtn, { backgroundColor:'#E5E7EB' }]}
+              onPress={() => onDecide(proposal.id, decision === 'accept' ? 'skip' : 'accept')}
+            >
+              <Text style={[S.smallBtnText, { color:'#374151' }]}>Change</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -324,8 +591,6 @@ const S = StyleSheet.create({
   },
 
   footer: {
-    flexDirection:'row',
-    gap:10,
     padding:16,
     borderTopWidth:1,
     borderTopColor:'#E5E7EB'
@@ -338,4 +603,31 @@ const S = StyleSheet.create({
     justifyContent:'center'
   },
   btnText: { color:'#fff', fontWeight:'800' },
+
+  proposalCard: {
+    backgroundColor:'#fffbeb',
+    borderWidth:1,
+    borderColor:'#fcd34d',
+    borderRadius:8,
+    padding:10,
+    marginTop:8,
+  },
+  decisionRow: {
+    flexDirection:'row',
+    gap:8,
+    marginTop:6,
+    alignItems:'center',
+  },
+  smallBtn: {
+    paddingHorizontal:12,
+    paddingVertical:6,
+    borderRadius:8,
+    alignItems:'center',
+    justifyContent:'center',
+  },
+  smallBtnText: {
+    color:'#fff',
+    fontWeight:'700',
+    fontSize:12,
+  },
 });
