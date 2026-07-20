@@ -1306,7 +1306,21 @@ async function handlePackingSlip(
   text: string,
 ): Promise<any> {
   const slip = await extractPackingSlip(text);
-  const { supplierId, supplierName } = await resolveSupplier(db, venueId, slip.supplierName);
+  const slipMeta: SupplierMeta = {
+    name: slip.supplierName || "",
+    phone: null,
+    email: null,
+    address: null,
+    accountNumber: null,
+  };
+  let supplierId = "";
+  let supplierName = "";
+  if (slipMeta.name) {
+    const resolution = await resolveSupplierShared(db, venueId, slipMeta);
+    const committed = await commitSupplierResolution(db, venueId, resolution, slipMeta, 'invoice-scan');
+    supplierId = committed.supplierId;
+    supplierName = committed.supplierName;
+  }
   const { processedLines, unmatchedLines, totalProvisionalCost } = await matchPackingSlipLines(db, venueId, slip.lines, uid);
 
   const deliveryRef = await db.collection(`venues/${venueId}/pendingDeliveries`).add({
@@ -1382,12 +1396,21 @@ async function handleCreditNoteOcr(
   const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
   const positiveLines = filterInvoiceLines(rawLines);
 
-  const { supplierId, supplierName } = await resolveSupplier(db, venueId, invoice?.supplierName ?? null, {
-    phone: invoice?.supplierPhone,
-    email: invoice?.supplierEmail,
-    address: invoice?.supplierAddress,
-    accountNumber: invoice?.supplierAccountNumber,
-  });
+  const creditMeta: SupplierMeta = {
+    name: invoice?.supplierName || "",
+    phone: invoice?.supplierPhone || null,
+    email: invoice?.supplierEmail || null,
+    address: invoice?.supplierAddress || null,
+    accountNumber: invoice?.supplierAccountNumber || null,
+  };
+  let supplierId = "";
+  let supplierName = "";
+  if (creditMeta.name) {
+    const resolution = await resolveSupplierShared(db, venueId, creditMeta);
+    const committed = await commitSupplierResolution(db, venueId, resolution, creditMeta, 'invoice-scan');
+    supplierId = committed.supplierId;
+    supplierName = committed.supplierName;
+  }
 
   const creditLines = positiveLines.map((l: ParsedLine) => {
     const unitCost = Math.abs(l.unitPrice ?? 0);
