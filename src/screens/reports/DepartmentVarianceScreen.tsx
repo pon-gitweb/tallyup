@@ -140,16 +140,13 @@ export default function DepartmentVarianceScreen() {
         <Text style={S.rowSub}>
           {r.supplierName ? `${r.supplierName} · ` : ''}
           {Number.isFinite(r.par) ? `PAR ${r.par} · ` : ''}
-          {Number(r.varianceQty) > 0
-            ? `Excess ${r.varianceQty}`
-            : Number(r.varianceQty) < 0
-            ? `Short ${Math.abs(r.varianceQty)}`
+          {Number(r.variance) > 0
+            ? `Excess ${r.variance}`
+            : Number(r.variance) < 0
+            ? `Short ${Math.abs(r.variance)}`
             : 'No variance'}
-          {Number.isFinite(r.varianceValue)
-            ? ` · $${Number(r.varianceValue).toFixed(2)}`
-            : ''}
-          {Number.isFinite(r.variancePct)
-            ? ` · ${Number(r.variancePct).toFixed(1)}%`
+          {Number.isFinite(r.value)
+            ? ` · $${Number(r.value).toFixed(2)}`
             : ''}
           {!r.material ? ' · minor' : ''}
         </Text>

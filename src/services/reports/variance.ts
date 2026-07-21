@@ -55,8 +55,12 @@ export type VarianceRow = {
   // Expected vs actual
   par: number;       // expected stock
   onHand: number;    // counted stock
-  variance: number;  // onHand - par
+  variance: number;  // unexplained variance (invoice-/sales-aware); falls back to total movement
   value: number;     // |variance| * unitCost if available
+
+  // total movement (closing − opening); differs from variance when snapshot has invoice/sales enrichment
+  totalVarianceQty?: number | null;
+  totalVarianceDollars?: number | null;
 
   // NEW: cost tiers + shrinkage metrics + flow context
   listCost?: number | null;
@@ -125,10 +129,13 @@ export async function computeVarianceSnapshot(
       // Only items with a baseline (openingCount known from previous cycle)
       if (item.openingCount == null) continue;
 
-      const variance = item.totalVarianceQty ?? (item.actualClosing - item.openingCount);
-      if (variance === 0) continue; // No variance — skip
+      // Prefer the invoice-/sales-aware unexplained figure; fall back to total movement.
+      // When unexplained = 0 (movement fully accounted for), the item is not actionable
+      // and is intentionally dropped — this is a visible behaviour change from total-only.
+      const variance = item.unexplainedVarianceQty ?? item.totalVarianceQty ?? (item.actualClosing - item.openingCount);
+      if (variance === 0) continue;
 
-      const value = item.totalVarianceDollars ?? (item.costPrice != null ? variance * item.costPrice : 0);
+      const value = item.unexplainedVarianceDollars ?? item.totalVarianceDollars ?? (item.costPrice != null ? variance * item.costPrice : 0);
 
       const row: VarianceRow = {
         id: item.productId || item.name,
@@ -140,6 +147,8 @@ export async function computeVarianceSnapshot(
         onHand: item.actualClosing,
         variance,
         value: Math.abs(value),
+        totalVarianceQty: item.totalVarianceQty ?? null,
+        totalVarianceDollars: item.totalVarianceDollars ?? null,
         listCost: item.costPrice ?? null,
         landedCost: item.costPrice ?? null,
         realCostPerUnit: item.costPrice ?? null,

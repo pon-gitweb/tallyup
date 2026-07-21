@@ -207,6 +207,10 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
     value,
   } = (row || {}) as any;
 
+  // When the snapshot has invoice/sales enrichment, unexplained ≠ total movement.
+  const totalVarianceQty = typeof row?.totalVarianceQty === 'number' ? row.totalVarianceQty : null;
+  const isEnriched = totalVarianceQty != null && totalVarianceQty !== variance;
+
   // Derived cost line: simple, user-friendly.
   const shrinkUnits = typeof row?.shrinkUnits === 'number' ? row.shrinkUnits : 0;
   const hasShrink = shrinkUnits > 0;
@@ -293,6 +297,11 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
             {costLine}
           </Text>
         ) : null}
+        {isEnriched ? (
+          <Text style={S.subtle} numberOfLines={1}>
+            {`Total: ${totalVarianceQty > 0 ? '+' : ''}${totalVarianceQty}`}
+          </Text>
+        ) : null}
         {attribution ? (
           <Text style={[S.subtle, { color: c.stellarAmber, marginTop: 2 }]} numberOfLines={2}>
             {'⚠️ '}{attribution.recipeName} ({attribution.qtySold} sold · {attribution.attributedPct}% of variance)
@@ -301,7 +310,7 @@ function Row({ row, divider, venueId, S, c }: { row: VarianceRow; divider?: bool
       </View>
       <Cell S={S} label="Par" value={par} />
       <Cell S={S} label="On-hand" value={onHand} />
-      <Cell S={S} c={c} label="Variance" value={variance} emph />
+      <Cell S={S} c={c} label={isEnriched ? 'Unexp.' : 'Variance'} value={variance} emph />
       <Cell S={S} label="Val." value={typeof value === 'number' ? formatMoney(value) : '—'} />
       <TouchableOpacity onPress={onExplain} style={S.aiBtn} accessibilityLabel="Explain this variance">
         <Text style={S.aiText}>🤖 Explain</Text>
