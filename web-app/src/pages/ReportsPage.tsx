@@ -57,6 +57,7 @@ type DeptSummary = {
   itemsCounted: number
   totalStockValue: number | null
   totalVarianceDollars: number | null
+  unexplainedVarianceDollars: number | null
 }
 
 type SortConfig<K extends string> = { key: K; dir: 'asc' | 'desc' }
@@ -192,10 +193,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
             itemsCounted: latestData.summary?.totalItemsCounted ?? 0,
             totalStockValue: latestData.summary?.totalStockValue ?? null,
             totalVarianceDollars: latestData.summary?.totalVarianceDollars ?? null,
+            unexplainedVarianceDollars: latestData.summary?.unexplainedVarianceDollars ?? null,
           })
 
           for (const item of (latestData.items || []) as any[]) {
-            const varianceUnits: number = item.totalVarianceQty ?? 0
+            const varianceUnits: number = item.unexplainedVarianceQty ?? item.totalVarianceQty ?? 0
             if (varianceUnits === 0) continue
             varRows.push({
               productId: item.productId || item.name,
@@ -205,7 +207,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               expectedQty: item.openingCount ?? null,
               actualQty: item.actualClosing ?? 0,
               varianceUnits,
-              varianceDollars: item.totalVarianceDollars ?? null,
+              varianceDollars: item.unexplainedVarianceDollars ?? item.totalVarianceDollars ?? null,
               costPrice: item.costPrice ?? null,
             })
           }
@@ -341,7 +343,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
 
   function exportVarianceCsv() {
     const dateStr = new Date().toISOString().slice(0, 10)
-    let csv = 'Product,Department,Area,Expected,Counted,Variance (units),Variance ($)\n'
+    let csv = 'Product,Department,Area,Expected,Counted,Unexplained (units),Unexplained ($)\n'
     for (const r of filteredVariance) {
       csv +=
         [
@@ -387,8 +389,8 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
     { key: 'areaName', label: 'Area' },
     { key: 'expectedQty', label: 'Expected' },
     { key: 'actualQty', label: 'Counted' },
-    { key: 'varianceUnits', label: 'Variance (units)' },
-    { key: 'varianceDollars', label: 'Variance ($)' },
+    { key: 'varianceUnits', label: 'Unexplained (units)' },
+    { key: 'varianceDollars', label: 'Unexplained ($)' },
   ]
 
   return (
@@ -460,13 +462,16 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
             <h2 className={styles.sectionHeading}>Variance Summary</h2>
             <p className={styles.sectionSubhead}>Latest stocktake results by department.</p>
             <div className={styles.cardRow}>
-              {deptSummaries.map((dept) =>
-                !dept.hasData ? (
+              {deptSummaries.map((dept) => {
+                if (!dept.hasData) return (
                   <div key={dept.deptId} className={`${styles.card} ${styles.cardEmpty}`}>
                     <p className={styles.cardName}>{dept.deptName}</p>
                     <p className={styles.cardNoData}>No stocktake data yet</p>
                   </div>
-                ) : (
+                )
+                const showVariance = dept.unexplainedVarianceDollars ?? dept.totalVarianceDollars
+                const isEnriched = dept.unexplainedVarianceDollars != null && dept.unexplainedVarianceDollars !== dept.totalVarianceDollars
+                return (
                   <div key={dept.deptId} className={styles.card}>
                     <p className={styles.cardName}>{dept.deptName}</p>
                     <p className={styles.cardDate}>
@@ -476,31 +481,31 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                     {dept.totalStockValue != null && (
                       <p className={styles.cardValue}>{fmtMoney(dept.totalStockValue)} stock value</p>
                     )}
-                    {dept.totalVarianceDollars != null ? (
+                    {showVariance != null ? (
                       <p
                         className={styles.cardVariance}
                         style={{
                           color:
-                            dept.totalVarianceDollars < 0
+                            showVariance < 0
                               ? theme.error
-                              : dept.totalVarianceDollars > 0
+                              : showVariance > 0
                                 ? theme.success
                                 : theme.slateMid,
                         }}
                       >
-                        {dept.totalVarianceDollars < 0
+                        {showVariance < 0
                           ? '▼'
-                          : dept.totalVarianceDollars > 0
+                          : showVariance > 0
                             ? '▲'
                             : '●'}{' '}
-                        {fmtMoney(dept.totalVarianceDollars)} variance
+                        {fmtMoney(showVariance)} {isEnriched ? 'unexplained' : 'variance'}
                       </p>
                     ) : (
                       <p className={styles.cardNoData}>Add cost prices to see variance</p>
                     )}
                   </div>
-                ),
-              )}
+                )
+              })}
             </div>
           </section>
 
