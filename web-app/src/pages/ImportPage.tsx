@@ -452,6 +452,9 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [cPdfLines, setCPdfLines] = useState<{ name: string; qty: number; unitPrice?: number }[]>([])
   const [cPdfSupplier, setCPdfSupplier] = useState('')
   const [cPdfStatus, setCPdfStatus] = useState<'idle' | 'uploading' | 'processing' | 'ready' | 'importing' | 'done'>('idle')
+  const [cPdfInvoiceMeta, setCPdfInvoiceMeta] = useState<{
+    invoiceNumber?: string | null; poNumber?: string | null; invoiceDate?: string | null
+  }>({})
 
   async function handleFileC(files: FileList) {
     const file = files[0]
@@ -515,6 +518,11 @@ export default function ImportPage({ venueId }: { venueId: string }) {
 
         setCPdfLines(lines)
         setCPdfSupplier(ocrData.invoice?.supplierName || '')
+        setCPdfInvoiceMeta({
+          invoiceNumber: ocrData.invoice?.invoiceNumber ?? null,
+          poNumber: ocrData.invoice?.poNumber ?? null,
+          invoiceDate: ocrData.invoice?.date ?? ocrData.invoice?.invoiceDate ?? null,
+        })
         setCPdfStatus('ready')
       } catch (e: any) {
         setCPdfError(e?.message || 'PDF processing failed. Please try a CSV instead.')
@@ -622,9 +630,37 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           importedAt: serverTimestamp(),
           supplierName: cSupplierName.trim(),
           lineCount: cRows.length,
-          source: 'desktop-import',
+          source: 'desktop-csv',
         })
       }
+
+      // Persist invoice record — inline shape matches ocrInvoicePhoto.ts
+      // When cIsDuplicate && cIgnoreDuplicate the user explicitly overrode the
+      // dedup warning; this path now creates a second invoice doc (not just
+      // re-runs prices). That's intentional — they said "import anyway."
+      const csvLines = cRows.map(r => ({
+        name: r.name, productName: r.name,
+        qty: r.qty ?? 0,
+        unitCost: r.costPrice ?? null, cost: r.costPrice ?? null, unitPrice: r.costPrice ?? null,
+        lineTotal: r.qty != null && r.costPrice != null ? r.qty * r.costPrice : null,
+      }))
+      await addDoc(collection(db, 'venues', venueId, 'invoices'), {
+        supplierId: supplierId ?? null,
+        supplierName: cSupplierName.trim() || 'Unassigned',
+        invoiceNumber: null,
+        poNumber: null,
+        invoiceDate: null,
+        invoiceDateTimestamp: null,
+        date: serverTimestamp(),
+        totalAmount: csvLines.reduce((s, l) => s + l.qty * (l.unitCost ?? 0), 0),
+        gstAmount: null,
+        lines: csvLines,
+        lineCount: csvLines.length,
+        venueId,
+        source: 'desktop-csv',
+        createdAt: serverTimestamp(),
+        processedAt: serverTimestamp(),
+      })
 
       setCStatus('done')
     } catch {
@@ -637,8 +673,24 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     if (!cPdfLines.length) return
     setCPdfStatus('importing')
     try {
-      const existingMap = await loadExistingProducts(venueId)
       const supplierName = cPdfSupplier.trim() || 'Unassigned'
+
+      // Dedup — same fingerprint gate as CSV path; checked here (not in UI) so a
+      // duplicate hit can't create a phantom supplier before we bail out
+      const pdfFp = buildInvoiceFingerprint(
+        supplierName,
+        cPdfLines.map(l => ({ name: l.name, qty: l.qty, costPrice: l.unitPrice ?? null }))
+      )
+      const pdfFpRef = doc(db, 'venues', venueId, 'processedInvoices', pdfFp)
+      const pdfFpSnap = await getDoc(pdfFpRef)
+      if (pdfFpSnap.exists()) {
+        const imported = (pdfFpSnap.data() as any).importedAt?.toDate?.()
+        setCPdfError(`This invoice was already imported${imported ? ` on ${imported.toLocaleDateString('en-NZ')}` : ''}.`)
+        setCPdfStatus('idle')
+        return
+      }
+
+      const existingMap = await loadExistingProducts(venueId)
 
       // Find or create supplier
       let supplierId: string | null = null
@@ -673,6 +725,38 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       await updateDoc(doc(db, 'venues', venueId), {
         onboardingHasInvoices: true,
         onboardingInvoiceLinesCount: cPdfLines.length,
+      })
+
+      // Persist invoice record — inline shape matches ocrInvoicePhoto.ts
+      // invoiceDateTimestamp left null: OCR produces a parsed timestamp but
+      // the desktop path only has the raw date string from cPdfInvoiceMeta;
+      // current readers sort by createdAt, not invoiceDateTimestamp, so this
+      // is harmless today but will affect any future date-sorted invoice report.
+      const pdfLines = cPdfLines.map(l => ({
+        name: l.name, productName: l.name,
+        qty: l.qty,
+        unitCost: l.unitPrice ?? null, cost: l.unitPrice ?? null, unitPrice: l.unitPrice ?? null,
+        lineTotal: l.unitPrice != null ? l.qty * l.unitPrice : null,
+      }))
+      await addDoc(collection(db, 'venues', venueId, 'invoices'), {
+        supplierId: supplierId ?? null,
+        supplierName,
+        invoiceNumber: cPdfInvoiceMeta.invoiceNumber ?? null,
+        poNumber: cPdfInvoiceMeta.poNumber ?? null,
+        invoiceDate: cPdfInvoiceMeta.invoiceDate ?? null,
+        invoiceDateTimestamp: null,
+        date: serverTimestamp(),
+        totalAmount: pdfLines.reduce((s, l) => s + l.qty * (l.unitCost ?? 0), 0),
+        gstAmount: null,
+        lines: pdfLines,
+        lineCount: pdfLines.length,
+        venueId,
+        source: 'desktop-pdf',
+        createdAt: serverTimestamp(),
+        processedAt: serverTimestamp(),
+      })
+      await setDoc(pdfFpRef, {
+        importedAt: serverTimestamp(), supplierName, lineCount: cPdfLines.length, source: 'desktop-pdf',
       })
 
       setCPdfStatus('done')
@@ -1039,7 +1123,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
               </table>
             </div>
             <div className={styles.actions}>
-              <button className={styles.cancelBtn} onClick={() => { setCPdfStatus('idle'); setCPdfLines([]); setCPdfError(null) }}>Cancel</button>
+              <button className={styles.cancelBtn} onClick={() => { setCPdfStatus('idle'); setCPdfLines([]); setCPdfError(null); setCPdfInvoiceMeta({}) }}>Cancel</button>
               <button className={styles.confirmBtn} onClick={handleImportPdf} disabled={cPdfStatus === 'importing'}>
                 {cPdfStatus === 'importing' ? 'Importing…' : `Import ${cPdfLines.length} products`}
               </button>
