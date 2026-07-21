@@ -18,9 +18,6 @@ export { onInviteCreated, acceptInviteCallable } from "./invites";
 // === Invoice OCR job queue (PDF/CSV etc) ===
 export { onOcrJobQueued } from "./ocr/parseInvoice";
 
-// === Fast Receive photo OCR (uses fastReceives snapshots) ===
-export { ocrFastReceivePhoto } from "./ocrFastReceivePhoto";
-
 // === Supplier card OCR ===
 export { ocrSupplierCard } from "./ocr/ocrSupplierCard";
 

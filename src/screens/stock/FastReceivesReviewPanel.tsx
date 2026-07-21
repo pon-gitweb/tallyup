@@ -10,8 +10,6 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
-import { runPhotoOcr } from '../../services/fastReceive/runPhotoOcr';
-
 import FastReceiveDetailModal from './FastReceiveDetailModal';
 
 type FastRec = {
@@ -31,8 +29,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
   const db = getFirestore(getApp());
   const [rows, setRows] = useState<FastRec[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [ocrBusyId, setOcrBusyId] = useState<string | null>(null);
-
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<FastRec | null>(null);
@@ -224,28 +220,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
     [venueId, chooserFor, load, closeChooser]
   );
 
-  // NEW: Run OCR (for photo snapshots without parsed lines)
-  const runOcrNow = useCallback(
-    async (it: FastRec) => {
-      try {
-        if (!venueId) throw new Error('No venue');
-        setOcrBusyId(it.id);
-        const res = await runPhotoOcr(venueId, it.id);
-        if (res?.ok) {
-          showSuccess(`✓ OCR processed — found ${res.linesCount ?? 0} lines${res.parsedPo ? ` · PO ${res.parsedPo}` : ''}`);
-          await load();
-        } else {
-          showError('OCR failed — no result returned.');
-        }
-      } catch (e: any) {
-        showError(String(e?.message || e) || 'OCR failed');
-      } finally {
-        setOcrBusyId(null);
-      }
-    },
-    [venueId, load]
-  );
-
   const onRefreshPress = useCallback(async () => {
     try {
       setRefreshBusy(true);
@@ -266,7 +240,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
       >
         <Text style={{ fontSize: 18, fontWeight: '900' }}>Fast Receives (Pending)</Text>
         <Text style={{ color: '#6B7280', marginTop: 4 }}>
-          Review snapshots, run OCR for photos, edit PO if needed, and attach to submitted orders.
+          Review snapshots, edit PO if needed, and attach to submitted orders.
         </Text>
       </View>
 
@@ -318,10 +292,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
               const po = it.parsedPo || it?.payload?.invoice?.poNumber || '—';
               const isBusy = busyId === it.id;
               const isPending = (it.status || 'pending') === 'pending';
-              const isPhoto = (it.source || '') === 'photo' || it?.payload?.invoice?.source === 'photo';
-              const hasLines = Array.isArray(it?.payload?.lines) && it.payload.lines.length > 0;
-              const ocrBusy = ocrBusyId === it.id;
-
               return (
                 <View key={it.id} style={S.card}>
                   <Text style={S.title}>Snapshot {it.id}</Text>
@@ -339,24 +309,6 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
                         flexWrap: 'wrap',
                       }}
                     >
-                      {/* Run OCR button for photo snapshots without lines */}
-                      {isPhoto && !hasLines && (
-                        <TouchableOpacity
-                          disabled={ocrBusy}
-                          onPress={() => runOcrNow(it)}
-                          style={{
-                            paddingVertical: 10,
-                            paddingHorizontal: 12,
-                            borderRadius: 10,
-                            backgroundColor: '#7c3aed',
-                          }}
-                        >
-                          <Text style={{ color: '#fff', fontWeight: '800' }}>
-                            {ocrBusy ? 'Running OCR…' : 'Run OCR (Photo)'}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-
                       <TouchableOpacity
                         onPress={() => openDetails(it)}
                         style={{
