@@ -447,7 +447,11 @@ export async function buildSuggestedOrdersInMemory(
     Object.values(buckets).reduce((a, b) => a + (b.lines?.length || 0), 0) +
     unassigned.lines.length;
 
-  dlog('summary', { suppliersWithLines, totalLines });
+  const velocityDriven = intelligence.filter(
+    (l) => l.velocityPerDay !== null && (l.velocityPerDay ?? 0) > 0
+  ).length;
+
+  dlog('summary', { suppliersWithLines, totalLines, velocityDriven });
 
   const meta: any = {
     departments,
@@ -457,6 +461,8 @@ export async function buildSuggestedOrdersInMemory(
     stockCycleKey: stockCycleKey || null,
     cycleDays,
     hasSalesData,
+    velocityDriven,
+    snapshotsUsed: hasSalesData ? 1 : 0,
   };
 
   return {

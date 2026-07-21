@@ -3,9 +3,8 @@
  * During migration, we wrap existing implementations here.
  * Screens should import from `src/domain/orders` eventually.
  */
-import { runAISuggest as runAISuggestLegacy } from '../../services/orders/suggestAI';
 import { OrdersRepo } from './orders.repo';
-import { buildSuggestedOrdersInMemory as buildSuggestedOrdersInMemoryLegacy } from '../../services/orders/suggest';
+import { buildSuggestedOrdersInMemory as buildSuggestedOrdersInMemoryLegacy } from '../../services/orders/suggestedOrders';
 import {
   createDraftsFromSuggestions as createDraftsFromSuggestionsLegacy,
   computeSuggestionKey as computeSuggestionKeyLegacy,
@@ -23,7 +22,6 @@ export const OrdersService = {
   submitDraftOrder: (...args: Parameters<typeof OrdersRepo.submitDraftOrder>) => OrdersRepo.submitDraftOrder(...args),
   deleteDraft: (...args: Parameters<typeof OrdersRepo.deleteDraft>) => OrdersRepo.deleteDraft(...args),
   createDraftOrderWithLines: createDraftOrderWithLinesLegacy,
-  runAISuggest: runAISuggestLegacy,
   buildSuggestedOrdersInMemory: buildSuggestedOrdersInMemoryLegacy,
 
   createDraftsFromSuggestions: createDraftsFromSuggestionsLegacy,

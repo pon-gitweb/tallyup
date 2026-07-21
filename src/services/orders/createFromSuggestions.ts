@@ -15,7 +15,7 @@ import {
   setDoc,
   getDoc,
 } from 'firebase/firestore';
-import type { SuggestedLegacyMap, SuggestedLine } from './suggest';
+import type { SuggestedLegacyMap, SuggestedLine } from './suggestedOrders';
 
 const TAG = '[OrdersServiceLocks:v2]';
 
