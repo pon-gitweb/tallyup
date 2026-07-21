@@ -36,9 +36,9 @@ export default function InvoicesScreen() {
     },
     {
       icon: '📦',
-      label: 'Pending deliveries',
-      sub: 'Submitted orders awaiting arrival',
-      onPress: () => nav.navigate('PendingDeliveries'),
+      label: 'Orders awaiting arrival',
+      sub: 'Placed orders not yet received',
+      onPress: () => nav.navigate('Orders', { initialTab: 'submitted' }),
     },
     {
       icon: '🔁',

@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { OrdersService } from '../../domain/orders';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   getFirestore,
   collection,
@@ -168,7 +168,10 @@ export default function OrdersScreen(){
   const { showError } = useToast();
   const { confirm, modal } = useConfirmModal();
 
-  const [tab,setTab]=useState<'drafts'|'pending'|'submitted'|'received'>('drafts');
+  const route = useRoute<any>();
+  const [tab,setTab]=useState<'drafts'|'pending'|'submitted'|'received'>(
+    route.params?.initialTab ?? 'drafts'
+  );
   const [rowsAll,setRowsAll]=useState<OrderRow[]>([]);
   const [refreshing,setRefreshing]=useState(false);
   const [receiveFor,setReceiveFor] = useState<OrderRow|null>(null);
