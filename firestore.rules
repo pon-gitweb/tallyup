@@ -1097,6 +1097,15 @@ service cloud.firestore {
         allow delete: if hasVenueRole(venueId, ['manager','owner']);
       }
 
+      match /queuedInvoices/{docId} {
+        // Parking queue for invoice quantities received mid-stocktake.
+        // Client SDK creates on receive (receive.ts); reads + deletes on cycle reset (reset.ts).
+        // ocrInvoicePhoto writes via Admin SDK (bypasses rules).
+        allow create: if isVenueMember(venueId);
+        allow read: if isVenueMember(venueId);
+        allow delete: if isVenueMember(venueId);
+      }
+
       match /orderCounters/{dateKey} {
         allow get, list: if isVenueMember(venueId);
         allow create: if hasVenueRole(venueId, ['manager','owner'])

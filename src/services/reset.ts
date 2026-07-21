@@ -55,6 +55,26 @@ export async function resetDepartment(venueId: string, departmentId: string) {
     });
     if (hasRestores) await itemBatch.commit();
   }
+
+  // Drain queued invoices for this department (parked while stocktakeActive was true)
+  try {
+    const queueSnap = await getDocs(
+      query(collection(db, 'venues', venueId, 'queuedInvoices'), where('departmentId', '==', departmentId))
+    );
+    for (const qDoc of queueSnap.docs) {
+      const data = qDoc.data() as any;
+      const itemRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', data.areaId, 'items', data.itemId);
+      const qBatch = writeBatch(db);
+      qBatch.update(itemRef, { incomingQty: increment(data.qty) });
+      qBatch.delete(qDoc.ref);
+      await qBatch.commit();
+    }
+    if (!queueSnap.empty) {
+      console.log(`[Reset] processed ${queueSnap.size} queued invoices for dept ${departmentId}`);
+    }
+  } catch (e: any) {
+    console.warn('[Reset] queued invoice processing failed (non-fatal):', e?.message);
+  }
 }
 
 export async function resetAllDepartmentsStockTake(venueId: string) {
@@ -136,20 +156,20 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
     const queueSnap = await getDocs(
       collection(db, 'venues', venueId, 'queuedInvoices')
     );
+    for (const qDoc of queueSnap.docs) {
+      const data = qDoc.data() as any;
+      const itemRef = doc(db,
+        'venues', venueId,
+        'departments', data.departmentId,
+        'areas', data.areaId,
+        'items', data.itemId
+      );
+      const qBatch = writeBatch(db);
+      qBatch.update(itemRef, { incomingQty: increment(data.qty) });
+      qBatch.delete(qDoc.ref);
+      await qBatch.commit();
+    }
     if (!queueSnap.empty) {
-      for (const qDoc of queueSnap.docs) {
-        const data = qDoc.data() as any;
-        const itemRef = doc(db,
-          'venues', venueId,
-          'departments', data.departmentId,
-          'areas', data.areaId,
-          'items', data.itemId
-        );
-        await updateDoc(itemRef, {
-          incomingQty: increment(data.qty),
-        });
-        await deleteDoc(qDoc.ref);
-      }
       console.log(`[Reset] processed ${queueSnap.size} queued invoices`);
     }
   } catch (e: any) {
