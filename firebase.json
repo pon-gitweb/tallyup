@@ -5,7 +5,8 @@
     "predeploy": ["npm --prefix functions install", "npm --prefix functions run build"]
   },
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "storage": {
     "rules": "storage.rules"
