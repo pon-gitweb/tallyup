@@ -204,14 +204,18 @@ export async function writeDepartmentSnapshot(
           const linesSnap = await getDocs(
             collection(db, 'venues', venueId, 'invoices', invDoc.id, 'lines'),
           );
-          if (!linesSnap.empty) hasInvoices = true;
 
-          linesSnap.forEach(lineDoc => {
-            const line = lineDoc.data() as any;
-            const lineProductId = line.productId || lineDoc.id;
-            // FIX 4: accept both 'productName' and 'name' for product name on lines
+          // Subcollection shape (receive.ts) takes precedence; inline array is the fallback
+          // for ocrInvoicePhoto and desktop importers. Each invoice has exactly one shape.
+          const lineRecords: any[] = !linesSnap.empty
+            ? linesSnap.docs.map(d => ({ _docId: d.id, ...d.data() }))
+            : (invDoc.data().lines || []);
+
+          if (lineRecords.length > 0) hasInvoices = true;
+
+          for (const line of lineRecords) {
+            const lineProductId = line.productId || line._docId || null;
             const lineName = (line.productName || line.name || '').toLowerCase().trim();
-            // FIX 4: accept all cost field variants
             const lineQty = typeof line.qty === 'number' ? line.qty :
                             typeof line.quantity === 'number' ? line.quantity : 0;
             const lineUnitCost = typeof line.unitCost === 'number' ? line.unitCost :
@@ -220,24 +224,16 @@ export async function writeDepartmentSnapshot(
                                  typeof line.price === 'number' ? line.price : 0;
 
             const match = snapshotItems.find(si =>
-              (si._rawProductId && si._rawProductId === lineProductId) ||
+              (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
               (si._rawName && lineName && si._rawName === lineName),
             );
             if (match) {
               match.receivedQty = (match.receivedQty || 0) + lineQty;
-              // Update per-unit cost if not already set on the snapshot item
               if (!match._invoiceUnitCost && lineUnitCost > 0) {
                 match._invoiceUnitCost = lineUnitCost;
               }
-              if (match.openingCount != null) {
-                match.expectedClosing = match.openingCount + match.receivedQty;
-                match.unexplainedVarianceQty = match.actualClosing - match.expectedClosing;
-                if (match.costPrice != null) {
-                  match.unexplainedVarianceDollars = match.unexplainedVarianceQty * match.costPrice;
-                }
-              }
             }
-          });
+          }
         }
       }
     } catch (e: any) { console.warn('[snapshotWriter] invoice enrichment failed:', e?.message); }
@@ -278,6 +274,17 @@ export async function writeDepartmentSnapshot(
       }
     } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
+    // Post-enrichment: set expectedClosing and unexplained figures once both receivedQty
+    // (STEP A) and soldQty (STEP A2) are final. Items with openingCount == null keep their
+    // initialised defaults (unexplained = total, confidence 'low').
+    for (const si of snapshotItems) {
+      if (si.openingCount == null) continue;
+      si.expectedClosing = si.openingCount + (si.receivedQty || 0) - (si.soldQty ?? 0);
+      si.unexplainedVarianceQty = si.actualClosing - si.expectedClosing;
+      si.unexplainedVarianceDollars = si.costPrice != null
+        ? si.unexplainedVarianceQty * si.costPrice : null;
+    }
+
     // STEP B — Missing invoice detection (gain > 2 units with no invoice received)
     const likelyMissingInvoices: any[] = [];
     for (const si of snapshotItems) {
@@ -293,7 +300,7 @@ export async function writeDepartmentSnapshot(
           lastInvoiceDate: null,
         });
       }
-      if (si.totalVarianceQty < -2 && si.openingCount != null) {
+      if (si.unexplainedVarianceQty < -2 && si.openingCount != null) {
         si.hasUnexplainedLoss = true;
       }
     }
