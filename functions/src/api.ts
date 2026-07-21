@@ -1802,11 +1802,15 @@ app.post("/myob/push-bill", async (req, res) => {
       res.json({ ok: false, error: "MYOB integration not yet activated" });
       return;
     }
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
     const { venueId, orderId, companyFileId } = req.body || {};
     if (!venueId || !orderId || !companyFileId) {
       res.status(400).json({ ok: false, error: "Missing venueId, orderId, or companyFileId" });
       return;
     }
+    await verifyVenueMembership(uid, venueId);
 
     const accessToken = await getValidMyobAccessToken(venueId);
     if (!accessToken) {
@@ -1848,11 +1852,15 @@ app.post("/myob/push-invoice", async (req, res) => {
       res.json({ ok: false, error: "MYOB integration not yet activated" });
       return;
     }
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
     const { venueId, invoiceId, companyFileId } = req.body || {};
     if (!venueId || !invoiceId || !companyFileId) {
       res.status(400).json({ ok: false, error: "Missing venueId, invoiceId, or companyFileId" });
       return;
     }
+    await verifyVenueMembership(uid, venueId);
 
     const accessToken = await getValidMyobAccessToken(venueId);
     if (!accessToken) {
@@ -2284,72 +2292,6 @@ app.post("/square/disconnect", async (req, res) => {
   }
 });
 
-// ── GET /square/sandbox-test ──────────────────────────────────────────────────
-// Tests the sandbox access token by pulling catalogue items
-// Remove before production
-app.get("/square/sandbox-test", async (req, res) => {
-  try {
-    if (!SQUARE_SANDBOX_TOKEN) {
-      res.status(400).json({ ok: false, error: 'SQUARE_SANDBOX_ACCESS_TOKEN not set' });
-      return;
-    }
-
-    // Test 1: Get merchant info
-    const merchantResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/merchants/me`, {
-      headers: {
-        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
-        'Square-Version': SQUARE_VERSION,
-      },
-    });
-    const merchantData: any = await merchantResp.json().catch(() => ({}));
-
-    // Test 2: Get catalogue items
-    const catalogResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/catalog/list?types=ITEM`, {
-      headers: {
-        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
-        'Square-Version': SQUARE_VERSION,
-      },
-    });
-    const catalogData: any = await catalogResp.json().catch(() => ({}));
-    const items = (catalogData.objects || [])
-      .filter((o: any) => o.type === 'ITEM')
-      .map((o: any) => ({
-        id: o.id,
-        name: o.item_data?.name,
-        price: o.item_data?.variations?.[0]?.item_variation_data?.price_money?.amount,
-      }));
-
-    // Test 3: Get locations
-    const locResp = await fetch(`${SQUARE_API_BASE_RESOLVED}/v2/locations`, {
-      headers: {
-        'Authorization': `Bearer ${SQUARE_SANDBOX_TOKEN}`,
-        'Square-Version': SQUARE_VERSION,
-      },
-    });
-    const locData: any = await locResp.json().catch(() => ({}));
-    const locations = (locData.locations || []).map((l: any) => ({
-      id: l.id,
-      name: l.name,
-      status: l.status,
-    }));
-
-    res.json({
-      ok: true,
-      merchant: {
-        id: merchantData.merchant?.id,
-        businessName: merchantData.merchant?.business_name,
-        country: merchantData.merchant?.country,
-        currency: merchantData.merchant?.currency,
-      },
-      locations,
-      catalogItemCount: items.length,
-      catalogItems: items.slice(0, 10),
-    })
-  } catch (e: any) {
-    console.error('[square/sandbox-test]', e?.message)
-    res.status(500).json({ ok: false, error: e?.message })
-  }
-})
 
 // ── GET /square/pull-sales ────────────────────────────────────────────────────
 // Pulls Square orders for a venue and writes them to salesReports collection.
