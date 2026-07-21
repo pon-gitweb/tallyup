@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc,
+  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc, Timestamp,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './ImportPage.module.css'
@@ -126,6 +126,24 @@ function buildInvoiceFingerprint(
     hash |= 0
   }
   return Math.abs(hash).toString(36)
+}
+
+// Parses a date string to a Firestore Timestamp. NZ-first (dd/mm/yyyy wins the
+// regex); strings that fall through to the Date constructor may parse US-style
+// for ambiguous formats — acceptable trade-off for the NZ market.
+// Returns null on absent or unparseable input so callers can fall back to serverTimestamp().
+function parseDateStringToTimestamp(s: string | null | undefined): Timestamp | null {
+  if (!s) return null
+  try {
+    const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+    if (dmy) {
+      const d = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]))
+      if (!isNaN(d.getTime())) return Timestamp.fromDate(d)
+    }
+    const d = new Date(s)
+    if (!isNaN(d.getTime())) return Timestamp.fromDate(d)
+  } catch {}
+  return null
 }
 
 // ─── DropZone component ───────────────────────────────────────────────────────
@@ -727,11 +745,9 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         onboardingInvoiceLinesCount: cPdfLines.length,
       })
 
+      const parsedInvoiceTs = parseDateStringToTimestamp(cPdfInvoiceMeta.invoiceDate ?? null)
+
       // Persist invoice record — inline shape matches ocrInvoicePhoto.ts
-      // invoiceDateTimestamp left null: OCR produces a parsed timestamp but
-      // the desktop path only has the raw date string from cPdfInvoiceMeta;
-      // current readers sort by createdAt, not invoiceDateTimestamp, so this
-      // is harmless today but will affect any future date-sorted invoice report.
       const pdfLines = cPdfLines.map(l => ({
         name: l.name, productName: l.name,
         qty: l.qty,
@@ -744,8 +760,8 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         invoiceNumber: cPdfInvoiceMeta.invoiceNumber ?? null,
         poNumber: cPdfInvoiceMeta.poNumber ?? null,
         invoiceDate: cPdfInvoiceMeta.invoiceDate ?? null,
-        invoiceDateTimestamp: null,
-        date: serverTimestamp(),
+        invoiceDateTimestamp: parsedInvoiceTs,
+        date: parsedInvoiceTs ?? serverTimestamp(),
         totalAmount: pdfLines.reduce((s, l) => s + l.qty * (l.unitCost ?? 0), 0),
         gstAmount: null,
         lines: pdfLines,
