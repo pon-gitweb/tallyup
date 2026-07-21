@@ -75,6 +75,38 @@ export async function resetDepartment(venueId: string, departmentId: string) {
   } catch (e: any) {
     console.warn('[Reset] queued invoice processing failed (non-fatal):', e?.message);
   }
+
+  // If this was the last open department, clear the venue-wide stocktakeActive flag.
+  // "Mid-cycle" = startedAt != null OR completedAt != null (resetAreaInBatch nulls both).
+  // Only clears, never sets — worst failure mode is a skipped clear, never a wrong false.
+  // Concurrent dept resets are safe: the later-finishing thread re-runs the check and clears.
+  // Legacy venue-level areas excluded: nothing can start a count on them (setter is modern-path only).
+  try {
+    const allDepsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+    let anyOpen = false;
+    for (const depDoc of allDepsSnap.docs) {
+      if (anyOpen) break;
+      const depAreasSnap = await getDocs(
+        collection(db, 'venues', venueId, 'departments', depDoc.id, 'areas')
+      );
+      for (const aDoc of depAreasSnap.docs) {
+        const d = aDoc.data();
+        if (d.startedAt != null || d.completedAt != null) {
+          anyOpen = true;
+          break;
+        }
+      }
+    }
+    if (!anyOpen) {
+      await updateDoc(doc(db, 'venues', venueId), {
+        stocktakeActive: false,
+        stocktakeActiveAt: null,
+      });
+      console.log('[Reset] all departments closed — cleared venue stocktakeActive');
+    }
+  } catch (e: any) {
+    console.warn('[Reset] stocktakeActive clear check failed (non-fatal):', e?.message);
+  }
 }
 
 export async function resetAllDepartmentsStockTake(venueId: string) {
