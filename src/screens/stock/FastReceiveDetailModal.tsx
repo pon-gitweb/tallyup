@@ -66,11 +66,15 @@ export default function FastReceiveDetailModal({
   item,
   onClose,
   onAttached,
+  onEditPo,
+  onAttachToSpecificOrder,
 }: {
   visible: boolean;
   item: FastRec | null;
   onClose: () => void;
   onAttached: (orderId: string) => void;
+  onEditPo?: () => void;
+  onAttachToSpecificOrder?: () => void;
 }) {
   const venueId = useVenueId();
   const { showSuccess, showInfo, showError } = useToast();
@@ -110,11 +114,6 @@ export default function FastReceiveDetailModal({
     () => item?.source || item?.payload?.invoice?.source || '—',
     [item]
   );
-  const path = useMemo(
-    () => item?.storagePath || item?.payload?.invoice?.storagePath || '—',
-    [item]
-  );
-
   const lines = useMemo(() => draftLines, [draftLines]);
   const warnings = useMemo(() => item?.payload?.warnings || [], [item]);
 
@@ -252,7 +251,7 @@ export default function FastReceiveDetailModal({
               <View style={{ flex:1 }}>
         <View style={S.header}>
           <TouchableOpacity onPress={onClose}><Text style={S.back}>‹ Back</Text></TouchableOpacity>
-          <Text style={S.title}>Snapshot {item?.id ?? ''}</Text>
+          <Text style={S.title}>{item?.payload?.invoice?.supplierName || 'Invoice Details'}</Text>
           <View style={{ width:60 }} />
         </View>
 
@@ -262,7 +261,6 @@ export default function FastReceiveDetailModal({
               <Text style={S.blockTitle}>Summary</Text>
               <Text style={S.kv}>PO: <Text style={S.v}>{po}</Text></Text>
               <Text style={S.kv}>Source: <Text style={S.v}>{src}</Text></Text>
-              <Text style={S.kv}>Path: <Text style={S.v}>{path}</Text></Text>
               <Text style={S.kv}>Created: <Text style={S.v}>{when}</Text></Text>
               <Text style={S.kv}>Lines: <Text style={S.v}>{totals.count}</Text></Text>
               <Text style={S.kv}>Estimated Total: <Text style={S.v}>${totals.extTotal.toFixed(2)}</Text></Text>
@@ -445,6 +443,7 @@ export default function FastReceiveDetailModal({
               <Text style={S.btnText}>{committing ? 'Applying…' : 'Confirm Changes'}</Text>
             </TouchableOpacity>
           )}
+          {/* Attach row */}
           <View style={{ flexDirection:'row', gap:10 }}>
             <TouchableOpacity
               disabled={busy || committing}
@@ -453,6 +452,27 @@ export default function FastReceiveDetailModal({
             >
               <Text style={S.btnText}>{busy ? 'Attaching…' : 'Try Attach to Order'}</Text>
             </TouchableOpacity>
+            {!!onAttachToSpecificOrder && (
+              <TouchableOpacity
+                disabled={busy || committing}
+                onPress={onAttachToSpecificOrder}
+                style={[S.btn, { backgroundColor:'#1f2937' }]}
+              >
+                <Text style={S.btnText}>Specific Order</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {/* Admin / navigation row */}
+          <View style={{ flexDirection:'row', gap:10 }}>
+            {!!onEditPo && (
+              <TouchableOpacity
+                disabled={busy || committing}
+                onPress={onEditPo}
+                style={[S.btn, { backgroundColor:'#10b981' }]}
+              >
+                <Text style={S.btnText}>Edit PO</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               disabled={busy || committing}
               onPress={onClose}

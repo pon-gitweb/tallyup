@@ -289,78 +289,31 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
             <Text style={{ color: '#94A3B8' }}>No pending fast receives.</Text>
           ) : (
             items.map(it => {
-              const po = it.parsedPo || it?.payload?.invoice?.poNumber || '—';
-              const isBusy = busyId === it.id;
-              const isPending = (it.status || 'pending') === 'pending';
+              const ts = it.createdAt?.toDate ? it.createdAt.toDate() : null;
+              const dateLabel = ts
+                ? ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString()
+                : 'Unknown date';
               return (
                 <View key={it.id} style={S.card}>
-                  <Text style={S.title}>Snapshot {it.id}</Text>
+                  <Text style={S.title}>{dateLabel}</Text>
                   <Text style={S.sub}>
-                    Source: {it.source || '—'} · PO: {po} · Status: {it.status || 'pending'}
+                    Source: {it.source || '—'} · Status: {it.status || 'pending'}
                   </Text>
-                  <Text style={S.sub}>Path: {it.storagePath || '—'}</Text>
 
-                  {isPending ? (
-                    <View
+                  <View style={{ marginTop: 10 }}>
+                    <TouchableOpacity
+                      onPress={() => openDetails(it)}
                       style={{
-                        flexDirection: 'row',
-                        gap: 8,
-                        marginTop: 10,
-                        flexWrap: 'wrap',
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        backgroundColor: '#0ea5e9',
+                        alignSelf: 'flex-start',
                       }}
                     >
-                      <TouchableOpacity
-                        onPress={() => openDetails(it)}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#0ea5e9',
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '800' }}>View Details</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => openEditPo(it)}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#10b981',
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '800' }}>Edit PO</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        disabled={isBusy}
-                        onPress={() => tryAttach(it)}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#111',
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '800' }}>
-                          {isBusy ? 'Attaching…' : 'Try Attach to Order'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => openChooser(it)}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#1f2937',
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '800' }}>Attach to Specific Order</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
+                      <Text style={{ color: '#fff', fontWeight: '800' }}>View Details</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             })
@@ -392,6 +345,8 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
         item={detailItem}
         onClose={closeDetails}
         onAttached={onAttachedFromDetail}
+        onEditPo={detailItem ? () => openEditPo(detailItem) : undefined}
+        onAttachToSpecificOrder={detailItem ? () => openChooser(detailItem) : undefined}
       />
 
       {/* Edit-PO modal */}
