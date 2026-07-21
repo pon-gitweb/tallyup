@@ -68,9 +68,9 @@ export default function OrderDispatchModal({
   const markPlaced = useCallback(async (method: string) => {
     try {
       await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
-        status: 'placed',
+        status: 'submitted',
         dispatchMethod: method,
-        placedAt: serverTimestamp(),
+        submittedAt: serverTimestamp(),
       });
     } catch (e) {
       console.log('[OrderDispatch] markPlaced error', e);
