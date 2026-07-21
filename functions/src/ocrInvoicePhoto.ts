@@ -18,6 +18,12 @@ type ParsedLine = {
   source?: string;
 };
 
+// Minimal Claude Messages API response shape — content array + error envelope
+type ClaudeApiResponse = {
+  content?: Array<{ type?: string; text?: string }>;
+  error?: { type?: string; message?: string };
+};
+
 // Regex fallback for line items when Claude fails.
 // Tries to distinguish unit price from line total by verifying unitPrice × qty ≈ lineTotal.
 // Returns unitPrice: undefined rather than guess when it cannot be verified.
@@ -1600,10 +1606,10 @@ export const ocrInvoicePhoto = functions
     });
 
     if (!claudeResp.ok) {
-      const errBody = await claudeResp.json().catch(() => ({} as any));
+      const errBody = await claudeResp.json().catch(() => ({})) as ClaudeApiResponse;
       throw new Error(`Claude vision failed: ${claudeResp.status} ${errBody?.error?.message || ""}`);
     }
-    const claudeData = await claudeResp.json() as any;
+    const claudeData = await claudeResp.json() as ClaudeApiResponse;
     const text = claudeData?.content?.[0]?.text || "";
 
     if (!text.trim()) {
