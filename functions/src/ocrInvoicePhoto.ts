@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { proposeInvoiceChanges, ProposedAction } from "./priceTracking";
+import { classifyLine, summarizeExcludedLines, ExcludedLineSummary, mergeExcludedLines } from './classifyLine';
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
@@ -556,7 +557,7 @@ async function processUnpricedLines(
   supplierId: string | null,
   supplierName: string | null,
   invoiceId: string,
-): Promise<ProposedAction[]> {
+): Promise<{ proposals: ProposedAction[]; excludedLines: ExcludedLineSummary[] }> {
   const productsSnap = await db.collection(`venues/${venueId}/products`).get();
   const existingProds = productsSnap.docs.map(d => ({
     id: d.id,
@@ -564,8 +565,16 @@ async function processUnpricedLines(
     supplierId: (d.data() as any).supplierId || null,
   }));
   const newProposals: ProposedAction[] = [];
+  const excludedRaw: ParsedLine[] = [];
   for (const line of unpricedLines) {
     if (!line.name?.trim()) continue;
+
+    // Non-product lines are excluded from new-product proposals
+    if (classifyLine(line) !== 'product') {
+      excludedRaw.push(line);
+      continue;
+    }
+
     const matchedProd = existingProds.find(ep => {
       const en = normNameInline(ep.name);
       const cn = normNameInline(line.name);
@@ -594,7 +603,7 @@ async function processUnpricedLines(
       supplierName: supplierName || null,
     });
   }
-  return newProposals;
+  return { proposals: newProposals, excludedLines: summarizeExcludedLines(excludedRaw) };
 }
 
 
@@ -1059,6 +1068,7 @@ async function processTaxInvoice(
     productMap = priceResult.autoProductMap || {};
     payload.proposals = payload.proposals.concat(priceResult.proposals);
     payload.hasPriceChanges = priceResult.proposals.some((p: ProposedAction) => p.type === 'priceChange');
+    payload.excludedLines = priceResult.excludedLines || [];
 
     // Link confidently-matched productIds back into the saved invoice line items immediately
     if (invoiceDocId && Object.keys(productMap).length > 0) {
@@ -1085,13 +1095,19 @@ async function processTaxInvoice(
   const unpricedLines = lines.filter((l: ParsedLine) => !(l.unitPrice != null && (l.unitPrice as number) > 0));
   if (unpricedLines.length > 0) {
     try {
-      const unpricedProposals = await processUnpricedLines(
+      const unpricedResult = await processUnpricedLines(
         db, venueId, unpricedLines,
         resolvedSupplierId || null, resolvedSupplierName || null,
         invoiceId,
       );
-      if (unpricedProposals.length > 0) {
-        payload.proposals = payload.proposals.concat(unpricedProposals);
+      if (unpricedResult.proposals.length > 0) {
+        payload.proposals = payload.proposals.concat(unpricedResult.proposals);
+      }
+      if (unpricedResult.excludedLines.length > 0) {
+        payload.excludedLines = mergeExcludedLines(
+          payload.excludedLines || [],
+          unpricedResult.excludedLines,
+        );
       }
     } catch (error: any) {
       console.error("[ocrInvoice] unpriced product processing failed:", error?.message);

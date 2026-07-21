@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { classifyLine, summarizeExcludedLines, ExcludedLineSummary } from './classifyLine';
 
 export interface InvoiceLine {
   name: string;
@@ -468,6 +469,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   autoApplied: { linked: number };
   proposals: ProposedAction[];
   autoProductMap: Record<string, string>;
+  excludedLines: ExcludedLineSummary[];
 }> {
   const {
     venueId,
@@ -480,12 +482,26 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   const cleanSupplierName = supplierName && supplierName.trim() ? supplierName.trim() : null;
   const db = admin.firestore();
 
-  const priced = lines.filter(l =>
+  // Classify all input lines first — non-product lines (freight, deposits, etc.)
+  // are excluded from matching/proposal logic and surfaced in excludedLines instead
+  const productLines: InvoiceLine[] = [];
+  const nonProductLines: InvoiceLine[] = [];
+  for (const l of lines) {
+    if (classifyLine(l) === 'product') productLines.push(l);
+    else nonProductLines.push(l);
+  }
+
+  const priced = productLines.filter(l =>
     typeof l.unitPrice === "number" &&
     (l.unitPrice as number) > 0 &&
     (l.unitPrice as number) < 10000
   );
-  if (!priced.length) return { autoApplied: { linked: 0 }, proposals: [], autoProductMap: {} };
+  if (!priced.length) return {
+    autoApplied: { linked: 0 },
+    proposals: [],
+    autoProductMap: {},
+    excludedLines: summarizeExcludedLines(nonProductLines),
+  };
 
   const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
   const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
@@ -660,7 +676,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     }
   }
 
-  return { autoApplied: { linked }, proposals, autoProductMap };
+  return { autoApplied: { linked }, proposals, autoProductMap, excludedLines: summarizeExcludedLines(nonProductLines) };
 }
 
 export async function commitInvoiceChanges(
