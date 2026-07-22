@@ -62,7 +62,7 @@ export function computeSnapshotItemFigures(
   const snapshotItems: any[] = rawItems.map(item => {
     const rawName = (item.name || '').toLowerCase().trim();
 
-    const openingCount: number | null = cycleNumber > 1
+    const openingCount: number | null = cycleNumber > 0
       ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
       : null;
 
@@ -216,7 +216,7 @@ export async function writeDepartmentSnapshot(
 
     // ── FIX 1: Load previous cycle snapshot for correct openingCount ──────────
     const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
-    if (cycleNumber > 1) {
+    if (cycleNumber > 0) {
       try {
         const prevSnapshotId = `cycle-${cycleNumber - 1}`;
         const prevSnap = await getDoc(
@@ -272,7 +272,7 @@ export async function writeDepartmentSnapshot(
       : 0;
 
     // Days since last cycle
-    const prevCycleDateMs = cycleNumber > 1 ? toMs(deptData.lastCycleAt) : null;
+    const prevCycleDateMs = cycleNumber > 0 ? toMs(deptData.lastCycleAt) : null;
     const daysSinceLastCycle = prevCycleDateMs
       ? Math.round((cycleEnd.getTime() - prevCycleDateMs) / (1000 * 60 * 60 * 24))
       : null;

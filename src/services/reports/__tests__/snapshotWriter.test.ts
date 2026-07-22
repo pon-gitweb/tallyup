@@ -208,3 +208,54 @@ describe('computeSnapshotItemFigures — STEP B flags', () => {
     expect(si2[0].hasUnexplainedLoss).toBe(true);
   });
 });
+
+// ── Suite: cycleNumber boundary (pins the > 1 → > 0 change) ──────────────────
+
+describe('computeSnapshotItemFigures — cycleNumber boundary', () => {
+  const item = makeItem({ name: 'Gin', lastCount: 10, costPrice: 30 });
+  const prev = prevMap({ gin: 5 });
+
+  it('cycle-0: openingCount is null regardless of prevItemMap content', () => {
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 0, [], []);
+    expect(snapshotItems[0].openingCount).toBeNull();
+  });
+
+  it('cycle-1: openingCount reads from prevItemMap (prev snapshot was cycle-0)', () => {
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 1, [], []);
+    expect(snapshotItems[0].openingCount).toBe(5);
+  });
+
+  it('cycle-2: openingCount reads from prevItemMap', () => {
+    const { snapshotItems } = computeSnapshotItemFigures([item], prev, 2, [], []);
+    expect(snapshotItems[0].openingCount).toBe(5);
+  });
+
+  it('cycle-1 with empty prevItemMap (no baseline written): openingCount is null', () => {
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, [], []);
+    expect(snapshotItems[0].openingCount).toBeNull();
+  });
+});
+
+// ── Suite: hasBaseline contract (pins what variance.ts guard reads) ───────────
+// variance.ts: `if (!snapshot.dataCompleteness?.hasBaseline) continue`
+// That field is written from computeSnapshotItemFigures's `hasBaseline` return value.
+
+describe('computeSnapshotItemFigures — hasBaseline contract', () => {
+  const item = makeItem({ name: 'Gin', lastCount: 10, costPrice: 30 });
+  const prev = prevMap({ gin: 5 });
+
+  it('cycle-0: hasBaseline is false — variance screen skips baseline docs', () => {
+    const { hasBaseline } = computeSnapshotItemFigures([item], prev, 0, [], []);
+    expect(hasBaseline).toBe(false);
+  });
+
+  it('cycle-1 with prevItemMap: hasBaseline is true — variance screen shows this cycle', () => {
+    const { hasBaseline } = computeSnapshotItemFigures([item], prev, 1, [], []);
+    expect(hasBaseline).toBe(true);
+  });
+
+  it('cycle-1 with empty prevItemMap (legacy first cycle): hasBaseline is false — skipped', () => {
+    const { hasBaseline } = computeSnapshotItemFigures([item], new Map(), 1, [], []);
+    expect(hasBaseline).toBe(false);
+  });
+});

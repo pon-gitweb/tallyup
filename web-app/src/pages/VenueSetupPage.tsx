@@ -4,6 +4,7 @@ import {
   onSnapshot, orderBy, query, serverTimestamp, updateDoc, writeBatch,
 } from 'firebase/firestore'
 import { db } from '../firebase'
+import { writeBaselineSnapshot } from '../services/baselineSnapshot'
 import styles from './VenueSetupPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -97,6 +98,10 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
   const [bulkTargetArea, setBulkTargetArea] = useState<string>('')  // "deptId/areaId"
   const [assigning, setAssigning] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  // ── Baseline ────────────────────────────────────────────────────────────────
+  const [baselineSetting, setBaselineSetting] = useState<string | null>(null)
+  const [baselineMsg, setBaselineMsg] = useState<{ text: string; ok: boolean } | null>(null)
 
   // ── Load departments live ───────────────────────────────────────────────────
   useEffect(() => {
@@ -211,6 +216,37 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
     return true
   })
 
+  async function handleSetBaseline(deptId: string) {
+    setBaselineSetting(deptId)
+    setBaselineMsg(null)
+    const result = await writeBaselineSnapshot(venueId, deptId)
+    setBaselineSetting(null)
+    if (result.ok) {
+      setBaselineMsg({ text: 'Baseline set.', ok: true })
+    } else if (result.reason === 'empty') {
+      setBaselineMsg({ text: 'No counted items yet — place and count products in this department first.', ok: false })
+    } else {
+      setBaselineMsg({ text: 'Baseline can only be set before the first stocktake.', ok: false })
+    }
+    setTimeout(() => setBaselineMsg(null), 6000)
+  }
+
+  async function handleSetBaselineAll() {
+    setBaselineSetting('all')
+    setBaselineMsg(null)
+    let ok = 0; let skipped = 0
+    for (const dept of structure) {
+      const result = await writeBaselineSnapshot(venueId, dept.id)
+      if (result.ok) ok++; else skipped++
+    }
+    setBaselineSetting(null)
+    const msg = ok > 0
+      ? `Baseline set for ${ok} department${ok !== 1 ? 's' : ''}${skipped ? ` (${skipped} skipped)` : ''}.`
+      : 'No departments had counted items — nothing written.'
+    setBaselineMsg({ text: msg, ok: ok > 0 })
+    setTimeout(() => setBaselineMsg(null), 6000)
+  }
+
   async function handleBulkAssign() {
     if (!bulkTargetArea || selectedProductIds.size === 0) return
     const [deptId, areaId] = bulkTargetArea.split('/')
@@ -244,6 +280,22 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
       <div className={styles.section}>
         <p className={styles.sectionHeading}>Departments &amp; Areas</p>
         <p className={styles.sectionSubhead}>Add departments (Bar, Kitchen, Cellar) and the counting areas within each.</p>
+        {structure.length > 0 && (
+          <div className={styles.baselineAllRow}>
+            <button
+              className={styles.baselineAllBtn}
+              onClick={handleSetBaselineAll}
+              disabled={baselineSetting !== null}
+            >
+              {baselineSetting === 'all' ? 'Setting…' : 'Set baseline for all departments'}
+            </button>
+            {baselineMsg && (
+              <span className={baselineMsg.ok ? styles.baselineMsgOk : styles.baselineMsgErr}>
+                {baselineMsg.text}
+              </span>
+            )}
+          </div>
+        )}
         <div className={styles.card}>
           {loadingStructure ? (
             <p className={styles.loading}>Loading…</p>
@@ -277,6 +329,14 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
                       <button className={styles.iconBtn} onClick={() => setRenaming({ id: dept.id, type: 'dept', value: dept.name })} title="Rename">✎</button>
                       <button className={styles.deleteBtn} onClick={() => setConfirmDelete({ id: dept.id, type: 'dept', name: dept.name })} title="Delete">×</button>
                       <button className={styles.addAreaBtn} onClick={() => { setAddingArea(dept.id); setNewAreaName('') }}>+ Add area</button>
+                      <button
+                        className={styles.baselineBtn}
+                        onClick={() => handleSetBaseline(dept.id)}
+                        disabled={baselineSetting !== null}
+                        title="Create cycle-0 baseline snapshot for this department"
+                      >
+                        {baselineSetting === dept.id ? '…' : 'Set baseline'}
+                      </button>
                     </>
                   )}
                 </div>

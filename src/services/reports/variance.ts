@@ -122,8 +122,8 @@ export async function computeVarianceSnapshot(
 
     const snapshot = snapshotsSnap.docs[0].data() as any;
 
-    // Skip first cycle snapshots — no baseline to compare against
-    if (snapshot.cycleNumber <= 1 || !snapshot.dataCompleteness?.hasBaseline) continue;
+    // Skip snapshots with no baseline — cycle-0 always, legacy first cycles, and any with missing prev snapshot
+    if (!snapshot.dataCompleteness?.hasBaseline) continue;
 
     for (const item of (snapshot.items || [])) {
       // Only items with a baseline (openingCount known from previous cycle)

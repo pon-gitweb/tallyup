@@ -50,3 +50,13 @@
 .successMsg { font-size: 13px; color: #16a34a; font-weight: 600; padding: 10px 0; }
 .noAreaSelected { padding: 48px 32px; text-align: center; color: #9ca3af; font-size: 14px; }
 .loading { font-size: 14px; color: #6B7280; text-align: center; padding: 40px; }
+/* Baseline */
+.baselineBtn { background: none; border: 1px solid #d1a846; border-radius: 6px; color: #92400e; font-size: 11px; font-weight: 700; padding: 3px 9px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; letter-spacing: 0.02em; }
+.baselineBtn:hover:not(:disabled) { background: #fef3c7; }
+.baselineBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.baselineAllRow { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.baselineAllBtn { padding: 7px 14px; font-size: 12px; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #d1a846; border-radius: 8px; cursor: pointer; white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+.baselineAllBtn:hover:not(:disabled) { background: #fde68a; }
+.baselineAllBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.baselineMsgOk  { font-size: 13px; color: #16a34a; font-weight: 600; }
+.baselineMsgErr { font-size: 13px; color: #dc2626; font-weight: 600; }
