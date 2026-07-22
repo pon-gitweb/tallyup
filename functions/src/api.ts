@@ -8,7 +8,7 @@ import { proposeInvoiceChanges, commitInvoiceChanges } from "./priceTracking";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
-import { checkAiLimit, trackAiCall } from './services/aiMeter';
+import { AiCallType, checkAiLimit, trackAiCall } from './services/aiMeter';
 
 const app = express();
 app.use(cors({ origin: true }));
