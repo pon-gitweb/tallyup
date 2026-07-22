@@ -178,6 +178,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               itemsCounted: 0,
               totalStockValue: null,
               totalVarianceDollars: null,
+              unexplainedVarianceDollars: null,
             })
             return
           }
