@@ -18,6 +18,8 @@ type Product = {
   supplierName: string | null
   unit: string | null
   costPrice: number | null
+  baselinePending: boolean | null
+  baselineCount: number | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ async function batchAssignProducts(
   for (let i = 0; i < products.length; i += 499) {
     const batch = writeBatch(db)
     products.slice(i, i + 499).forEach(p => {
+      const isPending = p.baselinePending === true
+      const baselineCount = typeof p.baselineCount === 'number' ? p.baselineCount : 0
       batch.set(
         doc(db, 'venues', venueId, 'departments', deptId, 'areas', areaId, 'items', p.id),
         {
@@ -47,9 +51,16 @@ async function batchAssignProducts(
           productId: p.id, productName: p.name,
           inductionStatus: 'complete', inductionSource: 'desktop-bulk-assign',
           countingUnit: p.unit || 'unit', caseSize: null,
+          ...(isPending ? {
+            lastCount: baselineCount,      lastCountAt: serverTimestamp(),
+            confirmedCount: baselineCount, confirmedCountAt: serverTimestamp(),
+          } : {}),
           createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         },
       )
+      if (isPending) {
+        batch.update(doc(db, 'venues', venueId, 'products', p.id), { baselinePending: false })
+      }
     })
     await batch.commit()
   }
@@ -118,7 +129,7 @@ export default function VenueSetupPage({ venueId }: { venueId: string }) {
     getDocs(collection(db, 'venues', venueId, 'products')).then(snap => {
       setProducts(snap.docs.map(d => {
         const data = d.data() as any
-        return { id: d.id, name: data.name || '', category: data.category ?? null, supplierName: data.supplierName ?? null, unit: data.unit ?? null, costPrice: data.costPrice ?? null }
+        return { id: d.id, name: data.name || '', category: data.category ?? null, supplierName: data.supplierName ?? null, unit: data.unit ?? null, costPrice: data.costPrice ?? null, baselinePending: data.baselinePending ?? null, baselineCount: data.baselineCount ?? null }
       }).sort((a, b) => a.name.localeCompare(b.name)))
     }).catch(() => {})
   }, [venueId])

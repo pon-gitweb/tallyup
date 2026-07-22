@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { addDoc, arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, increment, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import AreaInvHeader from "./components/AreaInvHeader";
 import PhotoCountModal from "./components/PhotoCountModal";
 import SmartShelfModal from "./components/SmartShelfModal";
@@ -3034,29 +3034,38 @@ const openHistory = throttleAction(async (item: Item) => {
       costPrice: product.costPrice || undefined,
       caseSize: product.caseSize || null,
       write: async ({ countingUnit, caseSize }) => {
-        await addDoc(
-          collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'),
-          {
-            name: product.name || '',
-            unit: product.unit || null,
-            supplierId: product.supplierId || null,
-            supplierName: product.supplierName || null,
-            productId: product.id || null,
-            countingUnit,
-            caseSize: caseSize ?? null,
-            costPrice: product.costPrice || null,
-            parLevel: product.parLevel || null,
-            barcode: product.barcode || null,
-            barcodeNumber: product.barcodeNumber || product.barcode || null,
-            category: product.category || product.categorySuggested || null,
-            brand: product.brand || null,
-            size: product.size || null,
-            inductionStatus: 'pending',
-            inductionSource: 'venue-search',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          }
-        );
+        const isPending = product.baselinePending === true
+        const baselineCount = typeof product.baselineCount === 'number' ? product.baselineCount : 0
+        const itemRef = doc(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'))
+        const itemBatch = writeBatch(db)
+        itemBatch.set(itemRef, {
+          name: product.name || '',
+          unit: product.unit || null,
+          supplierId: product.supplierId || null,
+          supplierName: product.supplierName || null,
+          productId: product.id || null,
+          countingUnit,
+          caseSize: caseSize ?? null,
+          costPrice: product.costPrice || null,
+          parLevel: product.parLevel || null,
+          barcode: product.barcode || null,
+          barcodeNumber: product.barcodeNumber || product.barcode || null,
+          category: product.category || product.categorySuggested || null,
+          brand: product.brand || null,
+          size: product.size || null,
+          ...(isPending ? {
+            lastCount: baselineCount,      lastCountAt: serverTimestamp(),
+            confirmedCount: baselineCount, confirmedCountAt: serverTimestamp(),
+          } : {}),
+          inductionStatus: 'pending',
+          inductionSource: 'venue-search',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+        if (isPending) {
+          itemBatch.update(doc(db, 'venues', venueId!, 'products', product.id), { baselinePending: false })
+        }
+        await itemBatch.commit()
         hapticSuccess();
       },
     });
@@ -3092,6 +3101,8 @@ const openHistory = throttleAction(async (item: Item) => {
       const batch = wb(db);
       for (const product of newProducts) {
         const { countingUnit, caseSize } = getUnitForProduct(product);
+        const isPending = product.baselinePending === true
+        const baselineCount = typeof product.baselineCount === 'number' ? product.baselineCount : 0
         const newRef = doc(collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId, 'items'));
         batch.set(newRef, {
           name: product.name || '',
@@ -3108,11 +3119,18 @@ const openHistory = throttleAction(async (item: Item) => {
           category: product.category || product.categorySuggested || null,
           brand: product.brand || null,
           size: product.size || null,
+          ...(isPending ? {
+            lastCount: baselineCount,      lastCountAt: serverTimestamp(),
+            confirmedCount: baselineCount, confirmedCountAt: serverTimestamp(),
+          } : {}),
           inductionStatus: 'pending',
           inductionSource: 'venue-search-batch',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        if (isPending) {
+          batch.update(doc(db, 'venues', venueId!, 'products', product.id), { baselinePending: false })
+        }
       }
       await batch.commit();
       hapticSuccess();
@@ -3276,6 +3294,8 @@ const openHistory = throttleAction(async (item: Item) => {
       costPrice: product.costPrice || undefined,
       caseSize: product.caseSize || null,
       write: async ({ countingUnit, caseSize }) => {
+        const isPending = product.baselinePending === true
+        const baselineCount = typeof product.baselineCount === 'number' ? product.baselineCount : 0
         const itemData = {
           name: product.name || '',
           unit: product.unit || null,
@@ -3283,6 +3303,10 @@ const openHistory = throttleAction(async (item: Item) => {
           productId: product.id || null,
           countingUnit,
           caseSize: caseSize ?? null,
+          ...(isPending ? {
+            lastCount: baselineCount,      lastCountAt: serverTimestamp(),
+            confirmedCount: baselineCount, confirmedCountAt: serverTimestamp(),
+          } : {}),
           inductionStatus: 'pending',
           inductionSource: 'venue-search',
           createdAt: serverTimestamp(),
@@ -3290,10 +3314,13 @@ const openHistory = throttleAction(async (item: Item) => {
         };
         console.log('[SearchBar] writing fields:', Object.keys(itemData));
         try {
-          await addDoc(
-            collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items'),
-            itemData,
-          );
+          const itemRef = doc(collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items'))
+          const itemBatch = writeBatch(db)
+          itemBatch.set(itemRef, itemData)
+          if (isPending) {
+            itemBatch.update(doc(db, 'venues', venueId, 'products', product.id), { baselinePending: false })
+          }
+          await itemBatch.commit()
           setUnifiedSearch('');
         } catch (error: any) {
           console.error('[SearchBar] write failed:', error);

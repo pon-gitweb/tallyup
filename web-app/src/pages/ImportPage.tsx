@@ -248,24 +248,40 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   async function handleImportA() {
     setAStatus('importing')
     try {
-      const existingMap = aExistingMap.size > 0 ? aExistingMap : await loadExistingProducts(venueId)
+      // Load existing products: id for dedup + detect already-consumed baselines
+      const existingSnap = await getDocs(collection(db, 'venues', venueId, 'products'))
+      const existingMap = new Map<string, string>()
+      const baselineConsumed = new Set<string>()
+      existingSnap.docs.forEach(d => {
+        const data = d.data() as any
+        const key = (data.name || '').toLowerCase().trim()
+        if (!key) return
+        existingMap.set(key, d.id)
+        if (data.baselinePending === false) baselineConsumed.add(key)
+      })
       await batchWrite(db, `venues/${venueId}/products`,
-        aRows.map(r => ({
-          id: existingMap.get(r.name.toLowerCase().trim()) ?? slugId(r.name),
-          data: {
-            name: r.name,
-            unit: r.unit,
-            ...(r.category ? { category: r.category } : {}),
-            costPrice: r.costPrice,
-            parLevel: r.parLevel,
-            confirmedCount: r.count,
-            confirmedCountAt: serverTimestamp(),
-            lastCount: r.count,
-            lastCountAt: serverTimestamp(),
-            supplierName: 'Unassigned',
-            updatedAt: serverTimestamp(),
-          },
-        }))
+        aRows.map(r => {
+          const key = r.name.toLowerCase().trim()
+          return {
+            id: existingMap.get(key) ?? slugId(r.name),
+            data: {
+              name: r.name,
+              unit: r.unit,
+              ...(r.category ? { category: r.category } : {}),
+              costPrice: r.costPrice,
+              parLevel: r.parLevel,
+              confirmedCount: r.count,
+              confirmedCountAt: serverTimestamp(),
+              lastCount: r.count,
+              lastCountAt: serverTimestamp(),
+              supplierName: 'Unassigned',
+              baselineCount: r.count,
+              baselineDate: aDate || null,
+              ...(!baselineConsumed.has(key) ? { baselinePending: r.count > 0 } : {}),
+              updatedAt: serverTimestamp(),
+            },
+          }
+        })
       )
       await updateDoc(doc(db, 'venues', venueId), {
         onboardingRoad: 'data',
