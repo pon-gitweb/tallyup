@@ -5,6 +5,7 @@ import { classifyLine, summarizeExcludedLines, ExcludedLineSummary, mergeExclude
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
+import { checkAiLimit, trackAiCall } from './services/aiMeter';
 
 type ParsedLine = {
   name: string;
@@ -1584,6 +1585,12 @@ export const ocrInvoicePhoto = functions
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new functions.https.HttpsError("internal", "ANTHROPIC_API_KEY not configured.");
 
+    // Gate new scans against the invoice_ocr meter; resume paths bypass this block.
+    const { allowed, limitError } = await checkAiLimit(venueId, 'invoice_ocr');
+    if (!allowed) {
+      throw new functions.https.HttpsError('resource-exhausted', limitError.message, limitError);
+    }
+
     const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -1621,6 +1628,9 @@ export const ocrInvoicePhoto = functions
         message: "Could not read any text from this image. Please try again or enter details manually.",
       };
     }
+
+    // Successful vision parse — one metered call regardless of page/document count
+    await trackAiCall(venueId, 'invoice_ocr');
 
     // STEP 1: classify the document (unless the client already told us what it is)
     const docTypeHint = data?.docTypeHint ? String(data.docTypeHint) : null;

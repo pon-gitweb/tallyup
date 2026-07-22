@@ -18,12 +18,16 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "jest",
     "emulate": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.19.15",
     "@types/nodemailer": "^8.0.1",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.6",
     "typescript": "^5.9.3"
   }
 }

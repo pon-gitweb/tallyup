@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system';
 import { getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { uploadFastInvoice } from './uploadFastInvoice';
+import { handleAiLimitError } from '../../utils/aiLimitError';
 
 function getProjectId(): string {
   try {
@@ -63,6 +64,10 @@ export async function scanInvoicePhoto(args: {
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (handleAiLimitError(json?.error?.details)) {
+      // Alert shown; known papercut: caller's catch may surface a secondary error UI
+      throw new Error(json?.error?.details?.message || 'AI limit reached');
+    }
     const errMsg =
       json?.error?.message ||
       json?.message ||

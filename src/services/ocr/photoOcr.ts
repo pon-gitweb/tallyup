@@ -8,6 +8,7 @@
 import { getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import * as FileSystem from 'expo-file-system';
+import { handleAiLimitError } from '../../utils/aiLimitError';
 
 type RunArgs = {
   venueId: string;
@@ -126,6 +127,7 @@ export async function runPhotoOcrJob({
   });
 
   if (!res.ok) {
+    if (handleAiLimitError(json?.error?.details)) return null;
     const errMsg =
       json?.error?.message || json?.message || `HTTP ${res.status}`;
     throw new Error(`OCR call failed: ${errMsg}`);

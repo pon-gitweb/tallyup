@@ -13,19 +13,20 @@ type UsageData = {
   plan: string;
 };
 
+// Keep in sync with functions/src/services/aiMeter.ts PLAN_LIMITS
 const PLAN_LIMITS: Record<string, Record<string, number>> = {
   beta: {
-    total: 300, invoice_ocr: 50, product_photo: 75, shelf_scan: 15,
+    total: 600, invoice_ocr: 300, product_photo: 75, shelf_scan: 15,
     stocktake_photo: 40, sales_report: 10, izzy: 150, suitee: 50,
     ai_insights: 12, suggest_orders: 20, variance_explain: 12,
   },
   core: {
-    total: 200, invoice_ocr: 30, product_photo: 30, shelf_scan: 10,
+    total: 500, invoice_ocr: 300, product_photo: 30, shelf_scan: 10,
     stocktake_photo: 20, sales_report: 5, izzy: 100, suitee: 30,
     ai_insights: 8, suggest_orders: 15, variance_explain: 8,
   },
   core_plus: {
-    total: 500, invoice_ocr: 80, product_photo: 100, shelf_scan: 30,
+    total: 800, invoice_ocr: 400, product_photo: 100, shelf_scan: 30,
     stocktake_photo: 60, sales_report: 15, izzy: 300, suitee: 100,
     ai_insights: 20, suggest_orders: 40, variance_explain: 20,
   },
@@ -114,7 +115,7 @@ function AiUsageScreen() {
 
   const plan = usage?.plan || 'beta';
   const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.beta;
-  const totalLimit = limits.total ?? 300;
+  const totalLimit = limits.total ?? 600;
   const totalUsed = usage?.totalCalls || 0;
   const breakdown = usage?.breakdown || {};
   const totalPct = totalLimit > 0 ? Math.min(100, Math.round((totalUsed / totalLimit) * 100)) : 0;
