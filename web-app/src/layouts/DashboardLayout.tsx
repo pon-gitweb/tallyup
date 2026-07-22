@@ -12,6 +12,7 @@ export type Page =
   | 'suitee'
   | 'products'
   | 'import'
+  | 'invoices'
   | 'suppliers'
   | 'team'
   | 'account'
@@ -40,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'products',  label: 'Products',  icon: '📦' },
       { key: 'import',    label: 'Import',    icon: '📥' },
+      { key: 'invoices',  label: 'Invoices',  icon: '🧾' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
       { key: 'team',        label: 'Team',        icon: '👥' },
       { key: 'account',     label: 'Account',     icon: '⚙️' },
