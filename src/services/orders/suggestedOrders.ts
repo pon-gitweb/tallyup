@@ -13,6 +13,18 @@ function s(v: any, d = '') {
 }
 
 export type DeptSnap = { id: string; name: string };
+
+export type ProdMeta = {
+  name?: string;
+  par?: number | undefined;
+  deptPar?: Record<string, number> | undefined;
+  supplierId?: string | undefined;
+  supplierName?: string | undefined;
+  packSize?: number | null;
+  cost?: number;
+  category?: string;
+};
+
 export type SuggestedLine = {
   productId: string;
   productName: string;
@@ -66,13 +78,6 @@ function deriveKeyFromAnyTimestamp(ts: any): string | null {
   }
 }
 
-/**
- * Decide the stockCycleKey based on the current venue session.
- *
- * Priority:
- *   1) Explicit session.cycleKey (if present) – **always wins**.
- *   2) Fallback: newest timestamp among startedAt/restartedAt/resumedAt/completedAt/finalizedAt.
- */
 async function resolveStockCycleKey(venueId: string): Promise<string | null> {
   try {
     const session = await getVenueSession(venueId);
@@ -94,245 +99,71 @@ async function resolveStockCycleKey(venueId: string): Promise<string | null> {
     const completedAt = (session as any).completedAt ?? null;
     const finalizedAt = (session as any).finalizedAt ?? null;
 
-    // 1) Explicit cycleKey always wins if present.
     if (explicit) {
-      dlog('resolveStockCycleKey: using explicit cycleKey', {
-        status,
-        key: explicit,
-      });
+      dlog('resolveStockCycleKey: using explicit cycleKey', { status, key: explicit });
       return explicit;
     }
 
-    // 2) Fallback: derive from newest timestamp we can see.
-    const candidates: any[] = [
-      startedAt,
-      restartedAt,
-      resumedAt,
-      completedAt,
-      finalizedAt,
-    ].filter(Boolean);
+    const candidates: any[] = [startedAt, restartedAt, resumedAt, completedAt, finalizedAt].filter(Boolean);
 
     let bestMs = 0;
     let bestTs: any = null;
 
     const toMs = (ts: any): number => {
       try {
-        if (ts?.toMillis && typeof ts.toMillis === 'function') {
-          return ts.toMillis();
-        }
+        if (ts?.toMillis && typeof ts.toMillis === 'function') return ts.toMillis();
         if (typeof ts === 'number') return ts;
         if (typeof ts === 'string') {
           const p = Date.parse(ts);
           return Number.isNaN(p) ? 0 : p;
         }
         return 0;
-      } catch {
-        return 0;
-      }
+      } catch { return 0; }
     };
 
     for (const ts of candidates) {
       const ms = toMs(ts);
-      if (ms > bestMs) {
-        bestMs = ms;
-        bestTs = ts;
-      }
+      if (ms > bestMs) { bestMs = ms; bestTs = ts; }
     }
 
     if (bestTs) {
       const key = deriveKeyFromAnyTimestamp(bestTs);
-      dlog('resolveStockCycleKey: fallback timestamp-derived key', {
-        key,
-        status,
-      });
+      dlog('resolveStockCycleKey: fallback timestamp-derived key', { key, status });
       return key;
     }
 
     dlog('resolveStockCycleKey: no usable timestamp/key', { status });
     return null;
   } catch (e: any) {
-    console.warn(
-      '[SuggestedOrders] resolveStockCycleKey failed',
-      e?.message || e
-    );
+    console.warn('[SuggestedOrders] resolveStockCycleKey failed', e?.message || e);
     return null;
   }
 }
 
-export async function buildSuggestedOrdersInMemory(
-  venueId: string,
-  opts: { roundToPack?: boolean; defaultParIfMissing?: number } = {
-    roundToPack: true,
-    defaultParIfMissing: 6,
-  }
-) {
-  const normOpts = {
-    roundToPack: !!opts.roundToPack,
-    defaultParIfMissing: Number.isFinite(opts.defaultParIfMissing)
-      ? Number(opts.defaultParIfMissing)
-      : 6,
-  };
+// ── Pure computation: exported for unit tests ─────────────────────────────────
 
-  dlog('ENTER buildSuggestedOrdersInMemory', { opts: normOpts, venueId });
-
-  const db = getFirestore(getApp());
-  const roundToPack = normOpts.roundToPack;
-  const defaultPar = normOpts.defaultParIfMissing;
-
-  // ─── Derive stockCycleKey from current venue session ─────────────────────────
-  const stockCycleKey = await resolveStockCycleKey(venueId);
-  dlog('cycleKey', stockCycleKey || '(none)');
-
-  // Departments
-  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-  const departments: DeptSnap[] = depsSnap.docs.map((d) => ({
-    id: d.id,
-    name: s((d.data() as any)?.name, 'Department'),
-  }));
-
-  // Suppliers
-  dlog('reading suppliers');
-  const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
-  const supplierNameById: Record<string, string> = {};
-  suppliersSnap.forEach((d) => {
-    supplierNameById[d.id] = s((d.data() as any)?.name, 'Supplier');
-  });
-
-  // Products
-  dlog('reading products');
-  const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-  type ProdMeta = {
-    name?: string;
-    par?: number | undefined;
-    deptPar?: Record<string, number> | undefined;
-    supplierId?: string | undefined;
-    supplierName?: string | undefined;
-    packSize?: number | null;
-    cost?: number;
-    category?: string;
-  };
-  const prodMeta: Record<string, ProdMeta> = {};
-  productsSnap.forEach((d) => {
-    const v: any = d.data() || {};
-    const sid = v?.supplierId || v?.supplier?.id || undefined;
-    const sname =
-      v?.supplierName || v?.supplier?.name || (sid ? supplierNameById[sid] : undefined);
-    const deptPar = v?.deptPar && typeof v.deptPar === 'object' ? v.deptPar : undefined;
-    prodMeta[d.id] = {
-      name: s(v?.name, String(d.id)),
-      par: Number.isFinite(v?.par)
-        ? Number(v.par)
-        : Number.isFinite(v?.parLevel)
-        ? Number(v.parLevel)
-        : undefined,
-      deptPar,
-      supplierId: sid,
-      supplierName: sname,
-      packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
-      cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
-      category: s(v?.category || v?.categorySuggested || ''),
-    };
-  });
-
-  // Per-dept on-hand ONLY from items that exist in that department
-  dlog('reading departments/areas/items');
-  const onHand: Record<string, Record<string, number>> = {};
-  const soldByDept: Record<string, Record<string, number>> = {};
-  for (const dep of depsSnap.docs) {
-    const depId = dep.id;
-    onHand[depId] = onHand[depId] || {};
-    const areasSnap = await getDocs(
-      collection(db, 'venues', venueId, 'departments', depId, 'areas')
-    );
-    for (const area of areasSnap.docs) {
-      const itemsSnap = await getDocs(
-        collection(
-          db,
-          'venues',
-          venueId,
-          'departments',
-          depId,
-          'areas',
-          area.id,
-          'items'
-        )
-      );
-      itemsSnap.forEach((it) => {
-        const v: any = it.data() || {};
-        const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
-        const itemName = s(v?.name || '').toLowerCase().trim();
-
-        const hasCount = typeof v?.lastCount === 'number' || typeof v?.confirmedCount === 'number';
-        if (!hasCount) return;
-
-        const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
-        const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
-        const soldQty = n(v?.soldQty, 0);
-
-        if (pid) {
-          onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
-          soldByDept[depId] = soldByDept[depId] || {};
-          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldQty;
-        } else if (itemName) {
-          const nameKey = `__name__${itemName}`;
-          onHand[depId][nameKey] = (onHand[depId][nameKey] || 0) + qty;
-          soldByDept[depId] = soldByDept[depId] || {};
-          soldByDept[depId][nameKey] = (soldByDept[depId][nameKey] || 0) + soldQty;
-        }
-      });
-    }
-  }
-
-  // Build name → productId map for unlinked item resolution
-  const productIdByNameKey: Record<string, string> = {};
-  productsSnap.forEach(d => {
-    const name = s((d.data() as any)?.name || '').toLowerCase().trim();
-    if (name) productIdByNameKey[`__name__${name}`] = d.id;
-  });
-
-  // Resolve name-keyed onHand entries to productIds where possible.
-  // If the name matches a catalogue product, merge into that product's bucket.
-  // If not, keep the __name__ key and add a prodMeta stub so the item still
-  // appears in the intelligence array (don't silently discard counted items).
-  for (const depId of Object.keys(onHand)) {
-    for (const key of Object.keys(onHand[depId])) {
-      if (!key.startsWith('__name__')) continue;
-      const pid = productIdByNameKey[key];
-      if (pid) {
-        onHand[depId][pid] = (onHand[depId][pid] || 0) + onHand[depId][key];
-        if (soldByDept[depId]?.[key]) {
-          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldByDept[depId][key];
-        }
-        delete onHand[depId][key];
-        if (soldByDept[depId]?.[key]) delete soldByDept[depId][key];
-      } else if (!prodMeta[key]) {
-        // No catalogue match — synthesize a display name from the raw item name
-        prodMeta[key] = { name: key.slice(8) }; // strip '__name__' prefix
-      }
-    }
-  }
-
-  // Calculate actual cycle duration from area lastConfirmedAt timestamps
-  let cycleDays = 7;
-  try {
-    let latestConfirmedMs = 0;
-    for (const dep of depsSnap.docs) {
-      const areasSnap2 = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
-      areasSnap2.forEach(a => {
-        const lca = (a.data() as any)?.lastConfirmedAt;
-        const ms = lca?.toMillis?.() ?? (typeof lca === 'number' ? lca : 0);
-        if (ms > latestConfirmedMs) latestConfirmedMs = ms;
-      });
-    }
-    if (latestConfirmedMs > 0) {
-      const daysSince = (Date.now() - latestConfirmedMs) / (1000 * 60 * 60 * 24);
-      cycleDays = Math.min(90, Math.max(1, Math.round(daysSince)));
-    }
-  } catch {}
-
-  const hasSalesData = Object.values(soldByDept).some(dept =>
-    Object.values(dept).some(qty => qty > 0)
-  );
+/**
+ * Builds the intelligence array, supplier buckets, and _meta from already-fetched
+ * in-memory data. No Firestore access. Called by buildSuggestedOrdersInMemory after
+ * all reads are complete.
+ */
+export function buildSuggestedOrdersFromData(
+  departments: DeptSnap[],
+  prodMeta: Record<string, ProdMeta>,
+  onHand: Record<string, Record<string, number>>,
+  soldByDept: Record<string, Record<string, number>>,
+  cycleDays: number,
+  opts: { roundToPack: boolean; defaultPar: number },
+  supplierNameById: Record<string, string>,
+  stockCycleKey: string | null,
+  hasSalesData: boolean,
+): {
+  buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }>;
+  unassigned: { lines: SuggestedLine[] };
+  intelligence: SuggestedLine[];
+  _meta: any;
+} {
+  const { roundToPack, defaultPar } = opts;
 
   const buckets: Record<string, { supplierName?: string; lines: SuggestedLine[] }> = {};
   const unassigned: { lines: SuggestedLine[] } = { lines: [] };
@@ -341,7 +172,7 @@ export async function buildSuggestedOrdersInMemory(
   for (const dep of departments) {
     const depId = dep.id;
     const onHandDept = onHand[depId] || {};
-    const productIds = Object.keys(onHandDept); // only products seen in this dept
+    const productIds = Object.keys(onHandDept);
 
     for (const pid of productIds) {
       const meta = prodMeta[pid] || {};
@@ -371,7 +202,7 @@ export async function buildSuggestedOrdersInMemory(
       const sid = s(meta.supplierId || '');
       const sname = s(
         meta.supplierName || (sid ? supplierNameById[sid] : ''),
-        'Supplier'
+        'Supplier',
       );
       const pack = Number.isFinite(meta.packSize) ? Number(meta.packSize) : null;
       const cost = n(meta.cost, 0);
@@ -430,17 +261,13 @@ export async function buildSuggestedOrdersInMemory(
     }
   }
 
-  Object.keys(buckets).forEach((sid) => {
-    buckets[sid].lines = (buckets[sid].lines || []).filter(
-      (l) => (l.qtyDept ?? l.qty ?? 0) > 0
-    );
+  Object.keys(buckets).forEach(sid => {
+    buckets[sid].lines = (buckets[sid].lines || []).filter(l => (l.qtyDept ?? l.qty ?? 0) > 0);
   });
-  unassigned.lines = (unassigned.lines || []).filter(
-    (l) => (l.qtyDept ?? l.qty ?? 0) > 0
-  );
+  unassigned.lines = (unassigned.lines || []).filter(l => (l.qtyDept ?? l.qty ?? 0) > 0);
 
   const suppliersWithLines =
-    Object.values(buckets).filter((b) => (b.lines || []).length > 0).length +
+    Object.values(buckets).filter(b => (b.lines || []).length > 0).length +
     (unassigned.lines.length > 0 ? 1 : 0);
 
   const totalLines =
@@ -448,12 +275,12 @@ export async function buildSuggestedOrdersInMemory(
     unassigned.lines.length;
 
   const velocityDriven = intelligence.filter(
-    (l) => l.velocityPerDay !== null && (l.velocityPerDay ?? 0) > 0
+    l => l.velocityPerDay !== null && (l.velocityPerDay ?? 0) > 0,
   ).length;
 
   dlog('summary', { suppliersWithLines, totalLines, velocityDriven });
 
-  const meta: any = {
+  const _meta: any = {
     departments,
     suppliersWithLines,
     totalLines,
@@ -465,12 +292,168 @@ export async function buildSuggestedOrdersInMemory(
     snapshotsUsed: hasSalesData ? 1 : 0,
   };
 
-  return {
-    buckets,
-    unassigned,
-    intelligence,
-    _meta: meta,
+  return { buckets, unassigned, intelligence, _meta };
+}
+
+// ── I/O wrapper ───────────────────────────────────────────────────────────────
+
+export async function buildSuggestedOrdersInMemory(
+  venueId: string,
+  opts: { roundToPack?: boolean; defaultParIfMissing?: number } = {
+    roundToPack: true,
+    defaultParIfMissing: 6,
+  },
+) {
+  const normOpts = {
+    roundToPack: !!opts.roundToPack,
+    defaultParIfMissing: Number.isFinite(opts.defaultParIfMissing)
+      ? Number(opts.defaultParIfMissing)
+      : 6,
   };
+
+  dlog('ENTER buildSuggestedOrdersInMemory', { opts: normOpts, venueId });
+
+  const db = getFirestore(getApp());
+  const roundToPack = normOpts.roundToPack;
+  const defaultPar = normOpts.defaultParIfMissing;
+
+  const stockCycleKey = await resolveStockCycleKey(venueId);
+  dlog('cycleKey', stockCycleKey || '(none)');
+
+  const depsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  const departments: DeptSnap[] = depsSnap.docs.map(d => ({
+    id: d.id,
+    name: s((d.data() as any)?.name, 'Department'),
+  }));
+
+  dlog('reading suppliers');
+  const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+  const supplierNameById: Record<string, string> = {};
+  suppliersSnap.forEach(d => {
+    supplierNameById[d.id] = s((d.data() as any)?.name, 'Supplier');
+  });
+
+  dlog('reading products');
+  const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+  const prodMeta: Record<string, ProdMeta> = {};
+  productsSnap.forEach(d => {
+    const v: any = d.data() || {};
+    const sid = v?.supplierId || v?.supplier?.id || undefined;
+    const sname =
+      v?.supplierName || v?.supplier?.name || (sid ? supplierNameById[sid] : undefined);
+    const deptPar = v?.deptPar && typeof v.deptPar === 'object' ? v.deptPar : undefined;
+    prodMeta[d.id] = {
+      name: s(v?.name, String(d.id)),
+      par: Number.isFinite(v?.par)
+        ? Number(v.par)
+        : Number.isFinite(v?.parLevel)
+        ? Number(v.parLevel)
+        : undefined,
+      deptPar,
+      supplierId: sid,
+      supplierName: sname,
+      packSize: Number.isFinite(v?.packSize) ? Number(v.packSize) : null,
+      cost: Number(v?.costPrice ?? v?.price ?? v?.unitCost ?? 0) || 0,
+      category: s(v?.category || v?.categorySuggested || ''),
+    };
+  });
+
+  dlog('reading departments/areas/items');
+  const onHand: Record<string, Record<string, number>> = {};
+  const soldByDept: Record<string, Record<string, number>> = {};
+  for (const dep of depsSnap.docs) {
+    const depId = dep.id;
+    onHand[depId] = onHand[depId] || {};
+    const areasSnap = await getDocs(
+      collection(db, 'venues', venueId, 'departments', depId, 'areas'),
+    );
+    for (const area of areasSnap.docs) {
+      const itemsSnap = await getDocs(
+        collection(db, 'venues', venueId, 'departments', depId, 'areas', area.id, 'items'),
+      );
+      itemsSnap.forEach(it => {
+        const v: any = it.data() || {};
+        const pid = s(v?.productId || v?.productRef || v?.productLinkId || '');
+        const itemName = s(v?.name || '').toLowerCase().trim();
+
+        const hasCount = typeof v?.lastCount === 'number' || typeof v?.confirmedCount === 'number';
+        if (!hasCount) return;
+
+        const baseCount = typeof v?.lastCount === 'number' ? v.lastCount : n(v?.confirmedCount, 0);
+        const qty = n(baseCount, 0) + n(v?.incomingQty, 0) - n(v?.soldQty, 0);
+        const soldQty = n(v?.soldQty, 0);
+
+        if (pid) {
+          onHand[depId][pid] = (onHand[depId][pid] || 0) + qty;
+          soldByDept[depId] = soldByDept[depId] || {};
+          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldQty;
+        } else if (itemName) {
+          const nameKey = `__name__${itemName}`;
+          onHand[depId][nameKey] = (onHand[depId][nameKey] || 0) + qty;
+          soldByDept[depId] = soldByDept[depId] || {};
+          soldByDept[depId][nameKey] = (soldByDept[depId][nameKey] || 0) + soldQty;
+        }
+      });
+    }
+  }
+
+  const productIdByNameKey: Record<string, string> = {};
+  productsSnap.forEach(d => {
+    const name = s((d.data() as any)?.name || '').toLowerCase().trim();
+    if (name) productIdByNameKey[`__name__${name}`] = d.id;
+  });
+
+  for (const depId of Object.keys(onHand)) {
+    for (const key of Object.keys(onHand[depId])) {
+      if (!key.startsWith('__name__')) continue;
+      const pid = productIdByNameKey[key];
+      if (pid) {
+        onHand[depId][pid] = (onHand[depId][pid] || 0) + onHand[depId][key];
+        if (soldByDept[depId]?.[key]) {
+          soldByDept[depId][pid] = (soldByDept[depId][pid] || 0) + soldByDept[depId][key];
+        }
+        delete onHand[depId][key];
+        if (soldByDept[depId]?.[key]) delete soldByDept[depId][key];
+      } else if (!prodMeta[key]) {
+        prodMeta[key] = { name: key.slice(8) };
+      }
+    }
+  }
+
+  let cycleDays = 7;
+  try {
+    let latestConfirmedMs = 0;
+    for (const dep of depsSnap.docs) {
+      const areasSnap2 = await getDocs(
+        collection(db, 'venues', venueId, 'departments', dep.id, 'areas'),
+      );
+      areasSnap2.forEach(a => {
+        const lca = (a.data() as any)?.lastConfirmedAt;
+        const ms = lca?.toMillis?.() ?? (typeof lca === 'number' ? lca : 0);
+        if (ms > latestConfirmedMs) latestConfirmedMs = ms;
+      });
+    }
+    if (latestConfirmedMs > 0) {
+      const daysSince = (Date.now() - latestConfirmedMs) / (1000 * 60 * 60 * 24);
+      cycleDays = Math.min(90, Math.max(1, Math.round(daysSince)));
+    }
+  } catch {}
+
+  const hasSalesData = Object.values(soldByDept).some(dept =>
+    Object.values(dept).some(qty => qty > 0),
+  );
+
+  return buildSuggestedOrdersFromData(
+    departments,
+    prodMeta,
+    onHand,
+    soldByDept,
+    cycleDays,
+    { roundToPack, defaultPar },
+    supplierNameById,
+    stockCycleKey,
+    hasSalesData,
+  );
 }
 
 // Kept for compatibility; currently a no-op because cache is disabled.

@@ -2,6 +2,8 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { OrdersService } from '../../domain/orders';
+import { CANON, canonicalizeStatus, STATUS_GROUPS } from '../../utils/orderStatus';
+import type { OrderRow } from '../../utils/orderStatus';
 import { View, Text, StyleSheet, TouchableOpacity, RefreshControl, FlatList, Alert, Modal, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -33,24 +35,6 @@ function normalizeDisplayStatus(o:any){
   return { ...o, displayStatus: s };
 }
 
-type OrderRow = {
-  id: string;
-  supplierId?: string | null;
-  supplierName?: string | null;
-  status: string;
-  displayStatus?: string | null;
-  poNumber?: string | null;
-  createdAt?: any;
-  createdAtClientMs?: number | null;
-  submittedAt?: any;
-  receivedAt?: any;
-  linesCount?: number | null;
-  total?: number | null;
-  submitHoldUntil?: number | null;
-  cutoffAt?: number | null;
-  deptScope?: string[] | string | null;
-  informal?: boolean;
-};
 
 const S = StyleSheet.create({
   wrap:{flex:1,backgroundColor:'#fff'},
@@ -81,30 +65,6 @@ const S = StyleSheet.create({
   fabText:{color:'#fff',fontWeight:'800'}
 });
 
-// canonical map
-const CANON = {
-  draft: 'draft',
-  pending: 'pending',
-  'pending-approval': 'pending-approval',
-  'pending_approval': 'pending-approval',
-  'pending_merge': 'pending_merge',
-  submitted: 'submitted',
-  sent: 'submitted',
-  placed: 'submitted',
-  approved: 'submitted',
-  awaiting: 'submitted',
-  processing: 'submitted',
-  queued: 'submitted',
-  holding: 'submitted',
-  onhold: 'submitted',
-  consolidating: 'submitted',
-  received: 'received',
-  'partially_received': 'received',
-  complete: 'received',
-  closed: 'received',
-  canceled: 'cancelled',
-  cancelled: 'cancelled',
-};
 
 const STATUS_BADGE_COLOURS: Record<string, { bg: string; text: string; label: string }> = {
   draft:            { bg: '#F1F5F9', text: '#475569', label: 'Draft' },
@@ -126,38 +86,6 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function canonicalizeStatus(statusRaw: any, displayRaw: any): string {
-  const s = String(statusRaw ?? '').toLowerCase().trim();
-  if (s && CANON[s as keyof typeof CANON]) return CANON[s as keyof typeof CANON];
-  const d = String(displayRaw ?? '').toLowerCase().trim();
-  if (d && CANON[d as keyof typeof CANON]) return CANON[d as keyof typeof CANON];
-  if (__DEV__) console.log('[OrdersScreen] legacy/unknown status → draft', { statusRaw, displayRaw });
-  return 'draft';
-}
-
-const STATUS_GROUPS = {
-  drafts: (r:OrderRow)=>{
-    const s = (r.status||'').toLowerCase().trim();
-    if (s === 'cancelled') return false;
-    // pending-approval is now its own tab — exclude from Drafts
-    return s === 'draft' || s === 'pending' || s === 'pending_merge';
-  },
-  pending: (r:OrderRow)=>{
-    const s = (r.status||'').toLowerCase().trim();
-    return s === 'pending-approval';
-  },
-  submitted: (r:OrderRow)=>{
-    const s = (r.status||'').toLowerCase().trim();
-    const hasSubmittedAt = !!(r.submittedAt && (r.submittedAt.toMillis?.() || Number(r.submittedAt)));
-    if (s === 'cancelled') return false;
-    if (s === 'received') return false;
-    return s === 'submitted' || hasSubmittedAt;
-  },
-  received: (r:OrderRow)=>{
-    const s = (r.status||'').toLowerCase().trim();
-    return s === 'received';
-  },
-};
 
 export default function OrdersScreen(){
   const nav = useNavigation<any>();

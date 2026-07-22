@@ -4,6 +4,22 @@ import {
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
+/**
+ * Pure decision: should the venue-wide stocktakeActive flag be cleared?
+ * Returns true when every area in every department has startedAt == null AND completedAt == null.
+ * areasByDept: one entry per department, each being that department's area data objects.
+ */
+export function shouldClearStocktakeActive(
+  areasByDept: Array<Array<{ startedAt: any; completedAt: any }>>,
+): boolean {
+  for (const deptAreas of areasByDept) {
+    for (const area of deptAreas) {
+      if (area.startedAt != null || area.completedAt != null) return false;
+    }
+  }
+  return true;
+}
+
 function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, now: any) {
   batch.update(areaRef, {
     startedAt: null,
@@ -83,21 +99,20 @@ export async function resetDepartment(venueId: string, departmentId: string) {
   // Legacy venue-level areas excluded: nothing can start a count on them (setter is modern-path only).
   try {
     const allDepsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-    let anyOpen = false;
+    const areasByDept: Array<Array<{ startedAt: any; completedAt: any }>> = [];
     for (const depDoc of allDepsSnap.docs) {
-      if (anyOpen) break;
       const depAreasSnap = await getDocs(
         collection(db, 'venues', venueId, 'departments', depDoc.id, 'areas')
       );
-      for (const aDoc of depAreasSnap.docs) {
-        const d = aDoc.data();
-        if (d.startedAt != null || d.completedAt != null) {
-          anyOpen = true;
-          break;
-        }
-      }
+      const areas = depAreasSnap.docs.map(a => {
+        const d = a.data();
+        return { startedAt: d.startedAt ?? null, completedAt: d.completedAt ?? null };
+      });
+      areasByDept.push(areas);
+      // Stop fetching once we know the flag must stay set
+      if (!shouldClearStocktakeActive([areas])) break;
     }
-    if (!anyOpen) {
+    if (shouldClearStocktakeActive(areasByDept)) {
       await updateDoc(doc(db, 'venues', venueId), {
         stocktakeActive: false,
         stocktakeActiveAt: null,

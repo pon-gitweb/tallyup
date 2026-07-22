@@ -13,6 +13,190 @@ function toMs(val: any): number | null {
   return null;
 }
 
+// ── Exported for unit tests ──────────────────────────────────────────────────
+
+export interface SnapshotLineRecord {
+  productId?: string | null;
+  _docId?: string;
+  productName?: string;
+  name?: string;
+  qty?: number;
+  quantity?: number;
+  unitCost?: number;
+  cost?: number;
+  unitPrice?: number;
+  price?: number;
+}
+
+export interface SnapshotSalesLine {
+  name: string;   // already lowercased and trimmed
+  qtySold: number;
+}
+
+/**
+ * Pure computation: builds per-item snapshot figures from already-fetched data.
+ * Wrapper responsibility: Firestore I/O only. This fn owns the math.
+ *
+ * allInvoiceLines: one entry per invoice, each an array of its line records
+ * (subcollection shape OR inline array — both accepted via field tolerance).
+ */
+export function computeSnapshotItemFigures(
+  rawItems: any[],
+  prevItemMap: Map<string, number>,
+  cycleNumber: number,
+  allInvoiceLines: SnapshotLineRecord[][],
+  salesLines: SnapshotSalesLine[],
+): {
+  snapshotItems: any[];
+  hasBaseline: boolean;
+  hasPrices: boolean;
+  totalPricedItems: number;
+  hasInvoices: boolean;
+  hasSales: boolean;
+  likelyMissingInvoices: any[];
+} {
+  let hasBaseline = false;
+  let hasPrices = false;
+  let totalPricedItems = 0;
+
+  const snapshotItems: any[] = rawItems.map(item => {
+    const rawName = (item.name || '').toLowerCase().trim();
+
+    const openingCount: number | null = cycleNumber > 1
+      ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
+      : null;
+
+    const actualClosing = typeof item.lastCount === 'number' ? item.lastCount : 0;
+    const costPrice = typeof item.costPrice === 'number' ? item.costPrice : null;
+    const parLevel = typeof item.parLevel === 'number' ? item.parLevel : null;
+
+    if (openingCount != null) hasBaseline = true;
+    if (costPrice != null) { hasPrices = true; totalPricedItems++; }
+
+    const totalVarianceQty = actualClosing - (openingCount ?? 0);
+    const totalVarianceDollars = costPrice != null ? totalVarianceQty * costPrice : null;
+
+    return {
+      productId: item._id,
+      name: item.name || item._id,
+      areaId: item._areaId,
+      areaName: item._areaName,
+      categoryName: item.category ?? item.categorySuggested ?? null,
+
+      openingCount,
+      receivedQty: 0,
+      soldQty: null,
+      theoreticalUsage: null,
+      wastageQty: 0,
+      expectedClosing: null,
+      actualClosing,
+
+      totalVarianceQty,
+      explainedVarianceQty: 0,
+      unexplainedVarianceQty: totalVarianceQty,
+
+      costPrice,
+      totalVarianceDollars,
+      unexplainedVarianceDollars: totalVarianceDollars,
+
+      parLevel,
+      belowPAR: parLevel != null ? actualClosing < parLevel : false,
+      dailyVelocity: null,
+      daysOfCover: null,
+
+      isNewProduct: openingCount == null,
+      ranToZero: actualClosing === 0 && (openingCount ?? 0) > 0,
+      hasUnexplainedGain: false,
+      hasUnexplainedLoss: false,
+      likelyMissingInvoice: false,
+
+      varianceConfidence: openingCount != null ? 'high' : 'low',
+      confidenceReason: openingCount == null
+        ? (cycleNumber === 1 ? 'First cycle for department' : 'New product — no prior cycle')
+        : 'Baseline from previous cycle snapshot',
+
+      lastCountBy: item.lastCountBy || null,
+      lastCountByName: item.lastCountByName || null,
+      lastCountAt: item.lastCountAt || null,
+
+      _rawProductId: item.productId || null,
+      _rawName: rawName,
+    };
+  });
+
+  // STEP A — Invoice enrichment (field-tolerant: qty/quantity, unitCost/cost/unitPrice/price,
+  // productName/name, subcollection _docId as fallback productId)
+  let hasInvoices = false;
+  for (const lineRecords of allInvoiceLines) {
+    if (lineRecords.length > 0) hasInvoices = true;
+    for (const line of lineRecords) {
+      const lineProductId = line.productId || line._docId || null;
+      const lineName = (line.productName || line.name || '').toLowerCase().trim();
+      const lineQty = typeof line.qty === 'number' ? line.qty :
+                      typeof line.quantity === 'number' ? line.quantity : 0;
+      const lineUnitCost = typeof line.unitCost === 'number' ? line.unitCost :
+                           typeof line.cost === 'number' ? line.cost :
+                           typeof line.unitPrice === 'number' ? line.unitPrice :
+                           typeof line.price === 'number' ? line.price : 0;
+      const match = snapshotItems.find(si =>
+        (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
+        (si._rawName && lineName && si._rawName === lineName),
+      );
+      if (match) {
+        match.receivedQty = (match.receivedQty || 0) + lineQty;
+        if (!match._invoiceUnitCost && lineUnitCost > 0) {
+          match._invoiceUnitCost = lineUnitCost;
+        }
+      }
+    }
+  }
+
+  // STEP A2 — Sales enrichment (soldQty)
+  let hasSales = false;
+  for (const line of salesLines) {
+    const match = snapshotItems.find(si => si._rawName === line.name);
+    if (match) {
+      match.soldQty = (match.soldQty ?? 0) + line.qtySold;
+      hasSales = true;
+    }
+  }
+
+  // Post-enrichment: set expectedClosing and unexplained figures once both receivedQty
+  // and soldQty are final. Items with openingCount == null keep initialised defaults
+  // (unexplained = total, confidence 'low').
+  for (const si of snapshotItems) {
+    if (si.openingCount == null) continue;
+    si.expectedClosing = si.openingCount + (si.receivedQty || 0) - (si.soldQty ?? 0);
+    si.unexplainedVarianceQty = si.actualClosing - si.expectedClosing;
+    si.unexplainedVarianceDollars = si.costPrice != null
+      ? si.unexplainedVarianceQty * si.costPrice : null;
+  }
+
+  // STEP B — Missing invoice detection + unexplained loss
+  const likelyMissingInvoices: any[] = [];
+  for (const si of snapshotItems) {
+    if (si.totalVarianceQty > 2 && si.receivedQty === 0 && si.openingCount != null) {
+      si.likelyMissingInvoice = true;
+      si.hasUnexplainedGain = true;
+      likelyMissingInvoices.push({
+        type: 'missing_invoice',
+        productId: si.productId,
+        productName: si.name,
+        unexplainedGainQty: si.totalVarianceQty,
+        likelySuppliers: [],
+        lastInvoiceDate: null,
+      });
+    }
+    if (si.unexplainedVarianceQty < -2 && si.openingCount != null) {
+      si.hasUnexplainedLoss = true;
+    }
+  }
+
+  return { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices };
+}
+
+// ── I/O wrapper ──────────────────────────────────────────────────────────────
+
 export async function writeDepartmentSnapshot(
   venueId: string,
   departmentId: string,
@@ -31,8 +215,6 @@ export async function writeDepartmentSnapshot(
     const departmentName: string = deptData.name || departmentId;
 
     // ── FIX 1: Load previous cycle snapshot for correct openingCount ──────────
-    // confirmedCount on item docs = CURRENT cycle count (overwritten by completeArea).
-    // The only reliable previous-cycle baseline is the prior snapshot's actualClosing.
     const prevItemMap = new Map<string, number>(); // name.toLowerCase() → actualClosing
     if (cycleNumber > 1) {
       try {
@@ -89,94 +271,20 @@ export async function writeDepartmentSnapshot(
       ? Math.max(0, Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 60000))
       : 0;
 
-    // Days since last cycle (use the pre-increment value stored before this run)
+    // Days since last cycle
     const prevCycleDateMs = cycleNumber > 1 ? toMs(deptData.lastCycleAt) : null;
     const daysSinceLastCycle = prevCycleDateMs
       ? Math.round((cycleEnd.getTime() - prevCycleDateMs) / (1000 * 60 * 60 * 24))
       : null;
 
-    // Build per-item snapshot entries
-    let hasBaseline = false;
-    let hasPrices = false;
-    let totalPricedItems = 0;
-
-    const snapshotItems: any[] = rawItems.map(item => {
-      const rawName = (item.name || '').toLowerCase().trim();
-
-      // FIX 1: Use previous snapshot's actualClosing as openingCount.
-      // For cycle 1 (no previous snapshot), openingCount is null.
-      const openingCount: number | null = cycleNumber > 1
-        ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
-        : null;
-
-      const actualClosing = typeof item.lastCount === 'number' ? item.lastCount : 0;
-      const costPrice = typeof item.costPrice === 'number' ? item.costPrice : null;
-      const parLevel = typeof item.parLevel === 'number' ? item.parLevel : null;
-
-      if (openingCount != null) hasBaseline = true;
-      if (costPrice != null) { hasPrices = true; totalPricedItems++; }
-
-      const totalVarianceQty = actualClosing - (openingCount ?? 0);
-      const totalVarianceDollars = costPrice != null ? totalVarianceQty * costPrice : null;
-
-      return {
-        productId: item._id,
-        name: item.name || item._id,
-        areaId: item._areaId,
-        areaName: item._areaName,
-        categoryName: item.category ?? item.categorySuggested ?? null,
-
-        openingCount,
-        receivedQty: 0,
-        soldQty: null,
-        theoreticalUsage: null,
-        wastageQty: 0,
-        expectedClosing: null,
-        actualClosing,
-
-        totalVarianceQty,
-        explainedVarianceQty: 0,
-        unexplainedVarianceQty: totalVarianceQty,
-
-        costPrice,
-        totalVarianceDollars,
-        unexplainedVarianceDollars: totalVarianceDollars,
-
-        parLevel,
-        belowPAR: parLevel != null ? actualClosing < parLevel : false,
-        dailyVelocity: null,
-        daysOfCover: null,
-
-        isNewProduct: openingCount == null,
-        ranToZero: actualClosing === 0 && (openingCount ?? 0) > 0,
-        hasUnexplainedGain: false,
-        hasUnexplainedLoss: false,
-        likelyMissingInvoice: false,
-
-        varianceConfidence: openingCount != null ? 'high' : 'low',
-        confidenceReason: openingCount == null
-          ? (cycleNumber === 1 ? 'First cycle for department' : 'New product — no prior cycle')
-          : 'Baseline from previous cycle snapshot',
-
-        // Who counted this item
-        lastCountBy: item.lastCountBy || null,
-        lastCountByName: item.lastCountByName || null,
-        lastCountAt: item.lastCountAt || null,
-
-        // Internal helpers for matching — stripped before write
-        _rawProductId: item.productId || null,
-        _rawName: rawName,
-      };
-    });
-
-    // STEP A — Enrich with invoice data (FIX 3+4: try invoiceDateTimestamp then date; read name/productName)
-    let hasInvoices = false;
+    // ── STEP A I/O: Gather invoice lines (subcollection or inline) ────────────
+    // Matching happens in computeSnapshotItemFigures; wrapper resolves shape only.
+    const allInvoiceLines: SnapshotLineRecord[][] = [];
     try {
       if (cycleStart) {
         const startTs = Timestamp.fromDate(cycleStart);
         const endTs = Timestamp.fromDate(cycleEnd);
 
-        // Query using invoiceDateTimestamp first (added by FIX 3), then fall back to date
         let invoiceDocs: any[] = [];
         try {
           const snap1 = await getDocs(query(
@@ -187,7 +295,6 @@ export async function writeDepartmentSnapshot(
           invoiceDocs = snap1.docs;
         } catch (e: any) { console.warn('[snapshotWriter] invoiceDateTimestamp query failed:', e?.message); }
 
-        // Also query legacy 'date' field and merge (avoid duplicates by id)
         try {
           const snap2 = await getDocs(query(
             collection(db, 'venues', venueId, 'invoices'),
@@ -204,42 +311,18 @@ export async function writeDepartmentSnapshot(
           const linesSnap = await getDocs(
             collection(db, 'venues', venueId, 'invoices', invDoc.id, 'lines'),
           );
-
           // Subcollection shape (receive.ts) takes precedence; inline array is the fallback
-          // for ocrInvoicePhoto and desktop importers. Each invoice has exactly one shape.
+          // for ocrInvoicePhoto and desktop importers.
           const lineRecords: any[] = !linesSnap.empty
             ? linesSnap.docs.map(d => ({ _docId: d.id, ...d.data() }))
             : (invDoc.data().lines || []);
-
-          if (lineRecords.length > 0) hasInvoices = true;
-
-          for (const line of lineRecords) {
-            const lineProductId = line.productId || line._docId || null;
-            const lineName = (line.productName || line.name || '').toLowerCase().trim();
-            const lineQty = typeof line.qty === 'number' ? line.qty :
-                            typeof line.quantity === 'number' ? line.quantity : 0;
-            const lineUnitCost = typeof line.unitCost === 'number' ? line.unitCost :
-                                 typeof line.cost === 'number' ? line.cost :
-                                 typeof line.unitPrice === 'number' ? line.unitPrice :
-                                 typeof line.price === 'number' ? line.price : 0;
-
-            const match = snapshotItems.find(si =>
-              (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
-              (si._rawName && lineName && si._rawName === lineName),
-            );
-            if (match) {
-              match.receivedQty = (match.receivedQty || 0) + lineQty;
-              if (!match._invoiceUnitCost && lineUnitCost > 0) {
-                match._invoiceUnitCost = lineUnitCost;
-              }
-            }
-          }
+          allInvoiceLines.push(lineRecords);
         }
       }
     } catch (e: any) { console.warn('[snapshotWriter] invoice enrichment failed:', e?.message); }
 
-    // STEP A2 — FIX 5: Enrich with sales data (soldQty)
-    let hasSales = false;
+    // ── STEP A2 I/O: Gather sales lines ──────────────────────────────────────
+    const salesLines: SnapshotSalesLine[] = [];
     try {
       if (cycleStart) {
         const startIso = cycleStart.toISOString().slice(0, 10);
@@ -247,63 +330,28 @@ export async function writeDepartmentSnapshot(
         const salesSnap = await getDocs(
           collection(db, 'venues', venueId, 'salesReports'),
         );
-        // salesReports have { report: { period: { start, end }, lines: [{name, qtySold}] } }
         for (const salesDoc of salesSnap.docs) {
           const salesData = salesDoc.data() as any;
           const report = salesData.report;
           if (!report || !Array.isArray(report.lines)) continue;
-
-          // Check if period overlaps with cycle window
           const periodStart = report.period?.start ?? null;
           const periodEnd = report.period?.end ?? null;
           const overlapStart = !periodEnd || periodEnd >= startIso;
           const overlapEnd = !periodStart || periodStart <= endIso;
           if (!overlapStart || !overlapEnd) continue;
-
           for (const line of report.lines) {
             const lineName = (line.name || '').toLowerCase().trim();
             const qtySold = typeof line.qtySold === 'number' ? line.qtySold : 0;
             if (!lineName || qtySold <= 0) continue;
-            const match = snapshotItems.find(si => si._rawName === lineName);
-            if (match) {
-              match.soldQty = (match.soldQty ?? 0) + qtySold;
-              hasSales = true;
-            }
+            salesLines.push({ name: lineName, qtySold });
           }
         }
       }
     } catch (e: any) { console.warn('[snapshotWriter] sales enrichment failed:', e?.message); }
 
-    // Post-enrichment: set expectedClosing and unexplained figures once both receivedQty
-    // (STEP A) and soldQty (STEP A2) are final. Items with openingCount == null keep their
-    // initialised defaults (unexplained = total, confidence 'low').
-    for (const si of snapshotItems) {
-      if (si.openingCount == null) continue;
-      si.expectedClosing = si.openingCount + (si.receivedQty || 0) - (si.soldQty ?? 0);
-      si.unexplainedVarianceQty = si.actualClosing - si.expectedClosing;
-      si.unexplainedVarianceDollars = si.costPrice != null
-        ? si.unexplainedVarianceQty * si.costPrice : null;
-    }
-
-    // STEP B — Missing invoice detection (gain > 2 units with no invoice received)
-    const likelyMissingInvoices: any[] = [];
-    for (const si of snapshotItems) {
-      if (si.totalVarianceQty > 2 && si.receivedQty === 0 && si.openingCount != null) {
-        si.likelyMissingInvoice = true;
-        si.hasUnexplainedGain = true;
-        likelyMissingInvoices.push({
-          type: 'missing_invoice',
-          productId: si.productId,
-          productName: si.name,
-          unexplainedGainQty: si.totalVarianceQty,
-          likelySuppliers: [],
-          lastInvoiceDate: null,
-        });
-      }
-      if (si.unexplainedVarianceQty < -2 && si.openingCount != null) {
-        si.hasUnexplainedLoss = true;
-      }
-    }
+    // ── Pure computation ──────────────────────────────────────────────────────
+    const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
+      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
