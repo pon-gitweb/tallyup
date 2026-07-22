@@ -7,6 +7,7 @@ export type Page =
   | 'projects'
   | 'hostihealth'
   | 'reports'
+  | 'stock'
   | 'orders'
   | 'craftit'
   | 'suitee'
@@ -28,9 +29,10 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Analyse',
     items: [
-      { key: 'hostihealth',  label: 'Hosti Health', icon: '⬡' },
-      { key: 'reports',      label: 'Reports',      icon: '📊' },
-      { key: 'orders',       label: 'Orders',       icon: '🛒' },
+      { key: 'hostihealth',  label: 'Hosti Health',   icon: '⬡' },
+      { key: 'reports',      label: 'Reports',        icon: '📊' },
+      { key: 'stock',        label: 'Current Stock',  icon: '⚖️' },
+      { key: 'orders',       label: 'Orders',         icon: '🛒' },
       { key: 'craftit',      label: 'CraftIt',      icon: '🍹' },
       { key: 'suitee',       label: 'Ask Suitee',   icon: '✦' },
       { key: 'pos-mapping',  label: 'POS Mapping',  icon: '🔗' },

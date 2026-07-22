@@ -17,6 +17,7 @@ import HostiHealthPage from './pages/HostiHealthPage'
 import TeamPage from './pages/TeamPage'
 import ImportPage from './pages/ImportPage'
 import InvoicesPage from './pages/InvoicesPage'
+import StockPage from './pages/StockPage'
 import VenueSetupPage from './pages/VenueSetupPage'
 import DashboardLayout, { type Page } from './layouts/DashboardLayout'
 import FestivalLayout, { type FestivalPage } from './layouts/FestivalLayout'
@@ -116,7 +117,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -180,6 +181,7 @@ function App() {
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
       {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
       {page === 'invoices'     && activeVenue && <InvoicesPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
+      {page === 'stock'        && activeVenue && <StockPage venueId={activeVenue.id} />}
       {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
       {page === 'pos-mapping'  && activeVenue && (
         <div style={{ padding: 32, maxWidth: 480 }}>
