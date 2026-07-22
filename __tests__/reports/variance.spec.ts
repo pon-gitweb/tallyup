@@ -1,3 +1,7 @@
+// firebase.ts imports firebase SDK at module level; mock it so this pure-logic
+// test doesn't require an initialised Firebase app.
+jest.mock('../../src/services/firebase', () => ({ db: {} }));
+
 import variance from '../../src/services/reports/variance';
 
 describe('computeVarianceFromData', () => {
