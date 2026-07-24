@@ -545,7 +545,22 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const missingSupplier = useMemo(() => products.filter(p => !p.supplierName || p.supplierName === 'Unassigned').length, [products])
   const missingUnit = useMemo(() => products.filter(p => !p.unit).length, [products])
 
-  const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(new Set())
+  const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(`hosti_dismissed_dupes_${venueId}`)
+      return stored ? new Set(JSON.parse(stored)) : new Set()
+    } catch { return new Set() }
+  })
+
+  const dismissPair = (pairKey: string) => {
+    setDismissedPairs(prev => {
+      const next = new Set([...prev, pairKey])
+      try {
+        localStorage.setItem(`hosti_dismissed_dupes_${venueId}`, JSON.stringify([...next]))
+      } catch {}
+      return next
+    })
+  }
   const [showDuplicates, setShowDuplicates] = useState(false)
 
   const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[]>([])
@@ -573,11 +588,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
   }
 
+  const dismissedArray = useMemo(() => [...dismissedPairs], [dismissedPairs])
   const duplicatePairs = useMemo(
     () => findDuplicatePairs(products).filter(
-      ([a, b]) => !dismissedPairs.has([a.id, b.id].sort().join(':'))
+      ([a, b]) => !dismissedArray.includes([a.id, b.id].sort().join(':'))
     ),
-    [products, dismissedPairs]
+    [products, dismissedArray]
   )
 
   return (
@@ -718,7 +734,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                   </p>
                 </div>
                 <button
-                  onClick={() => setDismissedPairs(prev => new Set([...prev, pairKey]))}
+                  onClick={() => dismissPair(pairKey)}
                   title="Not a duplicate — dismiss"
                   style={{
                     background: 'none',

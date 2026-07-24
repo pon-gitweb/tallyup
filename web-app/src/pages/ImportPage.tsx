@@ -200,7 +200,7 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [aStatus, setAStatus] = useState<ImportStatus>('idle')
   const [aError, setAError] = useState<string | null>(null)
   const [aDate, setADate] = useState('')
-  const [aExistingMap, setAExistingMap] = useState<Map<string, string>>(new Map())
+  const [_aExistingMap, setAExistingMap] = useState<Map<string, string>>(new Map())
   const [aUpdateCount, setAUpdateCount] = useState(0)
   const [aCreateCount, setACreateCount] = useState(0)
 
