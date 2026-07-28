@@ -100,7 +100,7 @@ export const onInviteCreated = functions
         } catch {}
       }
 
-      const inviteLink = `tallyup://invite/${venueId}/${inviteId}`;
+      const inviteLink = `https://tallyup-f1463.web.app/app/accept-invite?venueId=${venueId}&inviteId=${inviteId}`;
       await sendInviteEmail(apiKey, data.email, invitedByName, venueName, data.role || 'staff', inviteLink);
       await snap.ref.update({
         emailStatus: 'sent',

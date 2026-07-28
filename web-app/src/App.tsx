@@ -24,6 +24,7 @@ import FestivalLayout, { type FestivalPage } from './layouts/FestivalLayout'
 import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
 import FestivalPurchasingPage from './pages/FestivalPurchasingPage'
 import FestivalContractsPage from './pages/FestivalContractsPage'
+import AcceptInvitePage from './pages/AcceptInvitePage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -68,6 +69,13 @@ function App() {
       }
     })
   }, [])
+
+  const inviteParams = new URLSearchParams(window.location.search)
+  const inviteVenueId = inviteParams.get('venueId')
+  const inviteInviteId = inviteParams.get('inviteId')
+  if (window.location.pathname.includes('accept-invite') && inviteVenueId && inviteInviteId) {
+    return <AcceptInvitePage venueId={inviteVenueId} inviteId={inviteInviteId} />
+  }
 
   if (user === undefined || (user !== null && accountType === null)) {
     return (
