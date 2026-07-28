@@ -2377,21 +2377,13 @@ try {
       }).join('\n');
       const overflow = highVariance.length > 4 ? `\n...and ${highVariance.length - 4} more` : '';
 
-      // useConfirmModal does not support onCancel — simplified to recount-only confirm.
-      // TODO: restore "Flag for review" and "Accept and submit" paths when a multi-action
-      // sheet component is available.
       confirm({
         title: '⚠️ High variance detected',
-        message: `These items differ significantly from last stocktake:\n\n${hvList}${overflow}\n\nRecount before submitting?`,
-        confirmLabel: 'Recount now',
+        message: `These items differ significantly from last stocktake:\n\n${hvList}${overflow}\n\nRecount before submitting, or submit anyway?`,
+        confirmLabel: 'Submit anyway',
+        destructive: true,
         onConfirm: () => {
-          setHighlightedItemIds(new Set(highVariance.map(it => it.id)));
-          const idx = filtered.findIndex(x => x.id === highVariance[0].id);
-          if (idx > -1) {
-            try { listRef.current?.scrollToIndex({ index: idx + 1, animated: true }); } catch {}
-            setTimeout(() => inputRefs.current[highVariance[0].id]?.focus?.(), 80);
-          }
-          setTimeout(() => setHighlightedItemIds(new Set()), 5000);
+          proceedToReview();
         },
       });
       return;
