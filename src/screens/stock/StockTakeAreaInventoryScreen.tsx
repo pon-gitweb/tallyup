@@ -3349,33 +3349,13 @@ const openHistory = throttleAction(async (item: Item) => {
           clearButtonMode="while-editing"
           returnKeyType="search"
         />
-        {unifiedSearch.trim().length > 0 && (
+        {unifiedSearch.trim().length > 0 && (uTier2.length > 0 || uTier1.length === 0) && (
           <View style={{
             position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 300,
             backgroundColor: '#fff', borderRadius: 10, marginTop: 4,
             borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 300,
             shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, elevation: 8,
           }}>
-            {/* Tier 1 — In this area */}
-            {uTier1.length > 0 && (
-              <>
-                <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748b', textTransform: 'uppercase', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>In this area</Text>
-                {uTier1.slice(0, 5).map(it => (
-                  <TouchableOpacity
-                    key={it.id}
-                    onPress={() => {
-                      setUnifiedSearch('');
-                      const idx = filtered.findIndex(x => x.id === it.id);
-                      if (idx >= 0) listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
-                    }}
-                    style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
-                  >
-                    <Text style={{ fontWeight: '600', color: '#0f172a' }}>{it.name}</Text>
-                    {it.unit ? <Text style={{ fontSize: 11, color: '#94a3b8' }}>{it.unit}</Text> : null}
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
             {/* Tier 2 — In venue, not in this area */}
             {uTier2.length > 0 && (
               <>
