@@ -2944,7 +2944,7 @@ const openHistory = throttleAction(async (item: Item) => {
     if (!venueId) throw new Error('Missing venue');
     await ensureAreaStarted();
     const displayName = [product.name, product.brand, product.size].filter(Boolean).join(' ').trim() || product.name;
-    const barcode = (product as any).barcode?.trim() || null;
+    const barcode = photoModalBarcode?.trim() || (product as any).barcode?.trim() || null;
     const _cu = getAuth().currentUser;
 
     let venueProductId: string | null = null;
