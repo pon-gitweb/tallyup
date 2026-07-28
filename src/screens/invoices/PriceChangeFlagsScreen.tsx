@@ -44,6 +44,7 @@ export default function PriceChangeFlagsScreen({ navigation }: any) {
       },
       err => {
         console.error('[PriceFlags]', err);
+        showError("Couldn't load price changes — pull to refresh or check your connection");
         setLoading(false);
       }
     );
