@@ -5082,7 +5082,7 @@ app.post("/supplier-register", async (req, res) => {
 
 export const api = functions
   .region("us-central1")
-  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY", "POSTMARK_API_KEY", "GMAIL_SENDER_ADDRESS", "GMAIL_APP_PASSWORD"] })
+  .runWith({ memory: "512MB", timeoutSeconds: 120, secrets: ["ANTHROPIC_API_KEY", "POSTMARK_API_KEY", "GMAIL_SENDER_ADDRESS", "GMAIL_APP_PASSWORD", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"] })
   .https.onRequest(app);
 
 // ── Shared invoice parsing helpers ───────────────────────────────────────────
