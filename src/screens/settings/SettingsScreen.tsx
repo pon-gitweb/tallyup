@@ -1324,16 +1324,14 @@ export default function SettingsScreen() {
         </View>
 
         {/* Advanced Settings (dev) */}
-        {__DEV__ && (
-          <View style={styles.row}>
-            <TouchableOpacity
-              style={styles.btn}
-              onPress={() => nav.navigate('AdvancedSettings')}
-            >
-              <Text style={styles.btnText}>Advanced Settings (dev)</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        <View style={styles.row}>
+          <TouchableOpacity
+            style={styles.btn}
+            onPress={() => nav.navigate('AdvancedSettings')}
+          >
+            <Text style={styles.btnText}>Advanced Settings (dev)</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* App version */}
         <Text style={styles.versionText}>
