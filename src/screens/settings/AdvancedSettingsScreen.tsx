@@ -33,6 +33,8 @@ function AdvancedSettingsScreen() {
       {btn('Budget Approvals', 'BudgetApprovalInbox', '#B45309')}
       {__DEV__ && (
         <>
+          <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 8, letterSpacing: 1 }}>DEV — STRIPE SANDBOX</Text>
+          {btn('Stripe Sandbox Test (dev only)', 'StripeTest', '#92400E')}
           <Text style={{ fontSize: 12, fontWeight: '800', color: '#94A3B8', marginBottom: 8, marginTop: 8, letterSpacing: 1 }}>DEV — SENTRY TEST</Text>
           <TouchableOpacity
             style={{ backgroundColor: themeColours.error, padding: 14, borderRadius: 12, alignItems: 'center', marginBottom: 10 }}
