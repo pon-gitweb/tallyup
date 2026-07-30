@@ -1330,7 +1330,9 @@ app.post("/stripe/webhook", async (req, res) => {
             modules: [],
             stripeCustomerId: session.customer,
             stripeSubscriptionId: session.subscription,
-            currentPeriodEnd: subData ? new Date((subData as any).current_period_end * 1000).toISOString() : null,
+            currentPeriodEnd: typeof subData?.items?.data?.[0]?.current_period_end === "number"
+              ? new Date(subData.items.data[0].current_period_end * 1000).toISOString()
+              : null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         }, { merge: true });
@@ -1351,7 +1353,9 @@ app.post("/stripe/webhook", async (req, res) => {
             modules,
             stripeCustomerId: customerId,
             stripeSubscriptionId: sub.id,
-            currentPeriodEnd: new Date((sub as any).current_period_end * 1000).toISOString(),
+            currentPeriodEnd: typeof sub.items?.data?.[0]?.current_period_end === "number"
+              ? new Date(sub.items.data[0].current_period_end * 1000).toISOString()
+              : null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         }, { merge: true });
@@ -1370,7 +1374,9 @@ app.post("/stripe/webhook", async (req, res) => {
             modules: [],
             stripeCustomerId: customerId,
             stripeSubscriptionId: sub.id,
-            currentPeriodEnd: new Date((sub as any).current_period_end * 1000).toISOString(),
+            currentPeriodEnd: typeof sub.items?.data?.[0]?.current_period_end === "number"
+              ? new Date(sub.items.data[0].current_period_end * 1000).toISOString()
+              : null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         }, { merge: true });
@@ -1379,6 +1385,8 @@ app.post("/stripe/webhook", async (req, res) => {
     }
   } catch (e: any) {
     console.error("[api/stripe/webhook] Handler error", e?.message);
+    res.status(500).json({ error: "Webhook handler failed", message: e?.message });
+    return;
   }
   res.json({ received: true });
 });
