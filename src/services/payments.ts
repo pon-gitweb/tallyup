@@ -1,4 +1,5 @@
 import { AI_BASE_URL } from "../config/ai";
+import { getAuth } from "firebase/auth";
 
 const BILLING_NOT_ACTIVE_MSG =
   "Billing is not yet active. You are on complimentary pilot access.";
@@ -26,9 +27,10 @@ export async function createCheckout(params: {
   successUrl?: string;
   cancelUrl?: string;
 }) {
+  const idToken = await getAuth().currentUser?.getIdToken();
   const resp = await fetch(`${AI_BASE_URL}/api/stripe/create-checkout-session`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify(params),
   });
   const data = await resp.json().catch(() => null);
@@ -41,9 +43,10 @@ export async function createCheckout(params: {
 export async function openBillingPortal(params: { uid: string; venueId: string; returnUrl?: string }) {
   const qs = new URLSearchParams({ venueId: params.venueId });
   if (params.returnUrl) qs.set("returnUrl", params.returnUrl);
+  const idToken = await getAuth().currentUser?.getIdToken();
   const resp = await fetch(`${AI_BASE_URL}/api/stripe/portal?${qs.toString()}`, {
     method: "GET",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
   });
   const data = await resp.json().catch(() => null);
   if (resp.status === 503) throw new Error(BILLING_NOT_ACTIVE_MSG);
@@ -53,7 +56,10 @@ export async function openBillingPortal(params: { uid: string; venueId: string; 
 
 /** GET /api/entitlement?venueId=... → { ok, entitled } */
 export async function fetchEntitlement(venueId: string) {
-  const resp = await fetch(`${AI_BASE_URL}/api/entitlement?venueId=${encodeURIComponent(venueId)}`);
+  const idToken = await getAuth().currentUser?.getIdToken();
+  const resp = await fetch(`${AI_BASE_URL}/api/entitlement?venueId=${encodeURIComponent(venueId)}`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
   const data = await resp.json().catch(() => null);
   if (resp.status === 503) throw new Error(BILLING_NOT_ACTIVE_MSG);
   if (!resp.ok) throw new Error(data?.error || data?.message || `Entitlement check failed (${resp.status})`);

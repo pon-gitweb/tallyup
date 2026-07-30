@@ -1410,6 +1410,23 @@ app.get("/stripe/portal", async (req, res) => {
   }
 });
 
+// GET /entitlement?venueId=...
+app.get("/entitlement", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId } = req.query as Record<string, string>;
+    if (!venueId) { res.status(400).json({ ok: false, error: "Missing venueId" }); return; }
+    const db = admin.firestore();
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const entitled = venueSnap.data()?.subscription?.status === "active";
+    res.json({ ok: true, entitled });
+  } catch (e: any) {
+    console.error("[api/entitlement] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Entitlement check failed" });
+  }
+});
+
 // ── MYOB Business ────────────────────────────────────────────────────────────
 // Structure ready, activation pending MYOB developer account registration and
 // sandbox testing. Mirrors the Stripe lazy-init pattern above: every endpoint
