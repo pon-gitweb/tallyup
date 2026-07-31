@@ -12,6 +12,7 @@ import {
   where,
   writeBatch,
   arrayUnion,
+  addDoc,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
@@ -37,6 +38,8 @@ type MatchCandidate = {
   confidence: number
   createdAt: any
 }
+
+type VenueSupplier = { id: string; name: string }
 
 type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
@@ -330,10 +333,92 @@ function LearnableSelect({
   )
 }
 
+function SupplierSelect({
+  suppliers, currentValue, onCommit, onQuickAdd, onCancel,
+}: {
+  suppliers: VenueSupplier[]
+  currentValue: string
+  onCommit: (supplier: VenueSupplier) => void
+  onQuickAdd: (name: string) => Promise<VenueSupplier | null>
+  onCancel: () => void
+}) {
+  const [addingNew, setAddingNew] = useState(false)
+  const [newValue, setNewValue] = useState('')
+  const committedRef = useRef(false)
+  const newInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (addingNew) {
+      committedRef.current = false
+      newInputRef.current?.focus()
+    }
+  }, [addingNew])
+
+  const matchedSupplier = suppliers.find(
+    s => s.name.toLowerCase() === currentValue.toLowerCase()
+  )
+  const selectedId = matchedSupplier?.id || ''
+
+  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    committedRef.current = true
+    const val = e.target.value
+    if (val === '__add_new__') {
+      setAddingNew(true)
+    } else {
+      const selected = suppliers.find(s => s.id === val)
+      if (selected) onCommit(selected)
+      else onCancel()
+    }
+  }
+
+  async function commitNew() {
+    if (committedRef.current) return
+    const val = newValue.trim()
+    if (!val) { onCancel(); return }
+    committedRef.current = true
+    const supplier = await onQuickAdd(val)
+    if (supplier) onCommit(supplier)
+    else onCancel()
+  }
+
+  if (addingNew) {
+    return (
+      <input
+        ref={newInputRef}
+        className={styles.cellInput}
+        type="text"
+        value={newValue}
+        placeholder="Supplier name…"
+        onChange={e => setNewValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); commitNew() }
+          else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+        }}
+        onBlur={commitNew}
+      />
+    )
+  }
+
+  return (
+    <select
+      className={styles.cellInput}
+      value={selectedId}
+      onChange={handleSelectChange}
+      onBlur={() => { if (!committedRef.current) onCancel() }}
+      autoFocus
+    >
+      <option value="">— Select supplier —</option>
+      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+      <option value="__add_new__">+ Add new supplier…</option>
+    </select>
+  )
+}
+
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [venueUnits, setVenueUnits] = useState<string[]>(DEFAULT_UNITS)
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
   const [venueCountry, setVenueCountry] = useState<string | null>(null)
+  const [suppliers, setSuppliers] = useState<VenueSupplier[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -365,6 +450,15 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       if (!('productCategories' in data)) seed.productCategories = DEFAULT_CATEGORIES
       if (Object.keys(seed).length > 0) updateDoc(doc(db, 'venues', venueId), seed).catch(() => {})
     }).catch(() => {})
+  }, [venueId])
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'venues', venueId, 'suppliers'),
+      (snap) => setSuppliers(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || '' }))),
+      () => {}
+    )
+    return unsub
   }, [venueId])
 
   useEffect(() => {
@@ -518,6 +612,24 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
   }
 
+  async function addSupplier(name: string): Promise<VenueSupplier | null> {
+    const trimmed = name.trim()
+    if (!trimmed) return null
+    const existing = suppliers.find(s => s.name.toLowerCase() === trimmed.toLowerCase())
+    if (existing) return existing
+    try {
+      const ref = await addDoc(collection(db, 'venues', venueId, 'suppliers'), {
+        name: trimmed,
+        defaultLeadDays: 2,
+        createdAt: serverTimestamp(),
+      })
+      return { id: ref.id, name: trimmed }
+    } catch (e) {
+      console.error('[SetupProductsPage] addSupplier failed', e)
+      return null
+    }
+  }
+
   async function handleAddProduct() {
     // Pre-generate the doc ref so we know its id before the write resolves —
     // lets us pin the row to the top and start editing it immediately,
@@ -637,6 +749,28 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             currentValue={displayValue(product, field)}
             onCommit={(val) => { commitEdit(product.id, field, val); setEditingCell(null) }}
             onAddOption={(val) => addVenueOption(field, val)}
+            onCancel={() => setEditingCell(null)}
+          />
+        )
+      }
+      if (field === 'supplierName') {
+        return (
+          <SupplierSelect
+            suppliers={suppliers}
+            currentValue={displayValue(product, field)}
+            onCommit={async (supplier) => {
+              try {
+                await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+                  supplierId: supplier.id,
+                  supplierName: supplier.name,
+                  updatedAt: serverTimestamp(),
+                })
+              } catch (e) {
+                console.error('[SetupProductsPage] supplier commit failed', e)
+              }
+              setEditingCell(null)
+            }}
+            onQuickAdd={addSupplier}
             onCancel={() => setEditingCell(null)}
           />
         )
