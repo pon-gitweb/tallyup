@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   query,
   serverTimestamp,
@@ -36,7 +37,7 @@ type MatchCandidate = {
   createdAt: any
 }
 
-type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel'
+type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
@@ -46,6 +47,7 @@ const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'costPrice',    label: 'Cost Price' },
   { field: 'supplierName', label: 'Supplier' },
   { field: 'parLevel',     label: 'PAR' },
+  { field: 'gstPercent',   label: 'GST%' },
 ]
 
 // Matches the mobile app's isIncomplete logic — name, category, unit, pack
@@ -110,6 +112,7 @@ function displayValue(p: Product, field: EditableField): string {
     case 'costPrice':    return p.costPrice != null ? p.costPrice.toFixed(2) : ''
     case 'supplierName': return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
     case 'parLevel':     return p.parLevel != null ? String(p.parLevel) : ''
+    case 'gstPercent':   return p.gstPercent != null ? String(p.gstPercent) : ''
   }
 }
 
@@ -139,6 +142,10 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
     case 'parLevel': {
       const n = trimmed === '' ? null : Number(trimmed)
       return { parLevel: n != null && Number.isFinite(n) && n >= 0 ? n : null, updatedAt: serverTimestamp() }
+    }
+    case 'gstPercent': {
+      const n = trimmed === '' ? null : Number(trimmed)
+      return { gstPercent: n != null && Number.isFinite(n) ? n : null, updatedAt: serverTimestamp() }
     }
   }
 }
@@ -247,6 +254,7 @@ function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null 
 }
 
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
+  const [venueCountry, setVenueCountry] = useState<string | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -266,6 +274,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [csvError, setCsvError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    getDoc(doc(db, 'venues', venueId)).then((snap) => {
+      setVenueCountry((snap.data() as any)?.country ?? null)
+    }).catch(() => {})
+  }, [venueId])
 
   useEffect(() => {
     setLoading(true)
@@ -419,7 +433,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       costPrice: null,
       supplierId: null,
       supplierName: 'Unassigned',
-      gstPercent: 15,
+      gstPercent: venueCountry === 'AU' ? 10 : 15,
       active: true,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -462,7 +476,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             costPrice: row.costPrice,
             supplierId: null,
             supplierName: row.supplierName || 'Unassigned',
-            gstPercent: 15,
+            gstPercent: venueCountry === 'AU' ? 10 : 15,
             active: true,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
