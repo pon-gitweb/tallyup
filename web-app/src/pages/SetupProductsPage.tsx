@@ -11,6 +11,7 @@ import {
   updateDoc,
   where,
   writeBatch,
+  arrayUnion,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
@@ -253,7 +254,85 @@ function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null 
   return { parsed, error: parsed.length === 0 ? 'No valid rows found — each row needs a Name.' : null }
 }
 
+const DEFAULT_UNITS = ['Each', 'Bottle', 'Can', 'Keg', 'Case', 'Carton', 'Litre', 'Kg', 'Box']
+const DEFAULT_CATEGORIES = ['beer', 'wine', 'spirits', 'rtd', 'na']
+
+function LearnableSelect({
+  options, currentValue, onCommit, onAddOption, onCancel,
+}: {
+  options: string[]
+  currentValue: string
+  onCommit: (value: string) => void
+  onAddOption: (value: string) => void
+  onCancel: () => void
+}) {
+  const [addingNew, setAddingNew] = useState(false)
+  const [newValue, setNewValue] = useState('')
+  const committedRef = useRef(false)
+  const newInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (addingNew) {
+      committedRef.current = false
+      newInputRef.current?.focus()
+    }
+  }, [addingNew])
+
+  const allOptions = currentValue && !options.some(o => o.toLowerCase() === currentValue.toLowerCase())
+    ? [currentValue, ...options]
+    : options
+
+  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    committedRef.current = true
+    if (e.target.value === '__add_new__') {
+      setAddingNew(true)
+    } else {
+      onCommit(e.target.value)
+    }
+  }
+
+  function commitNew() {
+    if (committedRef.current) return
+    const val = newValue.trim()
+    if (val) { committedRef.current = true; onAddOption(val); onCommit(val) }
+    else { onCancel() }
+  }
+
+  if (addingNew) {
+    return (
+      <input
+        ref={newInputRef}
+        className={styles.cellInput}
+        type="text"
+        value={newValue}
+        placeholder="Type new option…"
+        onChange={e => setNewValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); commitNew() }
+          else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+        }}
+        onBlur={commitNew}
+      />
+    )
+  }
+
+  return (
+    <select
+      className={styles.cellInput}
+      value={currentValue || ''}
+      onChange={handleSelectChange}
+      onBlur={() => { if (!committedRef.current) onCancel() }}
+      autoFocus
+    >
+      {allOptions.map(o => <option key={o} value={o}>{o}</option>)}
+      <option value="__add_new__">+ Add new…</option>
+    </select>
+  )
+}
+
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
+  const [venueUnits, setVenueUnits] = useState<string[]>(DEFAULT_UNITS)
+  const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
   const [venueCountry, setVenueCountry] = useState<string | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
@@ -277,7 +356,14 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   useEffect(() => {
     getDoc(doc(db, 'venues', venueId)).then((snap) => {
-      setVenueCountry((snap.data() as any)?.country ?? null)
+      const data = (snap.exists() ? snap.data() : {}) as any
+      setVenueCountry(data.country ?? null)
+      setVenueUnits(Array.isArray(data.productUnits) ? data.productUnits : DEFAULT_UNITS)
+      setVenueCategories(Array.isArray(data.productCategories) ? data.productCategories : DEFAULT_CATEGORIES)
+      const seed: Record<string, unknown> = {}
+      if (!('productUnits' in data)) seed.productUnits = DEFAULT_UNITS
+      if (!('productCategories' in data)) seed.productCategories = DEFAULT_CATEGORIES
+      if (Object.keys(seed).length > 0) updateDoc(doc(db, 'venues', venueId), seed).catch(() => {})
     }).catch(() => {})
   }, [venueId])
 
@@ -417,6 +503,21 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
   }
 
+  async function addVenueOption(field: 'unit' | 'category', value: string) {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    const arrayField = field === 'unit' ? 'productUnits' : 'productCategories'
+    const existing = field === 'unit' ? venueUnits : venueCategories
+    if (existing.some(o => o.toLowerCase() === trimmed.toLowerCase())) return
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { [arrayField]: arrayUnion(trimmed) })
+      if (field === 'unit') setVenueUnits(prev => [...prev, trimmed])
+      else setVenueCategories(prev => [...prev, trimmed])
+    } catch (e) {
+      console.error('[SetupProductsPage] addVenueOption failed', e)
+    }
+  }
+
   async function handleAddProduct() {
     // Pre-generate the doc ref so we know its id before the write resolves —
     // lets us pin the row to the top and start editing it immediately,
@@ -529,6 +630,17 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   function renderCell(product: Product, field: EditableField) {
     const isEditing = editingCell?.id === product.id && editingCell.field === field
     if (isEditing) {
+      if (field === 'unit' || field === 'category') {
+        return (
+          <LearnableSelect
+            options={field === 'unit' ? venueUnits : venueCategories}
+            currentValue={displayValue(product, field)}
+            onCommit={(val) => { commitEdit(product.id, field, val); setEditingCell(null) }}
+            onAddOption={(val) => addVenueOption(field, val)}
+            onCancel={() => setEditingCell(null)}
+          />
+        )
+      }
       return (
         <input
           ref={(el) => {
