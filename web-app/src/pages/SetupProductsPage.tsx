@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
+import { upsertProductSupplier, setPreferredProductSupplier } from '../services/productSuppliers'
 
 type Product = {
   id: string
@@ -760,6 +761,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             currentValue={displayValue(product, field)}
             onCommit={async (supplier) => {
               try {
+                await upsertProductSupplier(venueId, product.id, supplier.id, {
+                  supplierName: supplier.name,
+                  relationship: 'preferred',
+                  unitCost: null,
+                })
+                await setPreferredProductSupplier(venueId, product.id, supplier.id)
                 await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
                   supplierId: supplier.id,
                   supplierName: supplier.name,
