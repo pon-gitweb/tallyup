@@ -342,7 +342,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             supplierName: cleanSupplierName,
             unitCost,
             caseSize: cs,
-            wouldBecomePreferred: !matched.primarySupplierId,
+            wouldBecomePreferred: !(matched.primarySupplierId || matched.supplierId),
           });
         } else {
           await supplierRef.update({
@@ -480,6 +480,9 @@ export async function commitInvoiceChanges(
         lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
         supplierId: cleanSupplierId,
         supplierName: cleanSupplierName,
+        ...(cleanSupplierId
+          ? { primarySupplierId: cleanSupplierId, primarySupplierName: cleanSupplierName }
+          : {}),
         inductionSource: "invoice-price-tracking",
         inductionStatus: "pending",
         priceChanged: false,
@@ -487,6 +490,31 @@ export async function commitInvoiceChanges(
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      if (cleanSupplierId) {
+        const newSubRef = db.doc(
+          `venues/${venueId}/products/${newRef.id}/suppliers/${cleanSupplierId}`
+        );
+        const unitCost = cs && proposal.unitPrice != null
+          ? proposal.unitPrice / cs
+          : proposal.unitPrice ?? null;
+        const caseCost = cs ? proposal.unitPrice : null;
+        batch.set(newSubRef, {
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
+          unitCost,
+          caseSize: cs,
+          caseCost,
+          isPreferred: true,
+          relationship: "preferred",
+          agreedPrice: proposal.unitPrice,
+          agreedPriceSource: "invoice",
+          lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastInvoicePrice: proposal.unitPrice,
+          addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          addedBy: "invoice-import",
+        });
+        ops++;
+      }
       ops++;
       created++;
       newlyResolvedMap[proposal.lineName] = newRef.id;
@@ -518,11 +546,53 @@ export async function commitInvoiceChanges(
         : proposal.unitCost;
 
       if (!snap.exists) {
-        // Fresh product read for primarySupplierId (state may have changed since propose)
+        // Fresh product read (state may have changed since propose)
         const productSnap = await db
           .doc(`venues/${venueId}/products/${proposal.productId}`)
           .get();
-        const hasPreferred = !!((productSnap.data() as any)?.primarySupplierId);
+        const productData = productSnap.data() as any;
+        const legacySupplierId: string | null = productData?.supplierId || null;
+        const hasPrimarySet = !!(productData?.primarySupplierId);
+        const hasPreferred = !!(productData?.primarySupplierId || productData?.supplierId);
+
+        // Backfill legacy-only products into the new model before processing the new link
+        if (!hasPrimarySet && legacySupplierId) {
+          const legacySubRef = db.doc(
+            `venues/${venueId}/products/${proposal.productId}/suppliers/${legacySupplierId}`
+          );
+          const legacySubSnap = await legacySubRef.get();
+          if (!legacySubSnap.exists) {
+            await legacySubRef.set({
+              supplierId: legacySupplierId,
+              supplierName: productData.supplierName || '',
+              unitCost: productData.costPrice ?? null,
+              caseSize: productData.caseSize ?? null,
+              caseCost: null,
+              isPreferred: true,
+              relationship: 'preferred',
+              lastInvoicePrice: productData.lastInvoicePrice ?? null,
+              addedAt: admin.firestore.FieldValue.serverTimestamp(),
+              addedBy: 'migration',
+            });
+          }
+          await db.doc(`venues/${venueId}/products/${proposal.productId}`).update({
+            primarySupplierId: legacySupplierId,
+            primarySupplierName: productData.supplierName || '',
+            supplierCount: 1,
+          });
+          // Invoice supplier is the same as the just-backfilled legacy supplier —
+          // update its invoice data and skip the set below to avoid overwriting preferred→alternative
+          if (legacySupplierId === proposal.supplierId) {
+            await supplierRef.update({
+              unitCost: proposal.unitCost,
+              caseSize: proposal.caseSize,
+              lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
+              lastInvoicePrice: invoicePrice,
+            });
+            continue;
+          }
+        }
+
         await supplierRef.set({
           supplierId: proposal.supplierId,
           supplierName: proposal.supplierName,
