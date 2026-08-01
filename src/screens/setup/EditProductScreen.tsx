@@ -104,6 +104,16 @@ export default function EditProductScreen() {
   const editingId = params?.productId || null;
   const seed = params?.product || null;
 
+  // Pre-generate a stable document ID for new product creation so subcollection
+  // entries written during this session (via the Suppliers card) land under the
+  // same ID as the product doc that performSave() will write. The path '_' is a
+  // harmless placeholder — only the .id property is used, no write is made here.
+  const [pendingNewProductId] = useState<string>(() => {
+    const db = getFirestore(getApp());
+    return doc(collection(db, 'venues', '_', 'products')).id;
+  });
+  const activeProductId = editingId || pendingNewProductId;
+
   // ----- Form state (kept simple + tolerant to legacy fields)
   const [form, setForm] = useState<any>(() => ({
     name: seed?.name ?? '',
@@ -235,27 +245,27 @@ export default function EditProductScreen() {
       .catch(() => {});
   }, [venueId, showSupplierModal]);
 
-  // Load multi-supplier links when editing an existing product
+  // Load multi-supplier links for both new and existing products
   useEffect(() => {
-    if (!editingId || !venueId) return;
+    if (!activeProductId || !venueId) return;
     setLoadingLinks(true);
-    listProductSuppliers(venueId, editingId)
+    listProductSuppliers(venueId, activeProductId)
       .then(links => setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0))))
       .catch(() => {})
       .finally(() => setLoadingLinks(false));
-  }, [editingId, venueId]);
+  }, [activeProductId, venueId]);
 
   async function handleLinkSupplier(sup: Supplier) {
-    if (!editingId || !venueId) return;
+    if (!activeProductId || !venueId) return;
     const hasPreferred = productSuppliers.some(l => l.isPreferred);
     try {
-      await upsertProductSupplier(venueId, editingId, sup.id!, {
+      await upsertProductSupplier(venueId, activeProductId, sup.id!, {
         supplierName: sup.name,
         isPreferred: !hasPreferred,
         relationship: 'alternative',
         unitCost: null,
       });
-      const links = await listProductSuppliers(venueId, editingId);
+      const links = await listProductSuppliers(venueId, activeProductId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
     } catch (e: any) {
       showError(e?.message || 'Could not link supplier.');
@@ -263,16 +273,16 @@ export default function EditProductScreen() {
   }
 
   async function handleSetPreferred(supplierId: string) {
-    if (!editingId || !venueId) return;
+    if (!activeProductId || !venueId) return;
     try {
-      await setPreferredProductSupplier(venueId, editingId, supplierId);
-      const links = await listProductSuppliers(venueId, editingId);
+      await setPreferredProductSupplier(venueId, activeProductId, supplierId);
+      const links = await listProductSuppliers(venueId, activeProductId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
     } catch (e: any) { showError(e?.message || 'Something went wrong'); }
   }
 
   async function handleRemoveSupplierLink(supplierId: string) {
-    if (!editingId || !venueId) return;
+    if (!activeProductId || !venueId) return;
     confirm({
       title: 'Remove supplier link?',
       message: 'This removes the link between this product and the supplier.',
@@ -280,7 +290,7 @@ export default function EditProductScreen() {
       destructive: true,
       onConfirm: async () => {
         try {
-          await removeProductSupplier(venueId, editingId, supplierId);
+          await removeProductSupplier(venueId, activeProductId, supplierId);
           setProductSuppliers(prev => prev.filter(l => l.supplierId !== supplierId));
         } catch (e: any) { showError(e?.message || 'Something went wrong'); }
       },
@@ -288,10 +298,10 @@ export default function EditProductScreen() {
   }
 
   async function handleSaveRelationship(relationship: string) {
-    if (!editingId || !venueId || !editingRelationshipLink) return;
+    if (!activeProductId || !venueId || !editingRelationshipLink) return;
     try {
-      await upsertProductSupplier(venueId, editingId, editingRelationshipLink.supplierId, { relationship: relationship as any });
-      const links = await listProductSuppliers(venueId, editingId);
+      await upsertProductSupplier(venueId, activeProductId, editingRelationshipLink.supplierId, { relationship: relationship as any });
+      const links = await listProductSuppliers(venueId, activeProductId);
       setProductSuppliers(links.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)));
     } catch (e: any) { showError(e?.message || 'Something went wrong'); }
     setRelationshipPickerVisible(false);
@@ -423,44 +433,29 @@ export default function EditProductScreen() {
 
     setSaving(true);
     try {
-      if (hasUpsert) {
-        // prefer unified upsert if your services expose it
-        await svc.upsertProduct(venueId, editingId || undefined, payload);
-        nav.goBack();
-        return;
-      }
       if (editingId) {
-        if (hasUpdate) {
+        // Update existing product — service paths handle this correctly
+        if (hasUpsert) {
+          await svc.upsertProduct(venueId, editingId, payload);
+        } else if (hasUpdate) {
           await svc.updateProduct(venueId, editingId, payload);
-          nav.goBack();
-          return;
-        }
-        // Raw Firestore fallback update
-        if (getFirestore && doc && updateDoc) {
+        } else if (getFirestore && doc && updateDoc) {
           const db = getFirestore(getApp());
           await updateDoc(doc(db, 'venues', venueId, 'products', editingId), payload);
-          nav.goBack();
-          return;
+        } else {
+          throw new Error('No update method available.');
         }
-        throw new Error('No update method available.');
       } else {
-        if (hasCreate) {
-          await svc.createProduct(venueId, payload);
-          nav.goBack();
-          return;
-        }
-        // Raw Firestore fallback create
-        if (getFirestore && addDoc && collection) {
-          const db = getFirestore(getApp());
-          await addDoc(collection(db, 'venues', venueId, 'products'), {
-            ...payload,
-            createdAt: (serverTimestamp ? serverTimestamp() : new Date()),
-          });
-          nav.goBack();
-          return;
-        }
-        throw new Error('No create method available.');
+        // Create new product — always write to pendingNewProductId so subcollection
+        // entries linked during this session attach to the correct final doc.
+        const db = getFirestore(getApp());
+        await setDoc(doc(db, 'venues', venueId, 'products', pendingNewProductId), {
+          ...payload,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
       }
+      nav.goBack();
     } catch (e:any) {
       showError(e?.message || 'Save failed — unknown error');
     } finally {
@@ -729,7 +724,7 @@ export default function EditProductScreen() {
         ) : null}
 
         {/* ---- Linked Suppliers (FIX 2 + FIX 6) ---- */}
-        {!!editingId && (
+        {!!activeProductId && (
           <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
             <Text style={[styles.cardTitle, { color: colours.text }]}>
               Suppliers ({productSuppliers.length})
