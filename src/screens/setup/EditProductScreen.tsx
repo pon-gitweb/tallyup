@@ -116,10 +116,6 @@ export default function EditProductScreen() {
     gstPercent: seed?.gstPercent ?? 15,
     parLevel: seed?.parLevel ?? seed?.par ?? null,
 
-    // existing link fields (do not set automatically here)
-    supplierId: seed?.supplierId ?? null,
-    supplierName: seed?.supplierName ?? seed?.supplier?.name ?? '',
-
     // hints from global catalog (non-authoritative)
     supplierNameSuggested: seed?.supplierNameSuggested ?? null,
     supplierGlobalId: seed?.supplierGlobalId ?? null,
@@ -158,7 +154,6 @@ export default function EditProductScreen() {
   // Multi-supplier section state (FIX 2 + FIX 6)
   const [productSuppliers, setProductSuppliers] = useState<ProductSupplierLink[]>([]);
   const [loadingLinks, setLoadingLinks] = useState(false);
-  const [linkingToProduct, setLinkingToProduct] = useState(false);
   const [relationshipPickerVisible, setRelationshipPickerVisible] = useState(false);
   const [editingRelationshipLink, setEditingRelationshipLink] = useState<ProductSupplierLink | null>(null);
 
@@ -205,7 +200,7 @@ export default function EditProductScreen() {
         const top = Array.isArray(hits) && hits.length > 0 ? hits[0] : null;
         if (!top) { setCatalogSuggestion(null); return; }
         // Only worth suggesting if it would actually fill something still empty
-        const wouldHelp = !clean(form.unit) || !intOrNull(form.packSize) || !clean(form.supplierName);
+        const wouldHelp = !clean(form.unit) || !intOrNull(form.packSize);
         setCatalogSuggestion(wouldHelp ? top : null);
       } catch (e: any) {
         console.log('[EditProductScreen] catalog suggestion search failed (non-fatal):', e?.message || e);
@@ -324,12 +319,12 @@ export default function EditProductScreen() {
       });
       const created: Supplier = { id, name: newSupplierName.trim(), email: newSupplierEmail.trim() || null, phone: newSupplierPhone.trim() || null };
       setSuppliers((prev) => [created, ...prev]);
-      setForm((p: any) => ({ ...p, supplierId: id, supplierName: created.name }));
       setShowSupplierModal(false);
       setAddingSupplier(false);
       setNewSupplierName('');
       setNewSupplierEmail('');
       setNewSupplierPhone('');
+      handleLinkSupplier(created);
     } catch (e: any) {
       if (e?.message?.startsWith('SIMILAR_EXISTS:')) {
         const parts = e.message.split(':');
@@ -338,12 +333,12 @@ export default function EditProductScreen() {
         showInfo(`Note: "${similarName}" already exists — linked instead.`);
         const linked: Supplier = { id: existingId, name: similarName };
         setSuppliers((prev: any) => prev.some((s: any) => s.id === existingId) ? prev : [linked, ...prev]);
-        setForm((p: any) => ({ ...p, supplierId: existingId, supplierName: similarName }));
         setShowSupplierModal(false);
         setAddingSupplier(false);
         setNewSupplierName('');
         setNewSupplierEmail('');
         setNewSupplierPhone('');
+        handleLinkSupplier(linked);
       } else {
         showError(e?.message || 'Could not save supplier — please try again.');
       }
@@ -369,7 +364,7 @@ export default function EditProductScreen() {
     if (!intOrNull(form.packSize)) missing.push('Pack size (units per case)');
     const gstNum = numOrNull(form.gstPercent ?? 15);
     if (gstNum === null) missing.push('GST %');
-    if (!clean(form.supplierName)) missing.push('Supplier');
+    if (!productSuppliers.some(l => l.isPreferred)) missing.push('Supplier');
 
     if (missing.length > 0) {
       setInductionMissing(missing);
@@ -401,11 +396,10 @@ export default function EditProductScreen() {
       gstPercent: gstNum,
       parLevel: intOrNull(form.parLevel),
 
-      supplierId: form.supplierId || null,
-      // Matches the "Unassigned" convention already used by Bring Your Data —
-      // keeps this product alongside other unassigned products rather than
-      // as a separate null/empty category.
-      supplierName: clean(form.supplierName) || 'Unassigned',
+      // Mirror the preferred subcollection link onto the legacy flat fields so
+      // older code paths that only read supplierId/supplierName stay consistent.
+      supplierId: productSuppliers.find(l => l.isPreferred)?.supplierId ?? null,
+      supplierName: productSuppliers.find(l => l.isPreferred)?.supplierName ?? 'Unassigned',
 
       // keep hints for UI; they're safe to store or ignore
       supplierNameSuggested: form.supplierNameSuggested || null,
@@ -678,16 +672,6 @@ export default function EditProductScreen() {
             </Text>
           </Field>
 
-          <Field label="Supplier *">
-            <TouchableOpacity
-              onPress={() => setShowSupplierModal(true)}
-              style={[styles.input, { justifyContent: 'center', minHeight: 40 }]}
-            >
-              <Text style={{ color: form.supplierName ? colours.text : colours.textSecondary }}>
-                {form.supplierName || 'Select supplier…'}
-              </Text>
-            </TouchableOpacity>
-          </Field>
         </View>
 
         {/* ---- Category picker (authoritative field used by purchasing prediction) ---- */}
@@ -805,7 +789,7 @@ export default function EditProductScreen() {
               ))
             )}
             <TouchableOpacity
-              onPress={() => { setLinkingToProduct(true); setShowSupplierModal(true); }}
+              onPress={() => setShowSupplierModal(true)}
               style={{ marginTop: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colours.border, borderRadius: 10 }}
             >
               <Text style={{ color: colours.primary, fontWeight: '700', fontSize: 14 }}>+ Link another supplier</Text>
@@ -904,19 +888,13 @@ export default function EditProductScreen() {
                     <TouchableOpacity
                       key={sup.id}
                       onPress={() => {
-                        if (linkingToProduct) {
-                          setShowSupplierModal(false);
-                          setLinkingToProduct(false);
-                          handleLinkSupplier(sup);
-                        } else {
-                          setForm((p: any) => ({ ...p, supplierId: sup.id || null, supplierName: sup.name }));
-                          setShowSupplierModal(false);
-                        }
+                        setShowSupplierModal(false);
+                        handleLinkSupplier(sup);
                       }}
                       style={{
                         paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
                         borderBottomColor: colours.border,
-                        backgroundColor: form.supplierId === sup.id ? colours.primaryLight : 'transparent',
+                        backgroundColor: 'transparent',
                         paddingHorizontal: 4, borderRadius: 6,
                       }}
                     >
