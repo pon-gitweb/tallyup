@@ -80,6 +80,10 @@ export type ProposedAction =
       unitCost: number;
       caseSize: number | null;
       wouldBecomePreferred: boolean;
+      qty: number;
+      preferredSupplierName?: string | null;
+      preferredUnitCost?: number | null;
+      costDeltaPerUnit?: number | null;
     };
 
 async function applyAreaItemLinking(
@@ -333,6 +337,27 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       try {
         const snap = await supplierRef.get();
         if (!snap.exists) {
+          let preferredSupplierName: string | null = null;
+          let preferredUnitCost: number | null = null;
+          let costDeltaPerUnit: number | null = null;
+          const prefId = matched.primarySupplierId || null;
+          if (prefId && prefId !== cleanSupplierId) {
+            try {
+              const prefSnap = await db.doc(
+                `venues/${venueId}/products/${matched.id}/suppliers/${prefId}`
+              ).get();
+              if (prefSnap.exists) {
+                const prefData = prefSnap.data() as any;
+                preferredSupplierName = prefData.supplierName || null;
+                if (prefData.unitCost != null) {
+                  preferredUnitCost = prefData.unitCost;
+                  costDeltaPerUnit = unitCost - preferredUnitCost;
+                }
+              }
+            } catch (e: any) {
+              console.log("[proposeInvoiceChanges] preferred cost lookup failed (non-fatal)", matched.id, e?.message);
+            }
+          }
           proposals.push({
             id: `${invoiceId}:supplierLink:${matched.id}:${cleanSupplierId}`,
             type: "supplierLink",
@@ -342,7 +367,11 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             supplierName: cleanSupplierName,
             unitCost,
             caseSize: cs,
+            qty: line.qty,
             wouldBecomePreferred: !(matched.primarySupplierId || matched.supplierId),
+            preferredSupplierName,
+            preferredUnitCost,
+            costDeltaPerUnit,
           });
         } else {
           await supplierRef.update({

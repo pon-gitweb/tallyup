@@ -33,7 +33,9 @@ type ProposedAction =
   | { id: string; type: 'newProduct'; lineName: string; unitPrice: number; qty: number;
       caseSize: number|null; supplierId: string|null; supplierName: string|null }
   | { id: string; type: 'supplierLink'; productId: string; productName: string; supplierId: string;
-      supplierName: string|null; unitCost: number; caseSize: number|null; wouldBecomePreferred: boolean };
+      supplierName: string|null; unitCost: number; caseSize: number|null; wouldBecomePreferred: boolean;
+      qty: number; preferredSupplierName?: string|null; preferredUnitCost?: number|null;
+      costDeltaPerUnit?: number|null };
 
 type FastRec = {
   id: string;
@@ -494,6 +496,8 @@ export default function FastReceiveDetailModal({
 function ProposalCard({ proposal, decision, onDecide }: any) {
   let heading = '';
   let detail = '';
+  let costComparison = '';
+  let costComparisonColor = '';
 
   if (proposal.type === 'priceChange') {
     heading = `${proposal.productName}: $${proposal.oldPrice.toFixed(2)} → $${proposal.newPrice.toFixed(2)}`;
@@ -517,6 +521,18 @@ function ProposalCard({ proposal, decision, onDecide }: any) {
     detail = proposal.caseSize
       ? `$${proposal.unitCost.toFixed(2)}/unit · $${(proposal.unitCost * proposal.caseSize).toFixed(2)}/case`
       : `$${proposal.unitCost.toFixed(2)}/unit`;
+    if (proposal.costDeltaPerUnit != null && proposal.preferredSupplierName) {
+      const delta = proposal.costDeltaPerUnit as number;
+      const absDelta = Math.abs(delta);
+      const totalDelta = absDelta * (proposal.qty ?? 1) * (proposal.caseSize ?? 1);
+      if (delta > 0) {
+        costComparison = `$${absDelta.toFixed(2)}/unit more than preferred (${proposal.preferredSupplierName}) — $${totalDelta.toFixed(2)} extra for this order`;
+        costComparisonColor = '#b91c1c';
+      } else if (delta < 0) {
+        costComparison = `$${absDelta.toFixed(2)}/unit less than preferred (${proposal.preferredSupplierName}) — $${totalDelta.toFixed(2)} saving on this order`;
+        costComparisonColor = '#166534';
+      }
+    }
   }
 
   const decided = decision !== null && decision !== undefined;
@@ -524,6 +540,11 @@ function ProposalCard({ proposal, decision, onDecide }: any) {
     <View style={S.proposalCard}>
       <Text style={{ color:'#92400e', fontWeight:'700', fontSize:13, marginBottom:2 }}>{heading}</Text>
       {!!detail && <Text style={{ color:'#92400e', fontSize:12, marginBottom:6 }}>{detail}</Text>}
+      {!!costComparison && (
+        <Text style={{ color: costComparisonColor, fontSize:12, fontWeight:'600', marginBottom:6 }}>
+          {costComparison}
+        </Text>
+      )}
       <View style={S.decisionRow}>
         {!decided ? (
           <>
