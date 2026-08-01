@@ -16,7 +16,8 @@ import {
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
-import { upsertProductSupplier, setPreferredProductSupplier } from '../services/productSuppliers'
+import { listProductSuppliers, upsertProductSupplier, setPreferredProductSupplier, removeProductSupplier } from '../services/productSuppliers'
+import type { ProductSupplierLink } from '../services/productSuppliers'
 
 type Product = {
   id: string
@@ -335,13 +336,14 @@ function LearnableSelect({
 }
 
 function SupplierSelect({
-  suppliers, currentValue, onCommit, onQuickAdd, onCancel,
+  suppliers, currentValue, onCommit, onQuickAdd, onCancel, onManage,
 }: {
   suppliers: VenueSupplier[]
   currentValue: string
   onCommit: (supplier: VenueSupplier) => void
   onQuickAdd: (name: string) => Promise<VenueSupplier | null>
   onCancel: () => void
+  onManage: () => void
 }) {
   const [addingNew, setAddingNew] = useState(false)
   const [newValue, setNewValue] = useState('')
@@ -365,6 +367,8 @@ function SupplierSelect({
     const val = e.target.value
     if (val === '__add_new__') {
       setAddingNew(true)
+    } else if (val === '__manage__') {
+      onManage()
     } else {
       const selected = suppliers.find(s => s.id === val)
       if (selected) onCommit(selected)
@@ -411,7 +415,190 @@ function SupplierSelect({
       <option value="">— Select supplier —</option>
       {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
       <option value="__add_new__">+ Add new supplier…</option>
+      <option value="__manage__">Manage suppliers…</option>
     </select>
+  )
+}
+
+function SupplierManageModal({
+  venueId, productId, productName, suppliers, onClose,
+}: {
+  venueId: string
+  productId: string
+  productName: string
+  suppliers: VenueSupplier[]
+  onClose: () => void
+}) {
+  const [links, setLinks] = useState<ProductSupplierLink[]>([])
+  const [loading, setLoading] = useState(true)
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [addingSupplierId, setAddingSupplierId] = useState('')
+  const [working, setWorking] = useState(false)
+
+  async function refreshLinks() {
+    try {
+      const fetched = await listProductSuppliers(venueId, productId)
+      setLinks(fetched.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)))
+    } catch {}
+  }
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    listProductSuppliers(venueId, productId)
+      .then(fetched => {
+        if (!alive) return
+        setLinks(fetched.sort((a, b) => (b.isPreferred ? 1 : 0) - (a.isPreferred ? 1 : 0)))
+      })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [venueId, productId])
+
+  async function handleSetPreferred(supplierId: string) {
+    setWorking(true)
+    try { await setPreferredProductSupplier(venueId, productId, supplierId); await refreshLinks() } catch {}
+    setWorking(false)
+  }
+
+  async function handleRelationshipChange(supplierId: string, relationship: string) {
+    setWorking(true)
+    try { await upsertProductSupplier(venueId, productId, supplierId, { relationship: relationship as any }); await refreshLinks() } catch {}
+    setWorking(false)
+  }
+
+  async function handleRemove(supplierId: string) {
+    setWorking(true)
+    try { await removeProductSupplier(venueId, productId, supplierId); setConfirmRemoveId(null); await refreshLinks() } catch {}
+    setWorking(false)
+  }
+
+  async function handleAddLink() {
+    const sup = suppliers.find(s => s.id === addingSupplierId)
+    if (!sup) return
+    setWorking(true)
+    try {
+      await upsertProductSupplier(venueId, productId, sup.id, {
+        supplierName: sup.name, isPreferred: false, relationship: 'alternative', unitCost: null,
+      })
+      setAddingSupplierId('')
+      await refreshLinks()
+    } catch {}
+    setWorking(false)
+  }
+
+  function relColour(r: string | undefined) {
+    switch (r) {
+      case 'contracted': return '#1b4f72'
+      case 'preferred': return '#065f46'
+      case 'emergency': return '#b91c1c'
+      default: return '#64748b'
+    }
+  }
+
+  const linkedIds = new Set(links.map(l => l.supplierId))
+  const availableToAdd = suppliers.filter(s => !linkedIds.has(s.id))
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '24px 28px', minWidth: 420, maxWidth: 560, width: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+          <h2 style={{ margin: 0, fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: '#0B132B' }}>
+            {productName || 'Product'} — Suppliers
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#6B7280', lineHeight: 1 }}>×</button>
+        </div>
+
+        {/* Supplier list */}
+        {loading ? (
+          <p style={{ color: '#6B7280', fontSize: 14 }}>Loading…</p>
+        ) : links.length === 0 ? (
+          <p style={{ color: '#6B7280', fontSize: 14 }}>No supplier links yet.</p>
+        ) : links.map(link => (
+          <div key={link.supplierId} style={{ borderBottom: '1px solid #e5e3de', paddingBottom: 14, marginBottom: 14 }}>
+            {/* Name + badge */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              {link.isPreferred && <span title="Preferred">⭐</span>}
+              <span style={{ fontWeight: 700, color: '#0B132B', flex: 1 }}>{link.supplierName}</span>
+              <span style={{ background: relColour(link.relationship), color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, textTransform: 'capitalize' }}>
+                {link.relationship || 'alternative'}
+              </span>
+            </div>
+            {/* Cost info */}
+            {link.unitCost != null && (
+              <p style={{ margin: '2px 0', fontSize: 13, color: '#6B7280' }}>
+                ${link.unitCost.toFixed(2)}/unit
+                {link.caseSize ? ` · Case of ${link.caseSize} · $${(link.caseCost ?? link.unitCost * link.caseSize).toFixed(2)}/case` : ''}
+              </p>
+            )}
+            {link.lastInvoicePrice != null && (
+              <p style={{ margin: '2px 0', fontSize: 12, color: '#6B7280' }}>Last invoice: ${link.lastInvoicePrice.toFixed(2)}</p>
+            )}
+            {/* Actions or inline confirm-remove */}
+            {confirmRemoveId === link.supplierId ? (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#b91c1c' }}>Remove {link.supplierName}?</span>
+                <button onClick={() => handleRemove(link.supplierId)} disabled={working} style={{ background: '#b91c1c', color: '#fff', border: 'none', borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Remove</button>
+                <button onClick={() => setConfirmRemoveId(null)} style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 999, padding: '4px 12px', fontSize: 12, cursor: 'pointer', color: '#6B7280' }}>Cancel</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                {!link.isPreferred && (
+                  <button onClick={() => handleSetPreferred(link.supplierId)} disabled={working} style={{ background: '#f0fdf4', border: 'none', borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 700, color: '#0f766e', cursor: 'pointer' }}>
+                    Set preferred
+                  </button>
+                )}
+                <select
+                  value={link.relationship || 'alternative'}
+                  onChange={e => handleRelationshipChange(link.supplierId, e.target.value)}
+                  disabled={working}
+                  style={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e3de', padding: '4px 8px', color: '#374151', background: '#f1f5f9' }}
+                >
+                  <option value="preferred">Preferred — Your go-to supplier</option>
+                  <option value="contracted">Contracted — You have a supply agreement</option>
+                  <option value="alternative">Alternative — Backup option</option>
+                  <option value="emergency">Emergency — Last resort only</option>
+                </select>
+                <button onClick={() => setConfirmRemoveId(link.supplierId)} disabled={working} style={{ background: '#fef2f2', border: 'none', borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 700, color: '#b91c1c', cursor: 'pointer' }}>
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* Add supplier section */}
+        {availableToAdd.length > 0 && (
+          <div style={{ borderTop: '1px solid #e5e3de', paddingTop: 16, marginTop: 4 }}>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: '#0B132B' }}>Add a supplier</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <select
+                value={addingSupplierId}
+                onChange={e => setAddingSupplierId(e.target.value)}
+                style={{ flex: 1, fontSize: 13, border: '1px solid #e5e3de', borderRadius: 8, padding: '6px 10px' }}
+              >
+                <option value="">— Select supplier —</option>
+                {availableToAdd.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button
+                onClick={handleAddLink}
+                disabled={!addingSupplierId || working}
+                style={{ background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: !addingSupplierId || working ? 0.5 : 1 }}
+              >
+                Link
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -433,6 +620,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [managingSupplierProduct, setManagingSupplierProduct] = useState<{ id: string; name: string } | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [csvFileName, setCsvFileName] = useState<string | null>(null)
   const [csvRows, setCsvRows] = useState<CsvRow[] | null>(null)
@@ -779,6 +967,10 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             }}
             onQuickAdd={addSupplier}
             onCancel={() => setEditingCell(null)}
+            onManage={() => {
+              setEditingCell(null)
+              setManagingSupplierProduct({ id: product.id, name: product.name })
+            }}
           />
         )
       }
@@ -1310,6 +1502,15 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             </p>
           )}
         </div>
+      )}
+      {managingSupplierProduct && (
+        <SupplierManageModal
+          venueId={venueId}
+          productId={managingSupplierProduct.id}
+          productName={managingSupplierProduct.name}
+          suppliers={suppliers}
+          onClose={() => setManagingSupplierProduct(null)}
+        />
       )}
     </div>
   )

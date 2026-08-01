@@ -6,7 +6,10 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
+  updateDoc,
+  deleteDoc,
   writeBatch,
   serverTimestamp,
 } from 'firebase/firestore'
@@ -82,4 +85,21 @@ export async function setPreferredProductSupplier(
     updatedAt: serverTimestamp(),
   })
   await batch.commit()
+}
+
+export async function removeProductSupplier(
+  venueId: string,
+  productId: string,
+  supplierId: string,
+): Promise<void> {
+  await deleteDoc(doc(db, 'venues', venueId, 'products', productId, 'suppliers', supplierId))
+  const productRef = doc(db, 'venues', venueId, 'products', productId)
+  const snap = await getDoc(productRef)
+  if (snap.exists() && (snap.data() as any)?.primarySupplierId === supplierId) {
+    await updateDoc(productRef, {
+      primarySupplierId: null,
+      primarySupplierName: '',
+      supplierUpdatedAt: serverTimestamp(),
+    })
+  }
 }
