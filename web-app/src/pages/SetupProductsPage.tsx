@@ -31,6 +31,8 @@ type Product = {
   supplierName: string | null
   parLevel: number | null
   gstPercent: number | null
+  costPriceSource: string | null
+  costPriceEstimatedAt: any
 }
 
 type MatchCandidate = {
@@ -792,6 +794,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               supplierName: data.supplierName ?? null,
               parLevel: data.parLevel ?? null,
               gstPercent: data.gstPercent ?? null,
+              costPriceSource: data.costPriceSource ?? null,
+              costPriceEstimatedAt: data.costPriceEstimatedAt ?? null,
             }
           })
         )
@@ -1141,9 +1145,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       )
     }
     const value = displayValue(product, field)
+    const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
     return (
       <div
         className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
+        style={isEstimate ? { color: '#c47b2b' } : undefined}
+        title={isEstimate ? 'Estimated from catalogue, not yet confirmed by invoice' : undefined}
         onClick={() => startEdit(product, field)}
       >
         {value || '—'}
@@ -1155,6 +1162,16 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const missingCostPrice = useMemo(() => products.filter(p => p.costPrice == null).length, [products])
   const missingSupplier = useMemo(() => products.filter(p => !p.supplierName || p.supplierName === 'Unassigned').length, [products])
   const missingUnit = useMemo(() => products.filter(p => !p.unit).length, [products])
+
+  const staleEstimateCount = useMemo(() => {
+    const threeMonthsAgo = new Date()
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+    return products.filter(p =>
+      p.costPriceSource === 'catalogue_estimate' &&
+      p.costPriceEstimatedAt != null &&
+      p.costPriceEstimatedAt.toDate() < threeMonthsAgo
+    ).length
+  }, [products])
 
   const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(() => {
     try {
@@ -1249,6 +1266,24 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               Click any product to fill in missing details. Cost prices unlock variance reporting.
             </p>
           </div>
+        </div>
+      )}
+
+      {staleEstimateCount > 0 && (
+        <div style={{
+          background: '#fffbeb',
+          border: '1.5px solid #c47b2b',
+          borderRadius: 12,
+          padding: '14px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 14,
+        }}>
+          <span style={{ fontSize: 20, marginTop: 2 }}>💰</span>
+          <p style={{ margin: 0, fontSize: 14, color: '#92400e' }}>
+            <strong>{staleEstimateCount} estimated price{staleEstimateCount !== 1 ? 's' : ''}</strong> haven't been confirmed by a real invoice in over 3 months — worth checking these are still accurate.
+          </p>
         </div>
       )}
 
