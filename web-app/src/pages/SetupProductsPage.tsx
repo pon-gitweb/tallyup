@@ -18,6 +18,8 @@ import { auth, db } from '../firebase'
 import styles from './SetupProductsPage.module.css'
 import { listProductSuppliers, upsertProductSupplier, setPreferredProductSupplier, removeProductSupplier } from '../services/productSuppliers'
 import type { ProductSupplierLink } from '../services/productSuppliers'
+import { searchGlobalCatalogFuzzy } from '../services/globalCatalog'
+import type { CatalogHit } from '../services/globalCatalog'
 
 type Product = {
   id: string
@@ -42,6 +44,13 @@ type MatchCandidate = {
 }
 
 type VenueSupplier = { id: string; name: string }
+
+type CatalogueMatch = {
+  product: Product
+  hit: CatalogHit & { score: number }
+  proposedCostPrice: number
+  proposedGstPercent: number
+}
 
 type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
@@ -602,6 +611,119 @@ function SupplierManageModal({
   )
 }
 
+function CatalogueReviewModal({
+  matches, venueId, onClose, onApplied,
+}: {
+  matches: CatalogueMatch[]
+  venueId: string
+  onClose: () => void
+  onApplied: () => void
+}) {
+  const [accepted, setAccepted] = useState<Set<string>>(
+    () => new Set(matches.map(m => m.product.id))
+  )
+  const [applying, setApplying] = useState(false)
+
+  function toggleAccepted(productId: string) {
+    setAccepted(prev => {
+      const next = new Set(prev)
+      if (next.has(productId)) next.delete(productId)
+      else next.add(productId)
+      return next
+    })
+  }
+
+  async function handleApply() {
+    const toApply = matches.filter(m => accepted.has(m.product.id))
+    if (toApply.length === 0) { onClose(); return }
+    setApplying(true)
+    try {
+      for (let i = 0; i < toApply.length; i += 500) {
+        const chunk = toApply.slice(i, i + 500)
+        const batch = writeBatch(db)
+        for (const m of chunk) {
+          const updates: Record<string, any> = {
+            costPrice: m.proposedCostPrice,
+            costPriceSource: 'catalogue_estimate',
+            costPriceEstimatedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+          if (m.product.gstPercent == null) updates.gstPercent = m.proposedGstPercent
+          batch.update(doc(db, 'venues', venueId, 'products', m.product.id), updates)
+        }
+        await batch.commit()
+      }
+      onApplied()
+    } catch (e) {
+      console.error('[CatalogueReviewModal] apply failed', e)
+    }
+    setApplying(false)
+  }
+
+  const selectedCount = accepted.size
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '24px 28px', minWidth: 480, maxWidth: 640, width: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+          <h2 style={{ margin: 0, fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: '#0B132B' }}>
+            Catalogue Matches
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#6B7280', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6B7280' }}>
+          Found cost price estimates for {matches.length} unpriced product{matches.length !== 1 ? 's' : ''}. Review and apply selected.
+        </p>
+
+        {matches.map(m => (
+          <div key={m.product.id} style={{ borderBottom: '1px solid #e5e3de', paddingBottom: 14, marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <input
+              type="checkbox"
+              checked={accepted.has(m.product.id)}
+              onChange={() => toggleAccepted(m.product.id)}
+              style={{ marginTop: 3, flexShrink: 0 }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, color: '#0B132B', fontSize: 14 }}>{m.product.name}</div>
+              <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                Matched: "{m.hit.name}" from {m.hit.supplierName}
+                <span style={{ marginLeft: 8, color: '#9CA3AF' }}>({Math.round(m.hit.score * 100)}% match)</span>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontWeight: 700, color: '#0B132B', fontSize: 14 }}>${m.proposedCostPrice.toFixed(2)}</div>
+              <div style={{ fontSize: 11, color: '#6B7280' }}>GST {m.proposedGstPercent}%</div>
+            </div>
+          </div>
+        ))}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4, paddingTop: 16, borderTop: '1px solid #e5e3de' }}>
+          <button
+            onClick={onClose}
+            disabled={applying}
+            style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 999, padding: '8px 20px', fontSize: 13, color: '#6B7280', cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleApply}
+            disabled={applying || selectedCount === 0}
+            style={{ background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 999, padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: selectedCount === 0 || applying ? 0.5 : 1 }}
+          >
+            {applying ? 'Applying…' : `Apply ${selectedCount} selected`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [venueUnits, setVenueUnits] = useState<string[]>(DEFAULT_UNITS)
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
@@ -621,6 +743,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [managingSupplierProduct, setManagingSupplierProduct] = useState<{ id: string; name: string } | null>(null)
+  const [scanProgress, setScanProgress] = useState<{ current: number; total: number } | null>(null)
+  const [catalogueMatches, setCatalogueMatches] = useState<CatalogueMatch[] | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [csvFileName, setCsvFileName] = useState<string | null>(null)
   const [csvRows, setCsvRows] = useState<CsvRow[] | null>(null)
@@ -926,6 +1050,34 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       console.error('[SetupProductsPage] delete failed', e)
     }
     setConfirmDeleteId(null)
+  }
+
+  async function scanForCatalogueMatches() {
+    if (scanProgress) return
+    const unpriced = products.filter(p => p.costPrice == null)
+    if (unpriced.length === 0) return
+    setScanProgress({ current: 0, total: unpriced.length })
+    const matches: CatalogueMatch[] = []
+    for (let i = 0; i < unpriced.length; i++) {
+      const product = unpriced[i]
+      setScanProgress({ current: i + 1, total: unpriced.length })
+      try {
+        const hits = await searchGlobalCatalogFuzzy(product.name)
+        if (hits.length > 0 && hits[0].priceBottleExGst != null) {
+          const best = hits[0]
+          matches.push({
+            product,
+            hit: best,
+            proposedCostPrice: best.priceBottleExGst!,
+            proposedGstPercent: best.gstPercent ?? (venueCountry === 'AU' ? 10 : 15),
+          })
+        }
+      } catch {
+        // non-fatal — skip this product and continue
+      }
+    }
+    setScanProgress(null)
+    setCatalogueMatches(matches)
   }
 
   function renderCell(product: Product, field: EditableField) {
@@ -1418,6 +1570,20 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         <button type="button" className={styles.exportButton} onClick={handleExportCsv}>
           Export CSV
         </button>
+        {scanProgress ? (
+          <span style={{ fontSize: 13, color: '#6B7280', padding: '0 4px', whiteSpace: 'nowrap' }}>
+            Scanning {scanProgress.current} of {scanProgress.total}…
+          </span>
+        ) : (
+          <button
+            type="button"
+            className={styles.exportButton}
+            onClick={scanForCatalogueMatches}
+            disabled={loading || products.filter(p => p.costPrice == null).length === 0}
+          >
+            Scan catalogue
+          </button>
+        )}
         <button type="button" className={styles.addButton} onClick={handleAddProduct}>
           + Add product
         </button>
@@ -1510,6 +1676,14 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           productName={managingSupplierProduct.name}
           suppliers={suppliers}
           onClose={() => setManagingSupplierProduct(null)}
+        />
+      )}
+      {catalogueMatches !== null && (
+        <CatalogueReviewModal
+          matches={catalogueMatches}
+          venueId={venueId}
+          onClose={() => setCatalogueMatches(null)}
+          onApplied={() => setCatalogueMatches(null)}
         />
       )}
     </div>
