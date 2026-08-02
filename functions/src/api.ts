@@ -5,6 +5,7 @@ import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
 import { proposeInvoiceChanges, commitInvoiceChanges } from "./priceTracking";
+import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
@@ -5683,6 +5684,32 @@ app.post("/commit-invoice-decisions", async (req, res) => {
         }
       } catch (e: any) {
         console.log('[api/commit-invoice-decisions] flagPriceChangeToManager error (non-fatal)', e?.message);
+      }
+    }
+
+    // Step 4b: Contribute accepted prices to the global product catalogue (best-effort, fire-and-forget)
+    for (const proposal of acceptedProposals) {
+      if (proposal.type === 'priceChange' && proposal.newPrice != null && resolvedSupplierName) {
+        const cs: number | null = proposal.caseSize ?? null;
+        contributeToGlobalCatalogItem(db, resolvedSupplierName, {
+          productName: proposal.productName,
+          packSize: cs,
+          unitCost: cs ? proposal.newPrice / cs : proposal.newPrice,
+          caseCost: cs ? proposal.newPrice : null,
+          addedByVenue: venueId,
+        }).catch(() => {});
+      } else if (proposal.type === 'newProduct' && proposal.unitPrice != null) {
+        const cs: number | null = proposal.caseSize ?? null;
+        const sName: string | null = proposal.supplierName || resolvedSupplierName || null;
+        if (sName) {
+          contributeToGlobalCatalogItem(db, sName, {
+            productName: proposal.lineName,
+            packSize: cs,
+            unitCost: cs ? proposal.unitPrice / cs : proposal.unitPrice,
+            caseCost: cs ? proposal.unitPrice : null,
+            addedByVenue: venueId,
+          }).catch(() => {});
+        }
       }
     }
 

@@ -93,3 +93,44 @@ export async function contributeToGlobalDirectory(
     }
   }
 }
+
+// Contribute a product price discovered from an accepted invoice line.
+// Non-blocking — caller should .catch(() => {}).
+// Fill-gaps-only: never overwrites an existing item (avoids one venue's
+// negotiated price becoming the catalogue reference for everyone else).
+export async function contributeToGlobalCatalogItem(
+  db: admin.firestore.Firestore,
+  supplierName: string,
+  item: {
+    productName: string;
+    packSize?: number | null;
+    unitCost?: number | null;
+    caseCost?: number | null;
+    gstPercent?: number | null;
+    category?: string | null;
+    addedByVenue?: string;
+  }
+): Promise<void> {
+  if (!supplierName?.trim() || !item.productName?.trim()) return;
+  const slug = toSlug(supplierName.trim());
+  const itemId = toSlug(item.productName.trim());
+  if (!slug || !itemId) return;
+
+  const ref = db.doc(`global_suppliers/${slug}/items/${itemId}`);
+  const snap = await ref.get();
+  if (snap.exists) return;
+
+  await ref.set({
+    supplierGlobalId: slug,
+    supplierName: supplierName.trim(),
+    name: item.productName.trim(),
+    unitsPerCase: item.packSize ?? null,
+    priceBottleExGst: item.unitCost ?? null,
+    priceCaseExGst: item.caseCost ?? null,
+    gstPercent: item.gstPercent ?? null,
+    category: item.category ?? null,
+    source: "invoice_scan",
+    addedByVenue: item.addedByVenue ?? null,
+    addedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
