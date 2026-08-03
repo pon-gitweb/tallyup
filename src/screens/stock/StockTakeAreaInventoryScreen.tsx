@@ -3349,7 +3349,7 @@ const openHistory = throttleAction(async (item: Item) => {
           clearButtonMode="while-editing"
           returnKeyType="search"
         />
-        {unifiedSearch.trim().length > 0 && (uTier2.length > 0 || uTier1.length === 0) && (
+        {unifiedSearch.trim().length > 0 && uTier1.length === 0 && (
           <View style={{
             position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 300,
             backgroundColor: '#fff', borderRadius: 10, marginTop: 4,
