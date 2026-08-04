@@ -28,6 +28,10 @@ export async function scanInvoicePhoto(args: {
   warnings: string[];
   supplierCandidate?: any;
   proposals: any[];
+  // TEMP DEBUG — remove once the invoice line filtering issue is diagnosed
+  debugRawLineCount?: number | null;
+  debugFilteredLineCount?: number | null;
+  debugRawLineNames?: string[] | null;
 }> {
   const { venueId, photoUri, filename } = args;
   if (!venueId) throw new Error('scanInvoicePhoto: missing venueId');
@@ -99,5 +103,9 @@ export async function scanInvoicePhoto(args: {
     warnings: [],
     proposals: Array.isArray(raw.proposals) ? raw.proposals : [],
     ...(raw.supplierCandidate != null ? { supplierCandidate: raw.supplierCandidate } : {}),
+    // TEMP DEBUG — remove once the invoice line filtering issue is diagnosed
+    debugRawLineCount: raw.debugRawLineCount ?? null,
+    debugFilteredLineCount: raw.debugFilteredLineCount ?? null,
+    debugRawLineNames: raw.debugRawLineNames ?? null,
   };
 }
