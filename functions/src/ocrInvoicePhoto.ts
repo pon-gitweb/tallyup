@@ -863,30 +863,16 @@ async function handleTaxInvoice(
   const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
   const ageCategory = categorizeAge(ageDays);
 
+  let isLate = false;
+  let cycleEndDate: string | null = null;
   if (ageCategory === "current" || ageCategory === "late") {
-    const { isLate, cycleEndDate } = await checkLateInvoice(db, venueId, invoice?.invoiceDate ?? null);
-    if (isLate) {
-      return {
-        ok: true,
-        documentType: "TAX_INVOICE" as DocumentType,
-        isLateInvoice: true,
-        invoiceDate: invoice?.invoiceDate ?? null,
-        cycleEndDate,
-        invoiceData: {
-          invoice, lines, ageCategory, rawText: text,
-          purchaseOrderNumber: invoice?.purchaseOrderNumber ?? null,
-        },
-        options: [
-          { id: "apply_current", label: "Apply to current cycle", description: "Invoice received today, applied to current period. Recommended." },
-          { id: "hold_for_review", label: "Hold for manager review", description: "Flag this for your manager to decide." },
-        ],
-        message: "This invoice is dated within a stocktake period that has already been completed.",
-      };
-    }
+    ({ isLate, cycleEndDate } = await checkLateInvoice(db, venueId, invoice?.invoiceDate ?? null));
   }
 
   // TEMP DEBUG — remove once the invoice line filtering issue is diagnosed
   const result = await processTaxInvoice(db, venueId, uid, invoice, lines, text, ageCategory, data, null);
+  result.isLateInvoice = isLate;
+  result.cycleEndDate = cycleEndDate;
   result.debugRawLineCount = debugRawLineCount;
   result.debugFilteredLineCount = debugFilteredLineCount;
   result.debugRawLineNames = debugRawLineNames;
