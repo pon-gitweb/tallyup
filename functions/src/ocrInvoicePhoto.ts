@@ -426,10 +426,10 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 3000,
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
       system,
-      messages: [{ role: "user", content: "Extract invoice data from this text:\n\n" + rawText.slice(0, 8000) }],
+      messages: [{ role: "user", content: "Extract invoice data from this text:\n\n" + rawText.slice(0, 12000) }],
     }),
   });
 
@@ -462,6 +462,10 @@ async function extractInvoiceWithClaude(rawText: string): Promise<InvoiceExtract
         };
       })
     : [];
+
+  if (lines.length === 0) {
+    console.log("[ocrInvoicePhoto] extraction succeeded but found zero lines", { supplierName: parsed.supplierName ?? null });
+  }
 
   return {
     supplierName: parsed.supplierName ? String(parsed.supplierName).trim() : null,
