@@ -855,6 +855,10 @@ async function handleTaxInvoice(
 
   const rawLines = invoice?.lines?.length ? invoice.lines : extractLines(text);
   const lines = filterInvoiceLines(rawLines);
+  // TEMP DEBUG — remove once the invoice line filtering issue is diagnosed
+  const debugRawLineCount = rawLines.length;
+  const debugFilteredLineCount = lines.length;
+  const debugRawLineNames = rawLines.slice(0, 20).map((l: any) => l.name);
 
   const ageDays = invoiceAgeDays(invoice?.invoiceDate ?? null);
   const ageCategory = categorizeAge(ageDays);
@@ -881,7 +885,12 @@ async function handleTaxInvoice(
     }
   }
 
-  return await processTaxInvoice(db, venueId, uid, invoice, lines, text, ageCategory, data, null);
+  // TEMP DEBUG — remove once the invoice line filtering issue is diagnosed
+  const result = await processTaxInvoice(db, venueId, uid, invoice, lines, text, ageCategory, data, null);
+  result.debugRawLineCount = debugRawLineCount;
+  result.debugFilteredLineCount = debugFilteredLineCount;
+  result.debugRawLineNames = debugRawLineNames;
+  return result;
 }
 
 async function processTaxInvoice(
