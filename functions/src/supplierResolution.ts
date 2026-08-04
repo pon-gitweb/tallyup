@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { stripLegalSuffix, tokenizeForMatching, overlapCoefficient, isReliableMatch } from "./nameMatching";
 
 export type SupplierMeta = {
   name: string;
@@ -34,24 +35,33 @@ export async function resolveSupplier(
 ): Promise<SupplierResolution> {
   if (!meta.name) return { kind: "unmatched", supplierName: "" };
   const suppSnap = await db.collection(`venues/${venueId}/suppliers`).get();
-  const candNorm = normName(meta.name);
+  const metaStripped = stripLegalSuffix(meta.name);
   let matchedId: string | null = null;
   let matchedDoc: admin.firestore.QueryDocumentSnapshot | null = null;
   let bestScore = 0;
+  let bestCandidateStripped = "";
   for (const sd of suppSnap.docs) {
-    const sn = normName((sd.data() as any).name || "");
-    if (sn === candNorm && sn.length > 0) { matchedId = sd.id; matchedDoc = sd; bestScore = 1.0; break; }
-    const sc = tokenJaccard(meta.name, (sd.data() as any).name || "");
-    if (sc > bestScore) { bestScore = sc; matchedId = sd.id; matchedDoc = sd; }
+    const candidateStripped = stripLegalSuffix((sd.data() as any).name || "");
+    const sc = overlapCoefficient(metaStripped, candidateStripped);
+    if (sc > bestScore) {
+      bestScore = sc;
+      matchedId = sd.id;
+      matchedDoc = sd;
+      bestCandidateStripped = candidateStripped;
+    }
   }
-  if (matchedId && matchedDoc && bestScore >= 0.85) {
-    return {
-      kind: "matched",
-      supplierId: matchedId,
-      canonicalName: (matchedDoc.data() as any).name || meta.name,
-      score: bestScore,
-      _existingData: matchedDoc.data() as Record<string, any>,
-    };
+  if (matchedId && matchedDoc) {
+    const tokensA = tokenizeForMatching(metaStripped);
+    const tokensB = tokenizeForMatching(bestCandidateStripped);
+    if (isReliableMatch(tokensA, tokensB, bestScore)) {
+      return {
+        kind: "matched",
+        supplierId: matchedId,
+        canonicalName: (matchedDoc.data() as any).name || meta.name,
+        score: bestScore,
+        _existingData: matchedDoc.data() as Record<string, any>,
+      };
+    }
   }
   return { kind: "unmatched", supplierName: meta.name };
 }
