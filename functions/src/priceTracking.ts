@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { classifyLine, summarizeExcludedLines, ExcludedLineSummary } from './classifyLine';
+import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from "./nameMatching";
 
 export interface InvoiceLine {
   name: string;
@@ -22,13 +23,10 @@ function normalizeName(s: string): string {
 }
 
 function namesMatch(a: string, b: string): boolean {
-  const na = normalizeName(a);
-  const nb = normalizeName(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const longer = na.length >= nb.length ? na : nb;
-  const shorter = na.length < nb.length ? na : nb;
-  return shorter.length >= 5 && longer.includes(shorter);
+  const ta = tokenizeForMatching(a);
+  const tb = tokenizeForMatching(b);
+  const score = overlapCoefficient(a, b);
+  return isReliableMatch(ta, tb, score);
 }
 
 // ---------------------------------------------------------------------------
