@@ -1,0 +1,132 @@
+// @ts-nocheck
+import { db } from '../firebase';
+import {
+  collection, doc, getDoc, getDocs, setDoc, updateDoc,
+  deleteDoc, addDoc, query, where, serverTimestamp,
+} from 'firebase/firestore';
+import { setPreferredProductSupplier } from '../productSuppliers';
+
+export type SameAreaConflict = {
+  departmentId: string;
+  areaId: string;
+  areaItemId: string;
+  departmentName: string;
+  areaName: string;
+};
+
+export type MergeProductsResult = {
+  areaItemsUpdated: number;
+  sameAreaConflicts: SameAreaConflict[];
+  priceHistoryMoved: number;
+  supplierLinksHandled: number;
+  fieldsBackfilled: string[];
+};
+
+const BACKFILL_FIELDS = ['costPrice', 'gstPercent', 'unit', 'category', 'packSize', 'supplierName'] as const;
+
+export async function mergeProducts(
+  venueId: string,
+  keepId: string,
+  mergeId: string,
+  dryRun = false,
+): Promise<MergeProductsResult> {
+  if (keepId === mergeId) throw new Error('mergeProducts: keepId and mergeId must be different');
+
+  let areaItemsUpdated = 0;
+  const sameAreaConflicts: SameAreaConflict[] = [];
+  let priceHistoryMoved = 0;
+  let supplierLinksHandled = 0;
+  const fieldsBackfilled: string[] = [];
+
+  // ── 1. Re-point area items ─────────────────────────────────────────────────
+  // Avoids collectionGroup() which is blocked by our security rules.
+  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  for (const deptDoc of deptsSnap.docs) {
+    const deptId = deptDoc.id;
+    const deptName = (deptDoc.data() as any).name || deptId;
+    const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptId, 'areas'));
+    for (const areaDoc of areasSnap.docs) {
+      const areaId = areaDoc.id;
+      const areaName = (areaDoc.data() as any).name || areaId;
+      const itemsCol = collection(db, 'venues', venueId, 'departments', deptId, 'areas', areaId, 'items');
+
+      const mergeItemsSnap = await getDocs(query(itemsCol, where('productId', '==', mergeId)));
+      if (mergeItemsSnap.empty) continue;
+
+      const keepItemsSnap = await getDocs(query(itemsCol, where('productId', '==', keepId)));
+      const keepExistsInArea = !keepItemsSnap.empty;
+
+      for (const itemDoc of mergeItemsSnap.docs) {
+        if (keepExistsInArea) {
+          sameAreaConflicts.push({ departmentId: deptId, areaId, areaItemId: itemDoc.id, departmentName: deptName, areaName });
+        } else {
+          if (!dryRun) {
+            await updateDoc(itemDoc.ref, { productId: keepId, updatedAt: serverTimestamp() });
+          }
+          areaItemsUpdated++;
+        }
+      }
+    }
+  }
+
+  // ── 2. Migrate supplier subcollection docs ─────────────────────────────────
+  const mergeSuppSnap = await getDocs(collection(db, 'venues', venueId, 'products', mergeId, 'suppliers'));
+  for (const mergeSuppDoc of mergeSuppSnap.docs) {
+    const suppId = mergeSuppDoc.id;
+    if (!dryRun) {
+      const keepSuppRef = doc(db, 'venues', venueId, 'products', keepId, 'suppliers', suppId);
+      const keepSuppSnap = await getDoc(keepSuppRef);
+      if (keepSuppSnap.exists()) {
+        const mergeData = mergeSuppDoc.data() as any;
+        if (mergeData.isPreferred && !(keepSuppSnap.data() as any)?.isPreferred) {
+          await setPreferredProductSupplier(venueId, keepId, suppId);
+        }
+      } else {
+        await setDoc(keepSuppRef, mergeSuppDoc.data());
+      }
+      await deleteDoc(mergeSuppDoc.ref);
+    }
+    supplierLinksHandled++;
+  }
+
+  // ── 3. Move priceHistory docs ──────────────────────────────────────────────
+  const priceHistSnap = await getDocs(collection(db, 'venues', venueId, 'products', mergeId, 'priceHistory'));
+  for (const histDoc of priceHistSnap.docs) {
+    if (!dryRun) {
+      await addDoc(collection(db, 'venues', venueId, 'products', keepId, 'priceHistory'), histDoc.data());
+      await deleteDoc(histDoc.ref);
+    }
+    priceHistoryMoved++;
+  }
+
+  // ── 4. Backfill missing top-level fields onto keep product ─────────────────
+  const [keepSnap, mergeSnap] = await Promise.all([
+    getDoc(doc(db, 'venues', venueId, 'products', keepId)),
+    getDoc(doc(db, 'venues', venueId, 'products', mergeId)),
+  ]);
+  const keepData = (keepSnap.data() as any) || {};
+  const mergeData = (mergeSnap.data() as any) || {};
+  const backfill: Record<string, any> = {};
+  for (const field of BACKFILL_FIELDS) {
+    const keepVal = keepData[field];
+    const mergeVal = mergeData[field];
+    if ((keepVal == null || keepVal === '') && mergeVal != null && mergeVal !== '') {
+      backfill[field] = mergeVal;
+      fieldsBackfilled.push(field);
+    }
+  }
+
+  if (!dryRun) {
+    if (Object.keys(backfill).length > 0) {
+      await updateDoc(doc(db, 'venues', venueId, 'products', keepId), { ...backfill, updatedAt: serverTimestamp() });
+    }
+    // Do NOT delete — mark inactive and record where it merged to
+    await updateDoc(doc(db, 'venues', venueId, 'products', mergeId), {
+      active: false,
+      mergedInto: keepId,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  return { areaItemsUpdated, sameAreaConflicts, priceHistoryMoved, supplierLinksHandled, fieldsBackfilled };
+}

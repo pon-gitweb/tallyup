@@ -25,6 +25,7 @@ import { getFirestore, collection, getDocs, doc, writeBatch, serverTimestamp, qu
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { listProducts, deleteProductById } from '../../services/products';
+import { mergeProducts } from '../../services/products/mergeProducts';
 import { listSuppliers } from '../../services/suppliers';
 import { adoptGlobalCatalogToVenue } from '../../services/catalog/adoptGlobalCatalogToVenue';
 import BarcodeScannerModal from '../stock/components/BarcodeScannerModal';
@@ -224,7 +225,7 @@ export default function ProductsScreen() {
   const route = useRoute<any>();
   const venueId = useVenueId();
   const colours = useColours();
-  const { showError } = useToast();
+  const { showError, showSuccess } = useToast();
   const { confirm, modal } = useConfirmModal();
 
   const [loading, setLoading] = useState(true);
@@ -275,6 +276,12 @@ export default function ProductsScreen() {
   const [addingToArea, setAddingToArea] = useState(false);
   const [pendingAreaAssign, setPendingAreaAssign] = useState<{ deptId: string; areaId: string; areaName: string } | null>(null);
   const [countingUnitPickerOpen, setCountingUnitPickerOpen] = useState(false);
+
+  // Merge duplicate picker
+  const [mergePickerOpen, setMergePickerOpen] = useState(false);
+  const [mergePickerSearch, setMergePickerSearch] = useState('');
+  const [mergeSource, setMergeSource] = useState(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   // Import toast
   const [importToast, setImportToast] = useState<string | null>(null);
@@ -468,6 +475,58 @@ export default function ProductsScreen() {
         },
       });
     })();
+  }
+
+  function onStartMerge(p) {
+    setMergeSource(p);
+    setMergePickerSearch('');
+    setMergePickerOpen(true);
+  }
+
+  async function onConfirmProductMerge(target) {
+    if (!venueId || !mergeSource) return;
+    const sourceName = mergeSource.name;
+    const targetName = target.name;
+    setMergeBusy(true);
+    let preview;
+    try {
+      preview = await mergeProducts(venueId, target.id, mergeSource.id, true);
+    } catch (e) {
+      setMergeBusy(false);
+      showError(e?.message || 'Could not preview merge.');
+      return;
+    }
+    setMergeBusy(false);
+    const lines = [`Merge "${sourceName}" into "${targetName}"?\n`, `• ${preview.areaItemsUpdated} area item(s) will be re-pointed`];
+    if (preview.priceHistoryMoved > 0) lines.push(`• ${preview.priceHistoryMoved} price history record(s) will be moved`);
+    if (preview.supplierLinksHandled > 0) lines.push(`• ${preview.supplierLinksHandled} supplier link(s) will be handled`);
+    if (preview.fieldsBackfilled.length > 0) lines.push(`• Fields backfilled: ${preview.fieldsBackfilled.join(', ')}`);
+    if (preview.sameAreaConflicts.length > 0) {
+      lines.push(`\n⚠ ${preview.sameAreaConflicts.length} same-area conflict(s) — will NOT be auto-merged:`);
+      preview.sameAreaConflicts.slice(0, 5).forEach(c => lines.push(`  · ${c.areaName} (${c.departmentName})`));
+      if (preview.sameAreaConflicts.length > 5) lines.push(`  · …and ${preview.sameAreaConflicts.length - 5} more`);
+    }
+    lines.push(`\n"${sourceName}" will be marked inactive. This cannot be undone.`);
+    confirm({
+      title: 'Merge Products',
+      message: lines.join('\n'),
+      confirmLabel: 'Merge',
+      destructive: true,
+      onConfirm: async () => {
+        setMergeBusy(true);
+        try {
+          await mergeProducts(venueId, target.id, mergeSource.id, false);
+          setMergePickerOpen(false);
+          setMergeSource(null);
+          await load();
+          showSuccess(`"${sourceName}" merged into "${targetName}".`);
+        } catch (e) {
+          showError(e?.message || 'Merge failed.');
+        } finally {
+          setMergeBusy(false);
+        }
+      },
+    });
   }
 
   function handleCardAction(action: string) {
@@ -1142,6 +1201,9 @@ export default function ProductsScreen() {
                   <TouchableOpacity style={S.editBtn} onPress={() => onEdit(item)}>
                     <Text style={S.editBtnText}>Edit</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity style={S.mergeBtn} onPress={() => onStartMerge(item)}>
+                    <Text style={S.mergeBtnText}>Merge…</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={S.deleteBtn} onPress={() => onDelete(item)}>
                     <Text style={S.deleteBtnText}>Delete</Text>
                   </TouchableOpacity>
@@ -1221,6 +1283,61 @@ export default function ProductsScreen() {
                 <Text style={{ fontSize: 14, fontWeight: '700', color: '#1b4f72' }}>+ Add new supplier</Text>
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Merge duplicate picker */}
+      <Modal visible={mergePickerOpen} transparent animationType="slide" onRequestClose={() => { setMergePickerOpen(false); setMergeSource(null); }}>
+        <View style={MS.pickerWrap}>
+          <TouchableOpacity style={MS.pickerBackdrop} onPress={() => { setMergePickerOpen(false); setMergeSource(null); }} activeOpacity={1} />
+          <View style={MS.pickerSheet}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>Merge "{mergeSource?.name}" into…</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Select the product to keep</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setMergePickerOpen(false); setMergeSource(null); }} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 18, color: '#64748b', fontWeight: '600' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+              <TextInput
+                value={mergePickerSearch}
+                onChangeText={setMergePickerSearch}
+                placeholder="Search products…"
+                placeholderTextColor="#94a3b8"
+                style={S.searchInput}
+                clearButtonMode="while-editing"
+                autoFocus={false}
+              />
+            </View>
+            {mergeBusy ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#92400e" />
+                <Text style={{ color: '#64748b', fontSize: 13, marginTop: 8 }}>Checking…</Text>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+                {rows
+                  .filter(p => p.id !== mergeSource?.id && (!mergePickerSearch.trim() || (p.name || '').toLowerCase().includes(mergePickerSearch.toLowerCase())))
+                  .map(p => (
+                    <TouchableOpacity
+                      key={p.id}
+                      onPress={() => onConfirmProductMerge(p)}
+                      style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
+                      activeOpacity={0.75}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: '#0f172a' }}>{p.name}</Text>
+                        {p.category ? <Text style={{ fontSize: 12, color: '#64748b' }}>{p.category}</Text> : null}
+                      </View>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e' }}>Keep this →</Text>
+                    </TouchableOpacity>
+                  ))
+                }
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -1424,6 +1541,13 @@ const S = StyleSheet.create({
     borderRadius: 8,
   },
   deleteBtnText: { fontWeight: '700', fontSize: 12, color: '#b91c1c' },
+  mergeBtn: {
+    backgroundColor: '#fef3c7',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  mergeBtnText: { fontWeight: '700', fontSize: 12, color: '#92400e' },
   emptyText: {
     textAlign: 'center',
     color: '#94a3b8',
