@@ -36,7 +36,7 @@ import {
   Supplier,
 } from '../../services/suppliers';
 import { findMatchingSupplier } from '../../services/matching';
-import { runSupplierMigration } from '../../services/productSuppliers';
+import { mergeSuppliers, runSupplierMigration } from '../../services/productSuppliers';
 import { runPhotoOcrJob } from '../../services/ocr/photoOcr';
 import { pickParseAndUploadProductsCsv } from '../../services/imports/pickAndUploadCsv';
 import { AI_BASE_URL } from '../../config/ai';
@@ -92,6 +92,10 @@ export default function SuppliersScreen() {
   const [detailProducts, setDetailProducts] = useState<any[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  const [mergePickerOpen, setMergePickerOpen] = useState(false);
+  const [mergePickerSearch, setMergePickerSearch] = useState('');
+  const [mergeBusy, setMergeBusy] = useState(false);
+
   async function load() {
     if (!venueId) {
       setRows([]);
@@ -145,6 +149,45 @@ export default function SuppliersScreen() {
       setDetailProducts(linked);
     } catch { setDetailProducts([]); }
     finally { setDetailLoading(false); }
+  }
+
+  async function onConfirmMerge(target: Supplier) {
+    if (!venueId || !detailSupplier?.id || !target.id) return;
+    const source = detailSupplier;
+    const mergeId = source.id!;
+    const keepId = target.id!;
+    const sourceName = source.name || '';
+    const targetName = target.name || '';
+    setMergeBusy(true);
+    try {
+      const { productsUpdated: count } = await mergeSuppliers(venueId, keepId, mergeId, true);
+      setMergeBusy(false);
+      confirm({
+        title: 'Merge suppliers?',
+        message: `This will move ${count} product${count !== 1 ? 's' : ''} from "${sourceName}" into "${targetName}". This cannot be undone.`,
+        confirmLabel: 'Merge',
+        destructive: true,
+        onConfirm: async () => {
+          setMergeBusy(true);
+          try {
+            const { productsUpdated: actual } = await mergeSuppliers(venueId, keepId, mergeId);
+            await deleteSupplierById(venueId, mergeId);
+            setDetailOpen(false);
+            setMergePickerOpen(false);
+            setMergePickerSearch('');
+            await load();
+            showSuccess(`${actual} product${actual !== 1 ? 's' : ''} moved from "${sourceName}" to "${targetName}".`);
+          } catch (e: any) {
+            showError(e?.message || 'Merge failed.');
+          } finally {
+            setMergeBusy(false);
+          }
+        },
+      });
+    } catch (e: any) {
+      showError(e?.message || 'Could not count merge targets.');
+      setMergeBusy(false);
+    }
   }
 
   function openNewForm() {
@@ -949,91 +992,151 @@ export default function SuppliersScreen() {
       </Modal>
 
       {/* FIX 4: Supplier detail modal with linked products */}
-      <Modal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
+      <Modal visible={detailOpen} animationType="slide" onRequestClose={() => { setDetailOpen(false); setMergePickerOpen(false); setMergePickerSearch(''); }}>
         <SafeAreaProvider>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top', 'left', 'right']}>
         <View style={{ flex: 1, backgroundColor: '#fff', padding: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <Text style={{ fontSize: 20, fontWeight: '800' }}>{detailSupplier?.name}</Text>
-            <TouchableOpacity onPress={() => setDetailOpen(false)}>
-              <Text style={{ color: '#6B7280', fontWeight: '700' }}>Close</Text>
-            </TouchableOpacity>
-          </View>
-          {detailSupplier?.email && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.email}</Text>}
-          {detailSupplier?.phone && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.phone}</Text>}
-
-          <View style={{ marginTop: 16, flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: '800', marginBottom: 8 }}>
-              Products ({detailProducts.length})
-            </Text>
-            {detailLoading ? (
-              <View style={{ alignItems: 'center', padding: 24 }}>
-                <ActivityIndicator />
-                <Text style={{ color: '#6B7280', marginTop: 8 }}>Loading linked products…</Text>
+          {mergePickerOpen ? (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <Text style={{ fontSize: 20, fontWeight: '800' }}>Merge into…</Text>
+                <TouchableOpacity onPress={() => { setMergePickerOpen(false); setMergePickerSearch(''); }}>
+                  <Text style={{ color: '#6B7280', fontWeight: '700' }}>← Back</Text>
+                </TouchableOpacity>
               </View>
-            ) : detailProducts.length === 0 ? (
-              <Text style={{ color: '#94A3B8', fontSize: 13 }}>
-                No products linked to this supplier yet. As invoices are processed or products are manually linked, they appear here.
+              <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>
+                Select the supplier to keep. "{detailSupplier?.name}" will be deleted and all its products re-assigned to the selected supplier.
               </Text>
-            ) : (
-              <>
-                <View style={{ flexDirection: 'row', gap: 16, marginBottom: 12 }}>
-                  <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#1b4f72' }}>{detailProducts.length}</Text>
-                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Products</Text>
-                  </View>
-                  <View style={{ backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#065f46' }}>
-                      {detailProducts.filter((p: any) => p.primarySupplierId === detailSupplier?.id || (p.supplierId === detailSupplier?.id && !p.primarySupplierId)).length}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Preferred for</Text>
-                  </View>
-                  <View style={{ backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#92400E' }}>
-                      ${detailProducts.filter((p: any) => p.costPrice != null).reduce((sum: number, p: any) => sum + (p.costPrice || 0), 0).toFixed(0)}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: '#6B7280' }}>Total cost</Text>
-                  </View>
+              <TextInput
+                value={mergePickerSearch}
+                onChangeText={setMergePickerSearch}
+                placeholder="Search suppliers…"
+                autoCapitalize="none"
+                style={{ borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#fff', marginBottom: 10 }}
+              />
+              {mergeBusy ? (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator />
+                  <Text style={{ color: '#6B7280', marginTop: 8 }}>Processing…</Text>
                 </View>
+              ) : (
                 <FlatList
                   keyboardShouldPersistTaps="handled"
                   style={{ flex: 1 }}
-                  data={detailProducts}
-                  keyExtractor={(p) => p.id}
-                  ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-                  renderItem={({ item: p }) => (
-                    <View style={{ backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+                  data={rows.filter(s => s.id !== detailSupplier?.id && (!mergePickerSearch.trim() || (s.name || '').toLowerCase().includes(mergePickerSearch.toLowerCase())))}
+                  keyExtractor={(s) => s.id!}
+                  ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#EFEFF4', padding: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                      onPress={() => onConfirmMerge(item)}
+                    >
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: '700' }}>{p.name}</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280' }}>
-                          {p.unit || ''}
-                          {p.costPrice != null ? ` · $${Number(p.costPrice).toFixed(2)}` : ''}
-                        </Text>
+                        <Text style={{ fontWeight: '700' }}>{item.name}</Text>
+                        <Text style={{ opacity: 0.7, marginTop: 2, fontSize: 12 }}>{item.email || item.phone || ''}</Text>
                       </View>
-                      {(p.primarySupplierId === detailSupplier?.id || (!p.primarySupplierId && p.supplierId === detailSupplier?.id)) && (
-                        <Text style={{ fontSize: 14 }}>⭐</Text>
-                      )}
-                    </View>
+                      <Text style={{ color: '#1b4f72', fontWeight: '700', fontSize: 13 }}>Keep this →</Text>
+                    </TouchableOpacity>
                   )}
+                  ListEmptyComponent={
+                    <Text style={{ color: '#94A3B8', textAlign: 'center', marginTop: 20 }}>
+                      {mergePickerSearch.trim() ? 'No suppliers match.' : 'No other suppliers.'}
+                    </Text>
+                  }
                 />
-              </>
-            )}
-          </View>
+              )}
+            </>
+          ) : (
+            <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <Text style={{ fontSize: 20, fontWeight: '800' }}>{detailSupplier?.name}</Text>
+                <TouchableOpacity onPress={() => setDetailOpen(false)}>
+                  <Text style={{ color: '#6B7280', fontWeight: '700' }}>Close</Text>
+                </TouchableOpacity>
+              </View>
+              {detailSupplier?.email && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.email}</Text>}
+              {detailSupplier?.phone && <Text style={{ color: '#6B7280', fontSize: 13 }}>{detailSupplier.phone}</Text>}
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-            <TouchableOpacity
-              style={[styles.primary, { flex: 1 }]}
-              onPress={() => { setDetailOpen(false); openEditForm(detailSupplier!); }}
-            >
-              <Text style={styles.primaryText}>Edit supplier</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.primary, { flex: 1, backgroundColor: '#065f46' }]}
-              onPress={() => { setDetailOpen(false); nav.navigate('SupplierSpend', { supplierId: detailSupplier?.id }); }}
-            >
-              <Text style={styles.primaryText}>📊 Spend report</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={{ marginTop: 16, flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', marginBottom: 8 }}>
+                  Products ({detailProducts.length})
+                </Text>
+                {detailLoading ? (
+                  <View style={{ alignItems: 'center', padding: 24 }}>
+                    <ActivityIndicator />
+                    <Text style={{ color: '#6B7280', marginTop: 8 }}>Loading linked products…</Text>
+                  </View>
+                ) : detailProducts.length === 0 ? (
+                  <Text style={{ color: '#94A3B8', fontSize: 13 }}>
+                    No products linked to this supplier yet. As invoices are processed or products are manually linked, they appear here.
+                  </Text>
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', gap: 16, marginBottom: 12 }}>
+                      <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#1b4f72' }}>{detailProducts.length}</Text>
+                        <Text style={{ fontSize: 11, color: '#6B7280' }}>Products</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#F0FDF4', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#065f46' }}>
+                          {detailProducts.filter((p: any) => p.primarySupplierId === detailSupplier?.id || (p.supplierId === detailSupplier?.id && !p.primarySupplierId)).length}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#6B7280' }}>Preferred for</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#FFFBEB', borderRadius: 10, padding: 10, flex: 1, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: '#92400E' }}>
+                          ${detailProducts.filter((p: any) => p.costPrice != null).reduce((sum: number, p: any) => sum + (p.costPrice || 0), 0).toFixed(0)}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#6B7280' }}>Total cost</Text>
+                      </View>
+                    </View>
+                    <FlatList
+                      keyboardShouldPersistTaps="handled"
+                      style={{ flex: 1 }}
+                      data={detailProducts}
+                      keyExtractor={(p) => p.id}
+                      ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+                      renderItem={({ item: p }) => (
+                        <View style={{ backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontWeight: '700' }}>{p.name}</Text>
+                            <Text style={{ fontSize: 12, color: '#6B7280' }}>
+                              {p.unit || ''}
+                              {p.costPrice != null ? ` · $${Number(p.costPrice).toFixed(2)}` : ''}
+                            </Text>
+                          </View>
+                          {(p.primarySupplierId === detailSupplier?.id || (!p.primarySupplierId && p.supplierId === detailSupplier?.id)) && (
+                            <Text style={{ fontSize: 14 }}>⭐</Text>
+                          )}
+                        </View>
+                      )}
+                    />
+                  </>
+                )}
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity
+                  style={[styles.primary, { flex: 1 }]}
+                  onPress={() => { setDetailOpen(false); openEditForm(detailSupplier!); }}
+                >
+                  <Text style={styles.primaryText}>Edit supplier</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primary, { flex: 1, backgroundColor: '#065f46' }]}
+                  onPress={() => { setDetailOpen(false); nav.navigate('SupplierSpend', { supplierId: detailSupplier?.id }); }}
+                >
+                  <Text style={styles.primaryText}>📊 Spend report</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primary, { flex: 1, backgroundColor: '#92400E' }]}
+                  onPress={() => { setMergePickerSearch(''); setMergePickerOpen(true); }}
+                >
+                  <Text style={styles.primaryText}>Merge…</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
         </SafeAreaView>
         </SafeAreaProvider>
