@@ -644,6 +644,13 @@ function StockTakeAreaInventoryScreen() {
   const [batchAddToast, setBatchAddToast] = useState<string | null>(null);
   const [photoModalBarcode, setPhotoModalBarcode] = useState<string | null>(null);
 
+  // Delete-or-move item modal
+  const [deleteOrMoveItem, setDeleteOrMoveItem] = useState<Item | null>(null);
+  const [movePickerOpen, setMovePickerOpen] = useState(false);
+  const [moveAreasList, setMoveAreasList] = useState<{ deptId: string; deptName: string; areas: { id: string; name: string }[] }[] | null>(null);
+  const [moveQ, setMoveQ] = useState('');
+  const [moveBusy, setMoveBusy] = useState(false);
+
   // Unified search
   const [unifiedSearch, setUnifiedSearch] = useState('');
   const [venueProducts, setVenueProducts] = useState<any[]>([]);
@@ -2031,17 +2038,53 @@ const qty = parseFloat(typed);
   }
 };
 
-  const removeItem = (itemId: string) => {
-    confirm({
-      title: 'Delete item',
-      message: 'This cannot be undone.',
-      confirmLabel: 'Delete',
-      destructive: true,
-      onConfirm: async () => {
-        try { await deleteDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',itemId)); }
-        catch (e:any) { toastService.error(e?.message ?? 'Could not delete.'); }
-      },
-    });
+  const doDelete = async (itemId: string) => {
+    try { await deleteDoc(doc(db,'venues',venueId!,'departments',departmentId,'areas',areaId,'items',itemId)); }
+    catch (e:any) { toastService.error(e?.message ?? 'Could not delete.'); }
+  };
+
+  const openDeleteOrMove = (item: Item) => {
+    setDeleteOrMoveItem(item);
+    setMovePickerOpen(false);
+    setMoveQ('');
+  };
+
+  const loadMoveAreas = async () => {
+    if (!venueId) return;
+    try {
+      const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+      const list: { deptId: string; deptName: string; areas: { id: string; name: string }[] }[] = [];
+      for (const deptDoc of deptsSnap.docs) {
+        const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+        const areas = areasSnap.docs
+          .filter(a => !(deptDoc.id === departmentId && a.id === areaId))
+          .map(a => ({ id: a.id, name: (a.data() as any).name || a.id }));
+        if (areas.length > 0) list.push({ deptId: deptDoc.id, deptName: (deptDoc.data() as any).name || deptDoc.id, areas });
+      }
+      setMoveAreasList(list);
+    } catch (e: any) {
+      toastService.error(e?.message ?? 'Could not load areas.');
+    }
+  };
+
+  const doMoveItem = async (item: Item, targetDeptId: string, targetAreaId: string, targetAreaName: string) => {
+    if (!venueId) return;
+    setMoveBusy(true);
+    try {
+      const snap = await getDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', item.id));
+      if (!snap.exists()) throw new Error('Item no longer exists.');
+      await addDoc(
+        collection(db, 'venues', venueId, 'departments', targetDeptId, 'areas', targetAreaId, 'items'),
+        { ...snap.data(), updatedAt: serverTimestamp() },
+      );
+      await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', item.id));
+      setDeleteOrMoveItem(null);
+      showSuccess(`Moved to ${targetAreaName}`);
+    } catch (e: any) {
+      toastService.error(e?.message ?? 'Move failed.');
+    } finally {
+      setMoveBusy(false);
+    }
   };
 
   const openAdjustment = (item: Item) => { setAdjModalFor(item); setAdjQty(''); setAdjReason(''); };
@@ -4003,7 +4046,7 @@ const openHistory = throttleAction(async (item: Item) => {
             <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openEditItem(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#F3F4F6', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#111827' }}>Edit item</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={()=>{ const id = menuFor!.id; setMenuFor(null); removeItem(id); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEE2E2', marginBottom:8 }}>
+            <TouchableOpacity onPress={()=>{ const it = menuFor!; setMenuFor(null); openDeleteOrMove(it); }} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, backgroundColor:'#FEE2E2', marginBottom:8 }}>
               <Text style={{ fontWeight:'800', color:'#991B1B' }}>Delete item</Text>
             </TouchableOpacity>
             <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
@@ -4011,6 +4054,113 @@ const openHistory = throttleAction(async (item: Item) => {
                 <Text style={{ textAlign:'center', fontWeight:'800', color:'#374151' }}>Close</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete or Move item */}
+      <Modal
+        visible={!!deleteOrMoveItem}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { if (!moveBusy) { setDeleteOrMoveItem(null); setMovePickerOpen(false); } }}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => { if (!moveBusy) { setDeleteOrMoveItem(null); setMovePickerOpen(false); } }} />
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32 }}>
+            {!movePickerOpen ? (
+              <>
+                <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                  <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a' }}>Remove "{deleteOrMoveItem?.name}" from this area?</Text>
+                  <Text style={{ fontSize: 14, color: '#6b7280', marginTop: 6, lineHeight: 20 }}>Deleting removes its count history permanently.</Text>
+                </View>
+                <View style={{ padding: 16, gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => { setMovePickerOpen(true); setMoveAreasList(null); loadMoveAreas(); }}
+                    style={{ backgroundColor: '#eff6ff', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12 }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#1d4ed8', fontSize: 15 }}>Move to another area →</Text>
+                    <Text style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>Count history moves with it</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => { const id = deleteOrMoveItem!.id; setDeleteOrMoveItem(null); await doDelete(id); }}
+                    style={{ backgroundColor: '#fef2f2', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12 }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#b91c1c', fontSize: 15 }}>Delete anyway</Text>
+                    <Text style={{ color: '#6b7280', fontSize: 13, marginTop: 2 }}>Permanently removes from this area</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => { setDeleteOrMoveItem(null); setMovePickerOpen(false); }}
+                    style={{ paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#f1f5f9' }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#374151', fontSize: 15, textAlign: 'center' }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                  <TouchableOpacity onPress={() => setMovePickerOpen(false)} style={{ paddingRight: 12 }}>
+                    <Text style={{ fontSize: 15, color: '#1d4ed8', fontWeight: '700' }}>← Back</Text>
+                  </TouchableOpacity>
+                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '800', color: '#0f172a' }}>Move to…</Text>
+                  <TouchableOpacity onPress={() => { setDeleteOrMoveItem(null); setMovePickerOpen(false); }} style={{ padding: 6 }}>
+                    <Text style={{ fontSize: 18, color: '#64748b', fontWeight: '600' }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+                  <TextInput
+                    value={moveQ}
+                    onChangeText={setMoveQ}
+                    placeholder="Search areas…"
+                    placeholderTextColor="#94a3b8"
+                    style={{ backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 }}
+                    clearButtonMode="while-editing"
+                  />
+                </View>
+                {moveBusy ? (
+                  <View style={{ padding: 32, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#1d4ed8" />
+                    <Text style={{ color: '#64748b', fontSize: 13, marginTop: 8 }}>Moving…</Text>
+                  </View>
+                ) : moveAreasList === null ? (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#94a3b8" />
+                  </View>
+                ) : (
+                  <ScrollView contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+                    {(() => {
+                      const depts = moveAreasList
+                        .map(d => ({ ...d, areas: d.areas.filter(a => !moveQ.trim() || a.name.toLowerCase().includes(moveQ.toLowerCase())) }))
+                        .filter(d => d.areas.length > 0);
+                      if (depts.length === 0) return (
+                        <Text style={{ textAlign: 'center', color: '#94a3b8', padding: 24, fontSize: 14 }}>
+                          {moveQ.trim() ? 'No areas match.' : 'No other areas available.'}
+                        </Text>
+                      );
+                      return depts.map(dept => (
+                        <View key={dept.deptId}>
+                          <Text style={{ paddingHorizontal: 16, paddingVertical: 8, fontSize: 11, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {dept.deptName}
+                          </Text>
+                          {dept.areas.map(area => (
+                            <TouchableOpacity
+                              key={area.id}
+                              onPress={() => doMoveItem(deleteOrMoveItem!, dept.deptId, area.id, area.name)}
+                              style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center' }}
+                              activeOpacity={0.75}
+                            >
+                              <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: '#0f172a' }}>{area.name}</Text>
+                              <Text style={{ fontSize: 18, color: '#cbd5e1' }}>›</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ));
+                    })()}
+                  </ScrollView>
+                )}
+              </>
+            )}
           </View>
         </View>
       </Modal>
