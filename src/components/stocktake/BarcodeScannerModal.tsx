@@ -16,6 +16,7 @@ import {
   setDoc, where,
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
 import { useToast } from '../common/Toast';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -146,9 +147,13 @@ export default function BarcodeScannerModal({
         const d = venueDocs[0];
         const p = { id: d.id, ...(d.data() as any) } as VenueProduct;
         setVenueProduct(p);
-        const inArea = areaItems.some(
-          item => item.productId === d.id || item.name?.toLowerCase() === p.name?.toLowerCase()
-        );
+        const inArea = areaItems.some(item => {
+          if (item.productId === d.id) return true;
+          if (item.name?.toLowerCase() === p.name?.toLowerCase()) return true;
+          if (!item.name || !p.name) return false;
+          const score = overlapCoefficient(item.name, p.name);
+          return isReliableMatch(tokenizeForMatching(item.name), tokenizeForMatching(p.name), score);
+        });
         if (inArea) {
           onClose();
           onFocusItem?.(p.id);
