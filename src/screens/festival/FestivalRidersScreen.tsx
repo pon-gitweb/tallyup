@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { ref, uploadString } from 'firebase/storage';
 import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth, storage } from '../../services/firebase';

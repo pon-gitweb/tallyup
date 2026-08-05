@@ -3,7 +3,7 @@
 // The duplicate at src/screens/imports/ProductsCsvImportScreen.tsx has been removed.
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import { getApp } from 'firebase/app';

@@ -38,7 +38,7 @@ import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
-import * as FS from 'expo-file-system';
+import * as FS from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as ImagePicker from 'expo-image-picker';
 import { aiUrl } from '../../config/ai';

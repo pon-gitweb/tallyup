@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { NormalizedSalesReport, NormalizedSalesLine } from './types';
 
 // Derive the Cloud Functions base from EXPO_PUBLIC_AI_URL.

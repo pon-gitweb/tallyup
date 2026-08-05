@@ -15,7 +15,7 @@ import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import * as Print from 'expo-print';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 const SORT_KEY = 'tallyup_stock_holding_sort_v1';

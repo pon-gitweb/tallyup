@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getAuth } from 'firebase/auth';
 import { AI_BASE_URL } from '../../config/ai';
 import { useToast } from '../common/Toast';

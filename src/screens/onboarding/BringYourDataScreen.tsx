@@ -14,7 +14,7 @@ import {
   writeBatch, getFirestore, getDocs,
 } from 'firebase/firestore';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
