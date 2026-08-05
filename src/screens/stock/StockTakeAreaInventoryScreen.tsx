@@ -1688,6 +1688,19 @@ function StockTakeAreaInventoryScreen() {
     }, 200);
   };
 
+  const focusItem = (productId: string) => {
+    setUnifiedSearch('');
+    const idx = filtered.findIndex(x => x.productId === productId);
+    if (idx === -1) return;
+    const areaItemId = filtered[idx].id;
+    setTimeout(() => inputRefs.current[areaItemId]?.focus?.(), 80);
+    setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+      } catch {}
+    }, 200);
+  };
+
   const ensureAreaStarted = async () => {
     if (startedAtMs) return;
     try {
@@ -4576,6 +4589,7 @@ const openHistory = throttleAction(async (item: Item) => {
           setAddingBarcode(barcode);
           setQuickAddSheetOpen(true);
         }}
+        onFocusItem={focusItem}
         onBeforeAddToArea={(product, write) => {
           setBarcodeScanOpen(false);
           setTimeout(() => {

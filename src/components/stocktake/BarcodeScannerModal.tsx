@@ -49,13 +49,14 @@ export type Props = {
   onManualEntry?: (barcode: string) => void;
   // Optional: parent intercepts add to show counting unit picker
   onBeforeAddToArea?: (product: VenueProduct & { caseSize?: number | null }, write: (extras: { countingUnit: string; caseSize: number | null }) => Promise<void>) => void;
+  onFocusItem?: (productId: string) => void;
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function BarcodeScannerModal({
   visible, onClose, venueId, departmentId, areaId,
-  areaItems, onProductAddedToArea, onOpenPhotoModal, onManualEntry, onBeforeAddToArea,
+  areaItems, onProductAddedToArea, onOpenPhotoModal, onManualEntry, onBeforeAddToArea, onFocusItem,
 }: Props) {
   const { showError } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
@@ -148,7 +149,12 @@ export default function BarcodeScannerModal({
         const inArea = areaItems.some(
           item => item.productId === d.id || item.name?.toLowerCase() === p.name?.toLowerCase()
         );
-        setPhase(inArea ? 'inArea' : 'inVenueNotArea');
+        if (inArea) {
+          onClose();
+          onFocusItem?.(p.id);
+          return;
+        }
+        setPhase('inVenueNotArea');
         return;
       }
 
@@ -354,22 +360,6 @@ export default function BarcodeScannerModal({
         <View style={S.resultCard}>
           <ActivityIndicator color="#1b4f72" size="large" />
           <Text style={S.resultBody}>Found it! Checking…</Text>
-        </View>
-      );
-    }
-
-    if (phase === 'inArea' && venueProduct) {
-      return (
-        <View style={S.resultCard}>
-          <Text style={S.resultTag}>✓ Already in this area</Text>
-          <Text style={S.resultName}>{venueProduct.name}</Text>
-          <Text style={S.resultSub}>{[venueProduct.brand, venueProduct.size].filter(Boolean).join(' · ')}</Text>
-          <Text style={[S.resultBody, { color: '#6b7280', marginTop: 8 }]}>
-            Use the stepper or input in the list below to update your count.
-          </Text>
-          <TouchableOpacity style={S.btnPrimary} onPress={onClose}>
-            <Text style={S.btnPrimaryText}>Got it</Text>
-          </TouchableOpacity>
         </View>
       );
     }
