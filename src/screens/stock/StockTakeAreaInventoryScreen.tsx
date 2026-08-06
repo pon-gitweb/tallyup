@@ -38,7 +38,7 @@ import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import AS from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
-import * as FS from 'expo-file-system';
+import * as FS from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as ImagePicker from 'expo-image-picker';
 import { aiUrl } from '../../config/ai';
@@ -52,6 +52,8 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
 import { matchProductInList } from '../../services/matching';
+import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
+import { captureError } from '../../services/crashReporting';
 import { ScaleService } from '../../services/scale/ScaleService';
 import { toBaseUnit } from '../../services/units';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
@@ -1695,9 +1697,16 @@ function StockTakeAreaInventoryScreen() {
     }, 200);
   };
 
-  const focusItem = (productId: string) => {
+  const focusItem = (productId: string, productName?: string) => {
     setUnifiedSearch('');
-    const idx = filtered.findIndex(x => x.productId === productId);
+    const idx = filtered.findIndex(x => {
+      if (x.productId === productId) return true;
+      if (!productName) return false;
+      if (x.name?.toLowerCase() === productName.toLowerCase()) return true;
+      if (!x.name) return false;
+      const score = overlapCoefficient(x.name, productName);
+      return isReliableMatch(tokenizeForMatching(x.name), tokenizeForMatching(productName), score);
+    });
     if (idx === -1) return;
     const areaItemId = filtered[idx].id;
     setTimeout(() => inputRefs.current[areaItemId]?.focus?.(), 80);
@@ -3038,7 +3047,14 @@ const openHistory = throttleAction(async (item: Item) => {
         venueProductId = prodRef.id;
       }
     } catch (e: any) {
-      console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', e?.message);
+      console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', {
+        code: e?.code,
+        message: e?.message,
+        displayName,
+        barcode,
+      });
+      captureError(e, 'handleProductPhotoConfirm:venueProductWrite');
+      showError("Product couldn't be linked to its barcode — the count has been saved. Re-scan or add it manually from the Products list if needed.");
     }
 
     await addDoc(

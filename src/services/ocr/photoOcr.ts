@@ -7,7 +7,7 @@
 
 import { getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { handleAiLimitError } from '../../utils/aiLimitError';
 
 type RunArgs = {

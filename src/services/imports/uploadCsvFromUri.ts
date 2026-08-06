@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getApp } from 'firebase/app';
 import { getStorage, ref, uploadString } from 'firebase/storage';
 

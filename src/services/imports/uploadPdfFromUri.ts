@@ -1,5 +1,5 @@
 // Expo-safe PDF upload helper: never uses Blob/ArrayBuffer on client.
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getStorage, ref, uploadString, getDownloadURL } from 'firebase/storage';
 
 // Example path: `venues/${venueId}/orders/${orderId}/invoices/${Date.now()}.pdf`

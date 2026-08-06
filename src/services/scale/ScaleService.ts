@@ -229,6 +229,7 @@ class ScaleServiceClass {
         this.emitStatus('disconnected');
       });
     } catch (e: any) {
+      console.log('[ScaleService] connect failed', e);
       this.emitStatus('error');
       throw new Error('Could not connect: ' + (e?.message || String(e)));
     }

@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getAuth } from 'firebase/auth';
 
 const FALLBACK_BASE = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api';

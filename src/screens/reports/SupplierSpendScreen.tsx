@@ -5,7 +5,7 @@ import {
   TextInput, TouchableOpacity, View,
 } from 'react-native';
 import * as Print from 'expo-print';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
