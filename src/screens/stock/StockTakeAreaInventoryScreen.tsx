@@ -3038,7 +3038,13 @@ const openHistory = throttleAction(async (item: Item) => {
         venueProductId = prodRef.id;
       }
     } catch (e: any) {
-      console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', e?.message);
+      console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', {
+        code: e?.code,
+        message: e?.message,
+        displayName,
+        barcode,
+      });
+      showError("Product couldn't be linked to its barcode — the count has been saved. Re-scan or add it manually from the Products list if needed.");
     }
 
     await addDoc(
