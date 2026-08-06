@@ -52,6 +52,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
 import { matchProductInList } from '../../services/matching';
+import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
 import { ScaleService } from '../../services/scale/ScaleService';
 import { toBaseUnit } from '../../services/units';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
@@ -1695,9 +1696,16 @@ function StockTakeAreaInventoryScreen() {
     }, 200);
   };
 
-  const focusItem = (productId: string) => {
+  const focusItem = (productId: string, productName?: string) => {
     setUnifiedSearch('');
-    const idx = filtered.findIndex(x => x.productId === productId);
+    const idx = filtered.findIndex(x => {
+      if (x.productId === productId) return true;
+      if (!productName) return false;
+      if (x.name?.toLowerCase() === productName.toLowerCase()) return true;
+      if (!x.name) return false;
+      const score = overlapCoefficient(x.name, productName);
+      return isReliableMatch(tokenizeForMatching(x.name), tokenizeForMatching(productName), score);
+    });
     if (idx === -1) return;
     const areaItemId = filtered[idx].id;
     setTimeout(() => inputRefs.current[areaItemId]?.focus?.(), 80);

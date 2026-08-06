@@ -50,7 +50,7 @@ export type Props = {
   onManualEntry?: (barcode: string) => void;
   // Optional: parent intercepts add to show counting unit picker
   onBeforeAddToArea?: (product: VenueProduct & { caseSize?: number | null }, write: (extras: { countingUnit: string; caseSize: number | null }) => Promise<void>) => void;
-  onFocusItem?: (productId: string) => void;
+  onFocusItem?: (productId: string, productName: string) => void;
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ export default function BarcodeScannerModal({
         });
         if (inArea) {
           onClose();
-          onFocusItem?.(p.id);
+          onFocusItem?.(p.id, p.name);
           return;
         }
         setPhase('inVenueNotArea');
