@@ -46,14 +46,22 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Hosti uses Bluetooth to connect to compatible scales for weighing stock during stocktakes.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Hosti-Stock connects to Bluetooth scales for automatic weight-based stock counting.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Hosti uses your camera to scan barcodes and photograph invoices and products.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Hosti-Stock may use your location for delivery and venue features.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hosti uses your microphone for voice counting during stocktake.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Hosti needs access to your photos to upload invoices and shelf scans.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hosti uses speech recognition to let you count stock by speaking numbers out loud.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

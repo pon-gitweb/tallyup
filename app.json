@@ -27,7 +27,6 @@
         "NSSpeechRecognitionUsageDescription": "Hosti uses speech recognition to let you count stock by speaking numbers out loud.",
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
-          "remote-notification",
           "remote-notification"
         ]
       }
@@ -41,15 +40,6 @@
       "edgeToEdgeEnabled": true,
       "package": "com.hostistock.tallyup",
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.BLUETOOTH",
