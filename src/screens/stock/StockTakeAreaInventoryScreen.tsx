@@ -53,6 +53,7 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
 import { matchProductInList } from '../../services/matching';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
+import { captureError } from '../../services/crashReporting';
 import { ScaleService } from '../../services/scale/ScaleService';
 import { toBaseUnit } from '../../services/units';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
@@ -3052,6 +3053,7 @@ const openHistory = throttleAction(async (item: Item) => {
         displayName,
         barcode,
       });
+      captureError(e, 'handleProductPhotoConfirm:venueProductWrite');
       showError("Product couldn't be linked to its barcode — the count has been saved. Re-scan or add it manually from the Products list if needed.");
     }
 
