@@ -1264,14 +1264,30 @@ app.post("/photo-count", async (req, res) => {
 const stripeKey = process.env.STRIPE_SECRET_KEY;
 const stripe = stripeKey ? new Stripe(stripeKey, { apiVersion: "2026-04-22.dahlia" as any }) : null;
 
+// Resolves a Stripe price ID from either a raw price_... ID or a stable lookup key.
+// Accepts either form so callers can be written once against lookup keys and keep working
+// unchanged when live-mode prices are created with the same key strings.
+// Throws with a descriptive message if the key has no matching active price.
+async function resolvePriceId(stripeClient: any, priceId?: string, lookupKey?: string): Promise<string> {
+  if (priceId) return priceId;
+  if (lookupKey) {
+    const prices = await stripeClient.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
+    if (prices.data.length === 0) {
+      throw new Error(`No active price found for lookup key: ${lookupKey}`);
+    }
+    return prices.data[0].id;
+  }
+  throw new Error("Either priceId or lookupKey must be provided");
+}
+
 // POST /stripe/create-checkout-session
 app.post("/stripe/create-checkout-session", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { venueId, priceId, successUrl, cancelUrl, quantity: rawQuantity } = req.body || {};
-    if (!venueId || !priceId || !successUrl || !cancelUrl) {
-      res.status(400).json({ ok: false, error: "Missing venueId, priceId, successUrl, or cancelUrl" });
+    const { venueId, priceId, lookupKey, successUrl, cancelUrl, quantity: rawQuantity } = req.body || {};
+    if (!venueId || (!priceId && !lookupKey) || !successUrl || !cancelUrl) {
+      res.status(400).json({ ok: false, error: "Missing venueId, successUrl, or cancelUrl; and either priceId or lookupKey" });
       return;
     }
     // Validate quantity: must be a positive integer; default to 1 if absent or invalid.
@@ -1279,13 +1295,20 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       ? rawQuantity
       : 1;
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
+    let resolvedPriceId: string;
+    try {
+      resolvedPriceId = await resolvePriceId(stripe, priceId, lookupKey);
+    } catch (e: any) {
+      res.status(400).json({ ok: false, error: e?.message || "Invalid priceId or lookupKey" });
+      return;
+    }
     const db = admin.firestore();
     const venueSnap = await db.doc(`venues/${venueId}`).get();
     const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity }],
+      line_items: [{ price: resolvedPriceId, quantity }],
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: venueId,
@@ -1309,9 +1332,9 @@ app.post("/stripe/add-subscription-item", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { venueId, priceId, quantity: rawQuantity } = req.body || {};
-    if (!venueId || !priceId) {
-      res.status(400).json({ ok: false, error: "Missing venueId or priceId" });
+    const { venueId, priceId, lookupKey, quantity: rawQuantity } = req.body || {};
+    if (!venueId || (!priceId && !lookupKey)) {
+      res.status(400).json({ ok: false, error: "Missing venueId; and either priceId or lookupKey" });
       return;
     }
     // Validate quantity: must be a positive integer; default to 1 if absent or invalid.
@@ -1319,6 +1342,13 @@ app.post("/stripe/add-subscription-item", async (req, res) => {
       ? rawQuantity
       : 1;
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
+    let resolvedPriceId: string;
+    try {
+      resolvedPriceId = await resolvePriceId(stripe, priceId, lookupKey);
+    } catch (e: any) {
+      res.status(400).json({ ok: false, error: e?.message || "Invalid priceId or lookupKey" });
+      return;
+    }
     const db = admin.firestore();
     const venueSnap = await db.doc(`venues/${venueId}`).get();
     const sub = venueSnap.data()?.subscription;
@@ -1335,7 +1365,7 @@ app.post("/stripe/add-subscription-item", async (req, res) => {
     // Retrieve current subscription to inspect existing items.
     const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
     const existingItem = (stripeSub.items?.data || []).find(
-      (item: any) => item.price?.id === priceId
+      (item: any) => item.price?.id === resolvedPriceId
     );
     if (existingItem) {
       // Price already on the subscription — update quantity if it differs, else reject.
@@ -1344,7 +1374,7 @@ app.post("/stripe/add-subscription-item", async (req, res) => {
           items: [{ id: existingItem.id, quantity }],
         });
         console.log("[api/stripe/add-subscription-item] quantity updated", {
-          uid, venueId, priceId, quantity, subscriptionId: stripeSubscriptionId,
+          uid, venueId, priceId: resolvedPriceId, quantity, subscriptionId: stripeSubscriptionId,
         });
         res.json({ ok: true, subscriptionId: stripeSubscriptionId });
       } else {
@@ -1356,10 +1386,10 @@ app.post("/stripe/add-subscription-item", async (req, res) => {
     // line item and leaves all existing items untouched (confirmed: SubscriptionUpdateParams.Item
     // uses id to select an existing item; omitting id signals a new addition, not a replacement).
     await stripe.subscriptions.update(stripeSubscriptionId, {
-      items: [{ price: priceId, quantity }],
+      items: [{ price: resolvedPriceId, quantity }],
     });
     console.log("[api/stripe/add-subscription-item] OK", {
-      uid, venueId, priceId, quantity, subscriptionId: stripeSubscriptionId,
+      uid, venueId, priceId: resolvedPriceId, quantity, subscriptionId: stripeSubscriptionId,
     });
     res.json({ ok: true, subscriptionId: stripeSubscriptionId });
   } catch (e: any) {
