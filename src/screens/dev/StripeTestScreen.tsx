@@ -52,12 +52,11 @@ function StripeTestScreen() {
       const result = await createCheckout({
         uid,
         venueId,
-        plan: 'monthly',
         priceId: PRICE_ID,
         successUrl: RETURN_URL,
         cancelUrl: RETURN_URL,
       });
-      const url = result.url || result.checkoutUrl;
+      const url = result.url;
       if (url) {
         await Linking.openURL(url);
       } else {

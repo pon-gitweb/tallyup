@@ -21,11 +21,10 @@ export async function validatePromoCode(params: { uid: string; venueId: string; 
 export async function createCheckout(params: {
   uid: string;
   venueId: string;
-  plan: "monthly" | "yearly";
-  promoCode?: string | null;
-  priceId?: string;
-  successUrl?: string;
-  cancelUrl?: string;
+  priceId: string;
+  successUrl: string;
+  cancelUrl: string;
+  quantity?: number;
 }) {
   const idToken = await getAuth().currentUser?.getIdToken();
   const resp = await fetch(`${AI_BASE_URL}/api/stripe/create-checkout-session`, {
@@ -36,7 +35,26 @@ export async function createCheckout(params: {
   const data = await resp.json().catch(() => null);
   if (resp.status === 503) throw new Error(BILLING_NOT_ACTIVE_MSG);
   if (!resp.ok) throw new Error(data?.error || data?.message || `Checkout failed (${resp.status})`);
-  return data as { ok: boolean; promoApplied?: boolean; amountCents?: number; checkoutUrl?: string | null; url?: string | null };
+  return data as { ok: boolean; sessionId?: string; url?: string | null };
+}
+
+/** POST /api/stripe/add-subscription-item → { ok, subscriptionId } */
+export async function addSubscriptionItem(params: {
+  uid: string;
+  venueId: string;
+  priceId: string;
+  quantity?: number;
+}) {
+  const idToken = await getAuth().currentUser?.getIdToken();
+  const resp = await fetch(`${AI_BASE_URL}/api/stripe/add-subscription-item`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(params),
+  });
+  const data = await resp.json().catch(() => null);
+  if (resp.status === 503) throw new Error(BILLING_NOT_ACTIVE_MSG);
+  if (!resp.ok) throw new Error(data?.error || data?.message || `Add subscription item failed (${resp.status})`);
+  return data as { ok: boolean; subscriptionId?: string };
 }
 
 /** GET /api/stripe/portal?venueId=...&returnUrl=... → { ok, url } */

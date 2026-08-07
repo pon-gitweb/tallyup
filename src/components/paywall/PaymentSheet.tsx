@@ -63,17 +63,11 @@ export default function PaymentSheet(props: Props) {
         }
       }
 
-      // 2) Checkout path (stub)
-      const c = await createCheckout({ uid, venueId, plan, promoCode: promo || null });
+      // 2) Checkout path — TODO: replace stubs with real priceId/successUrl/cancelUrl from caller
+      // (plan selection UI migrates to the new per-price Stripe flow; this component needs props wired)
+      const c = await createCheckout({ uid, venueId, priceId: '', successUrl: '', cancelUrl: '' });
       if (!c.ok) throw new Error("Checkout failed.");
-      if (c.promoApplied && (c.amountCents ?? 0) === 0 && !c.checkoutUrl) {
-        const { entitled } = await fetchEntitlement(venueId);
-        notifyUnlocked(!!entitled);
-        showSuccess('✓ AI features unlocked.');
-        onClose();
-        return;
-      }
-      const url = c.checkoutUrl;
+      const url = c.url;
       if (!url) throw new Error("No checkout URL returned.");
       const ok = await Linking.openURL(url).catch(() => false);
       if (!ok) throw new Error("Could not open checkout.");
