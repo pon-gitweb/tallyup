@@ -1323,7 +1323,7 @@ app.post("/stripe/webhook", async (req, res) => {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as any;
       const venueId = session.client_reference_id || (session.metadata as any)?.venueId;
-      if (venueId) {
+      if (venueId && session.mode === "subscription") {
         let subData: any = null;
         if (session.subscription) {
           try { subData = await stripe.subscriptions.retrieve(session.subscription as string); } catch {}
@@ -1342,6 +1342,8 @@ app.post("/stripe/webhook", async (req, res) => {
           },
         }, { merge: true });
         console.log("[api/stripe/webhook] checkout.session.completed", { venueId });
+      } else if (venueId && session.mode === "payment") {
+        console.log("[api/stripe/webhook] one-off payment completed (not yet processed)", { venueId, sessionId: session.id });
       }
     } else if (event.type === "customer.subscription.updated") {
       const sub = event.data.object as any;
