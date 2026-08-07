@@ -1300,6 +1300,74 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
   }
 });
 
+// POST /stripe/add-subscription-item
+// Adds a new price (module) to an existing active Stripe subscription, or updates its quantity
+// if it is already present. Enforces "Core required first" — returns 400 if no active
+// subscription exists yet. Does not write to Firestore directly; the customer.subscription.updated
+// webhook fires automatically and recomputes plan/modules from the full current item list.
+app.post("/stripe/add-subscription-item", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, priceId, quantity: rawQuantity } = req.body || {};
+    if (!venueId || !priceId) {
+      res.status(400).json({ ok: false, error: "Missing venueId or priceId" });
+      return;
+    }
+    // Validate quantity: must be a positive integer; default to 1 if absent or invalid.
+    const quantity = (typeof rawQuantity === "number" && Number.isInteger(rawQuantity) && rawQuantity >= 1)
+      ? rawQuantity
+      : 1;
+    if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
+    const db = admin.firestore();
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const sub = venueSnap.data()?.subscription;
+    const stripeSubscriptionId: string | undefined = sub?.stripeSubscriptionId;
+    const subStatus: string | undefined = sub?.status;
+    // Enforce Core-first: a module can only be added to an existing active subscription.
+    if (!stripeSubscriptionId || (subStatus !== "active" && subStatus !== "trialing")) {
+      res.status(400).json({
+        ok: false,
+        error: "No active subscription found. Subscribe to Core first before adding modules.",
+      });
+      return;
+    }
+    // Retrieve current subscription to inspect existing items.
+    const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    const existingItem = (stripeSub.items?.data || []).find(
+      (item: any) => item.price?.id === priceId
+    );
+    if (existingItem) {
+      // Price already on the subscription — update quantity if it differs, else reject.
+      if (rawQuantity !== undefined && existingItem.quantity !== quantity) {
+        await stripe.subscriptions.update(stripeSubscriptionId, {
+          items: [{ id: existingItem.id, quantity }],
+        });
+        console.log("[api/stripe/add-subscription-item] quantity updated", {
+          uid, venueId, priceId, quantity, subscriptionId: stripeSubscriptionId,
+        });
+        res.json({ ok: true, subscriptionId: stripeSubscriptionId });
+      } else {
+        res.status(400).json({ ok: false, error: "Already subscribed to this plan." });
+      }
+      return;
+    }
+    // New item: pass only { price, quantity } without an id — Stripe adds it as a new
+    // line item and leaves all existing items untouched (confirmed: SubscriptionUpdateParams.Item
+    // uses id to select an existing item; omitting id signals a new addition, not a replacement).
+    await stripe.subscriptions.update(stripeSubscriptionId, {
+      items: [{ price: priceId, quantity }],
+    });
+    console.log("[api/stripe/add-subscription-item] OK", {
+      uid, venueId, priceId, quantity, subscriptionId: stripeSubscriptionId,
+    });
+    res.json({ ok: true, subscriptionId: stripeSubscriptionId });
+  } catch (e: any) {
+    console.error("[api/stripe/add-subscription-item] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Failed to add subscription item" });
+  }
+});
+
 // POST /stripe/webhook
 app.post("/stripe/webhook", async (req, res) => {
   if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
