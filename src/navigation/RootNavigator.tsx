@@ -53,6 +53,14 @@ function parseSquareCallbackUrl(url: string): Record<string, string> | null {
   return null;
 }
 
+function parseBillingCallbackUrl(url: string): 'success' | 'cancel' | null {
+  try {
+    if (/tallyup:\/\/billing-success/.test(url)) return 'success';
+    if (/tallyup:\/\/billing-cancel/.test(url)) return 'cancel';
+  } catch {}
+  return null;
+}
+
 function AuthedStack({ pendingInvite, clearPendingInvite }: {
   pendingInvite: { venueId: string; inviteId: string } | null;
   clearPendingInvite: () => void;
@@ -179,13 +187,18 @@ export default function RootNavigator() {
       }
     }).catch(() => {});
 
-    // Handle initial URL (app opened via invite link or Square OAuth redirect)
+    // Handle initial URL (app opened via invite link, Square OAuth redirect, or Stripe billing return)
     Linking.getInitialURL().then((url) => {
       if (!url) return;
       const invite = parseInviteUrl(url);
       if (invite) { storePendingInvite(invite); return; }
       const square = parseSquareCallbackUrl(url);
-      if (square) handleSquareCallback(square);
+      if (square) { handleSquareCallback(square); return; }
+      const billing = parseBillingCallbackUrl(url);
+      if (billing === 'success') {
+        if (navigationRef.isReady()) navigationRef.navigate('Settings' as never);
+        showSuccess('✓ Subscription updated');
+      }
     }).catch(() => {});
 
     // Handle URL events while app is in foreground/background
@@ -201,11 +214,17 @@ export default function RootNavigator() {
         return;
       }
       const square = parseSquareCallbackUrl(url);
-      if (square) handleSquareCallback(square);
+      if (square) { handleSquareCallback(square); return; }
+      const billing = parseBillingCallbackUrl(url);
+      if (billing === 'success') {
+        if (navigationRef.isReady()) navigationRef.navigate('Settings' as never);
+        showSuccess('✓ Subscription updated');
+      }
+      // billing === 'cancel': do nothing — checkout was not completed
     });
 
     return () => sub.remove();
-  }, [storePendingInvite, clearPendingInvite, handleSquareCallback]);
+  }, [storePendingInvite, clearPendingInvite, handleSquareCallback, showSuccess]);
 
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
