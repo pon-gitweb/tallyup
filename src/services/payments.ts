@@ -21,7 +21,8 @@ export async function validatePromoCode(params: { uid: string; venueId: string; 
 export async function createCheckout(params: {
   uid: string;
   venueId: string;
-  priceId: string;
+  priceId?: string;
+  lookupKey?: string;
   successUrl: string;
   cancelUrl: string;
   quantity?: number;
@@ -42,7 +43,8 @@ export async function createCheckout(params: {
 export async function addSubscriptionItem(params: {
   uid: string;
   venueId: string;
-  priceId: string;
+  priceId?: string;
+  lookupKey?: string;
   quantity?: number;
 }) {
   const idToken = await getAuth().currentUser?.getIdToken();
