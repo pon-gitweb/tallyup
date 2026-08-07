@@ -1269,11 +1269,15 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
   try {
     const uid = await verifyToken(req);
     if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
-    const { venueId, priceId, successUrl, cancelUrl } = req.body || {};
+    const { venueId, priceId, successUrl, cancelUrl, quantity: rawQuantity } = req.body || {};
     if (!venueId || !priceId || !successUrl || !cancelUrl) {
       res.status(400).json({ ok: false, error: "Missing venueId, priceId, successUrl, or cancelUrl" });
       return;
     }
+    // Validate quantity: must be a positive integer; default to 1 if absent or invalid.
+    const quantity = (typeof rawQuantity === "number" && Number.isInteger(rawQuantity) && rawQuantity >= 1)
+      ? rawQuantity
+      : 1;
     if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
     const db = admin.firestore();
     const venueSnap = await db.doc(`venues/${venueId}`).get();
@@ -1281,7 +1285,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{ price: priceId, quantity }],
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: venueId,
@@ -1346,12 +1350,23 @@ app.post("/stripe/webhook", async (req, res) => {
       if (!venuesSnap.empty) {
         const venueDoc = venuesSnap.docs[0];
         const planMeta = (sub.items?.data?.[0]?.price?.metadata as any)?.plan || "core";
-        const modules = (sub.items?.data || []).map((item: any) => item.price?.metadata?.module).filter(Boolean);
+        // Split comma-separated module metadata so a single price can represent multiple modules
+        // (e.g. Pro Ops Bundle stores "supplier-optimisation,ops-intelligence,performance-incentives").
+        const modules = Array.from(new Set(
+          (sub.items?.data || [])
+            .flatMap((item: any) => (item.price?.metadata?.module || "").split(","))
+            .map((m: string) => m.trim())
+            .filter(Boolean)
+        ));
+        // Capture line-item quantity so the UI can display "billing for N venues" without
+        // a separate Stripe API call (relevant for tiered Multi-Venue Command Centre price).
+        const quantity = sub.items?.data?.[0]?.quantity || 1;
         await venueDoc.ref.set({
           subscription: {
             status: sub.status === "active" ? "active" : sub.status,
             plan: planMeta,
             modules,
+            quantity,
             stripeCustomerId: customerId,
             stripeSubscriptionId: sub.id,
             currentPeriodEnd: typeof sub.items?.data?.[0]?.current_period_end === "number"
