@@ -32,7 +32,19 @@ function App() {
   // undefined = auth state not yet resolved, null = signed out
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [activeVenue, setActiveVenue] = useState<VenueRow | null>(null)
-  const [page, setPage] = useState<Page>('hostihealth')
+  const [page, setPage] = useState<Page>(() => {
+    const path = window.location.pathname
+    if (path.includes('billing-success') || path.includes('billing-cancel')) return 'billing'
+    return 'hostihealth'
+  })
+  // Set on return from Stripe Checkout (success/cancel). Prefix _ = reserved for BillingPage (not yet built).
+  // Rename to [billingReturnStatus, setBillingReturnStatus] when BillingPage is added.
+  const [_billingReturnStatus, _setBillingReturnStatus] = useState<'success' | 'cancel' | null>(() => {
+    const path = window.location.pathname
+    if (path.includes('billing-success')) return 'success'
+    if (path.includes('billing-cancel')) return 'cancel'
+    return null
+  })
   const [festivalPage, setFestivalPage] = useState<FestivalPage>('festival-setup')
   const [supplierPage, setSupplierPage] = useState<SupplierPage>('supplier-catalogue')
   const [supplierName, setSupplierName] = useState<string | null>(null)
@@ -125,7 +137,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing']
 
   const isFestival = activeVenue?.venueType === 'festival'
 

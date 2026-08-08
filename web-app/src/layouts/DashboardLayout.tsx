@@ -19,6 +19,7 @@ export type Page =
   | 'account'
   | 'venue-setup'
   | 'pos-mapping'
+  | 'billing'
 
 type NavGroup = {
   label: string
@@ -46,8 +47,9 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'invoices',  label: 'Invoices',  icon: '🧾' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
       { key: 'team',        label: 'Team',        icon: '👥' },
-      { key: 'account',     label: 'Account',     icon: '⚙️' },
-      { key: 'venue-setup', label: 'Venue Setup', icon: '🏗️' },
+      { key: 'account',     label: 'Account',        icon: '⚙️' },
+      { key: 'venue-setup', label: 'Venue Setup',    icon: '🏗️' },
+      { key: 'billing',     label: 'Billing & Plans', icon: '💳' },
     ],
   },
 ]
