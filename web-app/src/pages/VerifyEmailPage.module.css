@@ -1,0 +1,163 @@
+/* VerifyEmailPage.module.css — mirrors LoginPage.module.css conventions */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f3ee;
+  padding: 24px 16px;
+}
+
+.card {
+  width: 100%;
+  max-width: 380px;
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 16px;
+  padding: 36px 32px;
+  box-shadow: 0 12px 32px rgba(11, 19, 43, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.wordmark {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 28px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 16px;
+}
+
+.wordmarkAmber {
+  color: #c47b2b;
+}
+
+.icon {
+  font-size: 44px;
+  line-height: 1;
+  margin: 0 0 12px;
+}
+
+.headline {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 22px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 10px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  line-height: 1.6;
+  margin: 0 0 20px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.maskedEmail {
+  color: #0B132B;
+  font-weight: 700;
+}
+
+.error {
+  font-size: 13px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.confirmation {
+  font-size: 13px;
+  color: #16a34a;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+/* ── Primary CTA ── */
+
+.submit {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+  margin-bottom: 10px;
+}
+
+.submit:hover:not(:disabled) {
+  background: #174465;
+}
+
+.submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── Secondary: resend ── */
+
+.secondaryBtn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1b4f72;
+  background: #ffffff;
+  border: 1.5px solid #e5e3de;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+  margin-bottom: 16px;
+}
+
+.secondaryBtn:hover:not(:disabled) {
+  border-color: #1b4f72;
+}
+
+.secondaryBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── Ghost: start over ── */
+
+.ghostBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  color: #9CA3AF;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.ghostBtn:hover:not(:disabled) {
+  color: #6B7280;
+  text-decoration: underline;
+}
+
+.ghostBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

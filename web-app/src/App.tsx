@@ -26,6 +26,8 @@ import FestivalPurchasingPage from './pages/FestivalPurchasingPage'
 import FestivalContractsPage from './pages/FestivalContractsPage'
 import AcceptInvitePage from './pages/AcceptInvitePage'
 import BillingPage from './pages/BillingPage'
+import RegisterPage from './pages/RegisterPage'
+import VerifyEmailPage from './pages/VerifyEmailPage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -50,6 +52,10 @@ function App() {
   const [supplierName, setSupplierName] = useState<string | null>(null)
   const [accountType, setAccountType] = useState<'venue' | 'supplier' | null>(null)
   const [supplierId, setSupplierId] = useState<string | null>(null)
+  const [authView, setAuthView] = useState<'login' | 'register'>('login')
+  // Separate primitive — avoids React bailing out on the same User object reference
+  // after reload() mutates emailVerified in place (Object.is check would pass).
+  const [emailVerified, setEmailVerified] = useState(false)
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -59,8 +65,11 @@ function App() {
         setPage('hostihealth')
         setAccountType(null)
         setSupplierId(null)
+        setAuthView('login')
+        setEmailVerified(false)
         return
       }
+      setEmailVerified(u.emailVerified)
       try {
         const userDoc = await getDoc(doc(db, 'users', u.uid))
         if (userDoc.exists()) {
@@ -98,7 +107,23 @@ function App() {
   }
 
   if (user === null) {
-    return <LoginPage />
+    if (authView === 'register') {
+      return <RegisterPage onSignIn={() => setAuthView('login')} />
+    }
+    return <LoginPage onCreateAccount={() => setAuthView('register')} />
+  }
+
+  // Email not yet verified — block access to the dashboard until the link is clicked.
+  // emailVerified is a separate primitive state (not user.emailVerified directly) so that
+  // React sees a real value change after reload() — Firebase mutates the User object in
+  // place, meaning setUser(auth.currentUser) would be reference-equal and bail out.
+  if (!emailVerified) {
+    return (
+      <VerifyEmailPage
+        user={user}
+        onVerified={() => setEmailVerified(true)}
+      />
+    )
   }
 
   if (user && accountType === 'supplier' && supplierId) {

@@ -28,7 +28,7 @@ function authErrorMessage(code: string | undefined): string {
   }
 }
 
-export default function LoginPage() {
+export default function LoginPage({ onCreateAccount }: { onCreateAccount?: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -130,7 +130,16 @@ export default function LoginPage() {
               </button>
             </form>
 
-            <p className={styles.note}>New to Hosti? Download the app to create your account.</p>
+            {onCreateAccount ? (
+              <p className={styles.note}>
+                New to Hosti?{' '}
+                <button type="button" className={styles.linkButton} onClick={onCreateAccount}>
+                  Create an account →
+                </button>
+              </p>
+            ) : (
+              <p className={styles.note}>New to Hosti? Download the app to create your account.</p>
+            )}
             <p style={{ textAlign: 'center', fontSize: 12, color: '#9ca3af', marginTop: 16 }}>
               Suppliers and venue operators use the same login.
             </p>
