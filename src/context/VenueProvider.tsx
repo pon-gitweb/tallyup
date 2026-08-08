@@ -20,6 +20,13 @@ export type SubscriptionData = {
   stripeSubscriptionId?: string;
 };
 
+// Manual entitlement bypass — set via Firebase Console or Admin SDK only.
+// Never written by any client; see firestore.rules comment for security boundary.
+export type SubscriptionOverride = {
+  plan: 'core' | 'core_plus';
+  modules: string[];
+};
+
 type VenueCtx = {
   loading: boolean;
   user: User | null;
@@ -32,6 +39,7 @@ type VenueCtx = {
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
   subscription: SubscriptionData | null;
+  subscriptionOverride: SubscriptionOverride | null;
   isPilot: boolean;
   isActive: boolean;
   plan: string | null;
@@ -43,7 +51,7 @@ const Ctx = createContext<VenueCtx>({
   loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null, venueCountry: 'NZ',
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
-  subscription: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
+  subscription: null, subscriptionOverride: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
   billingState: defaultBillingState,
 });
 
@@ -54,6 +62,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [venueIds, setVenueIds] = useState<string[]>([]);
   const [nonce, setNonce] = useState(0);
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [subscriptionOverride, setSubscriptionOverride] = useState<SubscriptionOverride | null>(null);
   const [venueType, setVenueType] = useState<string | null>(null);
   const [venueCountry, setVenueCountry] = useState<string>('NZ');
 
@@ -215,7 +224,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
+    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
@@ -244,6 +253,20 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         stripeCustomerId: sub.stripeCustomerId,
         stripeSubscriptionId: sub.stripeSubscriptionId,
       } : null);
+      // Read subscriptionOverride — shape: { plan: 'core'|'core_plus'; modules: string[] } | null.
+      // null means no override; normal Stripe-driven entitlement applies.
+      // Validated defensively: wrong shape or missing fields → treated as null.
+      const rawOverride = data?.subscriptionOverride ?? null;
+      const resolvedOverride: SubscriptionOverride | null = (
+        rawOverride !== null &&
+        typeof rawOverride === 'object' &&
+        (rawOverride.plan === 'core' || rawOverride.plan === 'core_plus') &&
+        Array.isArray(rawOverride.modules)
+      ) ? {
+        plan: rawOverride.plan as 'core' | 'core_plus',
+        modules: (rawOverride.modules as any[]).filter((m: any) => typeof m === 'string'),
+      } : null;
+      setSubscriptionOverride(resolvedOverride);
     }, (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       // Only clear state on permanent errors — not transient network issues
@@ -251,6 +274,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         // User has been removed from this venue — clear context so HomeRouter can redirect
         setVenueId(null);
         setSubscription(null);
+        setSubscriptionOverride(null);
         setVenueType(null);
         setVenueCountry('NZ');
       }
@@ -326,25 +350,55 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [venueId]);
 
-  const isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
-  const isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
-  const plan = subscription?.plan ?? null;
-  const hasModule = (moduleId: string) => subscription?.modules?.includes(moduleId) ?? false;
+  // ── Entitlement computation ──────────────────────────────────────────────
+  // subscriptionOverride (written only via Firebase Console / Admin SDK — never
+  // client-writable) takes absolute precedence over Stripe-driven state.
+  // If absent, falls through to the existing pilot/Stripe logic unchanged.
+  let isPilot: boolean;
+  let isActive: boolean;
+  let plan: string | null;
+  let hasModule: (moduleId: string) => boolean;
+  let billingState: BillingState;
 
-  // Maps SubscriptionData → BillingState so guards and components have one source of truth.
-  // During pilot isPilot=true → accessMode='full' for all venues regardless of Stripe.
-  const billingState: BillingState = {
-    plan: isActive ? ((subscription?.plan as 'core' | 'core_plus') ?? 'core') : 'none',
-    addons: {
-      aiReporting: isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
-      predictiveOrdering: isPilot || (subscription?.modules?.includes(MODULES.SUPPLIER_OPTIMISATION) ?? false),
-      gamification: isPilot || (subscription?.modules?.includes(MODULES.PERFORMANCE_INCENTIVES) ?? false),
-      suitee: isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
-      groupHQ: isPilot || (subscription?.modules?.includes(MODULES.MULTI_VENUE) ?? false),
-    },
-    accessMode: isPilot || isActive ? 'full' : 'readOnly',
-    trial: {},
-  };
+  if (subscriptionOverride) {
+    // Override branch: treat venue as a fully active paying subscriber with the
+    // specified plan and modules, regardless of what Stripe says.
+    isPilot = false;
+    isActive = true;
+    plan = subscriptionOverride.plan;
+    hasModule = (moduleId: string) => subscriptionOverride.modules.includes(moduleId);
+    billingState = {
+      plan: subscriptionOverride.plan,
+      addons: {
+        aiReporting:       subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
+        predictiveOrdering:subscriptionOverride.modules.includes(MODULES.SUPPLIER_OPTIMISATION),
+        gamification:      subscriptionOverride.modules.includes(MODULES.PERFORMANCE_INCENTIVES),
+        suitee:            subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
+        groupHQ:           subscriptionOverride.modules.includes(MODULES.MULTI_VENUE),
+      },
+      accessMode: 'full',
+      trial: {},
+    };
+  } else {
+    // Normal branch: derive entitlement from Stripe-driven subscription doc.
+    // During pilot isPilot=true → accessMode='full' for all venues regardless of Stripe.
+    isPilot = !subscription || !['active', 'trialing'].includes(subscription.status);
+    isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
+    plan = subscription?.plan ?? null;
+    hasModule = (moduleId: string) => subscription?.modules?.includes(moduleId) ?? false;
+    billingState = {
+      plan: isActive ? ((subscription?.plan as 'core' | 'core_plus') ?? 'core') : 'none',
+      addons: {
+        aiReporting:       isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
+        predictiveOrdering:isPilot || (subscription?.modules?.includes(MODULES.SUPPLIER_OPTIMISATION) ?? false),
+        gamification:      isPilot || (subscription?.modules?.includes(MODULES.PERFORMANCE_INCENTIVES) ?? false),
+        suitee:            isPilot || (subscription?.modules?.includes(MODULES.OPS_INTELLIGENCE) ?? false),
+        groupHQ:           isPilot || (subscription?.modules?.includes(MODULES.MULTI_VENUE) ?? false),
+      },
+      accessMode: isPilot || isActive ? 'full' : 'readOnly',
+      trial: {},
+    };
+  }
 
   const value = useMemo(() => ({
     loading,
@@ -374,12 +428,13 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     refresh: () => setNonce(n => n + 1),
     attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user); },
     subscription,
+    subscriptionOverride,
     isPilot,
     isActive,
     plan,
     hasModule,
     billingState,
-  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, isPilot, isActive, plan]);
+  }), [loading, user, venueId, venueIds, venueType, venueCountry, subscription, subscriptionOverride, isPilot, isActive, plan]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 
@@ -429,6 +484,6 @@ export function useVenueId(): string | null { return useContext(Ctx).venueId; }
 export function useVenueType(): string | null { return useContext(Ctx).venueType; }
 export function useVenueCountry(): string { return useContext(Ctx).venueCountry; }
 export function useSubscription() {
-  const { subscription, isPilot, isActive, plan, hasModule, billingState } = useContext(Ctx);
-  return { subscription, isPilot, isActive, plan, hasModule, billingState };
+  const { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState } = useContext(Ctx);
+  return { subscription, subscriptionOverride, isPilot, isActive, plan, hasModule, billingState };
 }

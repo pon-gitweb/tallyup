@@ -215,6 +215,14 @@ service cloud.firestore {
       // document into venues/{venueId}/billing/config restricted to owner only.
       // Firestore rules cannot restrict individual fields on a document read —
       // the whole document must be moved to a subcollection to limit access.
+      //
+      // SECURITY — subscriptionOverride: this field must NEVER appear in any
+      // allow update rule below. It is intentionally writable only via Firebase
+      // Console or Admin SDK (which bypasses rules entirely), so it functions as
+      // a genuine entitlement bypass for pilots, partners, press, and App Store /
+      // Play Store reviewers. Adding a client-writable rule for it would allow any
+      // venue member to grant themselves arbitrary plan/module access and defeat
+      // the bypass mechanism entirely.
 
       // Allow a signed-in user to create a new venue where they are the declared owner.
       allow create: if request.auth != null
