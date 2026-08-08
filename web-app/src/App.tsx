@@ -25,6 +25,7 @@ import FestivalEventSetupPage from './pages/FestivalEventSetupPage'
 import FestivalPurchasingPage from './pages/FestivalPurchasingPage'
 import FestivalContractsPage from './pages/FestivalContractsPage'
 import AcceptInvitePage from './pages/AcceptInvitePage'
+import BillingPage from './pages/BillingPage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -37,9 +38,8 @@ function App() {
     if (path.includes('billing-success') || path.includes('billing-cancel')) return 'billing'
     return 'hostihealth'
   })
-  // Set on return from Stripe Checkout (success/cancel). Prefix _ = reserved for BillingPage (not yet built).
-  // Rename to [billingReturnStatus, setBillingReturnStatus] when BillingPage is added.
-  const [_billingReturnStatus, _setBillingReturnStatus] = useState<'success' | 'cancel' | null>(() => {
+  // Set on return from Stripe Checkout (success/cancel); cleared by BillingPage once acknowledged.
+  const [billingReturnStatus, setBillingReturnStatus] = useState<'success' | 'cancel' | null>(() => {
     const path = window.location.pathname
     if (path.includes('billing-success')) return 'success'
     if (path.includes('billing-cancel')) return 'cancel'
@@ -203,6 +203,7 @@ function App() {
       {page === 'invoices'     && activeVenue && <InvoicesPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'stock'        && activeVenue && <StockPage venueId={activeVenue.id} />}
       {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
+      {page === 'billing'      && activeVenue && <BillingPage venueId={activeVenue.id} user={user} billingReturnStatus={billingReturnStatus} onClearStatus={() => setBillingReturnStatus(null)} />}
       {page === 'pos-mapping'  && activeVenue && (
         <div style={{ padding: 32, maxWidth: 480 }}>
           <h2 style={{ fontFamily: theme.fontTitle, fontSize: 24, color: theme.navy, marginBottom: 8 }}>
