@@ -42,7 +42,6 @@ import ScaleSettingsScreen from '../../screens/settings/ScaleSettingsScreen';
 import SetupGuideScreen from '../../screens/settings/SetupGuideScreen';
 import AppearanceScreen from '../../screens/settings/AppearanceScreen';
 import AdvancedSettingsScreen from '../../screens/settings/AdvancedSettingsScreen';
-import StripeTestScreen from '../../screens/dev/StripeTestScreen';
 import PricingScreen from '../../screens/settings/PricingScreen';
 import TermsScreen from '../../screens/settings/TermsScreen';
 import XeroScreen from '../../screens/settings/XeroScreen';
@@ -283,7 +282,6 @@ export default function MainStack() {
       <Stack.Screen name="SetupGuide" component={SetupGuideScreen} options={{ title: 'Setup Guide' }} />
       <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />
       <Stack.Screen name="AdvancedSettings" component={AdvancedSettingsScreen} options={{ title: 'Advanced Settings' }} />
-      <Stack.Screen name="StripeTest" component={StripeTestScreen} options={{ title: 'Stripe Sandbox Test' }} />
       <Stack.Screen name="Pricing" component={PricingScreen} options={{ title: 'Pricing' }} />
       <Stack.Screen name="Terms" component={TermsScreen} options={{ title: 'Terms of Service' }} />
       <Stack.Screen name="Xero" component={XeroScreen} options={{ title: 'Xero Integration' }} />
