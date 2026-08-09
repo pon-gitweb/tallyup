@@ -1,0 +1,127 @@
+/* CreateVenuePage.module.css — matches SettingsPage/BillingPage dashboard conventions */
+
+.page {
+  padding: 32px 0;
+  max-width: 520px;
+}
+
+.heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: #0B132B;
+  margin: 0 0 4px;
+}
+
+.subhead {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 24px;
+  line-height: 1.5;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* ── Create card ── */
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  padding: 28px 24px;
+  margin-bottom: 16px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: Inter, system-ui, sans-serif;
+  color: #0B132B;
+  background: #ffffff;
+  border: 1.5px solid #e5e3de;
+  border-radius: 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: #1b4f72;
+}
+
+.input:disabled {
+  background: #f9f8f6;
+  color: #9ca3af;
+}
+
+.submit {
+  display: block;
+  width: 100%;
+  padding: 11px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.submit:hover:not(:disabled) {
+  background: #174465;
+}
+
+.submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  font-size: 13px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* ── "Already have a venue" alt card ── */
+
+.altCard {
+  background: #f5f3ee;
+  border: 1px solid #e5e3de;
+  border-radius: 8px;
+  padding: 20px 24px;
+}
+
+.altHeading {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0B132B;
+  margin: 0 0 6px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.altBody {
+  font-size: 13px;
+  color: #6B7280;
+  margin: 0;
+  line-height: 1.5;
+  font-family: Inter, system-ui, sans-serif;
+}

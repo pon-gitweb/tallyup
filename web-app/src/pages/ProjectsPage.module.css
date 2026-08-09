@@ -88,9 +88,30 @@
   padding: 9px;
 }
 
+.emptyState {
+  padding: 8px 0;
+}
+
 .empty {
   font-size: 14px;
   color: #6B7280;
+  margin: 0 0 16px;
+}
+
+.createBtn {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1b4f72;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.createBtn:hover {
+  background: #174465;
 }
 
 .loading {

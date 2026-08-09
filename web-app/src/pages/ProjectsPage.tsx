@@ -167,10 +167,12 @@ export default function ProjectsPage({
   user,
   activeVenueId,
   onOpenVenue,
+  onCreateVenue,
 }: {
   user: User
   activeVenueId: string | null
   onOpenVenue: (venue: VenueRow) => void
+  onCreateVenue?: () => void
 }) {
   const [venues, setVenues] = useState<VenueRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -212,7 +214,14 @@ export default function ProjectsPage({
       {error && <p className={styles.error}>{error}</p>}
 
       {!loading && !error && venues.length === 0 && (
-        <p className={styles.empty}>No projects yet. Create your first venue or festival from the mobile app.</p>
+        <div className={styles.emptyState}>
+          <p className={styles.empty}>No projects yet.</p>
+          {onCreateVenue && (
+            <button type="button" className={styles.createBtn} onClick={onCreateVenue}>
+              Create your first venue →
+            </button>
+          )}
+        </div>
       )}
 
       {/* ── Command Centre (2+ venues) ── */}

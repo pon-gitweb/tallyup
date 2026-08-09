@@ -20,6 +20,7 @@ export type Page =
   | 'venue-setup'
   | 'pos-mapping'
   | 'billing'
+  | 'create-venue'
 
 type NavGroup = {
   label: string

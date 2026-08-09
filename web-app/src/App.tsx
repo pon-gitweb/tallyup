@@ -28,6 +28,7 @@ import AcceptInvitePage from './pages/AcceptInvitePage'
 import BillingPage from './pages/BillingPage'
 import RegisterPage from './pages/RegisterPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
+import CreateVenuePage from './pages/CreateVenuePage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -213,7 +214,10 @@ function App() {
       onNavigate={setPage}
     >
       {page === 'projects' && (
-        <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} />
+        <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} onCreateVenue={() => setPage('create-venue')} />
+      )}
+      {page === 'create-venue' && (
+        <CreateVenuePage onOpenVenue={openVenue} />
       )}
       {page === 'hostihealth'  && activeVenue && <HostiHealthPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'products'     && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
