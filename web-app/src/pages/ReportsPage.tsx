@@ -75,7 +75,7 @@ function fmtMoney(v: number | null): string {
   const sign = v < 0 ? '-' : ''
   if (abs === 0) return '$0'
   if (abs >= 100) return sign + '$' + Math.round(abs).toLocaleString('en-NZ')
-  return sign + '$' + abs.toFixed(1)
+  return sign + '$' + abs.toFixed(2)
 }
 
 function fmtDate(d: Date | null): string {
@@ -630,14 +630,14 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                         <td className={styles.td}>{r.name}</td>
                         <td className={styles.td}>{r.deptName}</td>
                         <td className={styles.td}>{r.areaName}</td>
-                        <td className={styles.tdNum}>{r.expectedQty ?? '—'}</td>
-                        <td className={styles.tdNum}>{r.actualQty}</td>
+                        <td className={styles.tdNum}>{r.expectedQty != null ? r.expectedQty.toFixed(2) : '—'}</td>
+                        <td className={styles.tdNum}>{r.actualQty != null ? r.actualQty.toFixed(2) : '—'}</td>
                         <td
                           className={styles.tdNum}
                           style={{ color: r.varianceUnits < 0 ? theme.error : theme.success }}
                         >
                           {r.varianceUnits > 0 ? '+' : ''}
-                          {r.varianceUnits}
+                          {r.varianceUnits.toFixed(2)}
                         </td>
                         <td
                           className={styles.tdNum}
@@ -1028,9 +1028,9 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
                     <tr key={i} className={styles.dataRow}>
                       <td className={styles.td}>{r.name}</td>
                       <td className={styles.td}>{r.areaName || '—'}</td>
-                      <td className={styles.tdNum}>{r.openingCount ?? '—'}</td>
-                      <td className={styles.tdNum}>{r.actualClosing ?? '—'}</td>
-                      <td className={styles.tdNum} style={{ color: unitColor, fontWeight: 600 }}>{vUnits > 0 ? '+' : ''}{vUnits}</td>
+                      <td className={styles.tdNum}>{r.openingCount != null ? r.openingCount.toFixed(2) : '—'}</td>
+                      <td className={styles.tdNum}>{r.actualClosing != null ? r.actualClosing.toFixed(2) : '—'}</td>
+                      <td className={styles.tdNum} style={{ color: unitColor, fontWeight: 600 }}>{vUnits > 0 ? '+' : ''}{vUnits.toFixed(2)}</td>
                       <td className={styles.tdNum} style={{ color: dollarColor, fontWeight: 600 }}>
                         {vDollars == null ? '—' : (vDollars > 0 ? '+' : '') + '$' + Math.abs(Math.round(vDollars)).toLocaleString('en-NZ')}
                       </td>
