@@ -303,7 +303,12 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
                   </Text>
                 )}
               </View>
-              <Text style={{ flex:2 }}>{r.qty}</Text>
+              <TextInput
+                value={String(r.qty)}
+                onChangeText={(v) => onItemsChange(items.map(i => i.key === r.key ? { ...i, qty: Number(v) || 0 } : i))}
+                keyboardType="numeric"
+                style={{ flex:2, borderWidth:1, borderColor:'#E5E7EB', borderRadius:8, padding:10, backgroundColor:'#fff' }}
+              />
               <Text style={{ flex:2 }}>{r.unit}</Text>
               <Text style={{ flex:2, textAlign:'right' }}>${cost.toFixed(2)}</Text>
               <TouchableOpacity onPress={()=>removeRow(r.key)} style={{ width:48, alignItems:'flex-end' }}>

@@ -25,7 +25,7 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onRecipeGenerated: (recipe: any) => void;
-  onBuildManually: () => void;
+  onBuildManually: (name: string, type: RecipeType) => void;
 };
 
 export default function RecipeGenerationModal({ visible, onClose, onRecipeGenerated, onBuildManually }: Props) {
@@ -53,8 +53,10 @@ export default function RecipeGenerationModal({ visible, onClose, onRecipeGenera
 
   const handleBuildManually = () => {
     if (loading) return;
+    const capturedName = name;
+    const capturedType = type;
     reset();
-    onBuildManually();
+    onBuildManually(capturedName, capturedType);
   };
 
   const generate = async () => {

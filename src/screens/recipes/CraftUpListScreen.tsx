@@ -78,6 +78,25 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
     }
   };
 
+  const handleBuildManually = async (name: string, type: string) => {
+    try {
+      if (!venueId) throw new Error('No venue');
+      const isDrink = type === 'cocktail' || type === 'drink';
+      const category: 'food' | 'beverage' = isDrink ? 'beverage' : 'food';
+      const mode: 'batch' | 'single' | 'dish' = type === 'batch' ? 'batch' : (isDrink ? 'single' : 'dish');
+      const { id: newId } = await createRecipeDraft({
+        venueId,
+        name: name.trim() || 'Untitled',
+        category,
+        mode,
+      });
+      setShowGenModal(false);
+      setEditDraftId(newId);
+    } catch (e: any) {
+      showError(String(e?.message || e) || 'Could not create recipe draft');
+    }
+  };
+
   const handleSaveGenerated = async (aiRecipe: any) => {
     try {
       if (!venueId) throw new Error('No venue');
@@ -198,7 +217,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
       <TouchableOpacity
         style={S.row}
         activeOpacity={0.9}
-        onPress={status === 'confirmed' ? () => setViewId(r.id) : undefined}
+        onPress={status === 'confirmed' ? () => setViewId(r.id) : () => setEditDraftId(r.id)}
         onLongPress={enableLongPressConfirm ? () => confirmFromList(r) : undefined}
         delayLongPress={300}
       >
@@ -283,7 +302,7 @@ export default function CraftUpListScreen({ filter = 'all' }: { filter?: Filter 
         visible={showGenModal}
         onClose={() => setShowGenModal(false)}
         onRecipeGenerated={(recipe) => { setShowGenModal(false); onRecipeGenerated(recipe); }}
-        onBuildManually={() => { setShowGenModal(false); nav.navigate('DraftRecipeDetail', { recipeId: 'new' }); }}
+        onBuildManually={handleBuildManually}
       />
 
       {generatedRecipe && (
