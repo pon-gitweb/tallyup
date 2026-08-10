@@ -4,7 +4,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, M
 import { getApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, orderBy, startAt, endAt, limit, query } from 'firebase/firestore';
 import { useVenueId } from '../../../context/VenueProvider';
-import { toBaseUnit, normalizePack } from '../../../services/units';
+import { toBaseUnit, parseProductSize, computeIngredientCost } from '../../../services/units';
 
 type Props = {
   items: Array<{
@@ -12,7 +12,7 @@ type Props = {
     name: string;
     qty: number;
     unit: 'ml'|'g'|'each';
-    link?: { productId: string; packSize?: number|null; packUnit?: string|null; packPrice?: number|null };
+    link?: { productId: string; size?: string|null; costPrice?: number|null };
   }>;
   onItemsChange: (rows: Props['items']) => void;
   onSummary?: (s: { totalCost: number; totalMl: number; totalG: number; totalEach: number; rows: any[] }) => void;
@@ -23,9 +23,8 @@ type Props = {
 type ProductHit = {
   id: string;
   name: string;
-  packSize?: number|null;
-  packUnit?: string|null;   // 'ml'|'L'|'g'|'kg'|'each'
-  packPrice?: number|null;  // price per pack
+  size?: string|null;      // product's physical size string, e.g. '700ml', '1.5L'
+  costPrice?: number|null; // cost per one unit/bottle (Product.costPrice)
   supplierName?: string|null;
 };
 
@@ -77,9 +76,8 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
             list.push({
               id: d.id,
               name,
-              packSize: x.packSize ?? x.pack?.size ?? null,
-              packUnit: x.packUnit ?? x.pack?.unit ?? null,
-              packPrice: x.packPrice ?? x.price ?? null,
+              size: x.size ?? null,
+              costPrice: x.costPrice ?? null,
               supplierName: x.supplierName ?? null,
             });
           }
@@ -98,15 +96,26 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
   const estimateMaxUnitPrice = (u:'ml'|'g'|'each'):number => {
     let maxPU = 0;
     for (const p of hits) {
-      if (p.packPrice && p.packPrice > 0) {
-        const { qty:packQty, base } = normalizePack(p.packSize, p.packUnit);
-        if (base === u && packQty > 0) maxPU = Math.max(maxPU, p.packPrice / packQty);
+      if (p.costPrice != null && p.costPrice > 0) {
+        if (u === 'each') {
+          // 'each' products have no meaningful size — costPrice IS the per-each cost
+          const parsed = parseProductSize(p.size);
+          if (!parsed || parsed.base === 'each') maxPU = Math.max(maxPU, p.costPrice);
+        } else {
+          const parsed = parseProductSize(p.size);
+          if (parsed && parsed.base === u && parsed.qty > 0) maxPU = Math.max(maxPU, p.costPrice / parsed.qty);
+        }
       }
     }
     for (const r of items) {
-      if (r.link?.packPrice && r.link.packPrice > 0) {
-        const { qty:packQty, base } = normalizePack(r.link.packSize, r.link.packUnit);
-        if (base === u && packQty > 0) maxPU = Math.max(maxPU, r.link.packPrice / packQty);
+      if (r.link?.costPrice != null && r.link.costPrice > 0) {
+        if (u === 'each') {
+          const parsed = parseProductSize(r.link.size);
+          if (!parsed || parsed.base === 'each') maxPU = Math.max(maxPU, r.link.costPrice);
+        } else {
+          const parsed = parseProductSize(r.link.size);
+          if (parsed && parsed.base === u && parsed.qty > 0) maxPU = Math.max(maxPU, r.link.costPrice / parsed.qty);
+        }
       }
     }
     return maxPU; // may be 0
@@ -119,7 +128,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
       name: p.name,
       qty: chosenQty,
       unit,
-      link: { productId: p.id, packSize: p.packSize ?? null, packUnit: p.packUnit ?? null, packPrice: p.packPrice ?? null }
+      link: { productId: p.id, size: p.size ?? null, costPrice: p.costPrice ?? null }
     };
     onItemsChange([r, ...items]);
     setTerm(''); setQty('');
@@ -134,7 +143,7 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
       name: `${name} (misc)`,
       qty: chosenQty,
       unit,
-      link: pu > 0 ? { productId: 'misc', packSize: 1, packUnit: unit, packPrice: pu } : undefined
+      link: pu > 0 ? { productId: 'misc', size: `1${unit}`, costPrice: pu } : undefined
     };
     onItemsChange([r, ...items]);
     setTerm(''); setQty('');
@@ -156,18 +165,8 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
   const removeRow = (key:string) => onItemsChange(items.filter(r => r.key !== key));
 
   const rowCost = (r:any):number => {
-    if (!r.link || !r.link.packPrice || r.link.packPrice <= 0) return 0;
-    const { qty:packQty, base:packBase } = normalizePack(r.link.packSize, r.link.packUnit);
-    const u = r.unit;
-    if ((u==='ml' && packBase!=='ml') || (u==='g' && packBase!=='g') || (u==='each' && packBase!=='each')) {
-      if (packBase==='each') {
-        const denom = packQty > 0 ? packQty : 1;
-        return (r.qty / denom) * r.link.packPrice;
-      }
-      return 0;
-    }
-    const denom = packQty > 0 ? packQty : 1;
-    return (r.qty / denom) * r.link.packPrice;
+    if (!r.link) return 0;
+    return computeIngredientCost(r.qty, r.unit, r.link.size, r.link.costPrice) ?? 0;
   };
 
   const totals = useMemo(() => {
@@ -216,8 +215,8 @@ export default function IngredientEditor({ items, onItemsChange, onSummary, cate
                 style={{ paddingVertical:8, paddingHorizontal:10, borderBottomWidth:1, borderColor:'#F3F4F6' }}>
                 <Text style={{ fontWeight:'700' }}>{item.name}</Text>
                 <Text style={{ color:'#6B7280' }}>
-                  {(item.packSize ?? '—')} {(item.packUnit ?? '')}
-                  {item.packPrice != null ? ` · $${Number(item.packPrice).toFixed(2)}` : ' · no price'}
+                  {item.size ?? '—'}
+                  {item.costPrice != null ? ` · $${Number(item.costPrice).toFixed(2)}` : ' · no price'}
                   {item.supplierName ? ` · ${item.supplierName}` : ''}
                 </Text>
               </TouchableOpacity>

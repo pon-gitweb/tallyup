@@ -10,7 +10,7 @@ export type UiRow = {
   name: string;
   qty: number;
   unit: 'ml'|'g'|'each'|string;
-  link?: { productId?: string; packSize?: number|null; packUnit?: string|null; packPrice?: number|null };
+  link?: { productId?: string; size?: string|null; costPrice?: number|null };
   // Recipe pricing-integrity fields (optional — pass through only when present)
   costPerServe?: number | null;
   manualCost?: boolean;
@@ -41,9 +41,8 @@ export function makeFirestoreItemSnapshot(rows: UiRow[]|null|undefined) {
       productName: label || null,
       qty: n(r?.qty) ?? 0,
       unit: s(r?.unit) || 'each',
-      packSize: n(r?.link?.packSize),
-      packUnit: s(r?.link?.packUnit),
-      packPrice: n(r?.link?.packPrice),
+      size: s(r?.link?.size),
+      costPrice: n(r?.link?.costPrice),
     };
     // Additive pricing-integrity fields — only written when explicitly present on the row,
     // so existing rows/readers that never set them are completely unaffected.

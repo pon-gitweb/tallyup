@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { computeIngredientCost } from '../units';
 import { computeConsumption } from './consumption';
 import { makeFirestoreItemSnapshot } from './itemSnapshot';
 
@@ -14,22 +15,19 @@ export class UnpricedIngredientsError extends Error {
 }
 
 // An item is unpriced unless it's explicitly in-house (free by design) and has no
-// usable cost: no costPerServe, and no linked product (productId + packSize + packPrice)
+// usable cost: no costPerServe, and no linked product (productId + size + costPrice)
 // to derive one from. Most persisted items don't carry costPerServe directly — cost is
-// usually implied by their product link — so we derive it the same way the live UI does
-// (qty / packSize * packPrice) before deciding an ingredient still needs pricing.
+// usually implied by their product link — so we derive it via computeIngredientCost
+// (ingredientQty / productSize * productCostPrice) before deciding an ingredient
+// still needs pricing.
 function effectiveCostPerServe(item: any): number | null {
   if (item?.costPerServe != null) {
     const explicit = Number(item.costPerServe);
     return Number.isFinite(explicit) ? explicit : null;
   }
+  if (!item?.productId) return null;
   const qty = Number(item?.qty) || 0;
-  const packSize = Number(item?.packSize) > 0 ? Number(item.packSize) : 0;
-  const packPrice = Number(item?.packPrice);
-  if (item?.productId && packSize > 0 && Number.isFinite(packPrice)) {
-    return (qty / packSize) * packPrice;
-  }
-  return null;
+  return computeIngredientCost(qty, item?.unit ?? 'each', item?.size, item?.costPrice);
 }
 
 function isItemUnpriced(item: any): boolean {
