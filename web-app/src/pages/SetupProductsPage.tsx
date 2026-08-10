@@ -1618,22 +1618,33 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                     {[b.supplierName, b.unit, b.costPrice != null ? `$${b.costPrice}` : null].filter(Boolean).join(' · ') || 'No details'}
                   </p>
                 </div>
-                <button
-                  onClick={() => dismissPair(pairKey)}
-                  title="Not a duplicate — dismiss"
-                  style={{
-                    background: 'none',
-                    border: '1px solid #e5e3de',
-                    borderRadius: 8,
-                    padding: '4px 10px',
-                    fontSize: 11,
-                    color: '#6B7280',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Not a duplicate
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className={styles.mergeBtn}
+                    onClick={() => setMergingProduct(a)}
+                    title="Merge these duplicates"
+                  >
+                    Merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissPair(pairKey)}
+                    title="Not a duplicate — dismiss"
+                    style={{
+                      background: 'none',
+                      border: '1px solid #e5e3de',
+                      borderRadius: 8,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      color: '#6B7280',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Not a duplicate
+                  </button>
+                </div>
               </div>
             )
           })}
@@ -1731,22 +1742,40 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                 </p>
                 <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>Existing product</p>
               </div>
-              <button
-                onClick={() => dismissCandidate(c.id)}
-                title="Keep both as separate products"
-                style={{
-                  background: 'none',
-                  border: '1px solid #e5e3de',
-                  borderRadius: 8,
-                  padding: '4px 10px',
-                  fontSize: 11,
-                  color: '#6B7280',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Keep both
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                <button
+                  type="button"
+                  className={styles.mergeBtn}
+                  onClick={() => {
+                    const found = products.find(p => p.id === c.newProductId)
+                    if (!found) {
+                      alert(`Product '${c.newProductName}' not found in local state — try refreshing the page.`)
+                      return
+                    }
+                    setMergingProduct(found)
+                  }}
+                  title="Merge this new product into the existing one"
+                >
+                  Merge
+                </button>
+                <button
+                  type="button"
+                  onClick={() => dismissCandidate(c.id)}
+                  title="Keep both as separate products"
+                  style={{
+                    background: 'none',
+                    border: '1px solid #e5e3de',
+                    borderRadius: 8,
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    color: '#6B7280',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Keep both
+                </button>
+              </div>
             </div>
           ))}
         </div>
