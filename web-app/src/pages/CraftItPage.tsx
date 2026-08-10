@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { computeIngredientCost } from '../services/units'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
@@ -17,6 +18,7 @@ type RecipeItem = {
   qty: number
   unit: string | null
   costPerUnit: number | null
+  productSize: string | null  // product's physical size string e.g. '700ml', used for proportional cost
   lineTotal: number | null
 }
 
@@ -97,15 +99,15 @@ function downloadCsv(filename: string, content: string) {
 const EMPTY_MESSAGES: Record<StatusFilter, { title: string; note: string }> = {
   all: {
     title: 'No recipes yet',
-    note: 'Create your first recipe in the CraftIt section of the mobile app.',
+    note: 'Tap + New recipe above to build your first recipe, or create one in the mobile app.',
   },
   confirmed: {
     title: 'No confirmed recipes yet',
-    note: 'Confirm a recipe in the mobile app to see it here.',
+    note: 'Open a draft recipe and mark it as confirmed once all ingredients are priced.',
   },
   draft: {
     title: 'No draft recipes',
-    note: 'Draft recipes will appear here once created on mobile.',
+    note: 'Tap + New recipe to start building — or create one on mobile and it will appear here.',
   },
 }
 
@@ -142,6 +144,7 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
             qty: it.qty ?? it.quantity ?? 0,
             unit: it.unit ?? null,
             costPerUnit: it.costPerUnit ?? it.unitCost ?? null,
+            productSize: it.productSize ?? it.size ?? null,
             lineTotal: it.lineTotal ?? it.totalCost ?? null,
           }))
           const isPartial = items.some((it) => it.costPerUnit == null)
@@ -237,7 +240,7 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
     <div className={(editingId || isNewRecipe) ? styles.pageWithEditor : styles.page}>
       <div>
       <h1 className={styles.heading}>CraftIt</h1>
-      <p className={styles.subhead}>Recipe library with GP analysis. Authoring stays on mobile.</p>
+      <p className={styles.subhead}>Recipe library with GP analysis — build and cost recipes on desktop or mobile.</p>
 
       {/* ── Summary stats ── */}
       <div className={styles.statsRow}>
@@ -510,15 +513,19 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         qty: it.qty || 1,
         unit: it.unit || null,
         costPerUnit: it.costPerUnit ?? null,
+        productSize: it.productSize ?? it.size ?? null,
         lineTotal: it.lineTotal ?? null,
       })))
     }).catch(() => {})
   }, [venueId, recipeId])
 
-  const computedCogs = items
-    .filter(it => it.costPerUnit != null)
-    .reduce((s, it) => s + it.qty * (it.costPerUnit ?? 0), 0)
-  const hasPartialCosts = items.some(it => it.costPerUnit == null)
+  const computedCogs = items.reduce((s, it) => {
+    const cost = computeIngredientCost(it.qty, it.unit ?? 'each', it.productSize, it.costPerUnit)
+    return s + (cost ?? 0)
+  }, 0)
+  const hasPartialCosts = items.some(
+    it => computeIngredientCost(it.qty, it.unit ?? 'each', it.productSize, it.costPerUnit) == null
+  )
   const rrpNum = parseFloat(rrp) || null
   const gpPct = rrpNum && rrpNum > 0 && computedCogs > 0
     ? Math.round(((rrpNum - computedCogs) / rrpNum) * 100)
@@ -530,7 +537,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   }
 
   function addItem() {
-    setItems(prev => [...prev, { productId: null, name: '', qty: 1, unit: null, costPerUnit: null, lineTotal: null }])
+    setItems(prev => [...prev, { productId: null, name: '', qty: 1, unit: null, costPerUnit: null, productSize: null, lineTotal: null }])
   }
 
   function removeItem(idx: number) {
@@ -554,8 +561,10 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
     updateItem(idx, {
       productId: product.id,
       name: product.name,
-      unit: product.unit || null,
+      productSize: product.size ?? null,
       costPerUnit: product.costPrice ?? null,
+      // unit is NOT auto-set from product.unit — that field means the counting label
+      // ('bottle', 'keg', etc.), not a measurement unit. The user picks ml/g/each.
     })
     setProductSearch(prev => ({ ...prev, [idx]: product.name }))
     setProductSuggestions(prev => ({ ...prev, [idx]: [] }))
@@ -578,7 +587,8 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
           qty: it.qty,
           unit: it.unit ?? null,
           costPerUnit: it.costPerUnit ?? null,
-          lineTotal: it.qty * (it.costPerUnit ?? 0),
+          productSize: it.productSize ?? null,
+          lineTotal: computeIngredientCost(it.qty, it.unit ?? 'each', it.productSize, it.costPerUnit),
         })),
         updatedAt: serverTimestamp(),
       }
@@ -672,31 +682,44 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
 
       {/* Ingredients */}
       <p style={{ fontSize: 13, fontWeight: 700, color: '#0B132B', margin: '16px 0 8px' }}>Ingredients</p>
-      {items.map((item, idx) => (
-        <div key={idx} className={styles.ingredientRow}>
-          <div className={styles.ingredientNameWrap}>
-            <input
-              className={styles.ingredientNameInput}
-              value={productSearch[idx] ?? item.name}
-              onChange={e => handleProductSearchChange(idx, e.target.value)}
-              placeholder="Product name"
-            />
-            {(productSuggestions[idx] || []).length > 0 && (
-              <div className={styles.ingredientSuggestions}>
-                {productSuggestions[idx].map(p => (
-                  <div key={p.id} className={styles.ingredientSuggestion} onClick={() => selectProduct(idx, p)}>
-                    {p.name}{p.unit ? ` (${p.unit})` : ''}{p.costPrice != null ? ` — $${p.costPrice}` : ''}
-                  </div>
-                ))}
-              </div>
-            )}
+      {items.map((item, idx) => {
+        const lineCost = computeIngredientCost(item.qty, item.unit ?? 'each', item.productSize, item.costPerUnit)
+        return (
+          <div key={idx} className={styles.ingredientRow}>
+            <div className={styles.ingredientNameWrap}>
+              <input
+                className={styles.ingredientNameInput}
+                value={productSearch[idx] ?? item.name}
+                onChange={e => handleProductSearchChange(idx, e.target.value)}
+                placeholder="Product name"
+              />
+              {(productSuggestions[idx] || []).length > 0 && (
+                <div className={styles.ingredientSuggestions}>
+                  {productSuggestions[idx].map(p => (
+                    <div key={p.id} className={styles.ingredientSuggestion} onClick={() => selectProduct(idx, p)}>
+                      {p.name}{p.size ? ` (${p.size})` : ''}{p.costPrice != null ? ` — $${p.costPrice}` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <input className={styles.smallInput} type="number" value={item.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 1 })} min={0.01} step="any" />
+            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              {(['ml', 'g', 'each'] as const).map(u => (
+                <button
+                  key={u}
+                  type="button"
+                  className={`${styles.filterChip} ${item.unit === u ? styles.filterChipActive : ''}`}
+                  style={{ padding: '2px 7px', fontSize: 11, minWidth: 0 }}
+                  onClick={() => updateItem(idx, { unit: item.unit === u ? null : u })}
+                >{u}</button>
+              ))}
+            </div>
+            <span className={styles.lineTotal}>{lineCost != null ? `$${lineCost.toFixed(2)}` : '—'}</span>
+            <button type="button" className={styles.removeIngredient} onClick={() => removeItem(idx)}>×</button>
           </div>
-          <input className={styles.smallInput} type="number" value={item.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 1 })} min={0.01} step="any" />
-          <input className={styles.smallInput} value={item.unit ?? ''} onChange={e => updateItem(idx, { unit: e.target.value || null })} placeholder="unit" />
-          <span className={styles.lineTotal}>{item.costPerUnit != null ? `$${(item.qty * item.costPerUnit).toFixed(2)}` : '—'}</span>
-          <button type="button" className={styles.removeIngredient} onClick={() => removeItem(idx)}>×</button>
-        </div>
-      ))}
+        )
+      })}
       <button type="button" className={styles.addIngredientBtn} onClick={addItem}>+ Add ingredient</button>
 
       {/* Save */}
