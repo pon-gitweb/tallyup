@@ -61,19 +61,49 @@ export function stripLegalSuffix(s: string): string {
 }
 
 /**
+ * Single-token words that are too generic to be the sole matching signal in
+ * NZ hospitality supplier / product names. Any token NOT on this list —
+ * including brand-specific short names like "lion", "db", "boc" — is treated
+ * as sufficiently specific and accepted when score ≥ 0.85.
+ *
+ * Residual risk: a genuinely generic short word absent from this list can still
+ * produce a false-positive single-token match (e.g. "spring", "grove"). Extend
+ * the list as new cases emerge in production. This is the honest cost of a
+ * denylist: intentional but incomplete coverage, versus a length threshold's
+ * blunt-but-consistent cut.
+ */
+const GENERIC_SINGLE_TOKEN_DENYLIST = new Set([
+  // beverage categories
+  "wine", "wines", "beer", "beers", "ale", "ales", "cider",
+  "brew", "brews", "brewing", "spirits", "spirit",
+  "gin", "rum", "rye", "malt", "tap", "keg",
+  "drinks", "drink", "beverage", "beverages",
+  // food & hospitality
+  "food", "foods", "cafe", "bar", "bars", "pub", "inn", "grill", "deli",
+  "fresh", "farm", "farms", "market",
+  // generic quality / origin descriptors
+  "fine", "good", "best", "pure", "real", "local", "select",
+  // geography-only tokens (appear across too many unrelated suppliers)
+  "nz",
+]);
+
+/**
  * Guards against high-score matches on dangerously small token sets.
  *
  * A 2+-token match at score ≥ 0.85 is always accepted — there's enough
  * overlapping signal to be confident.
  *
- * A 1-token match at score ≥ 0.85 (overlap = 1.0 by arithmetic) is only
- * accepted if that single shared token is ≥ 6 characters. Rationale: generic
- * short tokens ("wine", "beer", "bar", "fresh", "wines" — all ≤ 5 chars)
- * appear in many unrelated names and produce false positives at overlap = 1.0.
- * At 6+ characters, tokens are substantially more entity-specific in the NZ
- * hospitality space, while still catching legitimate short names like "Bidfood"
- * (7) or "Mineral" (7). Common 6-char words ("market", "drinks") remain a
- * small residual risk, but it's far lower than the 1-5 char band.
+ * A 1-token match at score ≥ 0.85 (overlap = 1.0 by arithmetic) is accepted
+ * if the shared token is NOT a known-generic hospitality word (see
+ * GENERIC_SINGLE_TOKEN_DENYLIST above). This replaces an earlier character-
+ * length threshold (≥ 6) which was too blunt: it correctly blocked "wine",
+ * "beer", "bar" but also blocked real brand-specific short names like "lion"
+ * (4), "db" (2), "boc" (3) that are unambiguous supplier identifiers in the
+ * NZ hospitality space.
+ *
+ * Residual risk: any short generic word not on the denylist will pass through
+ * as a false positive. The list requires ongoing maintenance. See the denylist
+ * comment for full detail.
  */
 export function isReliableMatch(
   tokensA: Set<string>,
@@ -86,5 +116,5 @@ export function isReliableMatch(
   if (minSize === 0) return false;
   // minSize === 1: score ≥ 0.85 guarantees exactly one token in common.
   const sharedToken = [...tokensA].find(t => tokensB.has(t));
-  return sharedToken !== undefined && sharedToken.length >= 6;
+  return sharedToken !== undefined && !GENERIC_SINGLE_TOKEN_DENYLIST.has(sharedToken);
 }
