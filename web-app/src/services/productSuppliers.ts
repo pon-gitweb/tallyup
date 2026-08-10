@@ -103,3 +103,85 @@ export async function removeProductSupplier(
     })
   }
 }
+
+/**
+ * Merge two suppliers — mirrors mergeSuppliers in
+ * src/services/productSuppliers.ts (mobile). Update both if you change the logic.
+ *
+ * keepId  — the supplier that survives
+ * mergeId — the supplier to absorb; caller must hard-delete it afterwards as a
+ *            separate step (see mobile's SuppliersScreen.tsx: mergeSuppliers then
+ *            deleteSupplierById in sequence)
+ * dryRun  — when true, counts affected products but writes nothing
+ */
+export async function mergeSuppliers(
+  venueId: string,
+  keepId: string,
+  mergeId: string,
+  dryRun = false,
+): Promise<{ productsUpdated: number }> {
+  if (keepId === mergeId) throw new Error('mergeSuppliers: keepId and mergeId must be different')
+
+  let keepSupplierName = ''
+  if (!dryRun) {
+    const keepSnap = await getDoc(doc(db, 'venues', venueId, 'suppliers', keepId))
+    keepSupplierName = (keepSnap.data() as Record<string, any>)?.name || ''
+  }
+
+  const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'))
+  let productsUpdated = 0
+
+  for (const productDoc of productsSnap.docs) {
+    const data = productDoc.data() as Record<string, any>
+    const productId = productDoc.id
+
+    const topLevelUpdates: Record<string, any> = {}
+    if (data.supplierId === mergeId) {
+      topLevelUpdates.supplierId = keepId
+      topLevelUpdates.supplierName = keepSupplierName
+    }
+    if (data.primarySupplierId === mergeId) {
+      topLevelUpdates.primarySupplierId = keepId
+      topLevelUpdates.primarySupplierName = keepSupplierName
+    }
+    let touched = Object.keys(topLevelUpdates).length > 0
+
+    const mergeDocRef = doc(db, 'venues', venueId, 'products', productId, 'suppliers', mergeId)
+    const mergeDocSnap = await getDoc(mergeDocRef)
+
+    if (mergeDocSnap.exists()) {
+      if (!dryRun) {
+        const mergeData = mergeDocSnap.data() as Record<string, any>
+        const keepDocRef = doc(db, 'venues', venueId, 'products', productId, 'suppliers', keepId)
+        const keepDocSnap = await getDoc(keepDocRef)
+        if (keepDocSnap.exists()) {
+          // Link already exists on keep product — promote preferred status if
+          // the merge supplier was preferred and the keep supplier is not.
+          if (mergeData.isPreferred && !(keepDocSnap.data() as Record<string, any>)?.isPreferred) {
+            await setPreferredProductSupplier(venueId, productId, keepId)
+            // setPreferredProductSupplier already writes primarySupplierId; drop
+            // them from topLevelUpdates to avoid a redundant / conflicting write.
+            delete topLevelUpdates.primarySupplierId
+            delete topLevelUpdates.primarySupplierName
+          }
+        } else {
+          await setDoc(keepDocRef, {
+            ...mergeData,
+            supplierId: keepId,
+            supplierName: keepSupplierName || mergeData.supplierName,
+          })
+        }
+        await deleteDoc(mergeDocRef)
+      }
+      touched = true
+    }
+
+    if (!dryRun && Object.keys(topLevelUpdates).length > 0) {
+      await updateDoc(productDoc.ref, { ...topLevelUpdates, updatedAt: serverTimestamp() })
+    }
+
+    if (touched) productsUpdated++
+  }
+
+  return { productsUpdated }
+}

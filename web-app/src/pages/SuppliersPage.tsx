@@ -14,6 +14,7 @@ import {
 import { db } from '../firebase'
 import { theme } from '../theme'
 import styles from './SuppliersPage.module.css'
+import { mergeSuppliers } from '../services/productSuppliers'
 
 type OrderingMethod = 'email' | 'portal' | 'phone'
 
@@ -148,6 +149,7 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
   const draftCounter = useRef(0)
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [mergingSupplier, setMergingSupplier] = useState<Supplier | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   // Product counts — fetched once, not on every snapshot update (new
@@ -482,14 +484,24 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                className={styles.deleteTrigger}
-                onClick={() => setConfirmDeleteId(supplier.id)}
-                aria-label="Delete supplier"
-              >
-                🗑
-              </button>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className={styles.mergeBtn}
+                  onClick={() => setMergingSupplier(supplier)}
+                  title="Merge into another supplier"
+                >
+                  Merge
+                </button>
+                <button
+                  type="button"
+                  className={styles.deleteTrigger}
+                  onClick={() => setConfirmDeleteId(supplier.id)}
+                  aria-label="Delete supplier"
+                >
+                  🗑
+                </button>
+              </div>
             )}
           </td>
         </tr>
@@ -547,6 +559,227 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
           )}
         </div>
       )}
+      {mergingSupplier && (
+        <SupplierMergeModal
+          venueId={venueId}
+          source={mergingSupplier}
+          allSuppliers={suppliers}
+          onClose={() => setMergingSupplier(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── SupplierMergeModal ────────────────────────────────────────────────────
+// Two-step modal: dry-run → impact summary → confirm → real merge + hard delete.
+// source  = the supplier being merged away (permanently deleted after merge)
+// target  = the supplier that survives (selected by the user)
+//
+// Call sequence matches mobile's SuppliersScreen.tsx exactly:
+//   1. mergeSuppliers(venueId, keepId, mergeId, dryRun=true) — count impact
+//   2. mergeSuppliers(venueId, keepId, mergeId)              — real move
+//   3. deleteDoc(suppliers/<mergeId>)                        — hard delete
+function SupplierMergeModal({
+  venueId,
+  source,
+  allSuppliers,
+  onClose,
+}: {
+  venueId: string
+  source: Supplier
+  allSuppliers: Supplier[]
+  onClose: () => void
+}) {
+  const [mergeQuery, setMergeQuery] = useState('')
+  const [target, setTarget] = useState<Supplier | null>(null)
+  const [dryRunResult, setDryRunResult] = useState<{ productsUpdated: number } | null>(null)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  const suggestions = useMemo(() => {
+    if (target) return []
+    const q = mergeQuery.trim().toLowerCase()
+    if (!q) return []
+    return allSuppliers
+      .filter(s => s.id !== source.id)
+      .filter(s => s.name.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [mergeQuery, allSuppliers, source.id, target])
+
+  async function handleSelectTarget(s: Supplier) {
+    setTarget(s)
+    setMergeQuery(s.name)
+    setDryRunResult(null)
+    setError(null)
+    setWorking(true)
+    try {
+      const result = await mergeSuppliers(venueId, s.id, source.id, true)
+      setDryRunResult(result)
+    } catch (e: any) {
+      setError(String(e?.message || 'Dry run failed.'))
+    }
+    setWorking(false)
+  }
+
+  async function handleConfirmMerge() {
+    if (!target) return
+    setWorking(true)
+    setError(null)
+    try {
+      // Step 1: redirect all product links from source → target
+      await mergeSuppliers(venueId, target.id, source.id)
+      // Step 2: hard delete the source supplier (permanent, not soft-deactivate)
+      await deleteDoc(doc(db, 'venues', venueId, 'suppliers', source.id))
+      setDone(true)
+    } catch (e: any) {
+      setError(String(e?.message || 'Merge failed.'))
+    }
+    setWorking(false)
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={done ? onClose : undefined}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '24px 28px', minWidth: 440, maxWidth: 580, width: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+          <h2 style={{ margin: 0, fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: '#0B132B' }}>
+            Merge supplier
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#6B7280', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6B7280' }}>
+          Search for the supplier to merge <strong style={{ color: '#0B132B' }}>{source.name}</strong> into.
+          Product links will be moved, then{' '}
+          <strong style={{ color: '#dc2626' }}>{source.name} will be permanently deleted.</strong>
+        </p>
+
+        {done ? (
+          /* ── Done state ── */
+          <>
+            <p style={{ color: '#065f46', fontWeight: 700, fontSize: 14, margin: '0 0 6px' }}>✓ Merge complete</p>
+            <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 20px' }}>
+              {source.name} has been permanently deleted. Product links now point to {target?.name}.
+            </p>
+            <button
+              onClick={onClose}
+              style={{ background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', width: '100%', fontFamily: 'Inter, system-ui, sans-serif' }}
+            >
+              Done
+            </button>
+          </>
+        ) : (
+          /* ── Search + confirm flow ── */
+          <>
+            {/* Target search */}
+            <div style={{ position: 'relative', marginBottom: 16 }}>
+              <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Merge {source.name} into…
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Search by supplier name…"
+                  value={mergeQuery}
+                  onChange={e => {
+                    setMergeQuery(e.target.value)
+                    if (target) { setTarget(null); setDryRunResult(null); setError(null) }
+                  }}
+                  disabled={working}
+                  autoFocus
+                  style={{ flex: 1, padding: '8px 12px', border: '1.5px solid #e5e3de', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'Inter, system-ui, sans-serif', color: '#0B132B' }}
+                />
+                {target && (
+                  <button
+                    type="button"
+                    onClick={() => { setTarget(null); setDryRunResult(null); setError(null) }}
+                    disabled={working}
+                    style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: '#6B7280', cursor: 'pointer', flexShrink: 0, fontFamily: 'Inter, system-ui, sans-serif' }}
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+
+              {/* Suggestions dropdown */}
+              {suggestions.length > 0 && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e3de', borderRadius: 8, zIndex: 10, maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginTop: 2 }}>
+                  {suggestions.map(s => (
+                    <div
+                      key={s.id}
+                      onClick={() => handleSelectTarget(s)}
+                      style={{ padding: '10px 14px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid #f1efe9' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#f9f8f6')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '')}
+                    >
+                      <span style={{ fontWeight: 600, color: '#0B132B' }}>{s.name}</span>
+                      {s.email && <span style={{ marginLeft: 8, fontSize: 11, color: '#9ca3af' }}>{s.email}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Checking indicator (dry run in flight) */}
+            {working && !dryRunResult && (
+              <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 12px' }}>Checking impact…</p>
+            )}
+
+            {/* Error */}
+            {error && (
+              <p style={{ color: '#dc2626', fontSize: 13, margin: '0 0 12px' }}>{error}</p>
+            )}
+
+            {/* Dry-run impact summary — red-tinted to reinforce the destructive action */}
+            {dryRunResult && target && (
+              <div style={{ background: '#fff5f5', borderRadius: 8, padding: '14px 16px', marginBottom: 16, border: '1px solid #fca5a5' }}>
+                <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: '#991b1b' }}>
+                  ⚠ This action is permanent and cannot be undone
+                </p>
+                <p style={{ margin: '0 0 4px', fontSize: 13, color: '#374151' }}>
+                  {dryRunResult.productsUpdated} product{dryRunResult.productsUpdated !== 1 ? 's' : ''} will have their supplier link moved from{' '}
+                  <strong>{source.name}</strong> to <strong>{target.name}</strong>.
+                </p>
+                <p style={{ margin: 0, fontSize: 13, color: '#374151' }}>
+                  <strong style={{ color: '#dc2626' }}>{source.name} will then be permanently deleted.</strong>
+                </p>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={working}
+                style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 999, padding: '8px 20px', fontSize: 13, color: '#6B7280', cursor: 'pointer', fontFamily: 'Inter, system-ui, sans-serif' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMerge}
+                disabled={!target || !dryRunResult || working}
+                style={{
+                  background: '#dc2626', color: '#fff', border: 'none', borderRadius: 999,
+                  padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  opacity: !target || !dryRunResult || working ? 0.5 : 1,
+                  fontFamily: 'Inter, system-ui, sans-serif',
+                }}
+              >
+                {working && dryRunResult ? 'Merging…' : 'Merge & delete'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
