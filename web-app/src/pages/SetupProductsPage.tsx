@@ -26,6 +26,7 @@ type Product = {
   name: string
   category: string | null
   unit: string | null
+  size: string | null        // physical size string e.g. '700ml', '20L' — used by recipe costing
   packSize: number | null
   costPrice: number | null
   supplierName: string | null
@@ -54,12 +55,13 @@ type CatalogueMatch = {
   proposedGstPercent: number
 }
 
-type EditableField = 'name' | 'category' | 'unit' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
+type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
   { field: 'category',     label: 'Category' },
   { field: 'unit',         label: 'Unit' },
+  { field: 'size',         label: 'Size' },
   { field: 'packSize',     label: 'Pack Size' },
   { field: 'costPrice',    label: 'Cost Price' },
   { field: 'supplierName', label: 'Supplier' },
@@ -125,6 +127,7 @@ function displayValue(p: Product, field: EditableField): string {
     case 'name':         return p.name || ''
     case 'category':     return p.category || ''
     case 'unit':         return p.unit || ''
+    case 'size':         return p.size ?? ''
     case 'packSize':     return p.packSize != null ? String(p.packSize) : ''
     case 'costPrice':    return p.costPrice != null ? p.costPrice.toFixed(2) : ''
     case 'supplierName': return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
@@ -140,6 +143,11 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
       return { name: trimmed, updatedAt: serverTimestamp() }
     case 'unit':
       return { unit: trimmed || null, updatedAt: serverTimestamp() }
+    case 'size':
+      // Physical size string e.g. "700ml", "20L" — used by recipe costing.
+      // Store null (not empty string) when cleared so computeIngredientCost
+      // treats it as "no size info" rather than an unparseable value.
+      return { size: trimmed || null, updatedAt: serverTimestamp() }
     case 'packSize': {
       const n = trimmed === '' ? null : Math.round(Number(trimmed))
       const val = n != null && Number.isFinite(n) ? n : null
@@ -234,6 +242,7 @@ function parseCsv(text: string): string[][] {
 type CsvRow = {
   name: string
   unit: string
+  size: string
   packSize: number | null
   costPrice: number | null
   supplierName: string
@@ -244,6 +253,7 @@ function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null 
   const header = rows[0].map((h) => h.trim().toLowerCase())
   const nameIdx = header.findIndex((h) => h === 'name')
   const unitIdx = header.findIndex((h) => h === 'unit')
+  const sizeIdx = header.findIndex((h) => h === 'size')
   const packSizeIdx = header.findIndex((h) => h === 'pack size' || h === 'packsize')
   const costPriceIdx = header.findIndex((h) => h === 'cost price' || h === 'costprice')
   const supplierIdx = header.findIndex(
@@ -257,6 +267,7 @@ function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null 
     .map((r) => ({
       name: (r[nameIdx] || '').trim(),
       unit: unitIdx >= 0 ? (r[unitIdx] || '').trim() : '',
+      size: sizeIdx >= 0 ? (r[sizeIdx] || '').trim() : '',
       packSize:
         packSizeIdx >= 0 && (r[packSizeIdx] || '').trim() !== ''
           ? Math.round(Number(r[packSizeIdx]))
@@ -789,6 +800,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               name: data.name || '',
               category: data.category ?? null,
               unit: data.unit ?? null,
+              size: data.size ?? null,
               packSize: data.packSize ?? null,
               costPrice: data.costPrice ?? null,
               supplierName: data.supplierName ?? null,
@@ -1001,6 +1013,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           batch.set(ref, {
             name: row.name,
             unit: row.unit || null,
+            size: row.size || null,
             packSize: row.packSize,
             caseSize: row.packSize,
             costPrice: row.costPrice,
@@ -1024,11 +1037,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   }
 
   function handleExportCsv() {
-    const headers = ['Name', 'Category', 'Unit', 'Pack Size', 'Cost Price', 'Supplier', 'PAR', 'Status']
+    const headers = ['Name', 'Category', 'Unit', 'Size', 'Pack Size', 'Cost Price', 'Supplier', 'PAR', 'Status']
     const rows = visibleRows.map((p) => [
       p.name,
       p.category || '',
       p.unit || '',
+      p.size || '',
       p.packSize != null ? String(p.packSize) : '',
       p.costPrice != null ? p.costPrice.toFixed(2) : '',
       p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : '',
@@ -1537,7 +1551,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             onChange={(e) => handleFiles(e.target.files)}
           />
           <p className={styles.dropZoneTitle}>Drag a CSV here, or click to upload</p>
-          <p className={styles.dropZoneHint}>Columns: Name, Unit, Pack Size, Cost Price, Supplier</p>
+          <p className={styles.dropZoneHint}>Columns: Name, Unit, Size, Pack Size, Cost Price, Supplier</p>
         </div>
         {csvError && <p className={styles.csvError}>{csvError}</p>}
 
@@ -1552,6 +1566,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                   <tr>
                     <th>Name</th>
                     <th>Unit</th>
+                    <th>Size</th>
                     <th>Pack Size</th>
                     <th>Cost Price</th>
                     <th>Supplier</th>
@@ -1562,6 +1577,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                     <tr key={i}>
                       <td className={styles.cellText}>{row.name}</td>
                       <td className={styles.cellText}>{row.unit || '—'}</td>
+                      <td className={styles.cellText}>{row.size || '—'}</td>
                       <td className={styles.cellText}>{row.packSize ?? '—'}</td>
                       <td className={styles.cellText}>{row.costPrice != null ? row.costPrice.toFixed(2) : '—'}</td>
                       <td className={styles.cellText}>{row.supplierName || '—'}</td>
