@@ -686,6 +686,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         const lineCost = computeIngredientCost(item.qty, item.unit ?? 'each', item.productSize, item.costPerUnit)
         return (
           <div key={idx} className={styles.ingredientRow}>
+            {/* Row 1: full-width name input + search dropdown */}
             <div className={styles.ingredientNameWrap}>
               <input
                 className={styles.ingredientNameInput}
@@ -703,20 +704,23 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
                 </div>
               )}
             </div>
-            <input className={styles.smallInput} type="number" value={item.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 1 })} min={0.01} step="any" />
-            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              {(['ml', 'g', 'each'] as const).map(u => (
-                <button
-                  key={u}
-                  type="button"
-                  className={`${styles.filterChip} ${item.unit === u ? styles.filterChipActive : ''}`}
-                  style={{ padding: '2px 7px', fontSize: 11, minWidth: 0 }}
-                  onClick={() => updateItem(idx, { unit: item.unit === u ? null : u })}
-                >{u}</button>
-              ))}
+            {/* Row 2: qty · unit chips · line total (right-aligned) · remove */}
+            <div className={styles.ingredientRowLine2}>
+              <input className={styles.smallInput} type="number" value={item.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 1 })} min={0.01} step="any" />
+              <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                {(['ml', 'g', 'each'] as const).map(u => (
+                  <button
+                    key={u}
+                    type="button"
+                    className={`${styles.filterChip} ${item.unit === u ? styles.filterChipActive : ''}`}
+                    style={{ padding: '2px 7px', fontSize: 11, minWidth: 0 }}
+                    onClick={() => updateItem(idx, { unit: item.unit === u ? null : u })}
+                  >{u}</button>
+                ))}
+              </div>
+              <span className={styles.lineTotal} style={{ marginLeft: 'auto' }}>{lineCost != null ? `$${lineCost.toFixed(2)}` : '—'}</span>
+              <button type="button" className={styles.removeIngredient} onClick={() => removeItem(idx)}>×</button>
             </div>
-            <span className={styles.lineTotal}>{lineCost != null ? `$${lineCost.toFixed(2)}` : '—'}</span>
-            <button type="button" className={styles.removeIngredient} onClick={() => removeItem(idx)}>×</button>
           </div>
         )
       })}
