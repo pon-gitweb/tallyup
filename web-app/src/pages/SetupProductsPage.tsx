@@ -36,6 +36,7 @@ type Product = {
   gstPercent: number | null
   costPriceSource: string | null
   costPriceEstimatedAt: any
+  active?: boolean           // false when merged away; undefined/true means active
 }
 
 type MatchCandidate = {
@@ -748,11 +749,13 @@ function MergeModal({
   source,
   allProducts,
   onClose,
+  onMergeComplete,
 }: {
   venueId: string
   source: Product
   allProducts: Product[]
   onClose: () => void
+  onMergeComplete?: (targetId: string) => void
 }) {
   const [mergeQuery, setMergeQuery] = useState('')
   const [target, setTarget] = useState<Product | null>(null)
@@ -794,6 +797,7 @@ function MergeModal({
     setError(null)
     try {
       await mergeProducts(venueId, target.id, source.id, false)
+      onMergeComplete?.(target.id)
       setDone(true)
     } catch (e: any) {
       setError(String(e?.message || 'Merge failed.'))
@@ -980,6 +984,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [mergingProduct, setMergingProduct] = useState<Product | null>(null)
+  const [mergingCandidateId, setMergingCandidateId] = useState<string | null>(null)
   const [managingSupplierProduct, setManagingSupplierProduct] = useState<{ id: string; name: string } | null>(null)
   const [scanProgress, setScanProgress] = useState<{ current: number; total: number } | null>(null)
   const [catalogueMatches, setCatalogueMatches] = useState<CatalogueMatch[] | null>(null)
@@ -1033,6 +1038,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               gstPercent: data.gstPercent ?? null,
               costPriceSource: data.costPriceSource ?? null,
               costPriceEstimatedAt: data.costPriceEstimatedAt ?? null,
+              active: data.active,  // false when merged away; undefined/true means active
             }
           })
         )
@@ -1457,7 +1463,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   const dismissedArray = useMemo(() => [...dismissedPairs], [dismissedPairs])
   const duplicatePairs = useMemo(
-    () => findDuplicatePairs(products).filter(
+    () => findDuplicatePairs(products.filter(p => p.active !== false)).filter(
       ([a, b]) => !dismissedArray.includes([a.id, b.id].sort().join(':'))
     ),
     [products, dismissedArray]
@@ -1752,6 +1758,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                       alert(`Product '${c.newProductName}' not found in local state — try refreshing the page.`)
                       return
                     }
+                    setMergingCandidateId(c.id)
                     setMergingProduct(found)
                   }}
                   title="Merge this new product into the existing one"
@@ -2004,7 +2011,16 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           venueId={venueId}
           source={mergingProduct}
           allProducts={products}
-          onClose={() => setMergingProduct(null)}
+          onClose={() => { setMergingProduct(null); setMergingCandidateId(null) }}
+          onMergeComplete={mergingCandidateId ? (_targetId) => {
+            const user = auth.currentUser
+            updateDoc(doc(db, 'venues', venueId, 'productMatchCandidates', mergingCandidateId), {
+              status: 'merged',
+              reviewedBy: { uid: user?.uid || null, name: user?.displayName || 'Manager' },
+              reviewedAt: serverTimestamp(),
+            }).catch(e => console.error('[SetupProductsPage] mark candidate merged failed', e))
+            setMergingCandidateId(null)
+          } : undefined}
         />
       )}
     </div>
