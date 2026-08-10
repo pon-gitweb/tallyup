@@ -20,6 +20,8 @@ import { listProductSuppliers, upsertProductSupplier, setPreferredProductSupplie
 import type { ProductSupplierLink } from '../services/productSuppliers'
 import { searchGlobalCatalogFuzzy } from '../services/globalCatalog'
 import type { CatalogHit } from '../services/globalCatalog'
+import { mergeProducts } from '../services/mergeProducts'
+import type { MergeProductsResult } from '../services/mergeProducts'
 
 type Product = {
   id: string
@@ -737,6 +739,228 @@ function CatalogueReviewModal({
   )
 }
 
+// ── MergeModal ─────────────────────────────────────────────────────────────
+// Two-step modal: dry-run → impact summary → confirm → real merge.
+// source  = the product that becomes inactive (merged away)
+// target  = the product that survives (selected by the user in this modal)
+function MergeModal({
+  venueId,
+  source,
+  allProducts,
+  onClose,
+}: {
+  venueId: string
+  source: Product
+  allProducts: Product[]
+  onClose: () => void
+}) {
+  const [mergeQuery, setMergeQuery] = useState('')
+  const [target, setTarget] = useState<Product | null>(null)
+  const [dryRunResult, setDryRunResult] = useState<MergeProductsResult | null>(null)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+
+  // Local fuzzy search — filter the already-loaded product list rather than
+  // making additional Firestore queries, matching the CraftItPage convention.
+  const suggestions = useMemo(() => {
+    if (target) return []
+    const q = mergeQuery.trim().toLowerCase()
+    if (!q) return []
+    return allProducts
+      .filter(p => p.id !== source.id)
+      .filter(p => p.name.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [mergeQuery, allProducts, source.id, target])
+
+  async function handleSelectTarget(p: Product) {
+    setTarget(p)
+    setMergeQuery(p.name)
+    setDryRunResult(null)
+    setError(null)
+    setWorking(true)
+    try {
+      const result = await mergeProducts(venueId, p.id, source.id, true)
+      setDryRunResult(result)
+    } catch (e: any) {
+      setError(String(e?.message || 'Dry run failed.'))
+    }
+    setWorking(false)
+  }
+
+  async function handleConfirmMerge() {
+    if (!target) return
+    setWorking(true)
+    setError(null)
+    try {
+      await mergeProducts(venueId, target.id, source.id, false)
+      setDone(true)
+    } catch (e: any) {
+      setError(String(e?.message || 'Merge failed.'))
+    }
+    setWorking(false)
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={done ? onClose : undefined}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '24px 28px', minWidth: 440, maxWidth: 580, width: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+          <h2 style={{ margin: 0, fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: '#0B132B' }}>
+            Merge product
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#6B7280', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6B7280' }}>
+          <strong style={{ color: '#0B132B' }}>{source.name}</strong> will become inactive and its stocktake area entries will be re-pointed to the product you choose below.
+        </p>
+
+        {done ? (
+          /* ── Done state ── */
+          <>
+            <p style={{ color: '#065f46', fontWeight: 700, fontSize: 14, margin: '0 0 6px' }}>✓ Merged successfully</p>
+            <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 20px' }}>
+              {source.name} is now inactive. Area entries have been re-pointed to {target?.name}.
+            </p>
+            <button
+              onClick={onClose}
+              style={{ background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', width: '100%', fontFamily: 'Inter, system-ui, sans-serif' }}
+            >
+              Done
+            </button>
+          </>
+        ) : (
+          /* ── Search + confirm flow ── */
+          <>
+            {/* Target search */}
+            <div style={{ position: 'relative', marginBottom: 16 }}>
+              <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Merge {source.name} into…
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  placeholder="Search by product name…"
+                  value={mergeQuery}
+                  onChange={e => {
+                    setMergeQuery(e.target.value)
+                    if (target) { setTarget(null); setDryRunResult(null); setError(null) }
+                  }}
+                  disabled={working}
+                  autoFocus
+                  style={{ flex: 1, padding: '8px 12px', border: '1.5px solid #e5e3de', borderRadius: 8, fontSize: 13, outline: 'none', fontFamily: 'Inter, system-ui, sans-serif', color: '#0B132B' }}
+                />
+                {target && (
+                  <button
+                    type="button"
+                    onClick={() => { setTarget(null); setDryRunResult(null); setError(null) }}
+                    disabled={working}
+                    style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: '#6B7280', cursor: 'pointer', flexShrink: 0, fontFamily: 'Inter, system-ui, sans-serif' }}
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+
+              {/* Suggestions dropdown */}
+              {suggestions.length > 0 && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e3de', borderRadius: 8, zIndex: 10, maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', marginTop: 2 }}>
+                  {suggestions.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => handleSelectTarget(p)}
+                      style={{ padding: '10px 14px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid #f1efe9' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#f9f8f6')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '')}
+                    >
+                      <span style={{ fontWeight: 600, color: '#0B132B' }}>{p.name}</span>
+                      {p.unit && <span style={{ marginLeft: 8, fontSize: 11, color: '#9ca3af' }}>{p.unit}</span>}
+                      {p.category && <span style={{ marginLeft: 6, fontSize: 11, color: '#9ca3af' }}>· {p.category}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Checking indicator (dry run in flight) */}
+            {working && !dryRunResult && (
+              <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 12px' }}>Checking impact…</p>
+            )}
+
+            {/* Error */}
+            {error && (
+              <p style={{ color: '#dc2626', fontSize: 13, margin: '0 0 12px' }}>{error}</p>
+            )}
+
+            {/* Dry-run impact summary */}
+            {dryRunResult && target && (
+              <div style={{ background: '#f9f8f6', borderRadius: 8, padding: '14px 16px', marginBottom: 16, border: '1px solid #e5e3de' }}>
+                <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: '#0B132B' }}>
+                  Impact of merging into <em>{target.name}</em>
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#374151', lineHeight: 1.8 }}>
+                  <li>{dryRunResult.areaItemsUpdated} stocktake area item{dryRunResult.areaItemsUpdated !== 1 ? 's' : ''} will be re-pointed</li>
+                  <li>{dryRunResult.supplierLinksHandled} supplier link{dryRunResult.supplierLinksHandled !== 1 ? 's' : ''} will be migrated</li>
+                  <li>{dryRunResult.priceHistoryMoved} price history record{dryRunResult.priceHistoryMoved !== 1 ? 's' : ''} will be moved</li>
+                  {dryRunResult.fieldsBackfilled.length > 0 && (
+                    <li>Fields to copy onto {target.name} (only where missing): {dryRunResult.fieldsBackfilled.join(', ')}</li>
+                  )}
+                </ul>
+                {dryRunResult.sameAreaConflicts.length > 0 && (
+                  <div style={{ marginTop: 10, padding: '10px 12px', background: '#fef3c7', borderRadius: 6, border: '1px solid #fde68a' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 700, color: '#92400e' }}>
+                      ⚠ {dryRunResult.sameAreaConflicts.length} same-area conflict{dryRunResult.sameAreaConflicts.length !== 1 ? 's' : ''} — these entries will be skipped
+                    </p>
+                    <p style={{ margin: '0 0 6px', fontSize: 12, color: '#92400e' }}>
+                      Both products already exist in the same stocktake area. Those entries won't be re-pointed — remove one manually first if needed.
+                    </p>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: '#92400e' }}>
+                      {dryRunResult.sameAreaConflicts.map(c => (
+                        <li key={c.areaItemId}>{c.departmentName} → {c.areaName}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 4 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={working}
+                style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 999, padding: '8px 20px', fontSize: 13, color: '#6B7280', cursor: 'pointer', fontFamily: 'Inter, system-ui, sans-serif' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMerge}
+                disabled={!target || !dryRunResult || working}
+                style={{
+                  background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 999,
+                  padding: '8px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  opacity: !target || !dryRunResult || working ? 0.5 : 1,
+                  fontFamily: 'Inter, system-ui, sans-serif',
+                }}
+              >
+                {working && dryRunResult ? 'Merging…' : 'Merge'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [venueUnits, setVenueUnits] = useState<string[]>(DEFAULT_UNITS)
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
@@ -755,6 +979,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [mergingProduct, setMergingProduct] = useState<Product | null>(null)
   const [managingSupplierProduct, setManagingSupplierProduct] = useState<{ id: string; name: string } | null>(null)
   const [scanProgress, setScanProgress] = useState<{ current: number; total: number } | null>(null)
   const [catalogueMatches, setCatalogueMatches] = useState<CatalogueMatch[] | null>(null)
@@ -1656,7 +1881,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                 <th onClick={() => toggleSort('status')}>
                   Status{sortField === 'status' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                 </th>
-                <th style={{ width: 40 }}></th>
+                <th style={{ width: 88 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -1676,6 +1901,14 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                       </span>
                     </td>
                     <td className={styles.deleteCell}>
+                      <button
+                        type="button"
+                        className={styles.mergeBtn}
+                        onClick={() => setMergingProduct(product)}
+                        title="Merge into another product"
+                      >
+                        Merge
+                      </button>
                       <button
                         type="button"
                         className={styles.deleteBtn}
@@ -1735,6 +1968,14 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           venueId={venueId}
           onClose={() => setCatalogueMatches(null)}
           onApplied={() => setCatalogueMatches(null)}
+        />
+      )}
+      {mergingProduct && (
+        <MergeModal
+          venueId={venueId}
+          source={mergingProduct}
+          allProducts={products}
+          onClose={() => setMergingProduct(null)}
         />
       )}
     </div>

@@ -261,13 +261,33 @@
   background: #eff6ff;
 }
 
-/* ── Delete column ── */
+/* ── Actions column (Merge + Delete) ── */
 .deleteCell {
   padding: 4px 6px;
   border-bottom: 1px solid #f1efe9;
-  text-align: center;
+  text-align: right;
   vertical-align: middle;
-  width: 40px;
+  white-space: nowrap;
+  width: 88px;
+}
+
+.mergeBtn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: Inter, system-ui, sans-serif;
+  margin-right: 2px;
+}
+
+.mergeBtn:hover {
+  color: #1b4f72;
+  background: #eff6ff;
 }
 
 .deleteBtn {
