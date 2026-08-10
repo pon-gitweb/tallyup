@@ -181,6 +181,12 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
             notes: data.notes ?? null,
           }
         })
+        rows.sort((a, b) => {
+          if (!a.name && !b.name) return 0
+          if (!a.name) return 1
+          if (!b.name) return -1
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        })
         setSuppliers(rows)
         setLoading(false)
         if (!countsFetched.current) {
