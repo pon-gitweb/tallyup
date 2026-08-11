@@ -478,6 +478,8 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const [category, setCategory] = useState<'food' | 'beverage' | null>(null)
   const [mode, setMode] = useState<'single' | 'batch' | 'dish' | null>('single')
   const [rrp, setRrp] = useState<string>('')
+  const [yieldQty, setYieldQty] = useState<string>('')
+  const [servingsCount, setServingsCount] = useState<string>('')
   const [status, setStatus] = useState<'draft' | 'confirmed'>('draft')
   const [items, setItems] = useState<RecipeItem[]>([])
   const [allProducts, setAllProducts] = useState<any[]>([])
@@ -497,7 +499,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   // Load existing recipe
   useEffect(() => {
     if (!recipeId) {
-      setName(''); setCategory(null); setMode('single'); setRrp(''); setStatus('draft'); setItems([])
+      setName(''); setCategory(null); setMode('single'); setRrp(''); setYieldQty(''); setServingsCount(''); setStatus('draft'); setItems([])
       return
     }
     getDoc(doc(db, 'venues', venueId, 'recipes', recipeId)).then(snap => {
@@ -507,6 +509,8 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
       setCategory(d.category || null)
       setMode(d.mode || 'single')
       setRrp(d.rrp != null ? String(d.rrp) : '')
+      setYieldQty(d.yield != null ? String(d.yield) : '')
+      setServingsCount(d.servings != null ? String(d.servings) : '')
       setStatus(d.status || 'draft')
       setItems((d.items || []).map((it: any) => ({
         productId: it.productId ?? null,
@@ -527,9 +531,26 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const hasPartialCosts = items.some(
     it => computeIngredientCost(it.qty, it.unit ?? 'each', it.productSize, it.costPerUnit) == null
   )
+
+  // Derived ingredient totals by unit — mirrors IngredientEditor totals logic on mobile.
+  // Independent of cost/productId: sums raw qty into ml, g, or count buckets.
+  const derivedTotals = useMemo(() => {
+    let volumeMl = 0, weightG = 0, count = 0
+    items.forEach(it => {
+      if (it.unit === 'ml') volumeMl += it.qty
+      else if (it.unit === 'g') weightG += it.qty
+      else count += it.qty
+    })
+    return { volumeMl, weightG, count }
+  }, [items])
+
   const rrpNum = parseFloat(rrp) || null
+  // For batch mode, GP% is per-serve cost (total batch COGS ÷ number of servings) vs RRP per serve.
+  // yieldQty (ml/g total) is stored for Phase 3 stocktake valuation but not used here.
+  // For single/dish, the whole computedCogs IS the per-serve cost — no change to that behavior.
+  const cogsPerUnit = mode === 'batch' ? computedCogs / (parseFloat(servingsCount) || 1) : computedCogs
   const gpPct = rrpNum && rrpNum > 0 && computedCogs > 0
-    ? Math.round(((rrpNum - computedCogs) / rrpNum) * 100)
+    ? Math.round(((rrpNum - cogsPerUnit) / rrpNum) * 100)
     : null
   const gpColor = gpPct == null ? '#6b7280' : gpPct >= 70 ? '#16a34a' : gpPct >= 60 ? '#c47b2b' : '#dc2626'
 
@@ -607,6 +628,8 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         category,
         mode,
         rrp: rrpNum,
+        yield: parseFloat(yieldQty) || null,
+        servings: parseFloat(servingsCount) || null,
         cogs: computedCogs > 0 ? Math.round(computedCogs * 100) / 100 : null,
         status,
         items: items.map(it => ({
@@ -689,17 +712,67 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
       <div className={styles.pricingRow}>
         <span className={styles.computedCogs}>COGS: {computedCogs > 0 ? `$${computedCogs.toFixed(2)}` : '—'}</span>
         <span style={{ color: gpColor, fontWeight: 700 }}>GP: {gpPct != null ? `${gpPct}%` : '—'}</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 12, color: '#6b7280' }}>RRP $</span>
-          <input
-            style={{ width: 70, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
-            type="number"
-            value={rrp}
-            onChange={e => setRrp(e.target.value)}
-            placeholder="0.00"
-          />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {mode === 'batch' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>Yield</span>
+              <input
+                style={{ width: 70, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
+                type="number"
+                value={yieldQty}
+                onChange={e => setYieldQty(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+          )}
+          {mode === 'batch' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>Servings</span>
+              <input
+                style={{ width: 60, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
+                type="number"
+                value={servingsCount}
+                onChange={e => setServingsCount(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>RRP $</span>
+            <input
+              style={{ width: 70, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
+              type="number"
+              value={rrp}
+              onChange={e => setRrp(e.target.value)}
+              placeholder="0.00"
+            />
+          </div>
         </div>
       </div>
+      {/* Batch yield suggestions — only shown in batch mode when at least one total is non-zero */}
+      {mode === 'batch' && (derivedTotals.volumeMl > 0 || derivedTotals.weightG > 0 || derivedTotals.count > 0) && (
+        <div className={styles.chipRow} style={{ marginBottom: 4 }}>
+          <span style={{ fontSize: 11, color: '#6b7280', alignSelf: 'center', marginRight: 4 }}>Yield:</span>
+          {derivedTotals.volumeMl > 0 && (
+            <button type="button"
+              className={`${styles.filterChip} ${parseFloat(yieldQty) === derivedTotals.volumeMl ? styles.filterChipActive : ''}`}
+              onClick={() => setYieldQty(String(derivedTotals.volumeMl))}
+            >{derivedTotals.volumeMl.toLocaleString()} ml</button>
+          )}
+          {derivedTotals.weightG > 0 && (
+            <button type="button"
+              className={`${styles.filterChip} ${parseFloat(yieldQty) === derivedTotals.weightG ? styles.filterChipActive : ''}`}
+              onClick={() => setYieldQty(String(derivedTotals.weightG))}
+            >{derivedTotals.weightG.toLocaleString()} g</button>
+          )}
+          {derivedTotals.count > 0 && (
+            <button type="button"
+              className={`${styles.filterChip} ${parseFloat(yieldQty) === derivedTotals.count ? styles.filterChipActive : ''}`}
+              onClick={() => setYieldQty(String(derivedTotals.count))}
+            >{derivedTotals.count.toLocaleString()} each</button>
+          )}
+        </div>
+      )}
       {hasPartialCosts && <p className={styles.partialWarning}>⚠️ Some ingredients have no cost price — COGS is incomplete</p>}
 
       {/* Status toggle */}
