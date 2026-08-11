@@ -485,6 +485,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const [productSuggestions, setProductSuggestions] = useState<Record<number, any[]>>({})
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
 
   // Load all products for autocomplete
   useEffect(() => {
@@ -544,6 +545,33 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
     setItems(prev => prev.filter((_, i) => i !== idx))
     setProductSearch(prev => { const n = { ...prev }; delete n[idx]; return n })
     setProductSuggestions(prev => { const n = { ...prev }; delete n[idx]; return n })
+  }
+
+  // Re-syncs productSize and costPerUnit for every linked ingredient from the
+  // current allProducts snapshot. Only updates items where the values have
+  // actually changed — reports how many were refreshed vs already current.
+  // Unlinked items (no productId) and orphaned links (product not found) are
+  // left untouched. Does NOT save to Firestore — user still needs to save.
+  function refreshIngredientCosts() {
+    let linked = 0
+    let updated = 0
+    const newItems = items.map(it => {
+      if (!it.productId) return it
+      linked++
+      const product = allProducts.find((p: any) => p.id === it.productId)
+      if (!product) return it
+      const newSize = product.size ?? null
+      const newCost = product.costPrice ?? null
+      const changed = newSize !== it.productSize || newCost !== it.costPerUnit
+      if (changed) updated++
+      return changed ? { ...it, productSize: newSize, costPerUnit: newCost } : it
+    })
+    setItems(newItems)
+    setRefreshMsg(
+      updated === 0
+        ? 'Already up to date'
+        : `Refreshed ${updated} of ${linked} linked ingredient${linked !== 1 ? 's' : ''}`
+    )
   }
 
   function handleProductSearchChange(idx: number, val: string) {
@@ -680,8 +708,20 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         <button type="button" className={`${styles.statusBtn} ${status === 'confirmed' ? styles.statusBtnActive : ''}`} onClick={() => setStatus('confirmed')}>Confirmed</button>
       </div>
 
-      {/* Ingredients */}
-      <p style={{ fontSize: 13, fontWeight: 700, color: '#0B132B', margin: '16px 0 8px' }}>Ingredients</p>
+      {/* Ingredients heading + refresh action */}
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '16px 0 8px' }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: '#0B132B', margin: 0 }}>Ingredients</p>
+        <button
+          type="button"
+          onClick={refreshIngredientCosts}
+          style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+        >
+          ↻ Refresh costs
+        </button>
+      </div>
+      {refreshMsg && (
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 8px' }}>{refreshMsg}</p>
+      )}
       {items.map((item, idx) => {
         const lineCost = computeIngredientCost(item.qty, item.unit ?? 'each', item.productSize, item.costPerUnit)
         return (
