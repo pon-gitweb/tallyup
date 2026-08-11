@@ -60,6 +60,15 @@ type CatalogueMatch = {
 
 type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
+// Fixed size presets — volumes cover standard spirit/wine/beer formats common
+// in NZ hospitality; dry goods cover standard ingredient pack sizes.
+// Must stay in sync with SIZE_PRESETS in StockTakeAreaInventoryScreen.tsx (mobile).
+// "Unsure" is represented as the empty-string option (committed as null via buildUpdatePayload).
+const SIZE_PRESETS = [
+  '50ml', '100ml', '200ml', '250ml', '300ml', '330ml', '350ml', '500ml', '700ml', '750ml', '1000ml',
+  '100g', '250g', '500g', '1kg', '2kg', '5kg',
+]
+
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
   { field: 'category',     label: 'Category' },
@@ -1368,6 +1377,24 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           />
         )
       }
+      if (field === 'size') {
+        return (
+          <select
+            autoFocus
+            className={styles.cellInput}
+            value={editValue}
+            onChange={e => {
+              const val = e.target.value
+              commitEdit(product.id, field, val)
+              setEditingCell(null)
+            }}
+            onBlur={() => setEditingCell(null)}
+          >
+            <option value="">Unsure</option>
+            {SIZE_PRESETS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )
+      }
       return (
         <input
           ref={(el) => {
@@ -1375,7 +1402,6 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           }}
           className={styles.cellInput}
           type={field === 'packSize' || field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
-          placeholder={field === 'size' ? 'e.g. 700ml' : undefined}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}
@@ -1385,9 +1411,6 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
     const value = displayValue(product, field)
     const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
-    // Warn when Size looks like a bare number — no letters means no unit, which
-    // breaks computeIngredientCost (returns null, COGS shows as incomplete).
-    const isBareNumber = field === 'size' && value.length > 0 && !/[a-z]/i.test(value)
     return (
       <div
         className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
@@ -1396,12 +1419,6 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         onClick={() => startEdit(product, field)}
       >
         {value || '—'}
-        {isBareNumber && (
-          <span
-            style={{ marginLeft: 4, color: '#c47b2b', fontSize: 11, fontWeight: 700 }}
-            title="Size needs a unit, e.g. 700ml — recipe costing won't work without one."
-          >⚠</span>
-        )}
       </div>
     )
   }

@@ -450,6 +450,13 @@ const Row = React.memo(function Row({
   );
 });
 
+// Fixed size presets — must stay in sync with SIZE_PRESETS in
+// web-app/src/pages/SetupProductsPage.tsx (desktop).
+const SIZE_PRESETS = [
+  '50ml', '100ml', '200ml', '250ml', '300ml', '330ml', '350ml', '500ml', '700ml', '750ml', '1000ml',
+  '100g', '250g', '500g', '1kg', '2kg', '5kg',
+];
+
 /* ---------------------------------- Screen ---------------------------------- */
 
 function StockTakeAreaInventoryScreen() {
@@ -1411,6 +1418,7 @@ function StockTakeAreaInventoryScreen() {
   const [addingSupplier, setAddingSupplier] = useState('');
   const [addingQty, setAddingQty] = useState('');
   const [addingBarcode, setAddingBarcode] = useState('');
+  const [addingSize, setAddingSize] = useState<string | null>(null);
   const nameInputRef = useRef<TextInput>(null);
 
   const [areaMeta, setAreaMeta] = useState<AreaDoc | null>(null);
@@ -1961,6 +1969,7 @@ const qty = parseFloat(typed);
           name: nm,
           unit: unit || null,
           supplierName: supplier || null,
+          size: addingSize,  // physical size string for recipe costing; null = unsure
           ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
           createdAt: nowTs,
           updatedAt: nowTs,
@@ -1971,6 +1980,7 @@ const qty = parseFloat(typed);
           name: nm,
           unit: unit || null,
           supplierName: supplier || null,
+          size: addingSize,
           ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
         }]);
         // Best-effort: contribute to global catalogue when a barcode was provided
@@ -2031,11 +2041,12 @@ const qty = parseFloat(typed);
     console.log('[Area quick add] SUCCESS path=', writePath, 'id=', docRef.id);
     showSuccess(`✓ "${nm}" added to this area.`);
 
-    // Clear name, qty, supplier — keep unit (user likely counting same type of product)
+    // Clear name, qty, supplier, size — keep unit (user likely counting same type of product)
     setAddingName('');
     setAddingQty('');
     setAddingSupplier('');
     setAddingBarcode('');
+    setAddingSize(null);
 
     // Persist unit preference only
     rememberQuickAdd(unit, '');
@@ -3239,7 +3250,7 @@ const openHistory = throttleAction(async (item: Item) => {
         { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
         /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
         { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
-        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => { setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setQuickAddSheetOpen(true); setTimeout(() => nameInputRef.current?.focus(), 100); } },
+        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => { setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setQuickAddSheetOpen(true); setTimeout(() => nameInputRef.current?.focus(), 100); } },
       ].map(card => (
         <TouchableOpacity
           key={card.icon}
@@ -3457,6 +3468,7 @@ const openHistory = throttleAction(async (item: Item) => {
                   setAddingUnit('');
                   setAddingQty('');
                   setAddingBarcode('');
+                  setAddingSize(null);
                   setQuickAddSheetOpen(true);
                   setTimeout(() => nameInputRef.current?.focus(), 100);
                 }}
@@ -4618,7 +4630,7 @@ const openHistory = throttleAction(async (item: Item) => {
               { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
               /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
               { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
-              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setQuickAddSheetOpen(true); }, 0); } },
+              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setQuickAddSheetOpen(true); }, 0); } },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.label}
@@ -4709,6 +4721,31 @@ const openHistory = throttleAction(async (item: Item) => {
                   blurOnSubmit={false}
                 />
 
+                {/* Size selection — fixed presets only, no free text, to enforce valid values for recipe costing */}
+                <Text style={{ fontSize:12, fontWeight:'600', color:'#64748b', marginBottom:6 }}>Size (for costing)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }} contentContainerStyle={{ gap:6, paddingRight:4 }}>
+                  {[...SIZE_PRESETS, null].map(s => {
+                    const isSelected = s === null ? addingSize === null : addingSize === s;
+                    const label = s === null ? 'Unsure' : s;
+                    return (
+                      <TouchableOpacity
+                        key={label}
+                        onPress={() => setAddingSize(s)}
+                        style={{
+                          paddingVertical:6, paddingHorizontal:10,
+                          borderRadius:8, borderWidth:1,
+                          borderColor: isSelected ? '#1b4f72' : '#e2e8f0',
+                          backgroundColor: isSelected ? '#1b4f72' : '#f8fafc',
+                        }}
+                      >
+                        <Text style={{ fontSize:13, color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '700' : '400' }}>
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
                 <TouchableOpacity
                   onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
                   style={{ backgroundColor:'#1b4f72', borderRadius:12, paddingVertical:14, alignItems:'center', marginBottom:8 }}
@@ -4753,6 +4790,7 @@ const openHistory = throttleAction(async (item: Item) => {
           setAddingUnit('');
           setAddingQty('');
           setAddingBarcode(barcode);
+          setAddingSize(null);
           setQuickAddSheetOpen(true);
         }}
         onFocusItem={focusItem}
