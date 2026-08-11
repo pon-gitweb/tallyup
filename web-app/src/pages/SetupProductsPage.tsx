@@ -60,14 +60,26 @@ type CatalogueMatch = {
 
 type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
 
-// Fixed size presets — volumes cover standard spirit/wine/beer formats common
-// in NZ hospitality; dry goods cover standard ingredient pack sizes.
-// Must stay in sync with SIZE_PRESETS in StockTakeAreaInventoryScreen.tsx (mobile).
-// "Unsure" is represented as the empty-string option (committed as null via buildUpdatePayload).
-const SIZE_PRESETS = [
-  '50ml', '100ml', '200ml', '250ml', '300ml', '330ml', '350ml', '500ml', '700ml', '750ml', '1000ml',
-  '100g', '250g', '500g', '1kg', '2kg', '5kg',
-]
+// Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
+// StockTakeAreaInventoryScreen.tsx (mobile).
+const UNIT_CATEGORIES = ['Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag']
+
+// Size presets keyed by unit category — must stay in sync with SIZE_PRESETS_BY_UNIT in
+// StockTakeAreaInventoryScreen.tsx (mobile).
+// "Unsure" is represented as the empty-string select option (committed as null via buildUpdatePayload).
+const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
+  'Bottle':         ['50ml','100ml','200ml','375ml','500ml','700ml','750ml','1L','1.125L','1.5L','1.75L','2L','3L'],
+  'Keg':            ['20L','30L','50L'],
+  'Container':      ['5L','10L','20L','30L'],
+  'Kitchen Liquid': ['250ml','500ml','1L','2L','4L','20L'],
+  'Can':            ['400g','800g','2.5kg','3kg'],
+  'Jar':            ['180g','250g','300g','510g'],
+  'Sachet':         ['2g','3g','3.5g','5g','7g','10g','15ml'],
+  'Dry/Bag':        ['100g','250g','500g','1kg','2kg','5kg','10kg','20kg'],
+}
+// Fallback list — all presets across all categories, deduplicated.  Used when unit is unset
+// or doesn't match a known category (grandfathered old data).
+const ALL_SIZE_PRESETS = [...new Set(Object.values(SIZE_PRESETS_BY_UNIT).flat())]
 
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
@@ -286,7 +298,6 @@ function mapCsvRows(rows: string[][]): { parsed: CsvRow[]; error: string | null 
   return { parsed, error: parsed.length === 0 ? 'No valid rows found — each row needs a Name.' : null }
 }
 
-const DEFAULT_UNITS = ['Each', 'Bottle', 'Can', 'Keg', 'Case', 'Carton', 'Litre', 'Kg', 'Box']
 const DEFAULT_CATEGORIES = ['beer', 'wine', 'spirits', 'rtd', 'na']
 
 function LearnableSelect({
@@ -968,7 +979,6 @@ function MergeModal({
 }
 
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
-  const [venueUnits, setVenueUnits] = useState<string[]>(DEFAULT_UNITS)
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
   const [venueCountry, setVenueCountry] = useState<string | null>(null)
   const [suppliers, setSuppliers] = useState<VenueSupplier[]>([])
@@ -1001,10 +1011,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     getDoc(doc(db, 'venues', venueId)).then((snap) => {
       const data = (snap.exists() ? snap.data() : {}) as any
       setVenueCountry(data.country ?? null)
-      setVenueUnits(Array.isArray(data.productUnits) ? data.productUnits : DEFAULT_UNITS)
       setVenueCategories(Array.isArray(data.productCategories) ? data.productCategories : DEFAULT_CATEGORIES)
       const seed: Record<string, unknown> = {}
-      if (!('productUnits' in data)) seed.productUnits = DEFAULT_UNITS
       if (!('productCategories' in data)) seed.productCategories = DEFAULT_CATEGORIES
       if (Object.keys(seed).length > 0) updateDoc(doc(db, 'venues', venueId), seed).catch(() => {})
     }).catch(() => {})
@@ -1159,16 +1167,13 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
   }
 
-  async function addVenueOption(field: 'unit' | 'category', value: string) {
+  async function addVenueOption(value: string) {
     const trimmed = value.trim()
     if (!trimmed) return
-    const arrayField = field === 'unit' ? 'productUnits' : 'productCategories'
-    const existing = field === 'unit' ? venueUnits : venueCategories
-    if (existing.some(o => o.toLowerCase() === trimmed.toLowerCase())) return
+    if (venueCategories.some(o => o.toLowerCase() === trimmed.toLowerCase())) return
     try {
-      await updateDoc(doc(db, 'venues', venueId), { [arrayField]: arrayUnion(trimmed) })
-      if (field === 'unit') setVenueUnits(prev => [...prev, trimmed])
-      else setVenueCategories(prev => [...prev, trimmed])
+      await updateDoc(doc(db, 'venues', venueId), { productCategories: arrayUnion(trimmed) })
+      setVenueCategories(prev => [...prev, trimmed])
     } catch (e) {
       console.error('[SetupProductsPage] addVenueOption failed', e)
     }
@@ -1334,13 +1339,32 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   function renderCell(product: Product, field: EditableField) {
     const isEditing = editingCell?.id === product.id && editingCell.field === field
     if (isEditing) {
-      if (field === 'unit' || field === 'category') {
+      if (field === 'unit') {
+        const isUnmatched = editValue !== '' && !UNIT_CATEGORIES.includes(editValue)
+        return (
+          <select
+            autoFocus
+            className={styles.cellInput}
+            value={editValue}
+            onChange={e => {
+              commitEdit(product.id, field, e.target.value)
+              setEditingCell(null)
+            }}
+            onBlur={() => setEditingCell(null)}
+          >
+            <option value="">—</option>
+            {isUnmatched && <option key={editValue} value={editValue}>{editValue}</option>}
+            {UNIT_CATEGORIES.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        )
+      }
+      if (field === 'category') {
         return (
           <LearnableSelect
-            options={field === 'unit' ? venueUnits : venueCategories}
+            options={venueCategories}
             currentValue={displayValue(product, field)}
             onCommit={(val) => { commitEdit(product.id, field, val); setEditingCell(null) }}
-            onAddOption={(val) => addVenueOption(field, val)}
+            onAddOption={(val) => addVenueOption(val)}
             onCancel={() => setEditingCell(null)}
           />
         )
@@ -1378,6 +1402,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         )
       }
       if (field === 'size') {
+        const sizeList = SIZE_PRESETS_BY_UNIT[product.unit ?? ''] ?? ALL_SIZE_PRESETS
+        const isSizeUnmatched = editValue !== '' && !sizeList.includes(editValue)
         return (
           <select
             autoFocus
@@ -1391,7 +1417,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             onBlur={() => setEditingCell(null)}
           >
             <option value="">Unsure</option>
-            {SIZE_PRESETS.map(s => <option key={s} value={s}>{s}</option>)}
+            {isSizeUnmatched && <option key={editValue} value={editValue}>{editValue}</option>}
+            {sizeList.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         )
       }

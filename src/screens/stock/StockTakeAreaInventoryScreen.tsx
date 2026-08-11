@@ -450,12 +450,25 @@ const Row = React.memo(function Row({
   );
 });
 
-// Fixed size presets — must stay in sync with SIZE_PRESETS in
+// Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
 // web-app/src/pages/SetupProductsPage.tsx (desktop).
-const SIZE_PRESETS = [
-  '50ml', '100ml', '200ml', '250ml', '300ml', '330ml', '350ml', '500ml', '700ml', '750ml', '1000ml',
-  '100g', '250g', '500g', '1kg', '2kg', '5kg',
-];
+const UNIT_CATEGORIES = ['Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag'];
+
+// Size presets keyed by unit — must stay in sync with SIZE_PRESETS_BY_UNIT in
+// web-app/src/pages/SetupProductsPage.tsx (desktop).
+const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
+  'Bottle':         ['50ml','100ml','200ml','375ml','500ml','700ml','750ml','1L','1.125L','1.5L','1.75L','2L','3L'],
+  'Keg':            ['20L','30L','50L'],
+  'Container':      ['5L','10L','20L','30L'],
+  'Kitchen Liquid': ['250ml','500ml','1L','2L','4L','20L'],
+  'Can':            ['400g','800g','2.5kg','3kg'],
+  'Jar':            ['180g','250g','300g','510g'],
+  'Sachet':         ['2g','3g','3.5g','5g','7g','10g','15ml'],
+  'Dry/Bag':        ['100g','250g','500g','1kg','2kg','5kg','10kg','20kg'],
+};
+// Fallback list — all presets across all categories, deduplicated.  Used when unit is unset
+// or doesn't match a known category (grandfathered old data).
+const ALL_SIZE_PRESETS_MOBILE = [...new Set(Object.values(SIZE_PRESETS_BY_UNIT).flat())];
 
 /* ---------------------------------- Screen ---------------------------------- */
 
@@ -1414,7 +1427,8 @@ function StockTakeAreaInventoryScreen() {
   const scaleRequestRef = useRef(0);
 
   const [addingName, setAddingName] = useState('');
-  const [addingUnit, setAddingUnit] = useState('');
+  const [addingUnit, setAddingUnit] = useState<string | null>(null);
+  const [addingSizeExpanded, setAddingSizeExpanded] = useState(false);
   const [addingSupplier, setAddingSupplier] = useState('');
   const [addingQty, setAddingQty] = useState('');
   const [addingBarcode, setAddingBarcode] = useState('');
@@ -2047,6 +2061,7 @@ const qty = parseFloat(typed);
     setAddingSupplier('');
     setAddingBarcode('');
     setAddingSize(null);
+    setAddingSizeExpanded(false);
 
     // Persist unit preference only
     rememberQuickAdd(unit, '');
@@ -3250,7 +3265,7 @@ const openHistory = throttleAction(async (item: Item) => {
         { icon: '📷', title: 'Photograph this shelf', desc: "Take a photo — AI reads what's on the shelf", onPress: () => setCaptureShelfOpen(true) },
         /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
         { icon: '🔍', title: 'Search venue products', desc: 'Find a product already in your venue and add it here', onPress: () => setVenueSearchOpen(true) },
-        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => { setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setQuickAddSheetOpen(true); setTimeout(() => nameInputRef.current?.focus(), 100); } },
+        { icon: '✏️', title: 'Add manually', desc: 'Type in the product name and details', onPress: () => { setAddingName(''); setAddingUnit(null); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setAddingSizeExpanded(false); setQuickAddSheetOpen(true); setTimeout(() => nameInputRef.current?.focus(), 100); } },
       ].map(card => (
         <TouchableOpacity
           key={card.icon}
@@ -3465,10 +3480,11 @@ const openHistory = throttleAction(async (item: Item) => {
                   const term = unifiedSearch.trim();
                   setUnifiedSearch('');
                   setAddingName(term);
-                  setAddingUnit('');
+                  setAddingUnit(null);
                   setAddingQty('');
                   setAddingBarcode('');
                   setAddingSize(null);
+                  setAddingSizeExpanded(false);
                   setQuickAddSheetOpen(true);
                   setTimeout(() => nameInputRef.current?.focus(), 100);
                 }}
@@ -4630,7 +4646,7 @@ const openHistory = throttleAction(async (item: Item) => {
               { icon: '📷', label: 'Scan barcode', desc: 'Point at any barcode — instant lookup or add new', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setBarcodeScanOpen(true), 0); } },
               /* PHOTOGRAPH_PRODUCT — hidden. Photo flow now triggered automatically after failed barcode scan. Code intact in ProductPhotoModal.tsx */
               { icon: '🖼️', label: 'Scan shelf section', desc: 'Take a photo — AI reads what\'s on the shelf', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>setCaptureShelfOpen(true), 0); } },
-              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(''); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setQuickAddSheetOpen(true); }, 0); } },
+              { icon: '✏️', label: 'Quick add manually', desc: 'Type in a product name and count', onPress: ()=>{ setAddSheetOpen(false); setTimeout(()=>{ setAddingName(''); setAddingUnit(null); setAddingQty(''); setAddingBarcode(''); setAddingSize(null); setAddingSizeExpanded(false); setQuickAddSheetOpen(true); }, 0); } },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.label}
@@ -4679,33 +4695,45 @@ const openHistory = throttleAction(async (item: Item) => {
                   blurOnSubmit={false}
                 />
 
-                <View style={{ flexDirection:'row', gap:8, marginBottom:10 }}>
-                  <TextInput
-                    value={addingUnit}
-                    onChangeText={setAddingUnit}
-                    placeholder="Unit (e.g. bottles)"
-                    style={{
-                      flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                      paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
-                    }}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                  />
-                  <TextInput
-                    value={addingQty}
-                    onChangeText={setAddingQty}
-                    placeholder="Count now"
-                    keyboardType="decimal-pad"
-                    inputMode="decimal"
-                    style={{
-                      flex:1, borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
-                      paddingHorizontal:12, paddingVertical:10, fontSize:14, color:'#0f172a',
-                    }}
-                    returnKeyType="done"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
-                  />
-                </View>
+                {/* Unit selection — fixed categories only, chip picker */}
+                <Text style={{ fontSize:12, fontWeight:'600', color:'#64748b', marginBottom:6 }}>Unit</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }} contentContainerStyle={{ gap:6, paddingRight:4 }}>
+                  {UNIT_CATEGORIES.map(u => {
+                    const isSelected = addingUnit === u;
+                    return (
+                      <TouchableOpacity
+                        key={u}
+                        onPress={() => { setAddingUnit(u); setAddingSize(null); setAddingSizeExpanded(false); }}
+                        style={{
+                          paddingVertical:6, paddingHorizontal:10,
+                          borderRadius:8, borderWidth:1,
+                          borderColor: isSelected ? '#1b4f72' : '#e2e8f0',
+                          backgroundColor: isSelected ? '#1b4f72' : '#f8fafc',
+                        }}
+                      >
+                        <Text style={{ fontSize:13, color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '700' : '400' }}>
+                          {u}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <TextInput
+                  value={addingQty}
+                  onChangeText={setAddingQty}
+                  placeholder="Count now"
+                  keyboardType="decimal-pad"
+                  inputMode="decimal"
+                  style={{
+                    borderWidth:1, borderColor:'#e2e8f0', borderRadius:10,
+                    paddingHorizontal:12, paddingVertical:10, fontSize:14,
+                    color:'#0f172a', marginBottom:10,
+                  }}
+                  returnKeyType="done"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
+                />
 
                 <TextInput
                   value={addingBarcode}
@@ -4721,30 +4749,64 @@ const openHistory = throttleAction(async (item: Item) => {
                   blurOnSubmit={false}
                 />
 
-                {/* Size selection — fixed presets only, no free text, to enforce valid values for recipe costing */}
-                <Text style={{ fontSize:12, fontWeight:'600', color:'#64748b', marginBottom:6 }}>Size (for costing)</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }} contentContainerStyle={{ gap:6, paddingRight:4 }}>
-                  {[...SIZE_PRESETS, null].map(s => {
-                    const isSelected = s === null ? addingSize === null : addingSize === s;
-                    const label = s === null ? 'Unsure' : s;
-                    return (
-                      <TouchableOpacity
-                        key={label}
-                        onPress={() => setAddingSize(s)}
-                        style={{
-                          paddingVertical:6, paddingHorizontal:10,
-                          borderRadius:8, borderWidth:1,
-                          borderColor: isSelected ? '#1b4f72' : '#e2e8f0',
-                          backgroundColor: isSelected ? '#1b4f72' : '#f8fafc',
-                        }}
-                      >
-                        <Text style={{ fontSize:13, color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '700' : '400' }}>
-                          {label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                {/* Size selection — filtered by selected unit, first 7 shown with "Show more" */}
+                {(() => {
+                  const rawList = SIZE_PRESETS_BY_UNIT[addingUnit ?? ''] ?? ALL_SIZE_PRESETS_MOBILE;
+                  const PAGE = 7;
+                  const shown = addingSizeExpanded ? rawList : rawList.slice(0, PAGE);
+                  const hasMore = !addingSizeExpanded && rawList.length > PAGE;
+                  return (
+                    <>
+                      <Text style={{ fontSize:12, fontWeight:'600', color:'#64748b', marginBottom:6 }}>Size (for costing)</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom:12 }} contentContainerStyle={{ gap:6, paddingRight:4 }}>
+                        {shown.map(s => {
+                          const isSelected = addingSize === s;
+                          return (
+                            <TouchableOpacity
+                              key={s}
+                              onPress={() => setAddingSize(s)}
+                              style={{
+                                paddingVertical:6, paddingHorizontal:10,
+                                borderRadius:8, borderWidth:1,
+                                borderColor: isSelected ? '#1b4f72' : '#e2e8f0',
+                                backgroundColor: isSelected ? '#1b4f72' : '#f8fafc',
+                              }}
+                            >
+                              <Text style={{ fontSize:13, color: isSelected ? '#fff' : '#374151', fontWeight: isSelected ? '700' : '400' }}>
+                                {s}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        {hasMore && (
+                          <TouchableOpacity
+                            onPress={() => setAddingSizeExpanded(true)}
+                            style={{
+                              paddingVertical:6, paddingHorizontal:10,
+                              borderRadius:8, borderWidth:1,
+                              borderColor: '#94a3b8', backgroundColor: '#f8fafc',
+                            }}
+                          >
+                            <Text style={{ fontSize:13, color:'#64748b' }}>Show more…</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          onPress={() => setAddingSize(null)}
+                          style={{
+                            paddingVertical:6, paddingHorizontal:10,
+                            borderRadius:8, borderWidth:1,
+                            borderColor: addingSize === null ? '#1b4f72' : '#e2e8f0',
+                            backgroundColor: addingSize === null ? '#1b4f72' : '#f8fafc',
+                          }}
+                        >
+                          <Text style={{ fontSize:13, color: addingSize === null ? '#fff' : '#374151', fontWeight: addingSize === null ? '700' : '400' }}>
+                            Unsure
+                          </Text>
+                        </TouchableOpacity>
+                      </ScrollView>
+                    </>
+                  );
+                })()}
 
                 <TouchableOpacity
                   onPress={async () => { await addQuickItem(); setQuickAddSheetOpen(false); }}
@@ -4787,10 +4849,11 @@ const openHistory = throttleAction(async (item: Item) => {
         onOpenPhotoModal={(barcode) => { setPhotoModalBarcode(barcode); }}
         onManualEntry={(barcode) => {
           setAddingName('');
-          setAddingUnit('');
+          setAddingUnit(null);
           setAddingQty('');
           setAddingBarcode(barcode);
           setAddingSize(null);
+          setAddingSizeExpanded(false);
           setQuickAddSheetOpen(true);
         }}
         onFocusItem={focusItem}
