@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -37,6 +38,8 @@ type Product = {
   costPriceSource: string | null
   costPriceEstimatedAt: any
   active?: boolean           // false when merged away; undefined/true means active
+  linkedRecipeId: string | null
+  linkedRecipeName: string | null
 }
 
 type MatchCandidate = {
@@ -978,6 +981,204 @@ function MergeModal({
   )
 }
 
+// ── RecipeLinkModal ────────────────────────────────────────────────────────────
+// Lets the user link a product's cost price to a confirmed recipe's COGS÷servings.
+// Only confirmed recipes are shown — drafts cannot be linked.
+// Unlinking clears the link fields but leaves costPrice at its current value.
+function RecipeLinkModal({
+  venueId,
+  product,
+  onClose,
+}: {
+  venueId: string
+  product: Product
+  onClose: () => void
+}) {
+  type RecipeRow = { id: string; name: string; cogs: number | null; servings: number | null }
+  const [recipes, setRecipes] = useState<RecipeRow[]>([])
+  const [loadingRecipes, setLoadingRecipes] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const [doneMsg, setDoneMsg] = useState('')
+
+  useEffect(() => {
+    getDocs(query(collection(db, 'venues', venueId, 'recipes'), where('status', '==', 'confirmed')))
+      .then(snap => {
+        setRecipes(snap.docs.map(d => {
+          const data = d.data() as any
+          return { id: d.id, name: data.name || '', cogs: data.cogs ?? null, servings: data.servings ?? null }
+        }).sort((a, b) => a.name.localeCompare(b.name)))
+        setLoadingRecipes(false)
+      })
+      .catch(() => setLoadingRecipes(false))
+  }, [venueId])
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return recipes
+    return recipes.filter(r => r.name.toLowerCase().includes(q))
+  }, [searchQuery, recipes])
+
+  async function handleLink(recipe: RecipeRow) {
+    setError(null)
+    if (!recipe.servings || recipe.servings <= 0) {
+      setError('This recipe has no servings set — add one in CraftIt before linking.')
+      return
+    }
+    if (recipe.cogs == null) {
+      setError('This recipe has no COGS — add ingredients with cost prices first.')
+      return
+    }
+    setWorking(true)
+    try {
+      const costPrice = Math.round((recipe.cogs / recipe.servings) * 10000) / 10000
+      await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+        costPrice,
+        linkedRecipeId: recipe.id,
+        linkedRecipeName: recipe.name,
+        updatedAt: serverTimestamp(),
+      })
+      setDoneMsg(`Linked to "${recipe.name}" — cost price set to $${costPrice.toFixed(4)}`)
+      setDone(true)
+    } catch {
+      setError('Link failed — try again.')
+    }
+    setWorking(false)
+  }
+
+  async function handleUnlink() {
+    setWorking(true)
+    setError(null)
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+        linkedRecipeId: null,
+        linkedRecipeName: null,
+        updatedAt: serverTimestamp(),
+      })
+      setDoneMsg('Recipe link removed. Cost price is unchanged.')
+      setDone(true)
+    } catch {
+      setError('Unlink failed — try again.')
+    }
+    setWorking(false)
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={done ? onClose : undefined}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '24px 28px', minWidth: 440, maxWidth: 560, width: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+          <h2 style={{ margin: 0, fontFamily: "'Playfair Display', Georgia, serif", fontSize: 20, color: '#0B132B' }}>
+            Link recipe
+          </h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#6B7280', lineHeight: 1 }}>×</button>
+        </div>
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6B7280' }}>
+          Linking sets <strong style={{ color: '#0B132B' }}>{product.name}</strong>'s cost price to
+          the recipe's COGS ÷ servings. Use ↻ Sync to re-apply after the recipe changes.
+        </p>
+
+        {done ? (
+          <>
+            <p style={{ color: '#065f46', fontWeight: 700, fontSize: 14, margin: '0 0 6px' }}>✓ Done</p>
+            <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 20px' }}>{doneMsg}</p>
+            <button
+              onClick={onClose}
+              style={{ background: '#1b4f72', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', width: '100%', fontFamily: 'Inter, system-ui, sans-serif' }}
+            >
+              Done
+            </button>
+          </>
+        ) : (
+          <>
+            {/* Current link banner + Unlink */}
+            {product.linkedRecipeId && (
+              <div style={{ background: '#f0f9ff', borderRadius: 8, padding: '10px 14px', marginBottom: 14, border: '1px solid #bae6fd', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#0369a1' }}>
+                  🔗 Linked to <strong>{product.linkedRecipeName || product.linkedRecipeId}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleUnlink}
+                  disabled={working}
+                  style={{ background: 'none', border: '1px solid #7dd3fc', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#0369a1', cursor: 'pointer', fontFamily: 'Inter, system-ui, sans-serif', flexShrink: 0 }}
+                >
+                  Unlink
+                </button>
+              </div>
+            )}
+
+            {/* Recipe search */}
+            <input
+              type="text"
+              placeholder="Search confirmed recipes…"
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setError(null) }}
+              disabled={working}
+              autoFocus
+              style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', border: '1.5px solid #e5e3de', borderRadius: 8, fontSize: 13, marginBottom: 8, outline: 'none', fontFamily: 'Inter, system-ui, sans-serif', color: '#0B132B' }}
+            />
+
+            {error && <p style={{ color: '#dc2626', fontSize: 13, margin: '0 0 10px' }}>{error}</p>}
+
+            {loadingRecipes ? (
+              <p style={{ color: '#6B7280', fontSize: 13 }}>Loading recipes…</p>
+            ) : filtered.length === 0 ? (
+              <p style={{ color: '#6B7280', fontSize: 13 }}>
+                {recipes.length === 0
+                  ? 'No confirmed recipes — mark a recipe as Confirmed in CraftIt first.'
+                  : 'No matching recipes.'}
+              </p>
+            ) : (
+              <div style={{ border: '1px solid #e5e3de', borderRadius: 8, overflow: 'hidden' }}>
+                {filtered.slice(0, 12).map((r, i) => (
+                  <div
+                    key={r.id}
+                    onClick={() => !working && handleLink(r)}
+                    style={{
+                      padding: '10px 14px', fontSize: 13,
+                      cursor: working ? 'default' : 'pointer',
+                      borderBottom: i < Math.min(filtered.length, 12) - 1 ? '1px solid #f1efe9' : 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    }}
+                    onMouseEnter={e => { if (!working) e.currentTarget.style.background = '#f9f8f6' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '' }}
+                  >
+                    <span style={{ fontWeight: 600, color: '#0B132B' }}>{r.name}</span>
+                    <span style={{ fontSize: 12, color: '#9ca3af', textAlign: 'right' }}>
+                      {r.cogs != null ? `$${r.cogs.toFixed(2)} COGS` : 'No COGS'}
+                      {r.servings ? ` · ${r.servings} serves` : ' · no servings'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 16 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={working}
+                style={{ background: 'none', border: '1px solid #e5e3de', borderRadius: 999, padding: '8px 20px', fontSize: 13, color: '#6B7280', cursor: 'pointer', fontFamily: 'Inter, system-ui, sans-serif' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
   const [venueCountry, setVenueCountry] = useState<string | null>(null)
@@ -995,6 +1196,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [linkingProduct, setLinkingProduct] = useState<Product | null>(null)
+  const [refreshLinkMsg, setRefreshLinkMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null)
   const [mergingProduct, setMergingProduct] = useState<Product | null>(null)
   const [mergingCandidateId, setMergingCandidateId] = useState<string | null>(null)
   const [managingSupplierProduct, setManagingSupplierProduct] = useState<{ id: string; name: string } | null>(null)
@@ -1049,6 +1252,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               costPriceSource: data.costPriceSource ?? null,
               costPriceEstimatedAt: data.costPriceEstimatedAt ?? null,
               active: data.active,  // false when merged away; undefined/true means active
+              linkedRecipeId: data.linkedRecipeId ?? null,
+              linkedRecipeName: data.linkedRecipeName ?? null,
             }
           })
         )
@@ -1308,6 +1513,37 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     setConfirmDeleteId(null)
   }
 
+  async function handleRefreshLinkedCost(product: Product) {
+    if (!product.linkedRecipeId) return
+    setRefreshLinkMsg(null)
+    try {
+      const snap = await getDoc(doc(db, 'venues', venueId, 'recipes', product.linkedRecipeId))
+      if (!snap.exists()) {
+        setRefreshLinkMsg({ id: product.id, msg: 'Recipe not found — it may have been deleted.', ok: false })
+        return
+      }
+      const d = snap.data() as any
+      const cogs: number | null = d.cogs ?? null
+      const servings: number | null = d.servings ?? null
+      if (!servings || servings <= 0) {
+        setRefreshLinkMsg({ id: product.id, msg: 'This recipe has no servings set — add one in CraftIt before syncing.', ok: false })
+        return
+      }
+      if (cogs == null) {
+        setRefreshLinkMsg({ id: product.id, msg: 'This recipe has no COGS — add ingredients with cost prices first.', ok: false })
+        return
+      }
+      const costPrice = Math.round((cogs / servings) * 10000) / 10000
+      await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+        costPrice,
+        updatedAt: serverTimestamp(),
+      })
+      setRefreshLinkMsg({ id: product.id, msg: `Cost synced to $${costPrice.toFixed(4)} (${cogs.toFixed(2)} ÷ ${servings})`, ok: true })
+    } catch {
+      setRefreshLinkMsg({ id: product.id, msg: 'Sync failed — try again.', ok: false })
+    }
+  }
+
   async function scanForCatalogueMatches() {
     if (scanProgress) return
     const unpriced = products.filter(p => p.costPrice == null)
@@ -1438,14 +1674,20 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
     const value = displayValue(product, field)
     const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
+    const isLinked  = field === 'costPrice' && !!product.linkedRecipeId
     return (
       <div
         className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
         style={isEstimate ? { color: '#c47b2b' } : undefined}
-        title={isEstimate ? 'Estimated from catalogue, not yet confirmed by invoice' : undefined}
+        title={isEstimate ? 'Estimated from catalogue, not yet confirmed by invoice' : isLinked ? `Recipe-derived: ${product.linkedRecipeName}` : undefined}
         onClick={() => startEdit(product, field)}
       >
         {value || '—'}
+        {isLinked && (
+          <div style={{ fontSize: 10, color: '#0369a1', lineHeight: 1.3, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            🔗 {product.linkedRecipeName}
+          </div>
+        )}
       </div>
     )
   }
@@ -1987,6 +2229,24 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                       <button
                         type="button"
                         className={styles.mergeBtn}
+                        onClick={() => { setLinkingProduct(product); setRefreshLinkMsg(null) }}
+                        title={product.linkedRecipeId ? `Recipe-linked: ${product.linkedRecipeName}` : 'Link to a recipe'}
+                      >
+                        🔗
+                      </button>
+                      {product.linkedRecipeId && (
+                        <button
+                          type="button"
+                          className={styles.mergeBtn}
+                          onClick={() => handleRefreshLinkedCost(product)}
+                          title="Re-sync cost price from linked recipe"
+                        >
+                          ↻
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={styles.mergeBtn}
                         onClick={() => setMergingProduct(product)}
                         title="Merge into another product"
                       >
@@ -2002,6 +2262,18 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                       </button>
                     </td>
                   </tr>
+                  {refreshLinkMsg?.id === product.id && (
+                    <tr>
+                      <td colSpan={COLUMNS.length + 2} style={{
+                        padding: '4px 14px', fontSize: 12,
+                        color: refreshLinkMsg.ok ? '#065f46' : '#991b1b',
+                        background: refreshLinkMsg.ok ? '#f0fdf4' : '#fff5f5',
+                        borderBottom: '1px solid #f1efe9',
+                      }}>
+                        {refreshLinkMsg.ok ? '✓ ' : '⚠ '}{refreshLinkMsg.msg}
+                      </td>
+                    </tr>
+                  )}
                   {confirmDeleteId === product.id && (
                     <tr className={styles.deleteConfirmRow}>
                       <td colSpan={COLUMNS.length + 2} className={styles.deleteConfirmCell}>
@@ -2051,6 +2323,13 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           venueId={venueId}
           onClose={() => setCatalogueMatches(null)}
           onApplied={() => setCatalogueMatches(null)}
+        />
+      )}
+      {linkingProduct && (
+        <RecipeLinkModal
+          venueId={venueId}
+          product={linkingProduct}
+          onClose={() => setLinkingProduct(null)}
         />
       )}
       {mergingProduct && (
