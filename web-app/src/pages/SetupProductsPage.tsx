@@ -108,15 +108,8 @@ function findDuplicatePairs(products: Product[]): Array<[Product, Product]> {
       const subMatch =
         (na.includes(nb) || nb.includes(na)) &&
         Math.min(na.length, nb.length) >= 5
-      const shorter = na.length < nb.length ? na : nb
-      const longer = na.length >= nb.length ? na : nb
-      let si = 0, matches = 0
-      for (let li = 0; li < longer.length && si < shorter.length; li++) {
-        if (longer[li] === shorter[si]) { matches++; si++ }
-      }
-      const seqMatch = matches / shorter.length >= 0.85
 
-      if (exactMatch || subMatch || seqMatch) {
+      if (exactMatch || subMatch) {
         pairs.push([a, b])
         seen.add(pairKey)
       }
