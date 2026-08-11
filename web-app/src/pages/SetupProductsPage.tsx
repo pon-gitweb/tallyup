@@ -1375,6 +1375,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           }}
           className={styles.cellInput}
           type={field === 'packSize' || field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
+          placeholder={field === 'size' ? 'e.g. 700ml' : undefined}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}
@@ -1384,6 +1385,9 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     }
     const value = displayValue(product, field)
     const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
+    // Warn when Size looks like a bare number — no letters means no unit, which
+    // breaks computeIngredientCost (returns null, COGS shows as incomplete).
+    const isBareNumber = field === 'size' && value.length > 0 && !/[a-z]/i.test(value)
     return (
       <div
         className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
@@ -1392,6 +1396,12 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         onClick={() => startEdit(product, field)}
       >
         {value || '—'}
+        {isBareNumber && (
+          <span
+            style={{ marginLeft: 4, color: '#c47b2b', fontSize: 11, fontWeight: 700 }}
+            title="Size needs a unit, e.g. 700ml — recipe costing won't work without one."
+          >⚠</span>
+        )}
       </div>
     )
   }
