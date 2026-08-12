@@ -286,7 +286,11 @@ export default function FestivalPurchasingPredictionScreen() {
   const { theme } = useTheme();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
-  const { activated } = useIsActivated();
+  // TODO(Session 5/billing): restore real gate — change this back to:
+  //   const { activated } = useIsActivated();
+  // and remove the constant below. Hook is retained; result unused until billing is designed.
+  const { activated: _activationFlag } = useIsActivated();
+  const activated = true; // all venues treated as activated — no hard gate until Festival billing is ready
   const R = makeStyles(c);
 
   const [results,        setResults]        = useState([]);

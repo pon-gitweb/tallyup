@@ -1,17 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getFirestore, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useColours, useTheme } from '../../context/ThemeContext';
-import { useVenueId } from '../../context/VenueProvider';
-import { useToast } from '../../components/common/Toast';
 
 export default function FestivalPaywallScreen({ navigation, route }: any) {
   const c = useColours();
   const { theme } = useTheme();
-  const venueId = useVenueId();
-  const { showSuccess, showError } = useToast();
-  const [activating, setActivating] = useState(false);
 
   const venueName = route?.params?.venueName || 'this festival';
 
@@ -27,32 +21,6 @@ export default function FestivalPaywallScreen({ navigation, route }: any) {
     'Event close and debrief',
     'Year-on-year data preserved'
   ];
-
-  // STUB: Manual activation for pilots
-  // Replace with Stripe payment intent when billing is built
-  async function handleActivate() {
-    if (!venueId) return;
-    setActivating(true);
-
-    try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'venues', venueId), {
-        activated: true,
-        activatedAt: serverTimestamp(),
-        activationPrice: 349,
-        // Stripe fields added later:
-        // stripePaymentIntentId: null,
-        // stripeCustomerId: null
-      });
-
-      showSuccess('✓ Festival activated. All features unlocked.');
-      navigation.goBack();
-    } catch (e: any) {
-      showError('Could not activate. Please try again.');
-    } finally {
-      setActivating(false);
-    }
-  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]} edges={['top', 'left', 'right']}>
@@ -98,19 +66,10 @@ export default function FestivalPaywallScreen({ navigation, route }: any) {
           hello@hosti.co.nz
         </Text>
 
-        {/* Activate button */}
-        <TouchableOpacity
-          style={[styles.activateBtn, { backgroundColor: c.deepBlue || '#1b4f72', opacity: activating ? 0.7 : 1 }]}
-          onPress={handleActivate}
-          disabled={activating}
-        >
-          {activating
-            ? <ActivityIndicator color="#ffffff" />
-            : <Text style={[styles.activateBtnText, { fontFamily: theme.fontBodySemiBold }]}>
-                Activate for $349 →
-              </Text>
-          }
-        </TouchableOpacity>
+        {/* Status only — no purchase mechanism. Replace with Stripe flow for Session 5 billing. */}
+        <Text style={[styles.activationNote, { color: c.slateMid || '#6b7280', fontFamily: theme.fontBody }]}>
+          Not currently activated
+        </Text>
 
         {/* Back link */}
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -140,8 +99,7 @@ const styles = StyleSheet.create({
   featureCheck: { fontSize: 15, marginRight: 10, marginTop: 1 },
   featureText: { fontSize: 14, lineHeight: 20, flex: 1 },
   customNote: { fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
-  activateBtn: { height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  activateBtnText: { color: '#ffffff', fontSize: 16 },
+  activationNote: { fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 12, paddingHorizontal: 8 },
   backBtn: { paddingVertical: 12, alignItems: 'center' },
   backBtnText: { fontSize: 14 }
 });
