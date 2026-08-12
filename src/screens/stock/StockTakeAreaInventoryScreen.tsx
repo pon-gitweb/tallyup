@@ -452,11 +452,14 @@ const Row = React.memo(function Row({
 
 // Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
 // web-app/src/pages/SetupProductsPage.tsx (desktop).
-const UNIT_CATEGORIES = ['Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag'];
+const UNIT_CATEGORIES = ['Each', 'Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag'];
 
 // Size presets keyed by unit — must stay in sync with SIZE_PRESETS_BY_UNIT in
 // web-app/src/pages/SetupProductsPage.tsx (desktop).
+// 'Each' maps to [] intentionally — individually-counted items have no meaningful size; the
+// size chip picker correctly shows no presets (and no "Show more") for this unit.
 const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
+  'Each':           [],
   'Bottle':         ['50ml','100ml','200ml','375ml','500ml','700ml','750ml','1L','1.125L','1.5L','1.75L','2L','3L'],
   'Keg':            ['20L','30L','50L'],
   'Container':      ['5L','10L','20L','30L'],

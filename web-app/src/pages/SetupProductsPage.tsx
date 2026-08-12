@@ -65,12 +65,15 @@ type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costP
 
 // Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
 // StockTakeAreaInventoryScreen.tsx (mobile).
-const UNIT_CATEGORIES = ['Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag']
+const UNIT_CATEGORIES = ['Each', 'Bottle', 'Keg', 'Container', 'Kitchen Liquid', 'Can', 'Jar', 'Sachet', 'Dry/Bag']
 
 // Size presets keyed by unit category — must stay in sync with SIZE_PRESETS_BY_UNIT in
 // StockTakeAreaInventoryScreen.tsx (mobile).
 // "Unsure" is represented as the empty-string select option (committed as null via buildUpdatePayload).
+// 'Each' maps to [] intentionally — individually-counted items have no meaningful size; the
+// Size dropdown correctly shows only "Unsure" for this unit.
 const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
+  'Each':           [],
   'Bottle':         ['50ml','100ml','200ml','375ml','500ml','700ml','750ml','1L','1.125L','1.5L','1.75L','2L','3L'],
   'Keg':            ['20L','30L','50L'],
   'Container':      ['5L','10L','20L','30L'],
