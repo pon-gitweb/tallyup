@@ -75,7 +75,7 @@ const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
   'Keg':            ['20L','30L','50L'],
   'Container':      ['5L','10L','20L','30L'],
   'Kitchen Liquid': ['250ml','500ml','1L','2L','4L','20L'],
-  'Can':            ['400g','800g','2.5kg','3kg'],
+  'Can':            ['330ml','355ml','375ml','440ml','500ml','400g','800g','2.5kg','3kg'],
   'Jar':            ['180g','250g','300g','510g'],
   'Sachet':         ['2g','3g','3.5g','5g','7g','10g','15ml'],
   'Dry/Bag':        ['100g','250g','500g','1kg','2kg','5kg','10kg','20kg'],
@@ -1658,13 +1658,52 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           </select>
         )
       }
+      if (field === 'packSize') {
+        const PACK_SIZE_PRESETS = [4, 6, 8, 10, 12, 15, 18, 24, 30]
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, padding: '4px 6px 3px' }}>
+              {PACK_SIZE_PRESETS.map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); setEditValue(String(n)) }}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: '2px 7px',
+                    border: '1px solid #e5e3de',
+                    borderRadius: 4,
+                    background: editValue === String(n) ? '#1b4f72' : '#f9f8f6',
+                    color: editValue === String(n) ? '#ffffff' : '#374151',
+                    cursor: 'pointer',
+                    fontFamily: 'Inter, system-ui, sans-serif',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <input
+              ref={(el) => { inputRefs.current[`${product.id}:${field}`] = el }}
+              className={styles.cellInput}
+              type="number"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handleBlur}
+              onKeyDown={handleCellKeyDown}
+            />
+          </div>
+        )
+      }
       return (
         <input
           ref={(el) => {
             inputRefs.current[`${product.id}:${field}`] = el
           }}
           className={styles.cellInput}
-          type={field === 'packSize' || field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
+          type={field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}

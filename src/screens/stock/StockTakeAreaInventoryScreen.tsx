@@ -461,7 +461,7 @@ const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
   'Keg':            ['20L','30L','50L'],
   'Container':      ['5L','10L','20L','30L'],
   'Kitchen Liquid': ['250ml','500ml','1L','2L','4L','20L'],
-  'Can':            ['400g','800g','2.5kg','3kg'],
+  'Can':            ['330ml','355ml','375ml','440ml','500ml','400g','800g','2.5kg','3kg'],
   'Jar':            ['180g','250g','300g','510g'],
   'Sachet':         ['2g','3g','3.5g','5g','7g','10g','15ml'],
   'Dry/Bag':        ['100g','250g','500g','1kg','2kg','5kg','10kg','20kg'],
