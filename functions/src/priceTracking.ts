@@ -29,6 +29,24 @@ function namesMatch(a: string, b: string): boolean {
   return isReliableMatch(ta, tb, score);
 }
 
+/** Returns the correct caseSize/unitCost/caseCost fields for a product or supplier-link
+ * document update. perUnitPrice is already per-unit — the OCR extraction prompt divides
+ * the case total by caseSize before returning unitPrice, so no further division is needed.
+ * caseCost is the actual case total (perUnitPrice × cs).
+ * Returns {} when cs is null/falsy.
+ */
+function computeCaseSizeFields(
+  perUnitPrice: number | null,
+  cs: number | null,
+): Record<string, number | null> {
+  if (!cs) return {};
+  return {
+    caseSize: cs,
+    unitCost: perUnitPrice,
+    caseCost: perUnitPrice != null ? perUnitPrice * cs : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Propose / commit split — replaces trackPriceChanges once callers are migrated
 // ---------------------------------------------------------------------------
@@ -202,9 +220,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     const matched = products.find(p => namesMatch(p.name || "", line.name));
 
     const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
-    const caseSizeFields = cs
-      ? { caseSize: cs, unitCost: unitPrice / cs, caseCost: unitPrice }
-      : {};
+    const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
 
     if (matched) {
       // Trusted product ID — queue for area-item linking regardless of price outcome
@@ -270,15 +286,9 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       const nearDuplicate = products.find(p => {
         const np = normalizeName(p.name || "");
         if (!np || !normLine || np.length < 4 || normLine.length < 4) return false;
-        if (np.includes(normLine) || normLine.includes(np)) return true;
-        const shorter = np.length < normLine.length ? np : normLine;
-        const longer = np.length >= normLine.length ? np : normLine;
-        let si = 0;
-        let matches = 0;
-        for (let li = 0; li < longer.length && si < shorter.length; li++) {
-          if (longer[li] === shorter[si]) { matches++; si++; }
-        }
-        return matches / shorter.length >= 0.85;
+        const exactMatch = np === normLine;
+        const subMatch = (np.includes(normLine) || normLine.includes(np)) && Math.min(np.length, normLine.length) >= 5;
+        return exactMatch || subMatch;
       });
 
       if (nearDuplicate) {
@@ -328,7 +338,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       const matched = products.find(p => namesMatch(p.name || "", line.name));
       if (!matched) continue;
       const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
-      const unitCost = cs ? unitPrice / cs : unitPrice;
+      const unitCost = unitPrice; // already per-unit — OCR prompt normalises before returning
       const supplierRef = db.doc(
         `venues/${venueId}/products/${matched.id}/suppliers/${cleanSupplierId}`
       );
@@ -411,9 +421,7 @@ export async function commitInvoiceChanges(
     if (proposal.type === "priceChange") {
       const productRef = db.doc(`venues/${venueId}/products/${proposal.productId}`);
       const cs = proposal.caseSize;
-      const caseSizeFields = cs
-        ? { caseSize: cs, unitCost: proposal.newPrice / cs, caseCost: proposal.newPrice }
-        : {};
+      const caseSizeFields = computeCaseSizeFields(proposal.newPrice, cs);
       const histRef = productRef.collection("priceHistory").doc();
       batch.set(histRef, {
         date: admin.firestore.FieldValue.serverTimestamp(),
@@ -443,9 +451,7 @@ export async function commitInvoiceChanges(
     } else if (proposal.type === "nearDuplicateMatch") {
       const productRef = db.doc(`venues/${venueId}/products/${proposal.candidateProductId}`);
       const cs = proposal.caseSize;
-      const caseSizeFields = cs
-        ? { caseSize: cs, unitCost: proposal.newPrice / cs, caseCost: proposal.newPrice }
-        : {};
+      const caseSizeFields = computeCaseSizeFields(proposal.newPrice, cs);
 
       if (proposal.existingPrice != null) {
         const pctDiff = Math.abs(
@@ -490,14 +496,7 @@ export async function commitInvoiceChanges(
     } else if (proposal.type === "newProduct") {
       const newRef = db.collection(`venues/${venueId}/products`).doc();
       const cs = proposal.caseSize;
-      const caseSizeFields = cs
-        ? {
-            caseSize: cs,
-            ...(proposal.unitPrice != null
-              ? { unitCost: proposal.unitPrice / cs, caseCost: proposal.unitPrice }
-              : {}),
-          }
-        : {};
+      const caseSizeFields = computeCaseSizeFields(proposal.unitPrice ?? null, cs);
       batch.set(newRef, {
         name: proposal.lineName,
         costPrice: proposal.unitPrice,
@@ -521,10 +520,8 @@ export async function commitInvoiceChanges(
         const newSubRef = db.doc(
           `venues/${venueId}/products/${newRef.id}/suppliers/${cleanSupplierId}`
         );
-        const unitCost = cs && proposal.unitPrice != null
-          ? proposal.unitPrice / cs
-          : proposal.unitPrice ?? null;
-        const caseCost = cs ? proposal.unitPrice : null;
+        const unitCost = proposal.unitPrice ?? null;
+        const caseCost = cs != null && proposal.unitPrice != null ? proposal.unitPrice * cs : null;
         batch.set(newSubRef, {
           supplierId: cleanSupplierId,
           supplierName: cleanSupplierName,
