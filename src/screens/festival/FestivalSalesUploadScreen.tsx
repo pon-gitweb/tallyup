@@ -8,7 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
-  collection, doc, getDocs, getDoc, setDoc, serverTimestamp,
+  collection, doc, getDocs, getDoc, setDoc, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -156,7 +156,7 @@ export default function FestivalSalesUploadScreen() {
     if (!venueId) return;
     Promise.all([
       getDocs(collection(db, 'venues', venueId, 'products')),
-      getDocs(collection(db, 'venues', venueId, 'bars')),
+      getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true))),
       getDoc(doc(db, 'venues', venueId, 'event', 'details')),
       getDoc(doc(db, 'venues', venueId, 'event', 'details', 'posMappings', 'current')),
     ]).then(([prodSnap, barSnap, evSnap, mappingsSnap]) => {

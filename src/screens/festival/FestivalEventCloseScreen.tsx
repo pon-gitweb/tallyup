@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
-  collection, getDocs, doc, onSnapshot, setDoc, updateDoc, serverTimestamp,
+  collection, getDocs, doc, onSnapshot, setDoc, updateDoc, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -86,7 +86,7 @@ export default function FestivalEventCloseScreen() {
     try {
       // 1. All bars counted
       const [barsSnap, barCountsSnap] = await Promise.all([
-        getDocs(collection(db, 'venues', venueId, 'bars')),
+        getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true))),
         getDocs(collection(db, 'venues', venueId, 'returns', 'eventClose', 'barCounts')),
       ]);
       const barsCounted = barsSnap.docs.length > 0 &&

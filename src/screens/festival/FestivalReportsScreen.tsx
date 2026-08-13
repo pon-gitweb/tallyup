@@ -5,7 +5,7 @@ import {
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { apiBase } from '../../services/apiBase';
@@ -57,7 +57,7 @@ export default function FestivalReportsScreen() {
         });
       })
       .catch(() => {});
-    getDocs(collection(db, 'venues', venueId, 'bars'))
+    getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true)))
       .then(s => setBarCount(s.size))
       .catch(() => {});
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000);

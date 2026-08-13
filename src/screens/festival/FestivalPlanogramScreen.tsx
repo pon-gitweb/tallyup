@@ -87,14 +87,14 @@ export default function FestivalPlanogramScreen() {
 
   async function buildPlanogram() {
     try {
-      const stockSnap = await getDocs(collection(db, 'venues', venueId, 'bars', barId, 'stock'));
+      const stockSnap = await getDocs(collection(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items'));
       const products = stockSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 
       // Fetch velocity for each product
       const velocityData: Record<string, FestivalVelocityData> = {};
       await Promise.all(products.map(async p => {
         try {
-          velocityData[p.id] = await calculateFestivalVelocity(venueId, barId, p.id, p.currentStock ?? 0, null, undefined, p.productName);
+          velocityData[p.id] = await calculateFestivalVelocity(venueId, barId, p.id, p.lastCount ?? 0, null, undefined, p.name || p.id);
         } catch {}
       }));
 
@@ -102,8 +102,8 @@ export default function FestivalPlanogramScreen() {
         { id: barId, name: barName || barId },
         products.map(p => ({
           id:                  p.id,
-          productName:         p.productName || p.id,
-          currentStock:        p.currentStock ?? 0,
+          productName:         p.name || p.id,
+          currentStock:        p.lastCount ?? 0,
           unit:                p.unit,
           supplierRequirement: p.supplierRequirement,
           brand:               p.brand,

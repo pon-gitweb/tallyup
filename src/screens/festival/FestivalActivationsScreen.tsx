@@ -5,7 +5,7 @@ import {
   ScrollView, TextInput, Modal, Switch,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, onSnapshot, setDoc, updateDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, updateDoc, getDocs, serverTimestamp, query, where } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -58,7 +58,7 @@ function AddActivationModal({ visible, onClose, venueId }: any) {
 
   useEffect(() => {
     if (!venueId) return;
-    getDocs(collection(db, 'venues', venueId, 'bars')).then(snap => {
+    getDocs(query(collection(db, 'venues', venueId, 'departments'), where('isFestivalBar', '==', true))).then(snap => {
       setBars(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
     }).catch(() => {});
   }, [venueId]);
