@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
+import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -114,6 +115,10 @@ export default function FestivalDeliveryTasksScreen() {
   // ── Actions ───────────────────────────────────────────────────────────────
   async function acceptTask(reqId: string) {
     if (!venueId || acting) return;
+    if (await isFestivalEventClosed(venueId)) {
+      showError('This event has been closed — no further changes can be recorded.');
+      return;
+    }
     setActing(reqId);
     try {
       await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
@@ -132,6 +137,10 @@ export default function FestivalDeliveryTasksScreen() {
 
   async function markCollected(reqId: string) {
     if (!venueId || acting) return;
+    if (await isFestivalEventClosed(venueId)) {
+      showError('This event has been closed — no further changes can be recorded.');
+      return;
+    }
     setActing(reqId);
     try {
       await updateDoc(doc(db, 'venues', venueId, 'requests', reqId), {
@@ -148,6 +157,10 @@ export default function FestivalDeliveryTasksScreen() {
 
   async function doMarkDelivered(reqId: string) {
     if (!venueId || acting) return;
+    if (await isFestivalEventClosed(venueId)) {
+      showError('This event has been closed — no further changes can be recorded.');
+      return;
+    }
     const req = requests.find(r => r.id === reqId);
     setActing(reqId);
     try {

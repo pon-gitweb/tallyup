@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDocs, query, where, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
+import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -153,6 +154,10 @@ export default function FestivalTransferScreen() {
   // ── Transfer logic ────────────────────────────────────────────────────────
   async function doTransfer(overrideReason: string | null = null) {
     if (!venueId || !fromBar || !toBar || !product) return;
+    if (await isFestivalEventClosed(venueId)) {
+      showError('This event has been closed — no further changes can be recorded.');
+      return;
+    }
     const q = parseFloat(qty);
     if (!q || q <= 0) return;
     setSaving(true);

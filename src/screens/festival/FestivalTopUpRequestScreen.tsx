@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { collection, doc, getDoc, getDocs, query, where, setDoc, serverTimestamp } from 'firebase/firestore';
+import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -153,6 +154,10 @@ export default function FestivalTopUpRequestScreen() {
 
   async function doSendRequest() {
     if (!venueId || lines.length === 0) return;
+    if (await isFestivalEventClosed(venueId)) {
+      showError('This event has been closed — no further changes can be recorded.');
+      return;
+    }
     setSaving(true);
     try {
       const uid = auth.currentUser?.uid ?? 'unknown';

@@ -8,6 +8,7 @@ import {
   collection, doc, getDocs, query, where, orderBy, limit,
   setDoc, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
+import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -86,6 +87,12 @@ export default function FestivalSessionCountScreen() {
 
     (async () => {
       try {
+        if (await isFestivalEventClosed(venueId)) {
+          showError('This event has been closed — no further changes can be recorded.');
+          nav.goBack();
+          return;
+        }
+
         const uid         = auth.currentUser?.uid ?? 'unknown';
         const displayName = auth.currentUser?.displayName ?? null;
 
