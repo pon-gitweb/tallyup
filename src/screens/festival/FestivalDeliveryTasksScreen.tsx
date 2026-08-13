@@ -5,7 +5,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { collection, doc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, updateDoc, serverTimestamp, query, where, orderBy, writeBatch, increment } from 'firebase/firestore';
 import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -188,6 +188,25 @@ export default function FestivalDeliveryTasksScreen() {
       }
       await batch.commit();
       showSuccess('✓ Delivery marked as completed');
+
+      // Post-commit soft check: warn if any HQ source items went negative.
+      // Never blocks or reverts the delivery — this documents something that already happened.
+      if (req?.sourceLocationId && Array.isArray(req?.products)) {
+        try {
+          const hqSnaps = await Promise.all(
+            req.products
+              .filter((p: any) => p.productId)
+              .map((p: any) =>
+                getDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', req.sourceLocationId, 'items', p.productId))
+              )
+          );
+          if (hqSnaps.some(s => s.exists() && (s.data()?.lastCount ?? 0) < 0)) {
+            showInfo('Some HQ source items may now be below zero — worth checking HQ stock.');
+          }
+        } catch {
+          // Silent — advisory check only; read failures never surface to the user
+        }
+      }
     } catch (e: any) {
       showError(e?.message || 'Could not update task.');
     } finally {
