@@ -8,7 +8,7 @@ const API_BASE =
     : 'https://us-central1-tallyup-f1463.cloudfunctions.net';
 
 export type ParsedInvoicePayload = {
-  invoice: { source: 'csv'|'pdf'; storagePath: string; poNumber?: string|null };
+  invoice: { source: 'csv'|'pdf'|'photo'; storagePath: string; poNumber?: string|null };
   lines: Array<{ code?: string; name: string; qty: number; unitPrice?: number }>;
   matchReport?: any;
   confidence?: number;

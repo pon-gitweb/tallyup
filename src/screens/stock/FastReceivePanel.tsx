@@ -7,6 +7,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { captureMultiPagePhotos } from '../../services/fastReceive/captureMultiPagePhotos';
 import { useVenueId } from '../../context/VenueProvider';
 import { uploadFastInvoice } from '../../services/fastReceive/uploadFastInvoice';
 import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
@@ -15,21 +16,6 @@ import { processInvoicesPdf } from '../../services/invoices/processInvoicesPdf';
 import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { invoiceFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
-
-// Promise-wrapped alert for the multi-page camera flow. Resolves true = add another page.
-function askAddPage(pageNum: number): Promise<boolean> {
-  return new Promise(resolve => {
-    Alert.alert(
-      'Add another page?',
-      `Page ${pageNum} captured. Scan another page of this invoice?`,
-      [
-        { text: 'Done — scan now', onPress: () => resolve(false), style: 'cancel' },
-        { text: 'Add page', onPress: () => resolve(true) },
-      ],
-      { cancelable: false },
-    );
-  });
-}
 
 export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
@@ -69,34 +55,14 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       setBusy(true);
       if (!venueId) throw new Error('Not ready: no venue selected');
 
-      const cam = await ImagePicker.requestCameraPermissionsAsync();
-      if (cam.status !== 'granted') {
+      const capture = await captureMultiPagePhotos();
+      if (capture.permissionDenied) {
         showInfo('Camera access is required to take a photo.');
         return;
       }
+      if (!capture.uris) return;
 
-      const photo = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 0.85,
-        base64: false,
-      });
-      if (photo.canceled || !photo.assets?.[0]?.uri) return;
-
-      // Collect pages: keep asking until the user says "Done"
-      const uris: string[] = [photo.assets[0].uri];
-      let addMore = await askAddPage(uris.length);
-      while (addMore) {
-        const next = await ImagePicker.launchCameraAsync({
-          allowsEditing: false,
-          quality: 0.85,
-          base64: false,
-        });
-        if (next.canceled || !next.assets?.[0]?.uri) break;
-        uris.push(next.assets[0].uri);
-        addMore = await askAddPage(uris.length);
-      }
-
-      await processScannedPhoto(uris);
+      await processScannedPhoto(capture.uris);
     } catch (e: any) {
       const msg = String(e?.message || e);
       showError(msg.replace(/^scanInvoicePhoto:\s*/i, '') || 'Photo capture failed');

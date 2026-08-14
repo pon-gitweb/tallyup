@@ -30,11 +30,31 @@ type Parsed = {
   warnings?: string[] | null;
 };
 
+// Inline token-overlap matching — mirrors functions/src/nameMatching.ts
+// for the client/mobile context (cannot import across the client/server boundary).
+function _tokForQty(s: string): Set<string> {
+  const words = (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const tokens: string[] = [];
+  for (const w of words) {
+    const m = w.match(/^([a-z]+)(\d+)$/);
+    if (m) { tokens.push(m[1], m[2]); } else { tokens.push(w); }
+  }
+  return new Set(tokens.map(t => /^\d{2}$/.test(t) ? '20' + t : t));
+}
+function _overlapQty(a: string, b: string): number {
+  const ta = _tokForQty(a), tb = _tokForQty(b);
+  if (!ta.size && !tb.size) return 1;
+  if (!ta.size || !tb.size) return 0;
+  let n = 0; ta.forEach(t => { if (tb.has(t)) n++; });
+  return n / Math.min(ta.size, tb.size);
+}
+
 async function updateStockAndCreateInvoice(
   db: any,
   venueId: string,
   orderId: string,
   uid: string | null,
+  invoiceLines: Array<{name: string; qty: number}>,
 ): Promise<{ warnings: string[]; unmatchedLines: Array<{name: string; qty: number}> }> {
   const warnings: string[] = [];
 
@@ -56,6 +76,29 @@ async function updateStockAndCreateInvoice(
   });
 
   if (orderLines.length === 0) return { warnings, unmatchedLines: [] };
+
+  // For each order line, resolve the effective delivery qty from the invoice.
+  // Threshold 0.85 mirrors nameMatching.ts's isReliableMatch score floor.
+  // Falls back to ordered qty (+ warning) when no reliable invoice line is found.
+  const effectiveQtyMap = new Map<string, number>();
+  for (const ol of orderLines) {
+    const key = ol.productId || ol.name.toLowerCase();
+    if (invoiceLines.length > 0) {
+      let bestScore = 0, bestQty = -1;
+      for (const il of invoiceLines) {
+        const score = _overlapQty(ol.name, il.name);
+        if (score >= 0.85 && score > bestScore) { bestScore = score; bestQty = il.qty; }
+      }
+      if (bestQty >= 0) {
+        effectiveQtyMap.set(key, bestQty);
+      } else {
+        warnings.push(`${ol.name}: no matching invoice line — using ordered quantity (${ol.qty}).`);
+        effectiveQtyMap.set(key, ol.qty);
+      }
+    } else {
+      effectiveQtyMap.set(key, ol.qty);
+    }
+  }
 
   // Find matching area items across all departments and update stock
   try {
@@ -83,36 +126,41 @@ async function updateStockAndCreateInvoice(
             (l.productId && itemProductId && l.productId === itemProductId) ||
             (l.name && itemName && l.name.toLowerCase().trim() === itemName),
           );
-          if (matchedLine && matchedLine.qty > 0) {
-            matchedProductIds.add(matchedLine.productId || matchedLine.name.toLowerCase());
-            if (isFestival) {
-              stockBatch.update(itemDoc.ref, {
-                lastCount: increment(matchedLine.qty),
-                lastCountAt: serverTimestamp(),
-                ...(uid ? { lastCountBy: uid } : {}),
-                updatedAt: serverTimestamp(),
-              });
-              stockUpdates++;
-            } else if (stocktakeActive) {
-              // Queue — will be applied to incomingQty on cycle reset
-              const pathParts = itemDoc.ref.path.split('/');
-              const deptId = pathParts[3];
-              const aId = pathParts[5];
-              await addDoc(collection(db, 'venues', venueId, 'queuedInvoices'), {
-                itemId: itemDoc.id,
-                departmentId: deptId,
-                areaId: aId,
-                qty: matchedLine.qty,
-                source: 'invoice',
-                queuedAt: serverTimestamp(),
-              });
-            } else {
-              stockBatch.update(itemDoc.ref, {
-                incomingQty: increment(matchedLine.qty),
-                ...(uid ? { lastCountBy: uid } : {}),
-                updatedAt: serverTimestamp(),
-              });
-              stockUpdates++;
+          if (matchedLine) {
+            const lineKey = matchedLine.productId || matchedLine.name.toLowerCase();
+            matchedProductIds.add(lineKey);
+            // Use invoice qty when reliably matched; falls back to order qty (with warning, already logged above)
+            const effectiveQty = effectiveQtyMap.get(lineKey) ?? matchedLine.qty;
+            if (effectiveQty > 0) {
+              if (isFestival) {
+                stockBatch.update(itemDoc.ref, {
+                  lastCount: increment(effectiveQty),
+                  lastCountAt: serverTimestamp(),
+                  ...(uid ? { lastCountBy: uid } : {}),
+                  updatedAt: serverTimestamp(),
+                });
+                stockUpdates++;
+              } else if (stocktakeActive) {
+                // Queue — will be applied to incomingQty on cycle reset
+                const pathParts = itemDoc.ref.path.split('/');
+                const deptId = pathParts[3];
+                const aId = pathParts[5];
+                await addDoc(collection(db, 'venues', venueId, 'queuedInvoices'), {
+                  itemId: itemDoc.id,
+                  departmentId: deptId,
+                  areaId: aId,
+                  qty: effectiveQty,
+                  source: 'invoice',
+                  queuedAt: serverTimestamp(),
+                });
+              } else {
+                stockBatch.update(itemDoc.ref, {
+                  incomingQty: increment(effectiveQty),
+                  ...(uid ? { lastCountBy: uid } : {}),
+                  updatedAt: serverTimestamp(),
+                });
+                stockUpdates++;
+              }
             }
           }
         }
@@ -144,7 +192,10 @@ async function updateStockAndCreateInvoice(
   // Create invoice document for this delivery
   try {
     const now = Timestamp.now();
-    const totalAmount = orderLines.reduce((s, l) => s + l.qty * l.unitCost, 0);
+    const totalAmount = orderLines.reduce((s, l) => {
+      const key = l.productId || l.name.toLowerCase();
+      return s + (effectiveQtyMap.get(key) ?? l.qty) * l.unitCost;
+    }, 0);
     const invoiceDoc: Record<string, any> = {
       supplierId: orderData.supplierId || null,
       supplierName: orderData.supplierName || null,
@@ -167,15 +218,17 @@ async function updateStockAndCreateInvoice(
     // Write invoice lines
     const lineBatch = writeBatch(db);
     for (const l of orderLines) {
+      const key = l.productId || l.name.toLowerCase();
+      const qty = effectiveQtyMap.get(key) ?? l.qty;
       const lineRef = doc(collection(db, 'venues', venueId, 'invoices', invRef.id, 'lines'), l.productId);
       lineBatch.set(lineRef, {
         productId: l.productId,
         productName: l.name,
         name: l.name,
-        qty: l.qty,
+        qty,
         unitCost: l.unitCost,
         cost: l.unitCost,
-        lineTotal: l.qty * l.unitCost,
+        lineTotal: qty * l.unitCost,
       });
     }
     await lineBatch.commit();
@@ -188,7 +241,7 @@ async function updateStockAndCreateInvoice(
   return { warnings, unmatchedLines };
 }
 
-async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:string; orderId:string; parsed: Parsed }) {
+async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual'|'photo', args: { venueId:string; orderId:string; parsed: Parsed }) {
   const { venueId, orderId, parsed } = args;
   const db = getFirestore(getApp());
   const currentUser = getAuth()?.currentUser || null;
@@ -336,7 +389,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
   const saved = await saveReconciliation(venueId, orderId, reconciled);
 
   // 3) Update stock counts + create invoice document
-  const { warnings: stockWarnings, unmatchedLines } = await updateStockAndCreateInvoice(db, venueId, orderId, uid);
+  const { warnings: stockWarnings, unmatchedLines } = await updateStockAndCreateInvoice(db, venueId, orderId, uid, parsed?.lines || []);
 
   // 4) Mark invoiced (fully received + invoice created)
   await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
@@ -349,7 +402,11 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual', args: { venueId:st
 
   return {
     ok: true,
-    reconciliationId: saved?.id || reconciled?.reconciliationId || null,
+    reconciliationId: saved?.id || null,
+    poMatch: reconciled.poMatch,
+    counts: reconciled.counts,
+    totals: reconciled.totals,
+    anomalies: reconciled.anomalies,
     invoicePeriod,
     periodMessage: periodMessage ?? undefined,
     unmatchedLines: unmatchedLines.length > 0 ? unmatchedLines : undefined,
@@ -365,4 +422,7 @@ export async function finalizeReceiveFromPdf(args:{ venueId:string; orderId:stri
 }
 export async function finalizeReceiveFromManual(args:{ venueId:string; orderId:string; parsed: Parsed }) {
   return finalizeReceiveCore('manual', args);
+}
+export async function finalizeReceiveFromPhoto(args:{ venueId:string; orderId:string; parsed: Parsed }) {
+  return finalizeReceiveCore('photo', args);
 }

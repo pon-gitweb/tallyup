@@ -10,6 +10,10 @@ import {
 } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
+import { captureMultiPagePhotos } from '../../services/fastReceive/captureMultiPagePhotos';
+import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
+import { reconcileInvoiceREST } from '../../services/invoices/reconcile';
+import { finalizeReceiveFromPhoto } from '../../services/orders/receive';
 
 type Line = {
   productId: string;
@@ -17,6 +21,17 @@ type Line = {
   qty?: number;           // ordered qty
   receivedQty?: number;   // received for this session
 };
+
+function formatAnomaly(a: any): string {
+  if (!a || typeof a !== 'object') return String(a);
+  switch (a.type) {
+    case 'missingOnInvoice': return `Missing from invoice: ${a.productName} (ordered ${a.orderedQty})`;
+    case 'unknown':          return `Not on order: ${a.invoiceName} (qty ${a.invoiceQty})`;
+    case 'qtyDiff':          return `Qty mismatch: ${a.productName} — ordered ${a.orderedQty}, invoiced ${a.invoicedQty}`;
+    case 'priceChange':      return `Price change: ${a.productName} — order $${Number(a.orderUnitCost).toFixed(2)}, invoice $${Number(a.invoiceUnitPrice).toFixed(2)}`;
+    default:                 return JSON.stringify(a);
+  }
+}
 
 export default function ReceiveAlias() {
   const route = useRoute<any>();
@@ -28,6 +43,11 @@ export default function ReceiveAlias() {
   const orderId: string | undefined = route?.params?.orderId;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // scan / preview state
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+  const [reconcilePreview, setReconcilePreview] = useState<any | null>(null);
 
   const [supplierName, setSupplierName] = useState<string>('Order');
   const [status, setStatus] = useState<string | undefined>(undefined);
@@ -97,7 +117,7 @@ export default function ReceiveAlias() {
     setLines(prev => prev.map(l => ({ ...l, receivedQty: Number(l.qty || 0) })));
   }, []);
 
-  // persist helper (keeps submitted) or finalize (received)
+  // persist helper (keeps submitted) or finalize (received) — no-scan path, unchanged
   const persist = useCallback(async (finalize: boolean) => {
     if (!venueId || !orderId) return;
     try {
@@ -146,6 +166,123 @@ export default function ReceiveAlias() {
     }
   }, [venueId, orderId, lines, nav]);
 
+  // Scan invoice: capture pages → OCR → reconcile preview (non-committing)
+  const scanInvoice = useCallback(async () => {
+    if (scanning || saving) return;
+    try {
+      setScanning(true);
+
+      const capture = await captureMultiPagePhotos();
+      if (capture.permissionDenied) {
+        showInfo('Camera access is required to scan an invoice.');
+        return;
+      }
+      if (!capture.uris) return; // user canceled
+
+      const filename = `invoice_${Date.now()}.jpg`;
+      const scanned = await scanInvoicePhoto({ venueId, photoUris: capture.uris, filename });
+      setScanResult(scanned);
+
+      // Non-committing preview — lets the user review before finalizing
+      const preview = await reconcileInvoiceREST(venueId, orderId, {
+        invoice: {
+          source: scanned.invoice.source,
+          storagePath: scanned.invoice.storagePath,
+          poNumber: scanned.invoice.poNumber,
+        },
+        lines: scanned.lines,
+        confidence: scanned.confidence,
+        warnings: scanned.warnings,
+      });
+      setReconcilePreview(preview);
+
+      if (!preview.ok) {
+        showError(preview.error || 'Reconciliation preview failed.');
+      }
+    } catch (e: any) {
+      showError(String(e?.message || e) || 'Scan failed.');
+    } finally {
+      setScanning(false);
+    }
+  }, [venueId, orderId, scanning, saving, showInfo, showError]);
+
+  // Complete Receiving — scan path: re-reconciles server-side, saves record, updates stock, creates invoice
+  const completeScanReceiving = useCallback(async () => {
+    if (!venueId || !orderId || !scanResult) return;
+    try {
+      setSaving(true);
+      const result = await finalizeReceiveFromPhoto({
+        venueId,
+        orderId,
+        parsed: {
+          invoice: scanResult.invoice,
+          lines: scanResult.lines,
+          confidence: scanResult.confidence,
+          warnings: scanResult.warnings,
+        },
+      });
+      if (!result.ok) {
+        showError(result.error || 'Could not complete receiving.');
+        return;
+      }
+      showSuccess(result.priorPeriod ? (result.message || 'Order recorded.') : 'Order received and invoice reconciled.');
+      nav.goBack();
+    } catch (e: any) {
+      showError(String(e?.message || e) || 'Could not complete receiving.');
+    } finally {
+      setSaving(false);
+    }
+  }, [venueId, orderId, scanResult, showSuccess, showError, nav]);
+
+  // Reconcile preview card (shown in FlatList header when scan is available)
+  const previewCard = useMemo(() => {
+    if (!reconcilePreview?.ok) return null;
+    const p = reconcilePreview;
+    const c = p.counts || {};
+    const t = p.totals || {};
+    const anomalies: any[] = Array.isArray(p.anomalies) ? p.anomalies : [];
+    const deltaKnown = Number.isFinite(t.invoiceTotal) && Number.isFinite(t.orderTotal);
+    const delta = deltaKnown ? (t.invoiceTotal - t.orderTotal) : (t.delta ?? null);
+
+    return (
+      <View style={{
+        backgroundColor: '#F0F9FF', borderRadius: 12, padding: 12,
+        margin: 12, marginBottom: 4, borderWidth: 1, borderColor: '#BAE6FD'
+      }}>
+        <Text style={{ fontWeight: '800', color: '#0369A1', marginBottom: 4 }}>
+          📋 Invoice Scanned {p.poMatch ? '· PO ✓' : '· PO ?'}
+        </Text>
+
+        <Text style={{ color: '#0369A1', fontSize: 12 }}>
+          {`Matched: ${c.matched ?? 0} · Unknown: ${c.unknown ?? 0} · Qty diffs: ${c.qtyDiffs ?? 0} · Price diffs: ${c.priceChanges ?? 0} · Missing: ${c.missingOnInvoice ?? 0}`}
+        </Text>
+
+        {deltaKnown && (
+          <Text style={{ color: '#0369A1', fontSize: 12, marginTop: 2 }}>
+            {`Invoice: $${Number(t.invoiceTotal).toFixed(2)} · Order: $${Number(t.orderTotal).toFixed(2)} · Δ ${delta >= 0 ? '+' : ''}$${Number(delta).toFixed(2)}`}
+          </Text>
+        )}
+
+        {anomalies.length > 0 && (
+          <View style={{ marginTop: 8 }}>
+            <Text style={{ fontWeight: '700', color: '#0369A1', fontSize: 12, marginBottom: 2 }}>
+              Anomalies — review, then adjust quantities if needed:
+            </Text>
+            {anomalies.map((a, i) => (
+              <Text key={i} style={{ color: '#0369A1', fontSize: 12, marginTop: 1 }}>
+                {'• '}{formatAnomaly(a)}
+              </Text>
+            ))}
+          </View>
+        )}
+
+        <Text style={{ color: '#64748B', fontSize: 11, marginTop: 8, fontStyle: 'italic' }}>
+          Adjust received quantities above if needed, then tap Complete Receiving.
+        </Text>
+      </View>
+    );
+  }, [reconcilePreview]);
+
   if (!venueId || !orderId) {
     return <Centered><Text>Missing venue/order id.</Text></Centered>;
   }
@@ -159,6 +296,8 @@ export default function ReceiveAlias() {
     );
   }
 
+  const isBusy = saving || scanning;
+
   return (
     <View style={{ flex: 1 }}>
       {/* Header area */}
@@ -169,23 +308,30 @@ export default function ReceiveAlias() {
         </Text>
 
         {/* Actions row */}
-        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap' }}>
-          <Button onPress={() => showInfo('Invoice scanning coming soon.')} text="Scan Invoice (coming soon)" />
-          <View style={{ width: 8 }} />
-          <Button onPress={receiveAll} text="Receive All" />
-          <View style={{ width: 8 }} />
-          <Button onPress={() => persist(false)} text={saving ? 'Saving…' : 'Save'} />
-          <View style={{ width: 8 }} />
-          <Button onPress={() => persist(true)} text={saving ? 'Working…' : 'Complete Receiving'} primary disabled={saving} />
+        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <Button
+            onPress={scanInvoice}
+            disabled={isBusy}
+            text={scanning ? 'Scanning…' : scanResult ? '📋 Rescan' : '📷 Scan Invoice'}
+          />
+          <Button onPress={receiveAll} disabled={isBusy} text="Receive All" />
+          <Button onPress={() => persist(false)} disabled={isBusy} text={saving ? 'Saving…' : 'Save'} />
+          <Button
+            onPress={scanResult ? completeScanReceiving : () => persist(true)}
+            disabled={isBusy}
+            text={saving ? 'Working…' : 'Complete Receiving'}
+            primary
+          />
         </View>
       </View>
 
-      {/* Lines */}
+      {/* Lines — preview card shown as list header */}
       <FlatList
         keyboardShouldPersistTaps="handled"
         data={lines}
         keyExtractor={(l) => l.productId}
         contentContainerStyle={{ padding: 12 }}
+        ListHeaderComponent={previewCard}
         renderItem={({ item }) => {
           const ordered = Number(item.qty || 0);
           const received = Number(item.receivedQty || 0);
@@ -242,4 +388,3 @@ function pill(primary: boolean) {
     backgroundColor: primary ? '#111827' : '#F3F4F6'
   };
 }
-
