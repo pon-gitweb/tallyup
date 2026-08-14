@@ -1126,12 +1126,22 @@ async function processTaxInvoice(
   let shouldRequestInvoice = false;
 
   if (hadPriceFailure) {
-    if (data?.imageBase64) {
+    // Support imageBase64Array (multi-page) with fallback to single imageBase64
+    const failureImages: string[] = Array.isArray(data?.imageBase64Array) && data.imageBase64Array.length > 0
+      ? data.imageBase64Array.map(String)
+      : data?.imageBase64
+      ? [String(data.imageBase64)]
+      : [];
+    if (failureImages.length > 0) {
       try {
-        const imgBuf = Buffer.from(String(data.imageBase64), 'base64');
-        const storageKey = `venues/${venueId}/invoice-failures/${Date.now()}-${invoiceDocId || 'unknown'}.jpg`;
-        await admin.storage().bucket().file(storageKey).save(imgBuf, { contentType: 'image/jpeg' });
-        documentStoragePath = storageKey;
+        const ts = Date.now();
+        for (let i = 0; i < failureImages.length; i++) {
+          const imgBuf = Buffer.from(failureImages[i], 'base64');
+          const suffix = failureImages.length > 1 ? `-page${i + 1}` : '';
+          const storageKey = `venues/${venueId}/invoice-failures/${ts}-${invoiceDocId || 'unknown'}${suffix}.jpg`;
+          await admin.storage().bucket().file(storageKey).save(imgBuf, { contentType: 'image/jpeg' });
+          if (i === 0) documentStoragePath = storageKey;
+        }
       } catch (e: any) {
         console.warn('[ocrInvoicePhoto] failure image storage error', e?.message);
       }
@@ -1572,13 +1582,24 @@ export const ocrInvoicePhoto = functions
       );
     }
 
-    const imageBase64 = String(data?.imageBase64 || "");
-    if (!imageBase64) throw new functions.https.HttpsError("invalid-argument", "imageBase64 is required.");
-
-    try {
-      Buffer.from(imageBase64, "base64");
-    } catch (e: any) {
-      throw new functions.https.HttpsError("invalid-argument", "Invalid imageBase64.");
+    // Accept imageBase64Array (multi-page) or fall back to single imageBase64 (backward-compat)
+    const rawArray = data?.imageBase64Array;
+    const imageBase64Single = String(data?.imageBase64 || "");
+    const imageBase64Array: string[] =
+      Array.isArray(rawArray) && rawArray.length > 0
+        ? rawArray.map(String)
+        : imageBase64Single
+        ? [imageBase64Single]
+        : [];
+    if (imageBase64Array.length === 0) {
+      throw new functions.https.HttpsError("invalid-argument", "imageBase64 or imageBase64Array is required.");
+    }
+    for (const img of imageBase64Array) {
+      try {
+        Buffer.from(img, "base64");
+      } catch (e: any) {
+        throw new functions.https.HttpsError("invalid-argument", "Invalid base64 in image payload.");
+      }
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1600,12 +1621,14 @@ export const ocrInvoicePhoto = functions
       body: JSON.stringify({
         model: "claude-opus-4-7",
         max_tokens: 4096,
-        system: "You are reading a hospitality invoice photo. Extract ALL text you can see exactly as written, preserving the layout as much as possible. Include supplier name, invoice number, date, and all line items with their quantities and prices. Do not summarise — return the full text content.",
+        system: imageBase64Array.length > 1
+          ? "You are reading a multi-page hospitality invoice. Extract ALL text you can see exactly as written, preserving the layout as much as possible. Include supplier name, invoice number, date, and all line items with their quantities and prices. The images are pages of the same invoice — combine the extracted text from all pages into one continuous extraction. Do not summarise — return the full text content."
+          : "You are reading a hospitality invoice photo. Extract ALL text you can see exactly as written, preserving the layout as much as possible. Include supplier name, invoice number, date, and all line items with their quantities and prices. Do not summarise — return the full text content.",
         messages: [{
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: "Extract all text from this invoice image." },
+            ...imageBase64Array.map(img => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: img } })),
+            { type: "text", text: imageBase64Array.length > 1 ? `Extract all text from these ${imageBase64Array.length} invoice pages.` : "Extract all text from this invoice image." },
           ],
         }],
       }),

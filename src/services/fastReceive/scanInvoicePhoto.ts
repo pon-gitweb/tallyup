@@ -19,7 +19,7 @@ function getProjectId(): string {
 
 export async function scanInvoicePhoto(args: {
   venueId: string;
-  photoUri: string;
+  photoUris: string[];
   filename: string;
 }): Promise<{
   invoice: { source: 'photo'; storagePath: string; poNumber: string|null; supplierName: string|null; supplierId: string|null };
@@ -33,18 +33,20 @@ export async function scanInvoicePhoto(args: {
   debugFilteredLineCount?: number | null;
   debugRawLineNames?: string[] | null;
 }> {
-  const { venueId, photoUri, filename } = args;
+  const { venueId, photoUris, filename } = args;
   if (!venueId) throw new Error('scanInvoicePhoto: missing venueId');
-  if (!photoUri) throw new Error('scanInvoicePhoto: missing photoUri');
+  if (!photoUris?.length) throw new Error('scanInvoicePhoto: missing photoUris');
 
-  // Upload first — every snapshot gets a real storagePath regardless of OCR outcome
-  const upload = await uploadFastInvoice(venueId, photoUri, filename, 'image/jpeg' as any);
+  // Upload first page — every snapshot gets a real storagePath regardless of OCR outcome
+  const upload = await uploadFastInvoice(venueId, photoUris[0], filename, 'image/jpeg' as any);
   const storagePath: string = upload?.fullPath || '';
 
-  // Read the same photo as base64 for the Claude payload
-  const imageBase64 = await FileSystem.readAsStringAsync(photoUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  // Read all pages as base64 for the Claude payload
+  const imageBase64Array = await Promise.all(
+    photoUris.map(uri =>
+      FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
+    )
+  );
 
   // Call ocrInvoicePhoto (onCall function — POST { data: {...} } with Bearer token)
   const auth = getAuth();
@@ -63,7 +65,7 @@ export async function scanInvoicePhoto(args: {
       'content-type': 'application/json',
       authorization: `Bearer ${idToken}`,
     },
-    body: JSON.stringify({ data: { venueId, imageBase64 } }),
+    body: JSON.stringify({ data: { venueId, imageBase64Array } }),
   });
 
   const json = await res.json().catch(() => ({}));

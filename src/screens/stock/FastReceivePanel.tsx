@@ -16,15 +16,30 @@ import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliati
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { invoiceFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 
+// Promise-wrapped alert for the multi-page camera flow. Resolves true = add another page.
+function askAddPage(pageNum: number): Promise<boolean> {
+  return new Promise(resolve => {
+    Alert.alert(
+      'Add another page?',
+      `Page ${pageNum} captured. Scan another page of this invoice?`,
+      [
+        { text: 'Done — scan now', onPress: () => resolve(false), style: 'cancel' },
+        { text: 'Add page', onPress: () => resolve(true) },
+      ],
+      { cancelable: false },
+    );
+  });
+}
+
 export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const [busy, setBusy] = useState(false);
 
-  const processScannedPhoto = useCallback(async (uri: string) => {
+  const processScannedPhoto = useCallback(async (uris: string[]) => {
     const filename = `invoice_${Date.now()}.jpg`;
-    const result = await scanInvoicePhoto({ venueId, photoUri: uri, filename });
+    const result = await scanInvoicePhoto({ venueId, photoUris: uris, filename });
     const save = await persistFastReceiveSnapshot({
       venueId,
       source: 'photo',
@@ -67,7 +82,21 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      await processScannedPhoto(photo.assets[0].uri);
+      // Collect pages: keep asking until the user says "Done"
+      const uris: string[] = [photo.assets[0].uri];
+      let addMore = await askAddPage(uris.length);
+      while (addMore) {
+        const next = await ImagePicker.launchCameraAsync({
+          allowsEditing: false,
+          quality: 0.85,
+          base64: false,
+        });
+        if (next.canceled || !next.assets?.[0]?.uri) break;
+        uris.push(next.assets[0].uri);
+        addMore = await askAddPage(uris.length);
+      }
+
+      await processScannedPhoto(uris);
     } catch (e: any) {
       const msg = String(e?.message || e);
       showError(msg.replace(/^scanInvoicePhoto:\s*/i, '') || 'Photo capture failed');
@@ -96,7 +125,7 @@ export default function FastReceivePanel({ onClose }: { onClose: () => void }) {
       });
       if (photo.canceled || !photo.assets?.[0]?.uri) return;
 
-      await processScannedPhoto(photo.assets[0].uri);
+      await processScannedPhoto([photo.assets[0].uri]);
     } catch (e: any) {
       const msg = String(e?.message || e);
       showError(msg.replace(/^scanInvoicePhoto:\s*/i, '') || 'Photo select failed');
