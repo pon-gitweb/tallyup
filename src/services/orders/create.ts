@@ -38,6 +38,12 @@ export async function createDraftOrderWithLines(
   notes?: string | null,
   supplierNameHint?: string | null,
   origin?: string | null,
+  /**
+   * When provided and non-empty, used as the order's PO number instead of the
+   * auto-generated sequential one.  Existing callers that omit this param are
+   * completely unaffected — they still get the auto-generated PO.
+   */
+  poNumberOverride?: string | null,
 ): Promise<{ id: string }> {
   if (!venueId) throw new Error('createDraftOrderWithLines: venueId required');
   if (!supplierId) throw new Error('createDraftOrderWithLines: supplierId required');
@@ -58,19 +64,26 @@ export async function createDraftOrderWithLines(
   const itemsCount = cleaned.length;
   const subtotal = cleaned.reduce((acc, l) => acc + l.qty * (l.unitCost ?? 0), 0);
 
-  // Generate PO number: VENUEPREFIX-YYYYMMDD-NNNN
+  // Use the caller-supplied PO override when present; otherwise auto-generate.
   let poNumber: string | null = null;
-  try {
-    const venueSnap = await getDoc(doc(db, 'venues', venueId));
-    const venueName = (venueSnap.data() as any)?.name ?? '';
-    const venuePrefix = venueName.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ORD';
-    const ordersSnap = await getDocs(collection(db, 'venues', venueId, 'orders'));
-    const orderCount = ordersSnap.size;
-    const now2 = new Date();
-    const dateStr = now2.toISOString().replace(/-/g, '').slice(0, 8);
-    const sequence = (orderCount + 1).toString().padStart(4, '0');
-    poNumber = `${venuePrefix}-${dateStr}-${sequence}`;
-  } catch { /* non-fatal — order created without PO number */ }
+  const trimmedOverride = poNumberOverride ? String(poNumberOverride).trim() : null;
+  if (trimmedOverride && trimmedOverride.length > 0) {
+    // Override supplied (e.g. Accept Order flow — PO comes from the invoice itself).
+    poNumber = trimmedOverride;
+  } else {
+    // Auto-generate: VENUEPREFIX-YYYYMMDD-NNNN
+    try {
+      const venueSnap = await getDoc(doc(db, 'venues', venueId));
+      const venueName = (venueSnap.data() as any)?.name ?? '';
+      const venuePrefix = venueName.replace(/[^a-zA-Z]/g, '').substring(0, 4).toUpperCase() || 'ORD';
+      const ordersSnap = await getDocs(collection(db, 'venues', venueId, 'orders'));
+      const orderCount = ordersSnap.size;
+      const now2 = new Date();
+      const dateStr = now2.toISOString().replace(/-/g, '').slice(0, 8);
+      const sequence = (orderCount + 1).toString().padStart(4, '0');
+      poNumber = `${venuePrefix}-${dateStr}-${sequence}`;
+    } catch { /* non-fatal — order created without PO number */ }
+  }
 
   const ordersCol = collection(db, 'venues', venueId, 'orders');
   const orderRef = doc(ordersCol);

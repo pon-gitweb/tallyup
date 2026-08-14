@@ -32,7 +32,8 @@ type Parsed = {
 
 // Inline token-overlap matching — mirrors functions/src/nameMatching.ts
 // for the client/mobile context (cannot import across the client/server boundary).
-function _tokForQty(s: string): Set<string> {
+// Exported so other client modules (e.g. Accept Order flow) can reuse without a third copy.
+export function _tokForQty(s: string): Set<string> {
   const words = (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
   const tokens: string[] = [];
   for (const w of words) {
@@ -41,7 +42,7 @@ function _tokForQty(s: string): Set<string> {
   }
   return new Set(tokens.map(t => /^\d{2}$/.test(t) ? '20' + t : t));
 }
-function _overlapQty(a: string, b: string): number {
+export function _overlapQty(a: string, b: string): number {
   const ta = _tokForQty(a), tb = _tokForQty(b);
   if (!ta.size && !tb.size) return 1;
   if (!ta.size || !tb.size) return 0;

@@ -52,6 +52,7 @@ import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { toastService } from '../../utils/toastService';
 import { matchProductInList } from '../../services/matching';
+import { quickAddProduct } from '../../services/products/quickAddProduct';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from '../../services/nameMatching';
 import { captureError } from '../../services/crashReporting';
 import { ScaleService } from '../../services/scale/ScaleService';
@@ -1974,67 +1975,23 @@ const qty = parseFloat(typed);
   try {
     await ensureAreaStarted();
 
-    // Find or create a venue product so the area item has a productId link
+    // Find or create a venue product so the area item has a productId link.
+    // Logic extracted to quickAddProduct — same behaviour, now shared.
     let productId: string | null = null;
     try {
-      const matchResult = matchProductInList(venueProductsRef.current, { name: nm });
-      if (matchResult.match && matchResult.confidence >= 0.85) {
-        productId = matchResult.match.id;
-      } else {
-        const newProdRef = doc(collection(db, 'venues', venueId, 'products'));
-        await setDoc(newProdRef, {
-          name: nm,
-          unit: unit || null,
-          supplierName: supplier || null,
-          size: addingSize,  // physical size string for recipe costing; null = unsure
-          ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
-          createdAt: nowTs,
-          updatedAt: nowTs,
-        });
-        productId = newProdRef.id;
-        setVenueProducts(prev => [...prev, {
-          id: newProdRef.id,
-          name: nm,
-          unit: unit || null,
-          supplierName: supplier || null,
-          size: addingSize,
-          ...(bc ? { barcode: bc, barcodeNumber: bc } : {}),
-        }]);
-        // Best-effort: contribute to global catalogue when a barcode was provided
-        if (bc) {
-          try {
-            const [g1, g2] = await Promise.all([
-              getDocs(query(collection(db, 'global_products'), where('barcode', '==', bc))),
-              getDocs(query(collection(db, 'global_products'), where('barcodeNumber', '==', bc))),
-            ]);
-            if (g1.empty && g2.empty) {
-              await setDoc(doc(db, 'global_products', bc), {
-                barcode: bc,
-                barcodeNumber: bc,
-                name: nm,
-                unit: unit || null,
-                addedAt: serverTimestamp(),
-                addedByVenue: venueId,
-                source: 'quick-add',
-              }, { merge: true });
-            }
-          } catch (e: any) {
-            console.warn('[addQuickItem] global catalogue write failed:', e?.message);
-          }
-        }
-        // Fire-and-forget: persist "maybe match" candidate for manager review
-        if (matchResult.match && matchResult.confidence >= 0.6 && matchResult.confidence < 0.85) {
-          addDoc(collection(db, 'venues', venueId, 'productMatchCandidates'), {
-            newProductId: newProdRef.id,
-            newProductName: nm,
-            candidateProductId: matchResult.match.id,
-            candidateProductName: matchResult.match.name,
-            confidence: matchResult.confidence,
-            source: 'quick-add',
-            status: 'pending',
-            createdAt: serverTimestamp(),
-          }).catch((e: any) => console.warn('[addQuickItem] candidate match write failed:', e?.message));
-        }
+      const result = await quickAddProduct({
+        venueId,
+        name: nm,
+        unit: unit || null,
+        size: addingSize,
+        supplierName: supplier || null,
+        barcode: bc || null,
+        existingProducts: venueProductsRef.current,
+      });
+      productId = result.productId;
+      // Update local cache if a new product was created (avoids a redundant fetch).
+      if (result.isNew && result.productPayload) {
+        setVenueProducts(prev => [...prev, result.productPayload]);
       }
     } catch {
       // Non-fatal — area item still created without productId

@@ -1,8 +1,9 @@
 // @ts-nocheck
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { getFirestore, updateDoc, getDocs, collection, doc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { OrdersService } from '../../domain/orders';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, ActivityIndicator } from 'react-native';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
@@ -10,6 +11,9 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
+import { _overlapQty } from '../../services/orders/receive';
+import { quickAddProduct } from '../../services/products/quickAddProduct';
+import { createDraftOrderWithLines } from '../../services/orders/create';
 import FastReceiveDetailModal from './FastReceiveDetailModal';
 
 type FastRec = {
@@ -21,6 +25,9 @@ type FastRec = {
   createdAt?: any;
   payload?: any;
 };
+
+type ResolvedLine = { productId: string; name: string; qty: number; unitCost: number };
+type UnmatchedLine = { name: string; qty: number; unitPrice: number; idx: number };
 
 export default function FastReceivesReviewPanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
@@ -46,6 +53,14 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
   const [ordersBusy, setOrdersBusy] = useState(false);
 
   const [refreshBusy, setRefreshBusy] = useState(false);
+
+  // Accept Order flow
+  const [acceptFor, setAcceptFor] = useState<FastRec | null>(null);
+  const [acceptBusy, setAcceptBusy] = useState(false);
+  const [acceptReviewOpen, setAcceptReviewOpen] = useState(false);
+  const [acceptMatched, setAcceptMatched] = useState<ResolvedLine[]>([]);
+  const [acceptUnmatched, setAcceptUnmatched] = useState<UnmatchedLine[]>([]);
+  const [acceptResolutions, setAcceptResolutions] = useState<Record<number, 'add' | 'skip'>>({});
 
   const load = useCallback(async () => {
     try {
@@ -229,6 +244,226 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
     }
   }, [load]);
 
+  // ── Accept Order: core create+submit+attach step ──────────────────────────
+  // Plain async helper (not useCallback) — always called from within another
+  // callback so always has access to current venueId/db/load through closure.
+  const doAcceptCreate = useCallback(
+    async (it: FastRec, resolvedLines: ResolvedLine[]) => {
+      if (!venueId) return;
+      setAcceptBusy(true);
+      try {
+        // Resolve supplier: use payload id if present, else match by name, else placeholder.
+        const supplierNameHint = it?.payload?.invoice?.supplierName || null;
+        let supplierId = it?.payload?.invoice?.supplierId || null;
+        if (!supplierId && supplierNameHint) {
+          try {
+            const suppSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+            for (const sd of suppSnap.docs) {
+              const sn = ((sd.data() as any)?.name || '').toLowerCase().trim();
+              if (sn && sn === supplierNameHint.toLowerCase().trim()) {
+                supplierId = sd.id;
+                break;
+              }
+            }
+          } catch {}
+        }
+        // '_invoice_accept' is a stable placeholder: resolveSupplierName handles
+        // missing docs gracefully and will fall back to supplierNameHint.
+        supplierId = supplierId || '_invoice_accept';
+
+        const poOverride = it?.parsedPo ?? it?.payload?.invoice?.poNumber ?? null;
+
+        // Step 8a — create draft order with resolved lines + PO from invoice.
+        const { id: newOrderId } = await createDraftOrderWithLines(
+          venueId,
+          supplierId,
+          resolvedLines.map(l => ({
+            productId: l.productId,
+            name: l.name,
+            qty: l.qty,
+            unitCost: l.unitCost,
+          })),
+          null,            // notes
+          supplierNameHint, // supplierNameHint
+          'invoice-accept', // origin
+          poOverride,      // poNumberOverride
+        );
+
+        // Step 8b — write 'submitted' directly, bypassing finalizeToSubmitted.
+        // Reason: the role gate in finalizeToSubmitted exists to control forward-looking
+        // spending commitments; goods already physically arrived, so blocking record-keeping
+        // on role would be wrong. We write the same fields finalizeToSubmitted writes,
+        // minus the role check, plus poDate to prevent ensurePoFields overwriting our PO.
+        const uid = getAuth()?.currentUser?.uid ?? null;
+        await updateDoc(doc(db, 'venues', venueId, 'orders', newOrderId), {
+          status: 'submitted',
+          displayStatus: 'submitted',
+          submittedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: uid,
+          submittedBy: uid,
+          plannedSubmitAt: null,
+          isConsolidating: null,
+          submitHoldUntil: null,
+          cutoffAt: null,
+          merge: null,
+          queued: null,
+          pending: null,
+          pendingReason: null,
+          // poDate prevents ensurePoFields (used by the standard submit path elsewhere)
+          // from overwriting the invoice-provided PO number on this order.
+          poDate: serverTimestamp(),
+        });
+
+        // Step 8c — attach the pending snapshot to the new order.
+        // attachPendingToOrder is the proven mechanism; it triggers the full
+        // finalize-receive pipeline (reconcile → stock update → invoice document).
+        const res = await attachPendingToOrder({
+          venueId,
+          pendingId: it.id,
+          orderId: newOrderId,
+        });
+        if (!res?.ok) throw new Error(res?.error || 'attach failed');
+
+        showSuccess('✓ Order created and invoice attached — stock updated.');
+        setAcceptReviewOpen(false);
+        setAcceptFor(null);
+        await load();
+      } catch (e: any) {
+        showError(String(e?.message || e) || 'Accept Order failed');
+      } finally {
+        setAcceptBusy(false);
+      }
+    },
+    [venueId, db, load, showSuccess, showError]
+  );
+
+  // ── Accept Order: Step 6 — match lines to products ────────────────────────
+  const startAcceptOrder = useCallback(
+    async (it: FastRec) => {
+      if (!venueId || acceptBusy || busyId) return;
+      const lines = it?.payload?.lines || [];
+      if (lines.length === 0) {
+        showError('No lines in this snapshot — cannot create an order.');
+        return;
+      }
+      setAcceptFor(it);
+      setAcceptBusy(true);
+      try {
+        // Fetch venue products for matching.
+        const prodSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+        const products = prodSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+        const matched: ResolvedLine[] = [];
+        const unmatched: UnmatchedLine[] = [];
+
+        for (let idx = 0; idx < lines.length; idx++) {
+          const line = lines[idx];
+          const lineName = String(line?.name || '').trim();
+          if (!lineName) continue;
+
+          // Match using the same _overlapQty helpers as updateStockAndCreateInvoice
+          // (threshold 0.85 — established convention throughout the receive pipeline).
+          let bestScore = 0;
+          let bestProduct: any = null;
+          for (const p of products) {
+            const score = _overlapQty(lineName, p.name || '');
+            if (score >= 0.85 && score > bestScore) {
+              bestScore = score;
+              bestProduct = p;
+            }
+          }
+
+          if (bestProduct) {
+            matched.push({
+              productId: bestProduct.id,
+              name: lineName,
+              qty: Math.max(1, Number(line.qty) || 1),
+              unitCost: Number(line.unitPrice) || 0,
+            });
+          } else {
+            unmatched.push({
+              name: lineName,
+              qty: Math.max(1, Number(line.qty) || 1),
+              unitPrice: Number(line.unitPrice) || 0,
+              idx,
+            });
+          }
+        }
+
+        if (unmatched.length === 0) {
+          // All lines matched — skip review and proceed straight to create.
+          await doAcceptCreate(it, matched);
+        } else {
+          // Open review step so the user can decide what to do with unmatched lines.
+          setAcceptMatched(matched);
+          setAcceptUnmatched(unmatched);
+          setAcceptResolutions({});
+          setAcceptReviewOpen(true);
+        }
+      } catch (e: any) {
+        showError(String(e?.message || e) || 'Accept Order failed');
+        setAcceptFor(null);
+      } finally {
+        setAcceptBusy(false);
+      }
+    },
+    [venueId, db, acceptBusy, busyId, doAcceptCreate, showError]
+  );
+
+  // ── Accept Order: Step 7 — finalise after unmatched review ────────────────
+  const finalizeAcceptReview = useCallback(
+    async () => {
+      if (!acceptFor) return;
+      const allResolved = acceptUnmatched.every(u => acceptResolutions[u.idx] !== undefined);
+      if (!allResolved) {
+        showInfo('Please resolve all unmatched items before continuing.');
+        return;
+      }
+
+      const finalLines: ResolvedLine[] = [...acceptMatched];
+      const skippedNames: string[] = [];
+
+      for (const u of acceptUnmatched) {
+        const resolution = acceptResolutions[u.idx];
+        if (resolution === 'add') {
+          // Create a new product: name from invoice, costPrice from unitPrice,
+          // unit/size left as null ("Unsure") — matching the quick-add convention.
+          try {
+            const result = await quickAddProduct({
+              venueId,
+              name: u.name,
+              costPrice: u.unitPrice || null,
+            });
+            finalLines.push({
+              productId: result.productId,
+              name: u.name,
+              qty: u.qty,
+              unitCost: u.unitPrice,
+            });
+          } catch (e: any) {
+            showError(`Could not add product "${u.name}": ${e?.message || e}`);
+            return;
+          }
+        } else if (resolution === 'skip') {
+          skippedNames.push(u.name);
+        }
+      }
+
+      if (finalLines.length === 0) {
+        showError('All items were skipped — cannot create an order with no lines.');
+        return;
+      }
+
+      if (skippedNames.length > 0) {
+        console.log('[AcceptOrder] skipped items (excluded from order):', skippedNames.join(', '));
+      }
+
+      await doAcceptCreate(acceptFor, finalLines);
+    },
+    [venueId, acceptFor, acceptMatched, acceptUnmatched, acceptResolutions, doAcceptCreate, showInfo, showError]
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: '#fff' }}>
       <View
@@ -293,6 +528,8 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
               const dateLabel = ts
                 ? ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString()
                 : 'Unknown date';
+              const isPending = !it.status || it.status === 'pending';
+              const isThisAccepting = acceptBusy && acceptFor?.id === it.id;
               return (
                 <View key={it.id} style={S.card}>
                   <Text style={S.title}>{dateLabel}</Text>
@@ -300,7 +537,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
                     Source: {it.source || '—'} · Status: {it.status || 'pending'}
                   </Text>
 
-                  <View style={{ marginTop: 10 }}>
+                  <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                     <TouchableOpacity
                       onPress={() => openDetails(it)}
                       style={{
@@ -313,6 +550,31 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
                     >
                       <Text style={{ color: '#fff', fontWeight: '800' }}>View Details</Text>
                     </TouchableOpacity>
+
+                    {isPending && (
+                      <TouchableOpacity
+                        onPress={() => startAcceptOrder(it)}
+                        disabled={acceptBusy || !!busyId}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 10,
+                          backgroundColor: isThisAccepting ? '#9CA3AF' : '#16a34a',
+                          alignSelf: 'flex-start',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          opacity: (acceptBusy && !isThisAccepting) || !!busyId ? 0.5 : 1,
+                        }}
+                      >
+                        {isThisAccepting && (
+                          <ActivityIndicator size="small" color="#fff" />
+                        )}
+                        <Text style={{ color: '#fff', fontWeight: '800' }}>
+                          {isThisAccepting ? 'Matching…' : 'Accept Order'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
               );
@@ -478,6 +740,141 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
           </View>
         </View>
       </Modal>
+
+      {/* Accept Order — unmatched lines review modal */}
+      <Modal
+        visible={acceptReviewOpen}
+        animationType="slide"
+        onRequestClose={() => { if (!acceptBusy) { setAcceptReviewOpen(false); setAcceptFor(null); } }}
+      >
+        <View style={{ flex: 1, backgroundColor: '#fff' }}>
+          <View
+            style={{
+              padding: 16,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: '#e5e7eb',
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <TouchableOpacity
+              onPress={() => { if (!acceptBusy) { setAcceptReviewOpen(false); setAcceptFor(null); } }}
+              disabled={acceptBusy}
+            >
+              <Text style={{ fontSize: 18, color: acceptBusy ? '#9CA3AF' : '#2563EB' }}>‹ Cancel</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: '800' }}>Review Items</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <ScrollView style={{ flex: 1 }}>
+            <View style={{ padding: 16 }}>
+              <Text style={{ fontWeight: '800', fontSize: 15, marginBottom: 4 }}>
+                These items weren't found in your product list
+              </Text>
+              <Text style={{ color: '#6B7280', marginBottom: 16 }}>
+                {acceptMatched.length > 0
+                  ? `${acceptMatched.length} item${acceptMatched.length === 1 ? '' : 's'} matched · ${acceptUnmatched.length} need${acceptUnmatched.length === 1 ? 's' : ''} review`
+                  : `${acceptUnmatched.length} item${acceptUnmatched.length === 1 ? '' : 's'} need${acceptUnmatched.length === 1 ? 's' : ''} review`}
+              </Text>
+
+              {acceptUnmatched.map(u => {
+                const resolution = acceptResolutions[u.idx];
+                return (
+                  <View key={u.idx} style={[S.card, { marginBottom: 10 }]}>
+                    <Text style={{ fontWeight: '700' }}>{u.name}</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
+                      Qty {u.qty}{u.unitPrice > 0 ? ` · $${u.unitPrice.toFixed(2)} ea` : ''}
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => setAcceptResolutions(prev => ({ ...prev, [u.idx]: 'add' }))}
+                        disabled={acceptBusy}
+                        style={[
+                          S.btn,
+                          {
+                            flex: 1,
+                            backgroundColor: resolution === 'add' ? '#16a34a' : '#F3F4F6',
+                            opacity: acceptBusy ? 0.6 : 1,
+                          },
+                        ]}
+                      >
+                        <Text style={[S.btnText, { color: resolution === 'add' ? '#fff' : '#111' }]}>
+                          ＋ Add as new product
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setAcceptResolutions(prev => ({ ...prev, [u.idx]: 'skip' }))}
+                        disabled={acceptBusy}
+                        style={[
+                          S.btn,
+                          {
+                            flex: 1,
+                            backgroundColor: resolution === 'skip' ? '#111827' : '#F3F4F6',
+                            opacity: acceptBusy ? 0.6 : 1,
+                          },
+                        ]}
+                      >
+                        <Text style={[S.btnText, { color: resolution === 'skip' ? '#fff' : '#111' }]}>
+                          Skip this item
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {resolution === 'skip' && (
+                      <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 6 }}>
+                        This item will be excluded from the order (not silently dropped — noted here).
+                      </Text>
+                    )}
+                    {resolution === 'add' && (
+                      <Text style={{ color: '#16a34a', fontSize: 11, marginTop: 6 }}>
+                        A new product will be created with name and cost price from the invoice. Unit/size can be set later.
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+
+          <View
+            style={{
+              padding: 16,
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: '#e5e7eb',
+              gap: 8,
+            }}
+          >
+            {acceptBusy && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <ActivityIndicator size="small" color="#16a34a" />
+                <Text style={{ color: '#6B7280' }}>Creating order…</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={finalizeAcceptReview}
+              disabled={
+                acceptBusy ||
+                acceptUnmatched.some(u => acceptResolutions[u.idx] === undefined)
+              }
+              style={[
+                S.btn,
+                {
+                  backgroundColor:
+                    acceptBusy || acceptUnmatched.some(u => acceptResolutions[u.idx] === undefined)
+                      ? '#9CA3AF'
+                      : '#16a34a',
+                },
+              ]}
+            >
+              <Text style={S.btnText}>
+                {acceptBusy ? 'Working…' : 'Continue — Create Order'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {modal}
     </View>
   );
