@@ -8,7 +8,7 @@ import { proposeInvoiceChanges, commitInvoiceChanges } from "./priceTracking";
 import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
-import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES } from "./izzyContext";
+import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall } from './services/aiMeter';
 
 const app = express();
@@ -3525,7 +3525,7 @@ app.post("/suitee", async (req, res) => {
     let hasPrevCycle = false;
     const deptContextLines: string[] = [];
     const snapshotContextLines: string[] = [];
-    const productCycles = new Map<string, { productId: string | null; velocities: number[]; lastStock: number; costPrice: number | null; parLevel: number | null }>();
+    const productCycles = new Map<string, { productId: string | null; velocities: number[]; lastStock: number; costPrice: number | null; parLevel: number | null; zeroDate: string | null }>();
 
     if (deptsSnap) {
       const deptResults = await Promise.all(deptsSnap.docs.map(async deptDoc => {
@@ -3663,7 +3663,16 @@ app.post("/suitee", async (req, res) => {
                 existing.lastStock = actualClosing;
                 if (!existing.productId && productId) existing.productId = productId;
               } else {
-                productCycles.set(key, { productId, velocities: [velocity], lastStock: actualClosing, costPrice: typeof item.costPrice === 'number' ? item.costPrice : null, parLevel: typeof item.parLevel === 'number' ? item.parLevel : null });
+                productCycles.set(key, { productId, velocities: [velocity], lastStock: actualClosing, costPrice: typeof item.costPrice === 'number' ? item.costPrice : null, parLevel: typeof item.parLevel === 'number' ? item.parLevel : null, zeroDate: null });
+              }
+              // Track most-recent genuine stockout (snapshots are desc — first hit per product is most recent)
+              // ranToZero = actualClosing === 0 && openingCount > 0: distinguishes "ran out" from "never stocked"
+              if (item.ranToZero === true) {
+                const cycleDate = snap.completedAt?.toDate?.()?.toISOString?.()?.slice(0, 10) || null;
+                if (cycleDate) {
+                  const entry = productCycles.get(key);
+                  if (entry && !entry.zeroDate) entry.zeroDate = cycleDate;
+                }
               }
             }
           }
@@ -4013,6 +4022,16 @@ app.post("/suitee", async (req, res) => {
       lines.push(...velocityLines);
     }
 
+    // Stock depletion history: products counted at zero in the last 6 cycles
+    const depletionLines: string[] = [];
+    productCycles.forEach((data, name) => {
+      if (data.zeroDate) depletionLines.push(`  ${name} — counted at 0 on ${data.zeroDate}`);
+    });
+    if (depletionLines.length > 0) {
+      lines.push("", "STOCK DEPLETION HISTORY (last 6 cycles — products counted at zero):");
+      lines.push(...depletionLines);
+    }
+
     if (productSupplierLines.length > 0) {
       lines.push("", "SUPPLIER PRICING (top products — ⭐=preferred, format: supplier(relationship,$cost/unit)):");
       productSupplierLines.forEach(l => lines.push("  " + l));
@@ -4285,7 +4304,7 @@ You have been given real data from this venue's stocktake and ordering history. 
 You answer questions like:
 - What was my GP last month?
 - Which product has the worst variance?
-- When did we last run out of Hendricks?
+- When did we last run out of Hendricks? (check STOCK DEPLETION HISTORY for recorded zero-count dates)
 - Which supplier is costing us the most?
 - What are my slowest moving lines?
 - Which supplier has increased prices the most?
@@ -4362,11 +4381,17 @@ Direct, analytical, honest — like a trusted CFO who respects the operator's ti
 
 If the data doesn't contain enough information to answer confidently, say so clearly: "I don't have enough data to answer that yet. Complete X more stocktakes to unlock this insight."
 
+When a question can't be fully answered from the available data, state what IS known, name the specific reason more isn't available (e.g. no live POS integration — sales data is currently upload-based only; no product-level order line detail yet; etc.), and where relevant note what would close the gap. Never go silent or guess — always give the operator something actionable.
+
+Example: "When did we last run out of Hendricks?" → Check STOCK DEPLETION HISTORY in context. If a zero count is recorded, state the date and note it's based on stocktake data. If no zero appears in the last 6 cycles, say so honestly and note the depletion may have occurred outside the tracked window, or wasn't captured if a cycle was missed.
+
 For pour variance questions: state the spec, the implied actual, and the confidence level. Always note whether the variance is more consistent with over-pouring, under-pouring, spillage, or measurement error — never accuse staff. Frame it as "the data suggests", not "your staff are".
 
 Never answer questions about how to use the app — direct those to Izzy.
 
 ${SUITEE_COUNTING_NOTE}
+
+${HOSTI_BUSINESS_REDIRECT}
 
 ${context}`;
 
@@ -4448,6 +4473,8 @@ ${IZZY_FEATURES.planned}
 
 When asked about something not on either list respond:
 "That feature isn't available at the moment. If it's something you'd find useful, contact our support team at office@hosti.co.nz and we'll look into it for you."
+
+${HOSTI_BUSINESS_REDIRECT}
 
 NEVER invent features that don't exist.
 NEVER suggest workflows that aren't in the available list.
@@ -4808,6 +4835,11 @@ Both are always computed; choose which to surface based on the question:
 - Big-picture ("how much did we waste?", "total write-off?") → cite the grand total and WASTAGE TOTALS.
 - Specific ("which bar wasted the most?", "what was wasted at Bar 2?") → use WASTAGE BY BAR.
 Always include the grand total when discussing wastage so the operator has the headline figure.
+
+## Honest constraints
+When a question can't be fully answered from the available data, state what IS known, name the specific reason more isn't available (e.g. no live POS integration — sales data is currently upload-based only; session counts provide snapshots not continuous tracking; no product-level delivery line detail yet), and where relevant note what would close the gap (uploading a POS export, completing a session count). Never go silent or guess — always give the operator something actionable.
+
+${HOSTI_BUSINESS_REDIRECT}
 
 ${context}`;
 

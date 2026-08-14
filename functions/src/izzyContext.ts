@@ -145,6 +145,19 @@ RECIPE COSTS (CraftIt)
 - When an invoice price differs from the recorded product cost, a price change flag is raised for your review. Once you accept the change, COGS recalculates automatically.
 - Ingredients show whether their cost is live (linked to a product) or manual
 - Add prices directly from the recipe if a linked product has no price set
+- Create and edit recipes from the Hosti web dashboard (CraftIt tab) — full keyboard entry, better for complex recipes with many ingredients
+- Batch mode: toggle Batch on a recipe to unlock Yield (total output amount) and Servings (number of portions) — Servings drives the cost-per-serve calculation used for stocktake costing
+- Link a product to a recipe: on the web dashboard go to Products → select the product → tap "Link Recipe" → choose the recipe this product is the output of. The product's cost price is set to recipe COGS ÷ Servings at the moment of linking. To update it after ingredient prices change, tap "Refresh linked cost" on the product — it does not update automatically.
+
+PRODUCT UNIT AND SIZE:
+- When adding or editing a product, select a Unit from the dropdown: Bottle, Can, Keg, Weight, or Each
+- The unit controls which size presets appear — Bottle shows 700ml, 750ml, 1L etc; Can shows 330ml, 375ml, 440ml, 500ml etc
+- Pick the matching size from the preset list — the system uses it to calculate stock value from your count
+- If your exact size isn't listed, type it in manually
+
+MERGING DUPLICATE PRODUCTS OR SUPPLIERS (desktop web dashboard only):
+- Products: go to Products → select the product you want to keep → tap Merge → choose the duplicate to absorb. All history, prices, and stocktake data are migrated to the primary product. The duplicate is marked inactive and hidden — its data is not deleted.
+- Suppliers: go to Suppliers → select the supplier you want to keep → tap Merge → choose the duplicate to remove. The duplicate supplier is permanently deleted and its products reassigned to the primary. This cannot be undone — it is a hard delete, not a soft merge.
 
 IZZY
 - Ask Izzy anything about how to use the app
@@ -213,7 +226,6 @@ SUGGESTED ORDERS:
 FEATURES PLANNED FOR FUTURE UPDATES:
 - POS integrations (Square, Wizbang, Bepoz — connection screens visible in Settings, activation in progress)
 - Desktop onboarding experience — guided tour for new web dashboard users (coming soon)
-- CraftIt recipe editing on desktop — create and edit recipes with a keyboard (coming soon)
 - Accounting integrations (Xero, MYOB — connection screens visible in Settings, activation in progress)
 - Gamification and staff performance tracking
 - Supplier scorecards
@@ -276,6 +288,12 @@ If a user asks Suitee how to count something (partial bottles, kegs, weight item
 barcodes, scales), direct them to Izzy for step-by-step guidance:
 "For counting how-to questions, Izzy is your best bet — tap the ✦ button in the
 header and ask her directly."
+`;
+
+export const HOSTI_BUSINESS_REDIRECT = `
+HOSTI PRICING, BILLING AND PLANS:
+Questions about Hosti's own subscription pricing, plan tiers, billing, or account costs are outside Izzy's and Suitee's scope — never state specific figures (pricing is not finalised).
+Redirect any such questions to the team at office@hosti.co.nz.
 `;
 
 export const FESTIVAL_IZZY_FEATURES = `
