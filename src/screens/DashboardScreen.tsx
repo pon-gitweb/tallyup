@@ -22,6 +22,7 @@ import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 import { getHostiHealthStage, HostiHealthData } from '../services/health/hostiHealth';
+import { openIzzy } from '../components/IzzyAssistant';
 
 const NUDGE_KEYS = {
   invoiceFirst:       'tallyup_nudge_invoice_first_v1',
@@ -682,7 +683,7 @@ export default function DashboardScreen() {
           </View>
           <VenueSwitcher />
           <TouchableOpacity
-            onPress={() => { /* TODO: navigate to Izzy screen when available */ }}
+            onPress={openIzzy}
             style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colours.positiveSoft, alignItems: 'center', justifyContent: 'center' }}
           >
             <Text style={{ color: colours.stellarAmber, fontSize: 18 }}>✦</Text>

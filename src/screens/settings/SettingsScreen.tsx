@@ -1260,7 +1260,6 @@ export default function SettingsScreen() {
         </View>
 
         {/* Legal — Privacy Policy + Terms of Service */}
-        {/* TODO: replace with live URLs before App Store submission */}
         <View style={styles.row}>
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: themeColours.navy }]}
