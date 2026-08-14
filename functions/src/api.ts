@@ -10,6 +10,7 @@ import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall } from './services/aiMeter';
+import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -5250,6 +5251,177 @@ app.post("/supplier-register", async (req, res) => {
   } catch (e: any) {
     console.error("[supplier-register] error:", e?.message);
     res.status(500).json({ ok: false, error: "Registration failed. Please try again." });
+  }
+});
+
+// ── Invoice reconciliation ────────────────────────────────────────────────────
+// Body: { venueId, orderId, invoice: { source, storagePath, poNumber, confidence, warnings },
+//         lines: [{ code?, name, qty, unitPrice? }] }
+// Compares the received invoice against the submitted order's lines.
+// Returns the document shape that saveReconciliation() spreads directly onto the Firestore doc.
+// Does NOT write to Firestore — the client's saveReconciliation() does that.
+//
+// Price tolerance: $0.01 absolute — handles supplier invoice rounding without
+// masking real discrepancies (e.g. $12.50 vs $12.75 is a real change).
+//
+// Matching: tokenizeForMatching + overlapCoefficient + isReliableMatch from nameMatching.ts.
+// Each order line is matched to the best-scoring unmatched invoice line.
+// Counts are per-line (a line differing in both qty and price increments both qtyDiffs and priceChanges).
+app.post("/reconcile-invoice", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+
+    const { venueId, orderId, invoice, lines } = req.body || {};
+    if (!venueId || typeof venueId !== "string") {
+      res.status(400).json({ ok: false, error: "Missing venueId" }); return;
+    }
+    if (!orderId || typeof orderId !== "string") {
+      res.status(400).json({ ok: false, error: "Missing orderId" }); return;
+    }
+    if (!Array.isArray(lines)) {
+      res.status(400).json({ ok: false, error: "lines must be an array" }); return;
+    }
+
+    await verifyVenueMembership(uid, venueId);
+
+    const db = admin.firestore();
+
+    // Read order document
+    const orderSnap = await db.doc(`venues/${venueId}/orders/${orderId}`).get();
+    if (!orderSnap.exists) {
+      res.json({ ok: false, error: "Order not found" }); return;
+    }
+    const orderData = orderSnap.data() || {};
+
+    // Read order lines subcollection: { productId, name, qty, unitCost }
+    const linesSnap = await db.collection(`venues/${venueId}/orders/${orderId}/lines`).get();
+    type OrderLine = { name: string; qty: number; unitCost: number };
+    const orderLines: OrderLine[] = [];
+    linesSnap.forEach((d: any) => {
+      const ld = d.data();
+      orderLines.push({
+        name: String(ld.name || ''),
+        qty: Number(ld.qty || 0),
+        unitCost: Number(ld.unitCost || 0),
+      });
+    });
+
+    // PO match: case-insensitive exact comparison
+    const orderPo = String(orderData.poNumber || orderData.purchaseOrderNumber || '').trim();
+    const invoicePo = String(invoice?.poNumber || '').trim();
+    const poMatch = !!(orderPo && invoicePo && orderPo.toLowerCase() === invoicePo.toLowerCase());
+
+    const supplierName: string = String(orderData.supplierName || invoice?.supplierName || '');
+
+    // Normalise invoice lines
+    type InvoiceLine = { name: string; qty: number; unitPrice: number };
+    const invoiceLines: InvoiceLine[] = (lines as any[]).map((l: any) => ({
+      name: String(l.name || ''),
+      qty: Number(l.qty || 0),
+      unitPrice: Number(l.unitPrice || 0),
+    }));
+
+    const PRICE_TOLERANCE = 0.01;
+
+    // Pre-tokenise for matching
+    const orderTokens = orderLines.map(l => tokenizeForMatching(l.name));
+    const invoiceTokens = invoiceLines.map(l => tokenizeForMatching(l.name));
+
+    const matchedInvoiceIndices = new Set<number>();
+
+    type Anomaly =
+      | { type: 'missingOnInvoice'; productName: string; orderedQty: number }
+      | { type: 'unknown'; invoiceName: string; invoiceQty: number; invoiceUnitPrice: number }
+      | { type: 'qtyDiff'; productName: string; orderedQty: number; invoicedQty: number }
+      | { type: 'priceChange'; productName: string; orderUnitCost: number; invoiceUnitPrice: number };
+
+    let countMatched = 0;
+    let countQtyDiffs = 0;
+    let countPriceChanges = 0;
+    let countMissing = 0;
+    const anomalies: Anomaly[] = [];
+
+    // Match each order line to the best-scoring unmatched invoice line
+    for (let oi = 0; oi < orderLines.length; oi++) {
+      const oLine = orderLines[oi];
+      const oToks = orderTokens[oi];
+      let bestScore = 0;
+      let bestIdx = -1;
+
+      for (let ii = 0; ii < invoiceLines.length; ii++) {
+        if (matchedInvoiceIndices.has(ii)) continue;
+        const score = overlapCoefficient(oLine.name, invoiceLines[ii].name);
+        if (isReliableMatch(oToks, invoiceTokens[ii], score) && score > bestScore) {
+          bestScore = score;
+          bestIdx = ii;
+        }
+      }
+
+      if (bestIdx === -1) {
+        // No reliable invoice match → missing from invoice
+        countMissing++;
+        anomalies.push({ type: 'missingOnInvoice', productName: oLine.name, orderedQty: oLine.qty });
+      } else {
+        matchedInvoiceIndices.add(bestIdx);
+        const iLine = invoiceLines[bestIdx];
+        const qtyMatch = oLine.qty === iLine.qty;
+        const priceMatch = Math.abs(oLine.unitCost - iLine.unitPrice) <= PRICE_TOLERANCE;
+
+        if (qtyMatch && priceMatch) {
+          countMatched++;
+        } else {
+          // A line can contribute to both qtyDiffs and priceChanges — both are actionable
+          if (!qtyMatch) {
+            countQtyDiffs++;
+            anomalies.push({ type: 'qtyDiff', productName: oLine.name, orderedQty: oLine.qty, invoicedQty: iLine.qty });
+          }
+          if (!priceMatch) {
+            countPriceChanges++;
+            anomalies.push({ type: 'priceChange', productName: oLine.name, orderUnitCost: oLine.unitCost, invoiceUnitPrice: iLine.unitPrice });
+          }
+        }
+      }
+    }
+
+    // Invoice lines unmatched to any order line → unknown
+    let countUnknown = 0;
+    for (let ii = 0; ii < invoiceLines.length; ii++) {
+      if (!matchedInvoiceIndices.has(ii)) {
+        countUnknown++;
+        const iLine = invoiceLines[ii];
+        anomalies.push({ type: 'unknown', invoiceName: iLine.name, invoiceQty: iLine.qty, invoiceUnitPrice: iLine.unitPrice });
+      }
+    }
+
+    // Totals
+    const orderTotal = orderLines.reduce((s, l) => s + l.qty * l.unitCost, 0);
+    const invoiceTotal = invoiceLines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+    const delta = invoiceTotal - orderTotal;
+
+    console.log("[api/reconcile-invoice] OK", { uid, venueId, orderId, poMatch, countMatched, countMissing, countUnknown });
+
+    res.json({
+      ok: true,
+      poMatch,
+      supplierName,
+      counts: {
+        matched: countMatched,
+        unknown: countUnknown,
+        priceChanges: countPriceChanges,
+        qtyDiffs: countQtyDiffs,
+        missingOnInvoice: countMissing,
+      },
+      totals: { invoiceTotal, orderTotal, delta },
+      anomalies,
+    });
+  } catch (e: any) {
+    if (e?.code === 'permission-denied') {
+      res.status(403).json({ ok: false, error: "You are not a member of this venue." });
+      return;
+    }
+    console.error("[api/reconcile-invoice] error:", e?.message);
+    res.status(500).json({ ok: false, error: String(e?.message || 'Reconciliation failed') });
   }
 });
 
