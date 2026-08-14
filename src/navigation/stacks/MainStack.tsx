@@ -1,5 +1,6 @@
 // @ts-nocheck
 import OrderEditorScreen from '../../screens/orders/OrderEditorScreen';
+import ReceiveAlias from '../../screens/orders/ReceiveAlias';
 import React from 'react';
 import { View, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -79,6 +80,7 @@ import PendingDeliveriesScreen from '../../screens/invoices/PendingDeliveriesScr
 
 // Adjustments
 import AdjustmentInboxScreen from '../../screens/adjustments/AdjustmentInboxScreen';
+import AdjustmentDetailScreen from '../../screens/adjustments/AdjustmentDetailScreen';
 
 // Orders
 import SuggestedOrderScreen from '../../screens/orders/SuggestedOrderScreen';
@@ -273,6 +275,7 @@ export default function MainStack() {
       <Stack.Screen name="ProductPerformance" component={ProductPerformanceScreen} options={{ title: 'Product Performance' }} />
       <Stack.Screen name="SupplierSpend" component={SupplierSpendScreen} options={{ title: 'Supplier Spend' }} />
       <Stack.Screen name="Adjustments" component={AdjustmentInboxScreen} options={{ title: 'Adjustments' }} />
+      <Stack.Screen name="AdjustmentDetail" component={AdjustmentDetailScreen} options={{ title: 'Adjustment Detail' }} />
       <Stack.Screen name="Invoices" component={InvoicesScreen} options={{ headerShown: false }} />
       <Stack.Screen name="InvoiceSummary" component={InvoiceSummaryScreen} options={{ title: 'Invoice Processed' }} />
       <Stack.Screen name="PriceChangeFlags" component={PriceChangeFlagsScreen} options={{ title: 'Price Changes', headerShown: true }} />
@@ -382,6 +385,7 @@ export default function MainStack() {
         component={OrderEditorScreen}
         options={{ title: 'Edit Order' }}
       />
+      <Stack.Screen name="Receive" component={ReceiveAlias} options={{ title: 'Receive' }} />
       <Stack.Screen name="OrderDetail" component={OrderDetailScreen} options={{ title: 'Order' }} />
       <Stack.Screen name="POSMapping" component={POSMappingScreen} options={{ title: 'POS Product Mapping' }} />
       <Stack.Screen name="POSConnection" component={POSConnectionScreen} options={{ title: 'POS Connection' }} />
