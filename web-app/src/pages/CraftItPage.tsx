@@ -487,6 +487,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const [productSuggestions, setProductSuggestions] = useState<Record<number, any[]>>({})
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
 
   // Load all products for autocomplete
@@ -622,6 +623,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   async function handleSave() {
     if (!name.trim()) return
     setSaving(true)
+    setSaveError(null)
     try {
       const payload: any = {
         name: name.trim(),
@@ -650,19 +652,30 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         const newRef = await addDoc(collection(db, 'venues', venueId, 'recipes'), { ...payload, createdAt: serverTimestamp() })
         onSaved(newRef.id)
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('[RecipeEditor] save failed', e)
+      if (e?.code === 'permission-denied') {
+        setSaveError("You don't have permission to save this change.")
+      } else {
+        setSaveError('Save failed — please try again.')
+      }
     }
     setSaving(false)
   }
 
   async function handleDelete() {
     if (!recipeId) return
+    setSaveError(null)
     try {
       await deleteDoc(doc(db, 'venues', venueId, 'recipes', recipeId))
       onClose()
-    } catch (e) {
+    } catch (e: any) {
       console.error('[RecipeEditor] delete failed', e)
+      if (e?.code === 'permission-denied') {
+        setSaveError("You don't have permission to delete this recipe.")
+      } else {
+        setSaveError('Delete failed — please try again.')
+      }
     }
   }
 
@@ -843,6 +856,9 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
       <button type="button" className={styles.saveBtn} onClick={handleSave} disabled={!name.trim() || saving}>
         {saving ? 'Saving…' : recipeId ? 'Save changes' : 'Create recipe'}
       </button>
+      {saveError && (
+        <p style={{ margin: '6px 0 0', fontSize: 13, color: '#dc2626' }}>{saveError}</p>
+      )}
 
       {/* Delete */}
       {recipeId && !confirmDelete && (
