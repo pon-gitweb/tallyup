@@ -63,6 +63,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
   const [nonce, setNonce] = useState(0);
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
   const [subscriptionOverride, setSubscriptionOverride] = useState<SubscriptionOverride | null>(null);
+  const [legacyFreeAccess, setLegacyFreeAccess] = useState(false);
   const [venueType, setVenueType] = useState<string | null>(null);
   const [venueCountry, setVenueCountry] = useState<string>('NZ');
 
@@ -224,7 +225,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (unsubVenueDocRef.current) { unsubVenueDocRef.current(); unsubVenueDocRef.current = null; }
-    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
+    if (!venueId) { setSubscription(null); setSubscriptionOverride(null); setLegacyFreeAccess(false); setVenueType(null); setVenueCountry('NZ'); lastVenueTypeRef.current = null; return; }
     unsubVenueDocRef.current = onSnapshot(doc(db, 'venues', venueId), (snap) => {
       if (!snap.exists()) {
         // Venue doc not yet written — keep loading, don't flip to null/festival
@@ -267,6 +268,10 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         modules: (rawOverride.modules as any[]).filter((m: any) => typeof m === 'string'),
       } : null;
       setSubscriptionOverride(resolvedOverride);
+      // legacyFreeAccess — boolean flag set via Firebase Console only (never client-writable;
+      // protected by omission from the venue update hasOnlyFields allowlist in firestore.rules).
+      // Grants permanent full access regardless of Stripe state — for grandfathered pilot venues.
+      setLegacyFreeAccess(data?.legacyFreeAccess === true);
     }, (err) => {
       if (__DEV__) console.log('[TallyUp VenueProvider] venue snapshot error', JSON.stringify({ code: err?.code, message: err?.message }));
       // Only clear state on permanent errors — not transient network issues
@@ -275,6 +280,7 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         setVenueId(null);
         setSubscription(null);
         setSubscriptionOverride(null);
+        setLegacyFreeAccess(false);
         setVenueType(null);
         setVenueCountry('NZ');
       }
@@ -375,6 +381,26 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
         gamification:      subscriptionOverride.modules.includes(MODULES.PERFORMANCE_INCENTIVES),
         suitee:            subscriptionOverride.modules.includes(MODULES.OPS_INTELLIGENCE),
         groupHQ:           subscriptionOverride.modules.includes(MODULES.MULTI_VENUE),
+      },
+      accessMode: 'full',
+      trial: {},
+    };
+  } else if (legacyFreeAccess) {
+    // Legacy free-access branch: grandfathered pilot venues that get permanent full access.
+    // Checked independently of the isPilot formula below so this guarantee survives any
+    // future restructure of the Stripe/pilot logic. Flag is Console-only; never client-writable.
+    isPilot = false;
+    isActive = true;
+    plan = 'core_plus';
+    hasModule = (_moduleId: string) => true;
+    billingState = {
+      plan: 'core_plus',
+      addons: {
+        aiReporting:        true,
+        predictiveOrdering: true,
+        gamification:       true,
+        suitee:             true,
+        groupHQ:            true,
       },
       accessMode: 'full',
       trial: {},
