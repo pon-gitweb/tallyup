@@ -4,6 +4,37 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 
+// ── Godmode ───────────────────────────────────────────────────────────────────
+// These seven accounts (four people) bypass the "already has a venue" guard and
+// always create a fresh venue with full subscriptionOverride on each call.
+// Intentionally small and manually maintained — not meant to scale.
+//   Poni:   poni@hosti.co.nz, poni@sula.co.nz
+//   Chris:  chris@hosti.co.nz, chris@stackmosaic.co.nz
+//   Izzy:   ibrownnz@hotmail.com
+//   Shayle: peaceling@hotmail.com, travellingfootnz@gmail.com
+// All stored lowercase — comparison normalises both sides.
+const GODMODE_EMAILS: string[] = [
+  "poni@hosti.co.nz",
+  "poni@sula.co.nz",
+  "chris@hosti.co.nz",
+  "chris@stackmosaic.co.nz",
+  "ibrownnz@hotmail.com",
+  "peaceling@hotmail.com",
+  "travellingfootnz@gmail.com",
+];
+
+// Module IDs for subscriptionOverride on godmode-created venues.
+// MUST stay in sync with:
+//   web-app/src/services/billing/modules.ts
+//   src/services/billing/modules.ts  (mobile)
+// Cannot be imported from either location — functions/ is a separate build target.
+const ALL_MODULE_IDS: string[] = [
+  "supplier_optimisation",
+  "ops_intelligence",
+  "performance_incentives",
+  "multi_venue",
+];
+
 function generateVenueId(): string {
   const autoId = admin.firestore().collection("_tmp").doc().id;
   return `v_${autoId}`;
@@ -46,6 +77,10 @@ export const createVenueOwnedByUser = onRequest(
       return;
     }
 
+    // Godmode check — normalise both sides to lowercase so case can never cause a silent mismatch
+    const normalizedEmail = email ? email.toLowerCase() : "";
+    const isGodmode = normalizedEmail !== "" && GODMODE_EMAILS.includes(normalizedEmail);
+
     // Parse body
     const body = typeof req.body === "string"
       ? JSON.parse(req.body || "{}")
@@ -60,16 +95,98 @@ export const createVenueOwnedByUser = onRequest(
     try {
       const db = admin.firestore();
 
-      // Check user doesn't already have a venue
+      // Read the user doc unconditionally — needed for the duplicate guard on the
+      // non-godmode path, and needed to correctly seed venueIds on the godmode path
+      // (see explanation below).
       const userSnap = await db.collection("users").doc(uid).get();
-      const existingVenueId = userSnap.exists ? (userSnap.data() as any)?.venueId : null;
-      if (existingVenueId) {
-        // Already has a venue — return it instead of creating a duplicate
-        console.log("[createVenueOwnedByUser] already has venue", { uid, existingVenueId });
-        res.status(200).json({ ok: true, venueId: existingVenueId, existing: true });
+      const userData = userSnap.exists ? (userSnap.data() as any) : null;
+
+      if (!isGodmode) {
+        // Non-godmode: if user already has a venue, return it without creating a new one
+        const existingVenueId = userData?.venueId ?? null;
+        if (existingVenueId) {
+          console.log("[createVenueOwnedByUser] already has venue", { uid, existingVenueId });
+          res.status(200).json({ ok: true, venueId: existingVenueId, existing: true });
+          return;
+        }
+      }
+
+      // Godmode: compute the full venueIds array we'll write, explicitly accounting for
+      // the migration gap. All existing godmode-user venues were created by the old code,
+      // which only wrote the singular venueId field — no venueIds array exists on those
+      // user docs yet. arrayUnion into a missing field would create ["v_XYZ"] only,
+      // because arrayUnion has no awareness of the separate venueId field. VenueProvider
+      // only falls back to venueId when venueIds is entirely absent, so a partial write
+      // would silently orphan the existing venue.
+      //
+      // Fix: read venueIds if it exists; if not, seed the base from the legacy singular
+      // venueId; then append the new venue id. This produces the correct full array in
+      // all cases: first godmode call on an old account, Nth call on a godmode account
+      // that already has a venueIds array, and brand-new accounts with neither field.
+      let godmodeVenueIds: string[] | null = null;
+      if (isGodmode) {
+        const existingArr: string[] = Array.isArray(userData?.venueIds)
+          ? (userData.venueIds as any[]).filter((id: any) => typeof id === "string")
+          : [];
+        const legacySingularId: string | null =
+          typeof userData?.venueId === "string" && userData.venueId
+            ? userData.venueId
+            : null;
+        // Seed from legacy singular field when venueIds doesn't exist yet
+        const base = existingArr.length > 0
+          ? existingArr
+          : (legacySingularId ? [legacySingularId] : []);
+        // Append new venue (guard against duplicate on transaction retry)
+        const venueId = generateVenueId();
+        godmodeVenueIds = base.includes(venueId) ? base : [...base, venueId];
+
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        const venueRef = db.collection("venues").doc(venueId);
+        const memberRef = venueRef.collection("members").doc(uid);
+        const userRef = db.collection("users").doc(uid);
+
+        await db.runTransaction(async (tx) => {
+          tx.set(venueRef, {
+            venueId,
+            name: trimmedName,
+            createdAt: now,
+            ownerUid: uid,
+            ownerEmail: email,
+            openSignup: false,
+            dev: false,
+            subscriptionOverride: {
+              plan: "core_plus",
+              modules: ALL_MODULE_IDS,
+            },
+            origin: "godmode-created",
+          }, { merge: true });
+
+          tx.set(memberRef, {
+            uid,
+            role: "owner",
+            email,
+            joinedAt: now,
+          }, { merge: true });
+
+          // Write the fully computed venueIds array (not arrayUnion — see above).
+          // Legacy singular venueId is intentionally left untouched; it's only read
+          // as a backward-compat fallback and its existing value is already captured
+          // in the base array we seeded above.
+          tx.set(userRef, {
+            uid,
+            email,
+            venueIds: godmodeVenueIds,
+            activeVenueId: venueId,
+            updatedAt: now,
+          }, { merge: true });
+        });
+
+        console.log("[createVenueOwnedByUser] created", { uid, venueId, name: trimmedName, isGodmode });
+        res.status(200).json({ ok: true, venueId });
         return;
       }
 
+      // Non-godmode path — completely unchanged from original
       const venueId = generateVenueId();
       const now = admin.firestore.FieldValue.serverTimestamp();
       const venueRef = db.collection("venues").doc(venueId);
@@ -102,7 +219,7 @@ export const createVenueOwnedByUser = onRequest(
         }, { merge: true });
       });
 
-      console.log("[createVenueOwnedByUser] created", { uid, venueId, name: trimmedName });
+      console.log("[createVenueOwnedByUser] created", { uid, venueId, name: trimmedName, isGodmode });
       res.status(200).json({ ok: true, venueId });
     } catch (err: any) {
       console.error("[createVenueOwnedByUser] error", err);
