@@ -20,6 +20,7 @@ type SubState = {
   status: string | null           // 'active' | 'trialing' | other
   stripeCustomerId: string | null
   isPilot: boolean                // mirrors mobile: !subscription || status not active/trialing
+  legacyFreeAccess: boolean       // permanent full access for grandfathered venues; Console-only flag
 }
 
 /** Build a Stripe lookup key from a base string and billing cycle. */
@@ -47,8 +48,9 @@ export default function BillingPage({
 
   // Live venue doc. Three-way precedence, matching mobile VenueProvider:
   //   1. subscriptionOverride present → explicit entitlement (reviewer / pilot-with-override)
-  //   2. subscription.status active/trialing → real paid subscription
-  //   3. otherwise → implicit pilot (no subscription data at all, or lapsed/cancelled)
+  //   2. legacyFreeAccess true → permanent full access for grandfathered pilot venues (Console-only flag)
+  //   3. subscription.status active/trialing → real paid subscription
+  //   4. otherwise → implicit pilot (no subscription data at all, or lapsed/cancelled)
   //      mobile: isPilot = !subscription || !['active','trialing'].includes(subscription.status)
   useEffect(() => {
     const unsub = onSnapshot(
@@ -66,9 +68,23 @@ export default function BillingPage({
               status: 'active',
               stripeCustomerId: s?.stripeCustomerId ?? null,
               isPilot: false,
+              legacyFreeAccess: false,
+            })
+          } else if (d?.legacyFreeAccess === true) {
+            // Case 2: grandfathered pilot venue — permanent full access.
+            // Flag is set via Firebase Console only; never client-writable (protected by
+            // omission from the venue hasOnlyFields allowlist in firestore.rules).
+            // Independent branch so this survives any future restructure of the isPilot formula.
+            setSub({
+              plan: 'core_plus',
+              modules: [],        // legacyFreeAccess drives hasModule directly; modules list unused
+              status: 'active',
+              stripeCustomerId: s?.stripeCustomerId ?? null,
+              isPilot: false,
+              legacyFreeAccess: true,
             })
           } else {
-            // Cases 2 & 3: real subscription or implicit pilot
+            // Cases 3 & 4: real subscription or implicit pilot
             const reallyActive = s?.status === 'active' || s?.status === 'trialing'
             setSub({
               plan: s?.plan ?? null,
@@ -76,10 +92,11 @@ export default function BillingPage({
               status: s?.status ?? null,
               stripeCustomerId: s?.stripeCustomerId ?? null,
               isPilot: !s || !reallyActive,  // matches mobile line 385
+              legacyFreeAccess: false,
             })
           }
         } else {
-          setSub({ plan: null, modules: [], status: null, stripeCustomerId: null, isPilot: false })
+          setSub({ plan: null, modules: [], status: null, stripeCustomerId: null, isPilot: false, legacyFreeAccess: false })
         }
         setLoading(false)
       },
@@ -91,11 +108,12 @@ export default function BillingPage({
   if (loading) return <p className={styles.loading}>Loading billing…</p>
 
   // ── Entitlement derivation ────────────────────────────────────────────────
-  // isPilot short-circuits everything: full access, no subscribe buttons shown.
+  // legacyFreeAccess and isPilot both short-circuit everything: full access, no subscribe buttons.
+  const legacyFreeAccess = sub?.legacyFreeAccess ?? false
   const isPilot    = sub?.isPilot ?? false
-  const isActive   = isPilot || sub?.status === 'active' || sub?.status === 'trialing'
-  const coreActive = isPilot || (isActive && !!sub?.plan)
-  const hasModule  = (id: string) => isPilot || (sub?.modules.includes(id) ?? false)
+  const isActive   = legacyFreeAccess || isPilot || sub?.status === 'active' || sub?.status === 'trialing'
+  const coreActive = legacyFreeAccess || isPilot || (isActive && !!sub?.plan)
+  const hasModule  = (id: string) => legacyFreeAccess || isPilot || (sub?.modules.includes(id) ?? false)
   const bundleActive =
     hasModule(MODULES.SUPPLIER_OPTIMISATION) &&
     hasModule(MODULES.OPS_INTELLIGENCE) &&
