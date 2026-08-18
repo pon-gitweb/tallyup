@@ -4637,7 +4637,8 @@ const openHistory = throttleAction(async (item: Item) => {
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex:1 }}>
           <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
             <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-              <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32 }}>
+              <View style={{ backgroundColor:'#fff', borderTopLeftRadius:20, borderTopRightRadius:20, padding:16, paddingBottom:32, maxHeight:'90%' }}>
+                <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 <Text style={{ fontSize:17, fontWeight:'800', color:'#0f172a', marginBottom:12 }}>Quick add</Text>
 
                 <TextInput
@@ -4692,7 +4693,7 @@ const openHistory = throttleAction(async (item: Item) => {
                   }}
                   returnKeyType="done"
                   blurOnSubmit={false}
-                  onSubmitEditing={() => { addQuickItem(); setQuickAddSheetOpen(false); }}
+                  onSubmitEditing={() => { Keyboard.dismiss(); }}
                 />
 
                 <TextInput
@@ -4777,6 +4778,7 @@ const openHistory = throttleAction(async (item: Item) => {
                 <TouchableOpacity onPress={()=>setQuickAddSheetOpen(false)} style={{ paddingVertical:12, alignItems:'center' }}>
                   <Text style={{ color:'#64748b', fontWeight:'600' }}>Cancel</Text>
                 </TouchableOpacity>
+                </ScrollView>
               </View>
             </View>
           </TouchableWithoutFeedback>
