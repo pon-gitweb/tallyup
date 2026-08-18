@@ -3406,6 +3406,9 @@ const openHistory = throttleAction(async (item: Item) => {
           }}
           clearButtonMode="while-editing"
           returnKeyType="search"
+          autoCorrect={false}
+          spellCheck={false}
+          autoCapitalize="none"
         />
         {unifiedSearch.trim().length > 0 && uTier1.length === 0 && (
           <View style={{
