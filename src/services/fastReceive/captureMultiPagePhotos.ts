@@ -6,16 +6,22 @@ import * as ImagePicker from 'expo-image-picker';
  * Resolves true = capture another page, false = done.
  */
 function askAddPage(pageNum: number): Promise<boolean> {
+  // Delay before showing the alert — the native camera modal's dismissal animation
+  // can silently swallow an Alert.alert fired immediately on return, causing the
+  // prompt to never appear and the flow to proceed as if only one page was wanted.
+  // 400ms gives the animation time to fully complete before the alert is shown.
   return new Promise(resolve => {
-    Alert.alert(
-      'Add another page?',
-      `Page ${pageNum} captured. Scan another page of this invoice?`,
-      [
-        { text: 'Done — scan now', onPress: () => resolve(false), style: 'cancel' },
-        { text: 'Add page', onPress: () => resolve(true) },
-      ],
-      { cancelable: false },
-    );
+    setTimeout(() => {
+      Alert.alert(
+        'Add another page?',
+        `Page ${pageNum} captured. Scan another page of this invoice?`,
+        [
+          { text: 'Done — scan now', onPress: () => resolve(false), style: 'cancel' },
+          { text: 'Add page', onPress: () => resolve(true) },
+        ],
+        { cancelable: false },
+      );
+    }, 400);
   });
 }
 
