@@ -1353,7 +1353,15 @@ async function handlePackingSlip(
   uid: string,
   text: string,
 ): Promise<any> {
-  const slip = await extractPackingSlip(text);
+  // Wrap extraction so a Claude API failure doesn't escape as a plain Error through the
+  // uncaught routing switch — fall back to empty defaults and continue (supplier name
+  // and lines will just be absent, which the rest of the function handles gracefully).
+  let slip: PackingSlipExtraction = { supplierName: null, packingSlipRef: null, invoiceRef: null, deliveryDate: null, lines: [] };
+  try {
+    slip = await extractPackingSlip(text);
+  } catch (e: any) {
+    console.log("[ocrInvoicePhoto] packing slip extraction failed, continuing with defaults", e?.message);
+  }
   const slipMeta: SupplierMeta = {
     name: slip.supplierName || "",
     phone: null,
@@ -1636,7 +1644,33 @@ export const ocrInvoicePhoto = functions
 
     if (!claudeResp.ok) {
       const errBody = await claudeResp.json().catch(() => ({})) as ClaudeApiResponse;
-      throw new Error(`Claude vision failed: ${claudeResp.status} ${errBody?.error?.message || ""}`);
+      console.error("[ocrInvoicePhoto] Claude vision failed", { status: claudeResp.status, error: errBody?.error?.message });
+      if (claudeResp.status === 413) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          "Photo is too large to process. Try cropping more tightly to just the invoice, avoiding busy background surfaces."
+        );
+      } else if (claudeResp.status === 400) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          "Photo could not be read. Try retaking it with better lighting and a straight-on angle."
+        );
+      } else if (claudeResp.status === 429) {
+        throw new functions.https.HttpsError(
+          'resource-exhausted',
+          "Too many requests — please try again shortly."
+        );
+      } else if (claudeResp.status === 401 || claudeResp.status === 403) {
+        throw new functions.https.HttpsError(
+          'internal',
+          "A server configuration error prevented this scan. Please contact support."
+        );
+      } else {
+        throw new functions.https.HttpsError(
+          'unavailable',
+          `Scan service temporarily unavailable — please try again shortly. (${claudeResp.status})`
+        );
+      }
     }
     const claudeData = await claudeResp.json() as ClaudeApiResponse;
     const text = claudeData?.content?.[0]?.text || "";
