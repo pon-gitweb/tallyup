@@ -20,6 +20,12 @@ export type QuickAddProductParams = {
    * Omit to have the function fetch from venues/{venueId}/products.
    */
   existingProducts?: VenueProduct[] | null;
+  /**
+   * ISO country code of the venue (e.g. 'AU', 'NZ').
+   * Used to set gstPercent on new products: AU → 10, everything else → 15.
+   * Defaults to NZ (15%) when omitted or null.
+   */
+  venueCountry?: string | null;
 };
 
 export type QuickAddProductResult = {
@@ -62,7 +68,7 @@ export type QuickAddProductResult = {
 export async function quickAddProduct(
   params: QuickAddProductParams,
 ): Promise<QuickAddProductResult> {
-  const { venueId, name, unit, size, supplierName, barcode, costPrice, existingProducts } = params;
+  const { venueId, name, unit, size, supplierName, barcode, costPrice, existingProducts, venueCountry } = params;
 
   // Resolve product list — use caller-supplied list to avoid a redundant read.
   let products: VenueProduct[];
@@ -88,6 +94,7 @@ export async function quickAddProduct(
     unit: unit || null,
     supplierName: supplierName || null,
     size: size || null,
+    gstPercent: venueCountry === 'AU' ? 10 : 15,
     ...(barcode ? { barcode, barcodeNumber: barcode } : {}),
     ...(costPrice != null && Number.isFinite(costPrice) ? { costPrice } : {}),
     createdAt: nowTs,

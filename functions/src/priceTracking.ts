@@ -415,6 +415,15 @@ export async function commitInvoiceChanges(
   // lineName → productId for lines that get a real product ID for the first time here
   const newlyResolvedMap: Record<string, string> = {};
 
+  // Read venue country once — only when new products will be created, to set gstPercent correctly.
+  // AU → 10%, everything else (NZ and any future country) → 15%.
+  const hasNewProducts = accepted.some(p => p.type === 'newProduct');
+  let venueCountry = 'NZ';
+  if (hasNewProducts) {
+    const venueSnap = await db.collection('venues').doc(venueId).get();
+    venueCountry = (venueSnap.data()?.country as string) || 'NZ';
+  }
+
   for (const proposal of accepted) {
     if (ops >= 400) break;
 
@@ -512,6 +521,7 @@ export async function commitInvoiceChanges(
         inductionSource: "invoice-price-tracking",
         inductionStatus: "pending",
         priceChanged: false,
+        gstPercent: venueCountry === 'AU' ? 10 : 15,
         ...caseSizeFields,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

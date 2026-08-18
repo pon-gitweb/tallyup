@@ -23,7 +23,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import HintBubble from '../../components/hints/HintBubble';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenueCountry } from '../../context/VenueProvider';
 import { throttleAction } from '../../utils/pressThrottle';
 import { dlog } from '../../utils/devlog';
 import { withErrorBoundary } from '../../components/ErrorCatcher';
@@ -486,6 +486,7 @@ function StockTakeAreaInventoryScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const venueIdFromCtx = useVenueId();
+  const venueCountry = useVenueCountry();
   const { departmentId, areaId, areaName, venueId: venueIdFromRoute, isFestivalSession } = (route.params ?? {}) as RouteParams;
   const venueId = venueIdFromCtx || venueIdFromRoute;
 
@@ -1987,6 +1988,7 @@ const qty = parseFloat(typed);
         supplierName: supplier || null,
         barcode: bc || null,
         existingProducts: venueProductsRef.current,
+        venueCountry,
       });
       productId = result.productId;
       // Update local cache if a new product was created (avoids a redundant fetch).

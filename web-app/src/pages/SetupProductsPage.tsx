@@ -61,7 +61,7 @@ type CatalogueMatch = {
   proposedGstPercent: number
 }
 
-type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel' | 'gstPercent'
+type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel'
 
 // Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
 // StockTakeAreaInventoryScreen.tsx (mobile).
@@ -96,7 +96,6 @@ const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'costPrice',    label: 'Cost Price' },
   { field: 'supplierName', label: 'Supplier' },
   { field: 'parLevel',     label: 'PAR' },
-  { field: 'gstPercent',   label: 'GST%' },
 ]
 
 // Matches the mobile app's isIncomplete logic — name, category, unit, pack
@@ -107,7 +106,6 @@ function isIncomplete(p: Product): boolean {
   if (!p.category) return true
   if (!p.unit) return true
   if (!p.packSize) return true
-  if (p.gstPercent == null) return true
   if (!p.supplierName || p.supplierName === 'Unassigned') return true
   return false
 }
@@ -155,7 +153,6 @@ function displayValue(p: Product, field: EditableField): string {
     case 'costPrice':    return p.costPrice != null ? p.costPrice.toFixed(2) : ''
     case 'supplierName': return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
     case 'parLevel':     return p.parLevel != null ? String(p.parLevel) : ''
-    case 'gstPercent':   return p.gstPercent != null ? String(p.gstPercent) : ''
   }
 }
 
@@ -190,10 +187,6 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
     case 'parLevel': {
       const n = trimmed === '' ? null : Number(trimmed)
       return { parLevel: n != null && Number.isFinite(n) && n >= 0 ? n : null, updatedAt: serverTimestamp() }
-    }
-    case 'gstPercent': {
-      const n = trimmed === '' ? null : Number(trimmed)
-      return { gstPercent: n != null && Number.isFinite(n) ? n : null, updatedAt: serverTimestamp() }
     }
   }
 }

@@ -5,7 +5,7 @@ import { getAuth } from 'firebase/auth';
 import { OrdersService } from '../../domain/orders';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, ActivityIndicator } from 'react-native';
 import { getApp } from 'firebase/app';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenueCountry } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
@@ -31,6 +31,7 @@ type UnmatchedLine = { name: string; qty: number; unitPrice: number; idx: number
 
 export default function FastReceivesReviewPanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
+  const venueCountry = useVenueCountry();
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm, modal } = useConfirmModal();
   const db = getFirestore(getApp());
@@ -434,6 +435,7 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
               venueId,
               name: u.name,
               costPrice: u.unitPrice || null,
+              venueCountry,
             });
             finalLines.push({
               productId: result.productId,
