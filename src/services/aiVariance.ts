@@ -31,8 +31,20 @@ export async function explainVariance(input: ExplainInput): Promise<ExplainOut> 
   }, 30000).catch((e) => { throw new Error(e?.message || 'Network error'); });
 
   if (!resp.ok) {
-    const msg = await resp.text().catch(() => '');
-    throw new Error(msg || `Server error (${resp.status})`);
+    const raw = await resp.text().catch(() => '');
+    let errMsg: string;
+    try {
+      const parsed = JSON.parse(raw);
+      // Backend's own try/catch returns { ok: false, error: "..." } — use that message.
+      errMsg = typeof parsed?.error === 'string' && parsed.error
+        ? parsed.error
+        : `Server error (${resp.status})`;
+    } catch {
+      // Body isn't JSON — likely an infrastructure-level HTML error page (e.g. Cloud Function
+      // timeout before the handler ran). Never expose raw content to the user.
+      errMsg = `Could not generate an explanation right now — please try again in a moment. (${resp.status})`;
+    }
+    throw new Error(errMsg);
   }
 
   const json = await resp.json().catch(() => ({}));
