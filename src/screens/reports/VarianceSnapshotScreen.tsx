@@ -340,7 +340,7 @@ function Cell({ S, c, label, value, emph }: { S: any; c?: any; label: string; va
     <View style={S.cell}>
       <Text style={S.cellLabel}>{label}</Text>
       <Text style={[S.cellVal, emph && { color: c?.deepBlue }]} numberOfLines={1}>
-        {value == null || value === '' ? '—' : String(value)}
+        {value == null || value === '' ? '—' : typeof value === 'number' ? value.toFixed(2) : String(value)}
       </Text>
     </View>
   );

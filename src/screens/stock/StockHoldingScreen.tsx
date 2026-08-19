@@ -240,7 +240,7 @@ export default function StockHoldingScreen() {
         }
         html += `<tr class="subtotal">
           <td>${g.category} subtotal</td>
-          <td class="right">${g.totalCount}</td>
+          <td class="right">${g.totalCount.toFixed(2)}</td>
           <td></td><td></td>
           <td class="right">${g.totalValue != null ? fmtVal(g.totalValue) : '–'}</td>
         </tr>`;
@@ -248,7 +248,7 @@ export default function StockHoldingScreen() {
 
       html += `<tr class="grand">
         <td>TOTAL</td>
-        <td class="right">${grandCount}</td>
+        <td class="right">${grandCount.toFixed(2)}</td>
         <td></td><td></td>
         <td class="right">${grandValue != null ? fmtVal(grandValue) : '–'}</td>
       </tr>`;
@@ -369,7 +369,7 @@ export default function StockHoldingScreen() {
         <View style={{ flex: 1 }}>
           <Text style={s.title}>Estimated Stock on Hand</Text>
           <Text style={s.subtitle}>
-            {grandCount} units
+            {grandCount.toFixed(2)} units
             {grandValue != null ? ` · ${fmtVal(grandValue)} total value` : ''}
             {'\n'}Last count + deliveries received − sales since last stocktake
           </Text>
@@ -425,7 +425,7 @@ export default function StockHoldingScreen() {
             <View style={s.catHeader}>
               <Text style={s.catName}>{g.category}</Text>
               <Text style={s.catMeta}>
-                {g.totalCount} units
+                {g.totalCount.toFixed(2)} units
                 {g.totalValue != null ? ` · ${fmtVal(g.totalValue)}` : ''}
               </Text>
             </View>
@@ -456,7 +456,7 @@ export default function StockHoldingScreen() {
             {/* Subtotal */}
             <View style={s.subtotal}>
               <Text style={s.subtotalLabel}>Subtotal</Text>
-              <Text style={s.subtotalCount}>{g.totalCount}</Text>
+              <Text style={s.subtotalCount}>{g.totalCount.toFixed(2)}</Text>
               {g.hasValue && (
                 <Text style={s.subtotalValue}>
                   {g.totalValue != null ? fmtVal(g.totalValue) : '–'}
@@ -469,7 +469,7 @@ export default function StockHoldingScreen() {
         {/* Grand total */}
         <View style={s.grandTotal}>
           <Text style={s.grandLabel}>TOTAL</Text>
-          <Text style={s.grandCount}>{grandCount} units</Text>
+          <Text style={s.grandCount}>{grandCount.toFixed(2)} units</Text>
           {grandValue != null && <Text style={s.grandValue}>{fmtVal(grandValue)}</Text>}
         </View>
       </ScrollView>
