@@ -232,7 +232,7 @@ export default function StockHoldingScreen() {
         for (const r of g.rows) {
           html += `<tr>
             <td>${r.name}</td>
-            <td class="right">${r.count}</td>
+            <td class="right">${r.count.toFixed(2)}</td>
             <td class="right">${r.unit ?? '–'}</td>
             <td class="right">${r.costPrice != null ? '$' + r.costPrice.toFixed(2) : '–'}</td>
             <td class="right">${r.value != null ? fmtVal(r.value) : '–'}</td>
@@ -280,7 +280,7 @@ export default function StockHoldingScreen() {
           csv += [
             esc(g.category),
             esc(r.name),
-            r.count,
+            r.count.toFixed(2),
             r.unit ?? '',
             r.costPrice != null ? r.costPrice.toFixed(2) : '',
             r.value != null ? r.value.toFixed(2) : '',
@@ -444,7 +444,7 @@ export default function StockHoldingScreen() {
                   <Text style={s.rowName}>{r.name}</Text>
                   {r.unit ? <Text style={s.rowUnit}>{r.unit}</Text> : null}
                 </View>
-                <Text style={[s.rowCount, { width: 60 }]}>{r.count}</Text>
+                <Text style={[s.rowCount, { width: 60 }]}>{r.count.toFixed(2)}</Text>
                 {g.hasValue && (
                   <Text style={[s.rowValue, { width: 72 }]}>
                     {r.value != null ? fmtVal(r.value) : '–'}
