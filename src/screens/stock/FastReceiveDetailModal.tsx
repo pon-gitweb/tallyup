@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { useVenueId } from '../../context/VenueProvider';
+import AcceptOrderButton from '../../components/receiving/AcceptOrderButton';
 import { useToast } from '../../components/common/Toast';
 import { tryAttachToOrderOrSavePending } from '../../services/fastReceive/attachToOrder';
 import { commitInvoiceDecisions } from '../../services/fastReceive/commitInvoiceDecisions';
@@ -464,6 +465,18 @@ export default function FastReceiveDetailModal({
               </TouchableOpacity>
             )}
           </View>
+          {/* Accept Order row — creates a new order from the invoice lines and attaches it */}
+          {item && (
+            <View style={{ flexDirection:'row', gap:10 }}>
+              <AcceptOrderButton
+                item={item}
+                venueId={venueId}
+                onSuccess={orderId => onAttached(orderId)}
+                disabled={busy || committing}
+                variant="footer"
+              />
+            </View>
+          )}
           {/* Admin / navigation row */}
           <View style={{ flexDirection:'row', gap:10 }}>
             {!!onEditPo && (
