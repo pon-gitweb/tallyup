@@ -2542,14 +2542,18 @@ try {
   const completeArea = async () => {
     if (submittingArea) return;
 
-    const missing = items.filter((it) => !hasLocalEntry(it));
+    // Exclude conflict orphans and already-resolved inactive items from both
+    // the missing-count gate and the bulk write — we neither expect a count
+    // from them nor want to accidentally write to the orphaned document.
+    const countableItems = items.filter(it => it.mergeConflictPending !== true && it.active !== false);
+    const missing = countableItems.filter((it) => !hasLocalEntry(it));
 
     const perform = async () => {
       if (submittingArea) return;
 
       // If variance wasn't checked via openReview, run a quick guard
       if (!varianceCheckedRef.current) {
-        const highVarianceGuard = items.filter(it => {
+        const highVarianceGuard = countableItems.filter(it => {
           const raw = (localQty[it.id] ?? '').trim();
           const c = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
           const expected = deriveExpected(it);
@@ -2583,11 +2587,14 @@ try {
         const windowHours = _windowMs > 0 ? _windowMs / (1000 * 60 * 60) : 0;
         await ensureAreaStarted();
 
-        // Write all items from localQty — entered items use their value, unset items get 0
+        // Write all countable items from localQty — entered items use their value, unset items get 0.
+        // Conflict orphans and inactive items are intentionally excluded: conflict items must be
+        // resolved via "Confirm recount" (which writes directly to the survivor), and inactive
+        // items are already retired.
         const _cu = getAuth().currentUser;
         const _countBy = _cu?.uid ?? 'unknown';
         const _countByName = _cu?.displayName || 'Unknown';
-        await Promise.all(items.map((it) => {
+        await Promise.all(countableItems.map((it) => {
           const raw = (localQty[it.id] ?? '').trim();
           const qty = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : 0;
           return setDoc(
@@ -2686,21 +2693,42 @@ try {
       }
     };
 
-    if (missing.length > 0) {
-      const itemList = missing.slice(0, 8).map((it) => `• ${it.name || 'Unnamed'}`).join('\n');
-      const overflow = missing.length > 8 ? `\n...and ${missing.length - 8} more` : '';
-      const msg = missing.length === items.length
-        ? `No items have been entered yet. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
-        : `These ${missing.length.toLocaleString()} item${missing.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`;
+    // Gate: proceed through the missing-items check and then submit.
+    const proceedToSubmit = () => {
+      if (missing.length > 0) {
+        const itemList = missing.slice(0, 8).map((it) => `• ${it.name || 'Unnamed'}`).join('\n');
+        const overflow = missing.length > 8 ? `\n...and ${missing.length - 8} more` : '';
+        const msg = missing.length === countableItems.length
+          ? `No items have been entered yet. All ${missing.length} will be saved as 0:\n\n${itemList}${overflow}`
+          : `These ${missing.length.toLocaleString()} item${missing.length > 1 ? 's' : ''} will be saved as 0:\n\n${itemList}${overflow}`;
+        confirm({
+          title: 'Incomplete counts',
+          message: msg,
+          confirmLabel: 'Continue',
+          cancelLabel: 'Go back',
+          onConfirm: () => perform(),
+        });
+      } else {
+        perform();
+      }
+    };
+
+    // Pre-flight: warn if any merge-conflict items haven't been resolved yet.
+    // They are excluded from the bulk write regardless, but the user should
+    // have a chance to go back and recount properly rather than lose counts silently.
+    const pendingConflicts = items.filter(it => it.mergeConflictPending === true);
+    if (pendingConflicts.length > 0) {
+      const conflictList = pendingConflicts.slice(0, 5).map((it) => `• ${it.name || 'Unnamed'}`).join('\n');
+      const conflictOverflow = pendingConflicts.length > 5 ? `\n...and ${pendingConflicts.length - 5} more` : '';
       confirm({
-        title: 'Incomplete counts',
-        message: msg,
-        confirmLabel: 'Continue',
+        title: '⚠️ Unresolved merge conflicts',
+        message: `${pendingConflicts.length} item${pendingConflicts.length > 1 ? 's have' : ' has'} a merge conflict that hasn't been recounted yet. ${pendingConflicts.length > 1 ? 'Their counts' : 'Its count'} will NOT be saved — use "Confirm recount" on each flagged row first.\n\n${conflictList}${conflictOverflow}`,
+        confirmLabel: 'Skip conflicts and submit',
         cancelLabel: 'Go back',
-        onConfirm: () => perform(),
+        onConfirm: proceedToSubmit,
       });
     } else {
-      await perform();
+      proceedToSubmit();
     }
   };
 
