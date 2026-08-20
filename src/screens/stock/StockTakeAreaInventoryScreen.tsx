@@ -77,6 +77,8 @@ type Item = {
   costPrice?: number; salePrice?: number; parLevel?: number;
   productId?: string; productName?: string; createdAt?: any; updatedAt?: any;
   flagRecount?: boolean;
+  mergeConflictPending?: boolean;
+  mergeConflictSurvivorId?: string | null;
 
   // Induction flags (quick-add / other partial items)
   inductionStatus?: 'pending' | 'complete';
@@ -126,6 +128,8 @@ type RowProps = {
   isEdited: boolean;
   isHighlighted: boolean;
   confidenceDot: 'high' | 'medium' | 'low' | null;
+  mergeConflictSurvivorName?: string | null;
+  onConfirmMergeRecount: (item: Item) => void;
 };
 
 function getConfidenceDot(
@@ -164,6 +168,8 @@ const Row = React.memo(function Row({
   isEdited,
   isHighlighted,
   confidenceDot,
+  mergeConflictSurvivorName,
+  onConfirmMergeRecount,
 }: RowProps) {
   const effectiveSteppers = showSteppers && !isLocked;
   const colours = useColours();
@@ -259,6 +265,11 @@ const Row = React.memo(function Row({
             {item.flagRecount && (
               <Text style={{ fontSize: 11, color: '#6A1B9A', fontWeight: '800', backgroundColor: '#F3E8FF', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
                 RECOUNT
+              </Text>
+            )}
+            {item.mergeConflictPending && (
+              <Text style={{ fontSize: 11, color: '#92400E', fontWeight: '800', backgroundColor: '#FEF3C7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+                ⚠ Recount needed{mergeConflictSurvivorName ? ` → ${mergeConflictSurvivorName}` : ''}
               </Text>
             )}
             {showOutlier && (
@@ -445,6 +456,23 @@ const Row = React.memo(function Row({
           style={{ marginTop: 6, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#F3E5F5' }}
         >
           <Text style={{ color: '#6A1B9A', fontWeight: '700' }}>Request adj.</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Merge conflict recount — only visible on orphaned items flagged during a product merge */}
+      {item.mergeConflictPending && (
+        <TouchableOpacity
+          onPress={() => onConfirmMergeRecount(item)}
+          style={{
+            marginTop: 6, alignSelf: 'flex-start',
+            backgroundColor: '#D97706',
+            paddingVertical: dens(8), paddingHorizontal: dens(12),
+            borderRadius: 10, minHeight: 36,
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '800' }}>
+            {(localQty[item.id] ?? '').trim() ? 'Confirm recount — resolve merge' : 'Enter count above first'}
+          </Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -796,6 +824,10 @@ function StockTakeAreaInventoryScreen() {
   // saveCount ref — always points to the latest saveCount regardless of closure age
   const saveCountRef = useRef(saveCount);
   useEffect(() => { saveCountRef.current = saveCount; });
+  // resolveMergeConflictCount ref — same pattern; function defined later but Metro
+  // transpiles const to var so the ref is updated by its useEffect before first use.
+  const resolveMergeConflictCountRef = useRef(resolveMergeConflictCount);
+  useEffect(() => { resolveMergeConflictCountRef.current = resolveMergeConflictCount; });
 
   // Best available English TTS voice locale, resolved on mount — falls back
   // through en-NZ → en-AU → en-GB → en-US → en since many Android devices
@@ -1280,8 +1312,13 @@ function StockTakeAreaInventoryScreen() {
 
       // Update localQty for immediate UI feedback (green border on row)
       setLocalQty(prev => ({ ...prev, [item.id]: String(count) }));
-      // Write to Firestore — forceReplace=true skips the add-or-replace alert
-      saveCountRef.current(item, count, true);
+      // Conflict items route to resolveMergeConflictCount instead of saveCount.
+      if (item.mergeConflictPending) {
+        resolveMergeConflictCountRef.current(item, count);
+      } else {
+        // Write to Firestore — forceReplace=true skips the add-or-replace alert
+        saveCountRef.current(item, count, true);
+      }
 
       // Record in voice history for undo/correction/repeat (last 10 entries)
       const prevRaw = (localQtyRef.current[item.id] ?? '').trim();
@@ -1652,7 +1689,9 @@ function StockTakeAreaInventoryScreen() {
 
   const filteredBase = useMemo(() => {
     const n = (unifiedSearch || '').trim().toLowerCase();
-    return !n ? items : items.filter((it) => (it.name || '').toLowerCase().includes(n));
+    // Exclude items explicitly deactivated (e.g. resolved merge-conflict orphans).
+    const activeItems = items.filter(it => it.active !== false);
+    return !n ? activeItems : activeItems.filter((it) => (it.name || '').toLowerCase().includes(n));
   }, [items, unifiedSearch]);
 
   const filtered = useMemo(() => {
@@ -1861,6 +1900,51 @@ function StockTakeAreaInventoryScreen() {
       );
     } else {
       await doSave(qty);
+    }
+  };
+
+  // Resolves a same-area merge conflict: writes the entered count onto the survivor item,
+  // then marks the orphaned item inactive so it disappears from the list.
+  const resolveMergeConflictCount = async (item: Item, qty: number) => {
+    if (!item.mergeConflictSurvivorId) {
+      showError('Missing survivor reference — cannot resolve this conflict.');
+      return;
+    }
+    try {
+      // Find the survivor's existing item in this area
+      const survivorSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId!, 'items'),
+          where('productId', '==', item.mergeConflictSurvivorId),
+        )
+      );
+      if (survivorSnap.empty) {
+        showError('Survivor item not found in this area — cannot resolve.');
+        return;
+      }
+      const cu = getAuth().currentUser;
+      // Write the recount onto the survivor — same fields doSave writes, for consistency
+      await setDoc(survivorSnap.docs[0].ref, {
+        lastCount: qty,
+        lastCountAt: serverTimestamp(),
+        lastCountBy: cu?.uid ?? 'unknown',
+        lastCountByName: cu?.displayName || 'Unknown',
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      // Mark the orphaned item resolved — non-destructive, matches the merged-products convention
+      await updateDoc(
+        doc(db, 'venues', venueId!, 'departments', departmentId, 'areas', areaId!, 'items', item.id),
+        {
+          mergeConflictPending: false,
+          active: false,
+          mergeConflictResolvedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      hapticSuccess();
+      showSuccess('✓ Count confirmed — merge resolved.');
+    } catch (e: any) {
+      showError(e?.message ?? 'Could not resolve merge conflict.');
     }
   };
 
@@ -3591,6 +3675,17 @@ const openHistory = throttleAction(async (item: Item) => {
             isEdited={editedItemIds.has(item.id)}
             isHighlighted={highlightedItemIds.has(item.id) || highlightedVoiceItemId === item.id}
             confidenceDot={getConfidenceDot(item, invoiceDataAvailable, salesDataAvailable)}
+            mergeConflictSurvivorName={
+              item.mergeConflictPending && item.mergeConflictSurvivorId
+                ? (venueProducts.find(p => p.id === item.mergeConflictSurvivorId)?.name ?? null)
+                : null
+            }
+            onConfirmMergeRecount={(it) => {
+              const raw = (localQty[it.id] ?? '').trim();
+              const qty = /^(\d+(\.\d+)?|\.\d+)$/.test(raw) ? parseFloat(raw) : null;
+              if (qty === null) { showInfo('Please enter a count first.'); return; }
+              resolveMergeConflictCountRef.current(it, qty);
+            }}
           />
         )}
         ListHeaderComponent={

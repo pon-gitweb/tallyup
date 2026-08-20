@@ -59,6 +59,17 @@ export async function mergeProducts(
       for (const itemDoc of mergeItemsSnap.docs) {
         if (keepExistsInArea) {
           sameAreaConflicts.push({ departmentId: deptId, areaId, areaItemId: itemDoc.id, departmentName: deptName, areaName });
+          // Flag the conflict on the orphaned item so the counting screen can surface
+          // it and route a recount to the active survivor.
+          // productId is deliberately left unchanged — the resolveProduct chain-walker
+          // in StockHoldingScreen already attributes this item's count to the survivor.
+          if (!dryRun) {
+            await updateDoc(itemDoc.ref, {
+              mergeConflictPending: true,
+              mergeConflictSurvivorId: keepId,
+              updatedAt: serverTimestamp(),
+            });
+          }
         } else {
           if (!dryRun) {
             await updateDoc(itemDoc.ref, { productId: keepId, updatedAt: serverTimestamp() });
