@@ -1953,9 +1953,19 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
                     type="button"
                     className={styles.mergeBtn}
                     onClick={() => setMergingProduct(a)}
-                    title="Merge these duplicates"
+                    title={`Merge — keep "${a.name}"`}
+                    style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                   >
-                    Merge
+                    Keep {a.name}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.mergeBtn}
+                    onClick={() => setMergingProduct(b)}
+                    title={`Merge — keep "${b.name}"`}
+                    style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    Keep {b.name}
                   </button>
                   <button
                     type="button"
