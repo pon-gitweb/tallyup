@@ -116,19 +116,44 @@ export default function StockHoldingScreen() {
       const venueSnap = await getDoc(doc(db, 'venues', venueId));
       setVenueName(venueSnap.data()?.name ?? '');
 
-      // Products → category + costPrice by name key
+      // Products — keyed by doc id for merge-chain resolution, and by lowercased
+      // name as a fallback for items that carry no productId.
       const prodSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+      type ProdEntry = {
+        name: string; category: string; costPrice?: number;
+        active?: boolean; mergedInto?: string | null;
+      };
+      const prodById: Record<string, ProdEntry> = {};
       const prodByName: Record<string, { category: string; costPrice?: number }> = {};
       prodSnap.forEach(d => {
         const p = d.data() as any;
-        const key = (p.name ?? '').toLowerCase().trim();
-        if (key) {
-          prodByName[key] = {
-            category: p.category ?? p.categorySuggested ?? 'Uncategorised',
-            costPrice: typeof p.costPrice === 'number' ? p.costPrice : undefined,
-          };
-        }
+        const name = (p.name ?? '').trim();
+        const entry: ProdEntry = {
+          name,
+          category: p.category ?? p.categorySuggested ?? 'Uncategorised',
+          costPrice: typeof p.costPrice === 'number' ? p.costPrice : undefined,
+          active: typeof p.active === 'boolean' ? p.active : undefined,
+          mergedInto: p.mergedInto ?? null,
+        };
+        prodById[d.id] = entry;
+        const nameKey = name.toLowerCase();
+        if (nameKey) prodByName[nameKey] = { category: entry.category, costPrice: entry.costPrice };
       });
+
+      // Walk the mergedInto chain to find the active survivor.
+      // Returns { id, entry } when an active product is reached, null if unresolvable.
+      // Capped at 5 hops to guard against any accidental circular reference.
+      function resolveProduct(startId: string): { id: string; entry: ProdEntry } | null {
+        let id = startId;
+        for (let hop = 0; hop < 5; hop++) {
+          const entry = prodById[id];
+          if (!entry) return null;                          // product doc missing
+          if (entry.active !== false) return { id, entry }; // active (or field absent → default active)
+          if (!entry.mergedInto) return null;               // inactive, no forwarding pointer
+          id = entry.mergedInto;                            // follow the chain
+        }
+        return null; // hop cap reached without landing on an active product
+      }
 
       // Aggregate counts from all area items — completedAt not required
       // After a reset, lastCount is restored from confirmedCount so data still exists
@@ -159,24 +184,50 @@ export default function StockHoldingScreen() {
             if (typeof item.lastCount !== 'number' || item.lastCountAt == null) return;
             const nameRaw = (item.name ?? '').trim();
             if (!nameRaw) return;
-            const key = nameRaw.toLowerCase();
-            const prod = prodByName[key];
-            const category = item.category ?? item.categorySuggested ?? prod?.category ?? 'Uncategorised';
-            const costPrice = typeof item.costPrice === 'number' ? item.costPrice : prod?.costPrice;
+
+            // Resolve via productId: walk mergedInto chain to find the active survivor.
+            // Falls back to name-keyed lookup when productId is absent or chain fails.
+            const resolved = item.productId ? resolveProduct(item.productId) : null;
+
+            let key: string;
+            let rowName: string;
+            let category: string;
+            let costPrice: number | undefined;
+
+            if (resolved) {
+              // Success — attribute this item's stock to the active survivor's identity.
+              key = resolved.id;
+              rowName = resolved.entry.name || nameRaw;
+              category = resolved.entry.category;
+              // Item-level costPrice wins (individual pricing override);
+              // fall back to the resolved product's current costPrice.
+              costPrice = typeof item.costPrice === 'number' ? item.costPrice : resolved.entry.costPrice;
+            } else {
+              // No productId, or resolution failed (doc missing / chain broken / cap exceeded).
+              // Preserve exactly the current behaviour — no data is ever silently dropped.
+              const nameKey = nameRaw.toLowerCase();
+              key = nameKey;
+              rowName = nameRaw;
+              const prod = prodByName[nameKey];
+              category = item.category ?? item.categorySuggested ?? prod?.category ?? 'Uncategorised';
+              costPrice = typeof item.costPrice === 'number' ? item.costPrice : prod?.costPrice;
+            }
+
+            const onHand = estimatedOnHand(item);
             if (rowMap[key]) {
-              rowMap[key].count += estimatedOnHand(item);
+              rowMap[key].count += onHand;
               if (costPrice != null) {
                 rowMap[key].costPrice = costPrice;
                 rowMap[key].value = rowMap[key].count * costPrice;
               }
             } else {
               rowMap[key] = {
-                name: nameRaw,
+                name: rowName,
                 category,
-                count: estimatedOnHand(item),
+                count: onHand,
                 unit: item.unit,
                 costPrice,
-                value: costPrice != null ? estimatedOnHand(item) * costPrice : undefined,
+                value: costPrice != null ? onHand * costPrice : undefined,
               };
             }
           });
