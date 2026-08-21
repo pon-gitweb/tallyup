@@ -479,7 +479,6 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const [mode, setMode] = useState<'single' | 'batch' | 'dish' | null>('single')
   const [rrp, setRrp] = useState<string>('')
   const [yieldQty, setYieldQty] = useState<string>('')
-  const [servingsCount, setServingsCount] = useState<string>('')
   const [status, setStatus] = useState<'draft' | 'confirmed'>('draft')
   const [items, setItems] = useState<RecipeItem[]>([])
   const [allProducts, setAllProducts] = useState<any[]>([])
@@ -500,7 +499,7 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   // Load existing recipe
   useEffect(() => {
     if (!recipeId) {
-      setName(''); setCategory(null); setMode('single'); setRrp(''); setYieldQty(''); setServingsCount(''); setStatus('draft'); setItems([])
+      setName(''); setCategory(null); setMode('single'); setRrp(''); setYieldQty(''); setStatus('draft'); setItems([])
       return
     }
     getDoc(doc(db, 'venues', venueId, 'recipes', recipeId)).then(snap => {
@@ -511,7 +510,6 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
       setMode(d.mode || 'single')
       setRrp(d.rrp != null ? String(d.rrp) : '')
       setYieldQty(d.yield != null ? String(d.yield) : '')
-      setServingsCount(d.servings != null ? String(d.servings) : '')
       setStatus(d.status || 'draft')
       setItems((d.items || []).map((it: any) => ({
         productId: it.productId ?? null,
@@ -546,10 +544,10 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   }, [items])
 
   const rrpNum = parseFloat(rrp) || null
-  // For batch mode, GP% is per-serve cost (total batch COGS ÷ number of servings) vs RRP per serve.
   // yieldQty (ml/g total) is stored for Phase 3 stocktake valuation but not used here.
-  // For single/dish, the whole computedCogs IS the per-serve cost — no change to that behavior.
-  const cogsPerUnit = mode === 'batch' ? computedCogs / (parseFloat(servingsCount) || 1) : computedCogs
+  // For single/dish mode, computedCogs IS the per-unit cost and feeds RRP/GP% directly.
+  // Batch mode has no per-serve concept — RRP/GP% are hidden for batch recipes.
+  const cogsPerUnit = computedCogs
   const gpPct = rrpNum && rrpNum > 0 && computedCogs > 0
     ? Math.round(((rrpNum - cogsPerUnit) / rrpNum) * 100)
     : null
@@ -631,7 +629,6 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
         mode,
         rrp: rrpNum,
         yield: parseFloat(yieldQty) || null,
-        servings: parseFloat(servingsCount) || null,
         cogs: computedCogs > 0 ? Math.round(computedCogs * 100) / 100 : null,
         status,
         items: items.map(it => ({
@@ -724,7 +721,9 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
       {/* Pricing row */}
       <div className={styles.pricingRow}>
         <span className={styles.computedCogs}>COGS: {computedCogs > 0 ? `$${computedCogs.toFixed(2)}` : '—'}</span>
-        <span style={{ color: gpColor, fontWeight: 700 }}>GP: {gpPct != null ? `${gpPct}%` : '—'}</span>
+        {mode !== 'batch' && (
+          <span style={{ color: gpColor, fontWeight: 700 }}>GP: {gpPct != null ? `${gpPct}%` : '—'}</span>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           {mode === 'batch' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -738,28 +737,18 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
               />
             </div>
           )}
-          {mode === 'batch' && (
+          {mode !== 'batch' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>Servings</span>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>RRP $</span>
               <input
-                style={{ width: 60, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
+                style={{ width: 70, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
                 type="number"
-                value={servingsCount}
-                onChange={e => setServingsCount(e.target.value)}
-                placeholder="0"
+                value={rrp}
+                onChange={e => setRrp(e.target.value)}
+                placeholder="0.00"
               />
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>RRP $</span>
-            <input
-              style={{ width: 70, padding: '4px 8px', border: '1px solid #e5e3de', borderRadius: 6, fontSize: 13 }}
-              type="number"
-              value={rrp}
-              onChange={e => setRrp(e.target.value)}
-              placeholder="0.00"
-            />
-          </div>
         </div>
       </div>
       {/* Batch yield suggestions — only shown in batch mode when at least one total is non-zero */}

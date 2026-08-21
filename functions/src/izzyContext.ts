@@ -146,8 +146,8 @@ RECIPE COSTS (CraftIt)
 - Ingredients show whether their cost is live (linked to a product) or manual
 - Add prices directly from the recipe if a linked product has no price set
 - Create and edit recipes from the Hosti web dashboard (CraftIt tab) — full keyboard entry, better for complex recipes with many ingredients
-- Batch mode: toggle Batch on a recipe to unlock Yield (total output amount) and Servings (number of portions) — Servings drives the cost-per-serve calculation used for stocktake costing
-- Link a product to a recipe: on the web dashboard go to Products → select the product → tap "Link Recipe" → choose the recipe this product is the output of. The product's cost price is set to recipe COGS ÷ Servings at the moment of linking. To update it after ingredient prices change, tap "Refresh linked cost" on the product — it does not update automatically.
+- Batch mode: toggle Batch on a recipe to unlock Yield (total output amount for the batch) — Yield is stored for stocktake valuation; batch mode has no per-serve concept and does not show RRP or GP%
+- Link a product to a recipe: on the web dashboard go to Products → select the product → tap "Link Recipe" → choose the recipe this product is the output of. The product's cost price is set to the recipe's full COGS at the moment of linking (the product is assumed to represent the full batch yield). To update it after ingredient prices change, tap "Refresh linked cost" on the product — it does not update automatically.
 
 PRODUCT UNIT AND SIZE:
 - When adding or editing a product, select a Unit from the dropdown: Bottle, Can, Keg, Weight, or Each

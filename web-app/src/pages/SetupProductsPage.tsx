@@ -978,7 +978,7 @@ function MergeModal({
 }
 
 // ── RecipeLinkModal ────────────────────────────────────────────────────────────
-// Lets the user link a product's cost price to a confirmed recipe's COGS÷servings.
+// Lets the user link a product's cost price to a confirmed recipe's COGS directly.
 // Only confirmed recipes are shown — drafts cannot be linked.
 // Unlinking clears the link fields but leaves costPrice at its current value.
 function RecipeLinkModal({
@@ -990,7 +990,7 @@ function RecipeLinkModal({
   product: Product
   onClose: () => void
 }) {
-  type RecipeRow = { id: string; name: string; cogs: number | null; servings: number | null }
+  type RecipeRow = { id: string; name: string; cogs: number | null }
   const [recipes, setRecipes] = useState<RecipeRow[]>([])
   const [loadingRecipes, setLoadingRecipes] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -1004,7 +1004,7 @@ function RecipeLinkModal({
       .then(snap => {
         setRecipes(snap.docs.map(d => {
           const data = d.data() as any
-          return { id: d.id, name: data.name || '', cogs: data.cogs ?? null, servings: data.servings ?? null }
+          return { id: d.id, name: data.name || '', cogs: data.cogs ?? null }
         }).sort((a, b) => a.name.localeCompare(b.name)))
         setLoadingRecipes(false)
       })
@@ -1019,17 +1019,13 @@ function RecipeLinkModal({
 
   async function handleLink(recipe: RecipeRow) {
     setError(null)
-    if (!recipe.servings || recipe.servings <= 0) {
-      setError('This recipe has no servings set — add one in CraftIt before linking.')
-      return
-    }
     if (recipe.cogs == null) {
       setError('This recipe has no COGS — add ingredients with cost prices first.')
       return
     }
     setWorking(true)
     try {
-      const costPrice = Math.round((recipe.cogs / recipe.servings) * 10000) / 10000
+      const costPrice = Math.round(recipe.cogs * 10000) / 10000
       await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
         costPrice,
         linkedRecipeId: recipe.id,
@@ -1079,7 +1075,7 @@ function RecipeLinkModal({
         </div>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6B7280' }}>
           Linking sets <strong style={{ color: '#0B132B' }}>{product.name}</strong>'s cost price to
-          the recipe's COGS ÷ servings. Use ↻ Sync to re-apply after the recipe changes.
+          the recipe's COGS directly. Use ↻ Sync to re-apply after the recipe changes.
         </p>
 
         {done ? (
@@ -1151,7 +1147,6 @@ function RecipeLinkModal({
                     <span style={{ fontWeight: 600, color: '#0B132B' }}>{r.name}</span>
                     <span style={{ fontSize: 12, color: '#9ca3af', textAlign: 'right' }}>
                       {r.cogs != null ? `$${r.cogs.toFixed(2)} COGS` : 'No COGS'}
-                      {r.servings ? ` · ${r.servings} serves` : ' · no servings'}
                     </span>
                   </div>
                 ))}
@@ -1520,21 +1515,16 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       }
       const d = snap.data() as any
       const cogs: number | null = d.cogs ?? null
-      const servings: number | null = d.servings ?? null
-      if (!servings || servings <= 0) {
-        setRefreshLinkMsg({ id: product.id, msg: 'This recipe has no servings set — add one in CraftIt before syncing.', ok: false })
-        return
-      }
       if (cogs == null) {
         setRefreshLinkMsg({ id: product.id, msg: 'This recipe has no COGS — add ingredients with cost prices first.', ok: false })
         return
       }
-      const costPrice = Math.round((cogs / servings) * 10000) / 10000
+      const costPrice = Math.round(cogs * 10000) / 10000
       await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
         costPrice,
         updatedAt: serverTimestamp(),
       })
-      setRefreshLinkMsg({ id: product.id, msg: `Cost synced to $${costPrice.toFixed(4)} (${cogs.toFixed(2)} ÷ ${servings})`, ok: true })
+      setRefreshLinkMsg({ id: product.id, msg: `Cost synced to $${costPrice.toFixed(4)} (recipe COGS)`, ok: true })
     } catch {
       setRefreshLinkMsg({ id: product.id, msg: 'Sync failed — try again.', ok: false })
     }
