@@ -233,6 +233,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     proposalId: string;
     matchScore: number;
     supplierMismatch: boolean;
+    primarySupplierId: string | null;
   }> = [];
 
   for (const line of priced) {
@@ -305,6 +306,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             proposalId: priceChangeId,
             matchScore: lineMatchScore,
             supplierMismatch,
+            primarySupplierId: typeof matched.primarySupplierId === "string" ? matched.primarySupplierId : null,
           });
           proposals.push({
             id: priceChangeId,
@@ -476,7 +478,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
 
   // Phase 3: attach reasoning to priceChange proposals crossing the 25% effective threshold
   const lineDataByProposalId = new Map(invoiceLineData.map(d => [d.proposalId, d]));
-  const proposalsWithReasoning: ProposedAction[] = proposals.map(p => {
+  const proposalsWithReasoning: ProposedAction[] = await Promise.all(proposals.map(async p => {
     if (p.type !== "priceChange") return p;
     const effectivePercent =
       p.possibleCaseMismatch && typeof p.correctedChangePercent === "number"
@@ -496,18 +498,32 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
         ? "trending"
         : "isolated";
     const matchConfidence: "high" | "moderate" = lineData.matchScore >= 0.95 ? "high" : "moderate";
+    // Lookup preferred supplier name — only when a mismatch is confirmed and we have an ID to query
+    let preferredSupplierName: string | null = null;
+    if (lineData.supplierMismatch && lineData.primarySupplierId) {
+      try {
+        const prefSnap = await db.doc(
+          `venues/${venueId}/products/${p.productId}/suppliers/${lineData.primarySupplierId}`
+        ).get();
+        if (prefSnap.exists) {
+          preferredSupplierName = (prefSnap.data() as any)?.supplierName || null;
+        }
+      } catch (e: any) {
+        console.log("[proposeInvoiceChanges] preferred supplier name lookup failed (non-fatal)", p.productId, e?.message);
+      }
+    }
     return {
       ...p,
       reasoning: {
         isolatedVsTrend,
         similarChangesOnInvoice: count,
         supplierMismatch: lineData.supplierMismatch,
-        preferredSupplierName: null,
+        preferredSupplierName,
         matchConfidence,
         matchScore: lineData.matchScore,
       },
     };
-  });
+  }));
   return { autoApplied: { linked }, proposals: proposalsWithReasoning, autoProductMap, excludedLines: summarizeExcludedLines(nonProductLines) };
 }
 
