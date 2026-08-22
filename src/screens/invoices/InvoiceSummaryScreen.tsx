@@ -29,6 +29,18 @@ export type InvoiceSummaryParams = {
     direction?: string;
     qty?: number;
     caseSize?: number | null;
+    possibleCaseMismatch?: boolean;
+    caseMismatchGuess?: number | null;
+    correctedUnitPrice?: number | null;
+    correctedChangePercent?: number | null;
+    reasoning?: {
+      isolatedVsTrend: 'isolated' | 'trending';
+      similarChangesOnInvoice: number;
+      supplierMismatch: boolean;
+      preferredSupplierName: string | null;
+      matchConfidence: 'high' | 'moderate';
+      matchScore: number;
+    };
   }>;
   invoiceNumber?: string | null;
   invoiceDate?: string | null;
@@ -97,6 +109,7 @@ function InvoiceSummaryScreen() {
   const isFestival = venueType === 'festival';
   const [disputed, setDisputed] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<string[]>([]);
+  const [caseMismatchDismissed, setCaseMismatchDismissed] = useState<string[]>([]);
 
   const ageInfo = ageCategory ? AGE_MSGS[ageCategory] : null;
   const hasPriceChanges = priceChanges.length > 0;
@@ -105,7 +118,11 @@ function InvoiceSummaryScreen() {
   const totalOvercharge = isFestival
     ? priceChanges.reduce((sum, pc) => {
         const totalUnits = (pc.qty || 1) * (pc.caseSize || 1);
-        return sum + Math.max(0, (pc.newPrice - pc.oldPrice) * totalUnits);
+        const effectiveNewPrice =
+          pc.possibleCaseMismatch && !caseMismatchDismissed.includes(pc.name) && pc.correctedUnitPrice != null
+            ? pc.correctedUnitPrice
+            : pc.newPrice;
+        return sum + Math.max(0, (effectiveNewPrice - pc.oldPrice) * totalUnits);
       }, 0)
     : 0;
 
@@ -138,6 +155,21 @@ function InvoiceSummaryScreen() {
     try {
       await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
         costPrice: pc.newPrice,
+        priceAcceptedAt: serverTimestamp(),
+        priceAcceptedBy: getAuth().currentUser?.uid || null,
+        priceChanged: false,
+      });
+      setAccepted(prev => [...prev, pc.name]);
+    } catch (e: any) {
+      showError('Could not accept price: ' + (e?.message || 'unknown error'));
+    }
+  }
+
+  async function acceptCorrectedPrice(pc: any) {
+    if (!venueId || !pc.productId) return;
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'products', pc.productId), {
+        costPrice: pc.correctedUnitPrice,
         priceAcceptedAt: serverTimestamp(),
         priceAcceptedBy: getAuth().currentUser?.uid || null,
         priceChanged: false,
@@ -222,41 +254,105 @@ function InvoiceSummaryScreen() {
             </Text>
             {priceChanges.map((pc, i) => {
               const totalUnits = (pc.qty || 1) * (pc.caseSize || 1);
-              const overcharge = (pc.newPrice - pc.oldPrice) * totalUnits;
               const isDisputed = disputed.includes(pc.name);
               const isAccepted = accepted.includes(pc.name);
+              const isCaseMismatch = pc.possibleCaseMismatch && !caseMismatchDismissed.includes(pc.name);
+              const effectiveNewPrice = isCaseMismatch && pc.correctedUnitPrice != null ? pc.correctedUnitPrice : pc.newPrice;
+              const overcharge = (effectiveNewPrice - pc.oldPrice) * totalUnits;
               const sign = (pc.newPrice > pc.oldPrice) ? '+' : '';
-              return (
-                <View key={i} style={{ marginBottom: i < priceChanges.length - 1 ? 14 : 0, paddingBottom: i < priceChanges.length - 1 ? 14 : 0, borderBottomWidth: i < priceChanges.length - 1 ? 1 : 0, borderBottomColor: '#FDE68A' }}>
-                  <Text style={{ fontWeight: '800', color: '#0B132B', marginBottom: 4 }}>{pc.name}</Text>
-                  <Text style={{ color: '#374151', fontSize: 13 }}>Invoice price: ${pc.newPrice.toFixed(2)}/unit</Text>
-                  <Text style={{ color: '#374151', fontSize: 13 }}>Last agreed: ${pc.oldPrice.toFixed(2)}/unit</Text>
-                  <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 13 }}>
-                    Difference: {sign}${Math.abs(pc.newPrice - pc.oldPrice).toFixed(2)} ({sign}{Math.abs(pc.changePercent || 0).toFixed(1)}%)
-                  </Text>
-                  {overcharge !== 0 && pc.qty != null && (
-                    <Text style={{ color: '#92400E', fontSize: 12, marginTop: 2 }}>
-                      Est. overcharge on this delivery: ${Math.abs(overcharge).toFixed(2)}
+
+              // Plain-language reasoning context shown beneath normal price-change cards
+              const ReasoningLines = pc.reasoning && !isCaseMismatch ? (
+                <View style={{ marginTop: 6, gap: 3 }}>
+                  {pc.reasoning.isolatedVsTrend === 'trending' ? (
+                    <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                      {pc.reasoning.similarChangesOnInvoice} other item{pc.reasoning.similarChangesOnInvoice !== 1 ? 's' : ''} on this invoice also changed by a similar amount — this may be a supplier-wide change.
+                    </Text>
+                  ) : (
+                    <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                      This is the only item on this invoice showing a change like this.
                     </Text>
                   )}
-                  {!isDisputed && !isAccepted && (
-                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-                      <TouchableOpacity
-                        onPress={() => flagDispute(pc)}
-                        style={{ flex: 1, backgroundColor: '#DC2626', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Flag for dispute</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => acceptPrice(pc)}
-                        style={{ flex: 1, backgroundColor: '#6B7280', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Accept price</Text>
-                      </TouchableOpacity>
-                    </View>
+                  {pc.reasoning.supplierMismatch && (
+                    <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                      {pc.reasoning.preferredSupplierName
+                        ? `This product is usually supplied by ${pc.reasoning.preferredSupplierName} — this invoice is from a different supplier.`
+                        : "This product's usual supplier differs from this invoice's supplier."}
+                    </Text>
                   )}
-                  {isDisputed && <Text style={{ color: '#16A34A', fontWeight: '700', marginTop: 6, fontSize: 13 }}>✓ Flagged for dispute</Text>}
-                  {isAccepted && <Text style={{ color: '#6B7280', fontWeight: '700', marginTop: 6, fontSize: 13 }}>✓ Price accepted</Text>}
+                  {pc.reasoning.matchConfidence === 'moderate' && (
+                    <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                      Product name match is approximate — review carefully.
+                    </Text>
+                  )}
+                </View>
+              ) : null;
+
+              return (
+                <View key={i} style={{ marginBottom: i < priceChanges.length - 1 ? 14 : 0, paddingBottom: i < priceChanges.length - 1 ? 14 : 0, borderBottomWidth: i < priceChanges.length - 1 ? 1 : 0, borderBottomColor: '#FDE68A' }}>
+                  {isCaseMismatch ? (
+                    // Case-mismatch card — calm blue styling, this is usually good news
+                    <View style={{ backgroundColor: '#EFF6FF', borderRadius: 10, padding: 12, borderWidth: 1.5, borderColor: '#3B82F6' }}>
+                      <Text style={{ fontWeight: '800', color: '#1E3A5F', marginBottom: 4 }}>{pc.name}</Text>
+                      <Text style={{ color: '#374151', fontSize: 13 }}>
+                        Invoice price: ${pc.newPrice.toFixed(2)}/unit — usual price: ${pc.oldPrice.toFixed(2)}/unit ({sign}{Math.abs(pc.changePercent || 0).toFixed(0)}%)
+                      </Text>
+                      <Text style={{ color: '#1D4ED8', fontSize: 13, marginTop: 6, lineHeight: 18 }}>
+                        This looks like a case price{pc.caseMismatchGuess ? ` for ${pc.caseMismatchGuess} units` : ''} compared against a single unit cost. The corrected per-unit price would be ${pc.correctedUnitPrice?.toFixed(2)} — no real change.
+                      </Text>
+                      {!isAccepted && (
+                        <View style={{ gap: 8, marginTop: 10 }}>
+                          <TouchableOpacity
+                            onPress={() => acceptCorrectedPrice(pc)}
+                            style={{ backgroundColor: '#1D4ED8', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Yes, that's a case price — use ${pc.correctedUnitPrice?.toFixed(2)}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setCaseMismatchDismissed(prev => [...prev, pc.name])}
+                            style={{ backgroundColor: '#E5E7EB', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#374151', fontWeight: '700', fontSize: 13 }}>No, treat as a real price change</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                      {isAccepted && <Text style={{ color: '#16A34A', fontWeight: '700', marginTop: 6, fontSize: 13 }}>✓ Corrected price accepted</Text>}
+                    </View>
+                  ) : (
+                    // Normal price-change card (amber)
+                    <>
+                      <Text style={{ fontWeight: '800', color: '#0B132B', marginBottom: 4 }}>{pc.name}</Text>
+                      <Text style={{ color: '#374151', fontSize: 13 }}>Invoice price: ${pc.newPrice.toFixed(2)}/unit</Text>
+                      <Text style={{ color: '#374151', fontSize: 13 }}>Last agreed: ${pc.oldPrice.toFixed(2)}/unit</Text>
+                      <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 13 }}>
+                        Difference: {sign}${Math.abs(pc.newPrice - pc.oldPrice).toFixed(2)} ({sign}{Math.abs(pc.changePercent || 0).toFixed(1)}%)
+                      </Text>
+                      {overcharge !== 0 && pc.qty != null && (
+                        <Text style={{ color: '#92400E', fontSize: 12, marginTop: 2 }}>
+                          Est. overcharge on this delivery: ${Math.abs(overcharge).toFixed(2)}
+                        </Text>
+                      )}
+                      {ReasoningLines}
+                      {!isDisputed && !isAccepted && (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                          <TouchableOpacity
+                            onPress={() => flagDispute(pc)}
+                            style={{ flex: 1, backgroundColor: '#DC2626', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Flag for dispute</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => acceptPrice(pc)}
+                            style={{ flex: 1, backgroundColor: '#6B7280', borderRadius: 8, paddingVertical: 9, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Accept price</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                      {isDisputed && <Text style={{ color: '#16A34A', fontWeight: '700', marginTop: 6, fontSize: 13 }}>✓ Flagged for dispute</Text>}
+                      {isAccepted && <Text style={{ color: '#6B7280', fontWeight: '700', marginTop: 6, fontSize: 13 }}>✓ Price accepted</Text>}
+                    </>
+                  )}
                 </View>
               );
             })}
