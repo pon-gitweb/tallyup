@@ -22,11 +22,11 @@ function normalizeName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function namesMatch(a: string, b: string): boolean {
+function namesMatch(a: string, b: string): { isMatch: boolean; score: number } {
   const ta = tokenizeForMatching(a);
   const tb = tokenizeForMatching(b);
   const score = overlapCoefficient(a, b);
-  return isReliableMatch(ta, tb, score);
+  return { isMatch: isReliableMatch(ta, tb, score), score };
 }
 
 /** Returns the correct caseSize/unitCost/caseCost fields for a product or supplier-link
@@ -217,7 +217,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   for (const line of priced) {
     if (ops >= 400) break;
     const unitPrice = line.unitPrice as number;
-    const matched = products.find(p => namesMatch(p.name || "", line.name));
+    const matched = products.find(p => namesMatch(p.name || "", line.name).isMatch);
 
     const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
     const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
@@ -285,9 +285,14 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       const normLine = normalizeName(line.name);
       const nearDuplicate = products.find(p => {
         const np = normalizeName(p.name || "");
-        if (!np || !normLine || np.length < 4 || normLine.length < 4) return false;
+        if (!np || !normLine) return false;
         const exactMatch = np === normLine;
-        const subMatch = (np.includes(normLine) || normLine.includes(np)) && Math.min(np.length, normLine.length) >= 5;
+        const tokensA = tokenizeForMatching(p.name || "");
+        const tokensB = tokenizeForMatching(line.name);
+        const [smaller, larger] = tokensA.size <= tokensB.size
+          ? [tokensA, tokensB]
+          : [tokensB, tokensA];
+        const subMatch = smaller.size > 0 && [...smaller].every(t => larger.has(t));
         return exactMatch || subMatch;
       });
 
@@ -335,7 +340,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   if (cleanSupplierId) {
     for (const line of priced) {
       const unitPrice = line.unitPrice as number;
-      const matched = products.find(p => namesMatch(p.name || "", line.name));
+      const matched = products.find(p => namesMatch(p.name || "", line.name).isMatch);
       if (!matched) continue;
       const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
       const unitCost = unitPrice; // already per-unit — OCR prompt normalises before returning
