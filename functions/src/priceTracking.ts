@@ -69,6 +69,14 @@ export type ProposedAction =
       correctedUnitPrice?: number | null;
       correctedChangePercent?: number | null;
       useCorrectedPrice?: boolean;
+      reasoning?: {
+        isolatedVsTrend: "isolated" | "trending";
+        similarChangesOnInvoice: number;
+        supplierMismatch: boolean;
+        preferredSupplierName: string | null;
+        matchConfidence: "high" | "moderate";
+        matchScore: number;
+      };
     }
   | {
       id: string;
@@ -218,11 +226,24 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   const proposals: ProposedAction[] = [];
   // Confident namesMatch lines — fed to area-item linking even when price write waits
   const autoProductMap: Record<string, string> = {};
+  // Per-line price-change records — used for the trend signal in Phase 3 reasoning
+  const invoiceLineData: Array<{
+    direction: "increase" | "decrease";
+    changePercent: number;
+    proposalId: string;
+    matchScore: number;
+    supplierMismatch: boolean;
+  }> = [];
 
   for (const line of priced) {
     if (ops >= 400) break;
     const unitPrice = line.unitPrice as number;
-    const matched = products.find(p => namesMatch(p.name || "", line.name).isMatch);
+    let lineMatchScore = 0;
+    const matched = products.find(p => {
+      const r = namesMatch(p.name || "", line.name);
+      if (r.isMatch) { lineMatchScore = r.score; return true; }
+      return false;
+    });
 
     const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
     const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
@@ -271,8 +292,22 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
               };
             }
           }
+          const priceChangeId = `${invoiceId}:priceChange:${matched.id}`;
+          const direction: "increase" | "decrease" = unitPrice > existing ? "increase" : "decrease";
+          const supplierMismatch =
+            typeof matched.primarySupplierId === "string" &&
+            matched.primarySupplierId.length > 0 &&
+            cleanSupplierId !== null &&
+            matched.primarySupplierId !== cleanSupplierId;
+          invoiceLineData.push({
+            direction,
+            changePercent,
+            proposalId: priceChangeId,
+            matchScore: lineMatchScore,
+            supplierMismatch,
+          });
           proposals.push({
-            id: `${invoiceId}:priceChange:${matched.id}`,
+            id: priceChangeId,
             type: "priceChange",
             productId: matched.id,
             productName: matched.name || line.name,
@@ -280,7 +315,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             oldPrice: existing,
             newPrice: unitPrice,
             changePercent,
-            direction: unitPrice > existing ? "increase" : "decrease",
+            direction,
             qty: line.qty,
             caseSize: cs,
             ...caseMismatchFields,
@@ -439,7 +474,41 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     }
   }
 
-  return { autoApplied: { linked }, proposals, autoProductMap, excludedLines: summarizeExcludedLines(nonProductLines) };
+  // Phase 3: attach reasoning to priceChange proposals crossing the 25% effective threshold
+  const lineDataByProposalId = new Map(invoiceLineData.map(d => [d.proposalId, d]));
+  const proposalsWithReasoning: ProposedAction[] = proposals.map(p => {
+    if (p.type !== "priceChange") return p;
+    const effectivePercent =
+      p.possibleCaseMismatch && typeof p.correctedChangePercent === "number"
+        ? p.correctedChangePercent
+        : p.changePercent;
+    if (Math.abs(effectivePercent) <= 25) return p;
+    const lineData = lineDataByProposalId.get(p.id);
+    if (!lineData) return p;
+    const otherChanges = invoiceLineData.filter(d => d.proposalId !== p.id);
+    const sameDirectionMeaningful = otherChanges.filter(
+      d => d.direction === p.direction && Math.abs(d.changePercent) >= 5
+    );
+    const count = sameDirectionMeaningful.length;
+    const totalOtherMeaningful = otherChanges.filter(d => Math.abs(d.changePercent) >= 5).length;
+    const isolatedVsTrend: "isolated" | "trending" =
+      count >= 2 || (totalOtherMeaningful > 0 && count / totalOtherMeaningful >= 0.3)
+        ? "trending"
+        : "isolated";
+    const matchConfidence: "high" | "moderate" = lineData.matchScore >= 0.95 ? "high" : "moderate";
+    return {
+      ...p,
+      reasoning: {
+        isolatedVsTrend,
+        similarChangesOnInvoice: count,
+        supplierMismatch: lineData.supplierMismatch,
+        preferredSupplierName: null,
+        matchConfidence,
+        matchScore: lineData.matchScore,
+      },
+    };
+  });
+  return { autoApplied: { linked }, proposals: proposalsWithReasoning, autoProductMap, excludedLines: summarizeExcludedLines(nonProductLines) };
 }
 
 export async function commitInvoiceChanges(
