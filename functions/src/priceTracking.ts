@@ -64,6 +64,11 @@ export type ProposedAction =
       direction: "increase" | "decrease";
       qty: number;
       caseSize: number | null;
+      possibleCaseMismatch?: boolean;
+      caseMismatchGuess?: number | null;
+      correctedUnitPrice?: number | null;
+      correctedChangePercent?: number | null;
+      useCorrectedPrice?: boolean;
     }
   | {
       id: string;
@@ -233,6 +238,39 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
         if (pctDiff > 0.01) {
           // Price change — waits for user confirmation
           const changePercent = Math.round(((unitPrice - existing) / existing) * 10000) / 100;
+          // Case-mismatch detection — only fires for suspiciously large changes (>50%)
+          let caseMismatchFields: {
+            possibleCaseMismatch?: boolean;
+            caseMismatchGuess?: number | null;
+            correctedUnitPrice?: number | null;
+            correctedChangePercent?: number | null;
+          } = {};
+          if (pctDiff > 0.5) {
+            const knownCaseSize =
+              typeof matched.caseSize === "number" && matched.caseSize > 0
+                ? matched.caseSize as number
+                : null;
+            const candidates = knownCaseSize != null ? [knownCaseSize] : [6, 12, 24];
+            const ratio = unitPrice / existing;
+            let matchedCandidate: number | null = null;
+            for (const candidate of candidates) {
+              if (Math.abs(ratio - candidate) / candidate <= 0.15) {
+                matchedCandidate = candidate;
+                break;
+              }
+            }
+            if (matchedCandidate != null) {
+              const correctedUnitPrice = unitPrice / matchedCandidate;
+              const correctedChangePercent =
+                Math.round(((correctedUnitPrice - existing) / existing) * 10000) / 100;
+              caseMismatchFields = {
+                possibleCaseMismatch: true,
+                caseMismatchGuess: matchedCandidate,
+                correctedUnitPrice,
+                correctedChangePercent,
+              };
+            }
+          }
           proposals.push({
             id: `${invoiceId}:priceChange:${matched.id}`,
             type: "priceChange",
@@ -245,6 +283,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             direction: unitPrice > existing ? "increase" : "decrease",
             qty: line.qty,
             caseSize: cs,
+            ...caseMismatchFields,
           });
         } else {
           // Same price — automatic touch (no meaningful change)
@@ -435,23 +474,33 @@ export async function commitInvoiceChanges(
     if (proposal.type === "priceChange") {
       const productRef = db.doc(`venues/${venueId}/products/${proposal.productId}`);
       const cs = proposal.caseSize;
-      const caseSizeFields = computeCaseSizeFields(proposal.newPrice, cs);
+      // When the user confirmed a case-size correction, use the corrected unit price
+      // in place of newPrice for all stored values; otherwise behaviour is unchanged.
+      const effectivePrice =
+        proposal.useCorrectedPrice && typeof proposal.correctedUnitPrice === "number"
+          ? proposal.correctedUnitPrice
+          : proposal.newPrice;
+      const effectiveChangePercent =
+        proposal.useCorrectedPrice && typeof proposal.correctedChangePercent === "number"
+          ? proposal.correctedChangePercent
+          : proposal.changePercent;
+      const caseSizeFields = computeCaseSizeFields(effectivePrice, cs);
       const histRef = productRef.collection("priceHistory").doc();
       batch.set(histRef, {
         date: admin.firestore.FieldValue.serverTimestamp(),
         oldPrice: proposal.oldPrice,
-        newPrice: proposal.newPrice,
+        newPrice: effectivePrice,
         supplierId: cleanSupplierId,
         supplierName: cleanSupplierName,
         invoiceId,
-        changePercent: proposal.changePercent,
+        changePercent: effectiveChangePercent,
         direction: proposal.direction,
       });
       batch.update(productRef, {
-        costPrice: proposal.newPrice,
+        costPrice: effectivePrice,
         costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         costPriceSource: "invoice",
-        lastInvoicePrice: proposal.newPrice,
+        lastInvoicePrice: effectivePrice,
         lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
         priceChanged: true,
         lastPriceChangeAt: admin.firestore.FieldValue.serverTimestamp(),
