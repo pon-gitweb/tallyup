@@ -54,7 +54,10 @@ function App() {
   const [supplierName, setSupplierName] = useState<string | null>(null)
   const [accountType, setAccountType] = useState<'venue' | 'supplier' | null>(null)
   const [supplierId, setSupplierId] = useState<string | null>(null)
-  const [authView, setAuthView] = useState<'login' | 'register'>('login')
+  const [authView, setAuthView] = useState<'login' | 'register'>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('view') === 'register' ? 'register' : 'login'
+  })
   // Separate primitive — avoids React bailing out on the same User object reference
   // after reload() mutates emailVerified in place (Object.is check would pass).
   const [emailVerified, setEmailVerified] = useState(false)
