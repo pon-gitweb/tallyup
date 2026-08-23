@@ -66,6 +66,33 @@ export async function addSubscriptionItem(params: {
   return { subscriptionId: data.subscriptionId }
 }
 
+/** POST /stripe/create-one-off-checkout-session
+ *  Opens a Stripe Checkout flow for a one-off (non-subscription) purchase.
+ *  Pass lookupKey — never raw price_... IDs.
+ *  Returns the Stripe-hosted checkout URL; caller should redirect to it.
+ */
+export async function createOneOffCheckout(params: {
+  venueId: string
+  lookupKey: string
+  successUrl: string
+  cancelUrl: string
+}): Promise<{ sessionId: string; url: string }> {
+  const token = await getToken()
+  const res = await fetch(`${API}/stripe/create-one-off-checkout-session`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(params),
+  })
+  const data = await res.json()
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error ?? 'Checkout session creation failed')
+  }
+  return { sessionId: data.sessionId, url: data.url }
+}
+
 /** GET /stripe/portal
  *  Creates a Stripe Billing Portal session for the venue's Stripe customer.
  *  Returns the portal URL; caller should redirect to it.

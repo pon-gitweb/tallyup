@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
-import { createCheckout, addSubscriptionItem, openBillingPortal } from '../services/payments'
+import { createCheckout, addSubscriptionItem, openBillingPortal, createOneOffCheckout } from '../services/payments'
 import { MODULES } from '../services/billing/modules'
 import styles from './BillingPage.module.css'
 
@@ -158,6 +158,25 @@ export default function BillingPage({
       setErrors((prev) => ({ ...prev, [cardKey]: e?.message ?? 'Something went wrong. Please try again.' }))
     }
     setBusy(null)
+  }
+
+  async function handleOneOffCheckout(cardKey: string, lookupKey: string) {
+    if (busy) return
+    clearError(cardKey)
+    setBusy(cardKey)
+    try {
+      const result = await createOneOffCheckout({
+        venueId,
+        lookupKey,
+        successUrl: SUCCESS_URL,
+        cancelUrl: CANCEL_URL,
+      })
+      window.location.href = result.url
+    } catch (e: any) {
+      setErrors((prev) => ({ ...prev, [cardKey]: e?.message ?? 'Something went wrong. Please try again.' }))
+      setBusy(null)
+    }
+    // No setBusy(null) on success — we're navigating away
   }
 
   async function handlePortal() {
@@ -354,6 +373,28 @@ export default function BillingPage({
               )}
             </>
           )}
+        </div>
+
+        {/* AI Meter Extension — one-off top-up, no subscription, no plan gate */}
+        <div className={styles.card}>
+          <p className={styles.cardName}>AI Meter Extension</p>
+          <p className={styles.cardDesc}>
+            Topped out on AI calls this month? Buy a one-off extension — doubles your plan's monthly AI call limit for the rest of this calendar month, then resets automatically.
+          </p>
+          <p className={styles.cardPrice}>$40.00 one-off</p>
+          <>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => handleOneOffCheckout('ai_meter_extension', 'ai_meter_extension')}
+              disabled={!!busy}
+            >
+              {busy === 'ai_meter_extension' ? 'Processing…' : 'Buy Extension'}
+            </button>
+            {errors.ai_meter_extension && (
+              <p className={styles.cardError}>{errors.ai_meter_extension}</p>
+            )}
+          </>
         </div>
 
       </div>
