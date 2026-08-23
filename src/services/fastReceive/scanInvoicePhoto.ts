@@ -70,7 +70,7 @@ export async function scanInvoicePhoto(args: {
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (handleAiLimitError(json?.error?.details, venueId)) {
+    if (handleAiLimitError(json?.error?.details)) {
       // Alert shown; known papercut: caller's catch may surface a secondary error UI
       throw new Error(json?.error?.details?.message || 'AI limit reached');
     }
