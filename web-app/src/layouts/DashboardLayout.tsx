@@ -21,10 +21,12 @@ export type Page =
   | 'pos-mapping'
   | 'billing'
   | 'create-venue'
+  | 'stocktake-correction'
 
+type NavItem = { key: Page; label: string; icon: string; managerOnly?: boolean }
 type NavGroup = {
   label: string
-  items: { key: Page; label: string; icon: string }[]
+  items: NavItem[]
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -47,10 +49,11 @@ const NAV_GROUPS: NavGroup[] = [
       { key: 'import',    label: 'Import',    icon: '📥' },
       { key: 'invoices',  label: 'Invoices',  icon: '🧾' },
       { key: 'suppliers', label: 'Suppliers', icon: '🏢' },
-      { key: 'team',        label: 'Team',        icon: '👥' },
-      { key: 'account',     label: 'Account',        icon: '⚙️' },
-      { key: 'venue-setup', label: 'Venue Setup',    icon: '🏗️' },
-      { key: 'billing',     label: 'Billing & Plans', icon: '💳' },
+      { key: 'team',                label: 'Team',               icon: '👥' },
+      { key: 'account',             label: 'Account',            icon: '⚙️' },
+      { key: 'venue-setup',         label: 'Venue Setup',        icon: '🏗️' },
+      { key: 'billing',             label: 'Billing & Plans',    icon: '💳' },
+      { key: 'stocktake-correction', label: 'Fix Stocktake',     icon: '✏️', managerOnly: true },
     ],
   },
 ]
@@ -60,12 +63,14 @@ export default function DashboardLayout({
   activeVenueName,
   page,
   onNavigate,
+  canManage,
   children,
 }: {
   user: User
   activeVenueName: string | null
   page: Page
   onNavigate: (page: Page) => void
+  canManage?: boolean
   children: ReactNode
 }) {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -96,7 +101,7 @@ export default function DashboardLayout({
         {NAV_GROUPS.map((group) => (
           <div key={group.label} className={styles.navGroup}>
             <p className={styles.navGroupLabel}>{group.label}</p>
-            {group.items.map((item) => (
+            {group.items.filter((item) => !item.managerOnly || canManage).map((item) => (
               <button
                 key={item.key}
                 type="button"

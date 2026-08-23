@@ -29,6 +29,7 @@ import BillingPage from './pages/BillingPage'
 import RegisterPage from './pages/RegisterPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateVenuePage from './pages/CreateVenuePage'
+import StocktakeCorrectionPage from './pages/StocktakeCorrectionPage'
 import styles from './App.module.css'
 import { theme } from './theme'
 
@@ -57,6 +58,28 @@ function App() {
   // Separate primitive — avoids React bailing out on the same User object reference
   // after reload() mutates emailVerified in place (Object.is check would pass).
   const [emailVerified, setEmailVerified] = useState(false)
+  const [canManage, setCanManage] = useState(false)
+
+  useEffect(() => {
+    if (!activeVenue || !user) { setCanManage(false); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', activeVenue.id))
+        if (cancelled) return
+        if ((venueSnap.data() as any)?.ownerUid === user.uid) {
+          setCanManage(true); return
+        }
+        const memberSnap = await getDoc(doc(db, 'venues', activeVenue.id, 'members', user.uid))
+        if (cancelled) return
+        const r = (memberSnap.data() as any)?.role
+        setCanManage(r === 'owner' || r === 'manager')
+      } catch {
+        if (!cancelled) setCanManage(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeVenue?.id, user?.uid])
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -163,7 +186,7 @@ function App() {
     }
   }
 
-  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing']
+  const noVenuePages: Page[] = ['hostihealth', 'products', 'import', 'invoices', 'suppliers', 'reports', 'stock', 'orders', 'craftit', 'account', 'suitee', 'team', 'venue-setup', 'pos-mapping', 'billing', 'stocktake-correction']
 
   const isFestival = activeVenue?.venueType === 'festival'
 
@@ -212,6 +235,7 @@ function App() {
       activeVenueName={activeVenue?.name ?? null}
       page={page}
       onNavigate={setPage}
+      canManage={canManage}
     >
       {page === 'projects' && (
         <ProjectsPage user={user} activeVenueId={activeVenue?.id ?? null} onOpenVenue={openVenue} onCreateVenue={() => setPage('create-venue')} />
@@ -233,6 +257,9 @@ function App() {
       {page === 'stock'        && activeVenue && <StockPage venueId={activeVenue.id} />}
       {page === 'venue-setup'  && activeVenue && <VenueSetupPage venueId={activeVenue.id} />}
       {page === 'billing'      && activeVenue && <BillingPage venueId={activeVenue.id} user={user} billingReturnStatus={billingReturnStatus} onClearStatus={() => setBillingReturnStatus(null)} />}
+      {page === 'stocktake-correction' && activeVenue && user && (
+        <StocktakeCorrectionPage venueId={activeVenue.id} user={user} />
+      )}
       {page === 'pos-mapping'  && activeVenue && (
         <div style={{ padding: 32, maxWidth: 480 }}>
           <h2 style={{ fontFamily: theme.fontTitle, fontSize: 24, color: theme.navy, marginBottom: 8 }}>
