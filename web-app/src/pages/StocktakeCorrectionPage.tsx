@@ -383,6 +383,7 @@ export default function StocktakeCorrectionPage({
   const [items, setItems] = useState<SnapshotItem[]>([])
   const [itemsLoading, setItemsLoading] = useState(false)
   const [selectedItem, setSelectedItem] = useState<SnapshotItem | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const [newValue, setNewValue] = useState('')
   const [reason, setReason] = useState('')
@@ -424,6 +425,7 @@ export default function StocktakeCorrectionPage({
   function selectCycle(cycle: CycleRow) {
     setSelectedCycle(cycle)
     setSelectedItem(null)
+    setSearchQuery('')
     setNewValue('')
     setReason('')
     setPreview(null)
@@ -508,6 +510,7 @@ export default function StocktakeCorrectionPage({
     setSelectedDept(null)
     setSelectedCycle(null)
     setSelectedItem(null)
+    setSearchQuery('')
     setNewValue('')
     setReason('')
     setPreview(null)
@@ -515,6 +518,14 @@ export default function StocktakeCorrectionPage({
     setCommitError(null)
     setAuditId(null)
   }
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const filteredItems = items.filter((it) => {
+    if (!searchQuery.trim()) return true
+    const name = (it.name ?? it._rawName ?? '').toLowerCase()
+    return name.includes(searchQuery.toLowerCase().trim())
+  })
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -646,8 +657,32 @@ export default function StocktakeCorrectionPage({
                 No items found in this snapshot.
               </p>
             )}
+            {!itemsLoading && items.length > 0 && (
+              <input
+                type="text"
+                placeholder="Filter items…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: 8,
+                  fontFamily: theme.fontBody,
+                  fontSize: 15,
+                  color: theme.navy,
+                  marginBottom: 12,
+                  boxSizing: 'border-box',
+                }}
+              />
+            )}
+            {!itemsLoading && items.length > 0 && filteredItems.length === 0 && (
+              <p style={{ color: theme.slateMid, fontFamily: theme.fontBody, fontSize: 14 }}>
+                No items match your search.
+              </p>
+            )}
             <div style={{ maxHeight: 420, overflowY: 'auto' }}>
-              {items.map((it, i) => (
+              {filteredItems.map((it, i) => (
                 <button
                   key={i}
                   type="button"
