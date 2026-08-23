@@ -660,6 +660,10 @@ service cloud.firestore {
         allow write: if isVenueMember(venueId);
       }
 
+      match /stocktakeCorrections/{correctionId} {
+        allow read, write: if hasVenueRole(venueId, ['manager', 'owner']);
+      }
+
       // ------- Areas + Items (venue-level legacy) -------
       match /areas/{areaId} {
         allow read: if isVenueMember(venueId);
