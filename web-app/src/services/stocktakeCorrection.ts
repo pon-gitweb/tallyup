@@ -168,6 +168,51 @@ export async function findSnapshotItem(
   return { items, snapshotRef: ref }
 }
 
+// ---------------------------------------------------------------------------
+// Summary recomputation
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact port of snapshotWriter.ts lines 431-489 (summary-building block).
+ *
+ * hasPrices is derived from the items themselves — costPrice presence on each
+ * item does not change when correcting a quantity, so this is stable and needs
+ * no separate Firestore read.
+ *
+ * dataCompleteness is NOT recomputed here: all its fields (hasBaseline,
+ * hasInvoices, hasSales, pricedItemPercent) depend on invoice/sales records
+ * and item-count ratios that a quantity correction never touches.
+ */
+function computeSummary(items: SnapshotItem[]): Record<string, unknown> {
+  const pricedItems = items.filter((it) => it.costPrice != null)
+  const hasPrices = pricedItems.length > 0
+
+  const totalStockValue = hasPrices
+    ? pricedItems.reduce((s, it) => s + (it.actualClosing as number) * (it.costPrice as number), 0)
+    : null
+  const totalVarianceDollars = hasPrices
+    ? items.reduce((s, it) => s + ((it.totalVarianceDollars as number) ?? 0), 0)
+    : null
+  const unexplainedVarianceDollars = hasPrices
+    ? items.reduce((s, it) => s + ((it.unexplainedVarianceDollars as number) ?? 0), 0)
+    : null
+
+  return {
+    totalItemsCounted: items.length,
+    totalItemsWithVariance: items.filter((it) => (it.totalVarianceQty as number) !== 0).length,
+    totalStockValue,
+    totalVarianceQty: items.reduce((s, it) => s + (it.totalVarianceQty as number), 0),
+    totalVarianceDollars,
+    unexplainedVarianceQty: items.reduce((s, it) => s + (it.unexplainedVarianceQty as number), 0),
+    unexplainedVarianceDollars,
+    itemsBelowPAR: items.filter((it) => it.belowPAR).length,
+    itemsAtZero: items.filter((it) => it.actualClosing === 0).length,
+    itemsWithNoPrice: items.filter((it) => it.costPrice == null).length,
+    itemsWithPositiveVariance: items.filter((it) => (it.totalVarianceQty as number) > 0).length,
+    itemsWithNegativeVariance: items.filter((it) => (it.totalVarianceQty as number) < 0).length,
+  }
+}
+
 function normalise(name: string): string {
   return (name ?? '').toLowerCase().trim()
 }
@@ -285,9 +330,10 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
     ranToZero: afterN.ranToZero,
   }
 
+  const summaryN = computeSummary(updatedItemsN)
   const batch = writeBatch(db)
 
-  batch.update(snapN.snapshotRef, { items: updatedItemsN })
+  batch.update(snapN.snapshotRef, { items: updatedItemsN, summary: summaryN })
 
   // Check for downstream cycle and update its openingCount
   let downstreamUpdated = false
@@ -311,7 +357,8 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
         ranToZero: afterN1.ranToZero,
       }
 
-      batch.update(snapN1.snapshotRef, { items: updatedItemsN1 })
+      const summaryN1 = computeSummary(updatedItemsN1)
+      batch.update(snapN1.snapshotRef, { items: updatedItemsN1, summary: summaryN1 })
       downstreamUpdated = true
     }
   }

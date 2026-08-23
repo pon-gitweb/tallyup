@@ -450,10 +450,6 @@ export default function StocktakeCorrectionPage({
       setPreviewError('Please enter a valid non-negative number.')
       return
     }
-    if (parsed === (selectedItem.actualClosing as number)) {
-      setPreviewError('New value is the same as the current value — nothing to change.')
-      return
-    }
     if (!reason.trim()) {
       setPreviewError('Please provide a reason for this correction.')
       return
