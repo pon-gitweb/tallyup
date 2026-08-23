@@ -87,7 +87,7 @@ export async function fetchAiInsights(
 
   if (resp.status === 429) {
     const json = await resp.json().catch(() => ({}));
-    handleAiLimitError(json);
+    handleAiLimitError(json, venueId);
     return [];
   }
   if (!resp.ok) throw new Error(`AI insights HTTP ${resp.status}`);

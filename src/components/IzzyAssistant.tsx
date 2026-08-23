@@ -79,7 +79,7 @@ export default function IzzyAssistant() {
         }),
       }, 30000);
       const json = await resp.json().catch(() => ({}));
-      if (handleAiLimitError(json)) { setLoading(false); return; }
+      if (handleAiLimitError(json, venueId || undefined)) { setLoading(false); return; }
       const answer = json?.answer || "I'm having trouble right now. Please try again.";
       setMessages(prev => [...prev, { role: 'assistant', text: answer }]);
     } catch {

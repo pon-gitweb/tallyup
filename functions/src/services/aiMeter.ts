@@ -2,6 +2,19 @@ import * as admin from 'firebase-admin';
 
 // Keep in sync with src/screens/settings/AiUsageScreen.tsx PLAN_LIMITS
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Meter Extension — one-off $40 top-up
+//
+// AI_METER_EXTENSION_LOOKUP_KEY must match the lookup key of the one-off price
+// created in the Stripe dashboard. Create it before deploying the payment flow.
+//
+// The granted call quantity is NOT a fixed constant — it is resolved at
+// purchase time from the venue's own plan limit (resolveVenuePlan + PLAN_LIMITS),
+// so the extension doubles the venue's effective limit for the rest of the month
+// regardless of which tier they are on.
+// ─────────────────────────────────────────────────────────────────────────────
+export const AI_METER_EXTENSION_LOOKUP_KEY = 'ai_meter_extension';
+
 export type AiCallType =
   | 'invoice_ocr' | 'product_photo' | 'shelf_scan' | 'stocktake_photo'
   | 'sales_report' | 'izzy' | 'suitee' | 'ai_insights'
@@ -96,12 +109,14 @@ export async function trackAiCall(venueId: string, callType: AiCallType): Promis
 
   let aiUsed = 0;
   let featureUsedAfter = 0;
+  let extensionCallsPurchased = 0;
   let usageWarning: MeterState['usageWarning'] = null;
   try {
     const snap = await usageRef.get();
     const data = snap.data() || {};
     aiUsed = (data.totalCalls || 0) + 1;
     featureUsedAfter = (data.breakdown?.[callType] || 0) + 1;
+    extensionCallsPurchased = data.extensionCallsPurchased || 0;
 
     await usageRef.set({
       totalCalls: aiUsed,
@@ -129,10 +144,11 @@ export async function trackAiCall(venueId: string, callType: AiCallType): Promis
     aiUsed = 1;
   }
 
+  const effectiveTotalLimitTrack = totalLimit + extensionCallsPurchased;
   return {
     aiUsed,
-    aiRemaining: Math.max(0, totalLimit - aiUsed),
-    aiLimit: totalLimit,
+    aiRemaining: Math.max(0, effectiveTotalLimitTrack - aiUsed),
+    aiLimit: effectiveTotalLimitTrack,
     resetAt,
     plan: plan as MeterState['plan'],
     usageWarning,
@@ -152,25 +168,36 @@ export async function checkAiLimit(venueId: string, callType: AiCallType): Promi
 
   let aiUsed = 0;
   let featureUsed = 0;
+  let extensionCallsPurchased = 0;
   try {
     const snap = await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).get();
     const d = snap.data() || {};
     aiUsed = d.totalCalls || 0;
     featureUsed = d.breakdown?.[callType] || 0;
+    extensionCallsPurchased = d.extensionCallsPurchased || 0;
   } catch {}
 
+  // Extension top-up is additive to the plan's base limit for this month only.
+  // A new monthKey document in a new month carries no extensionCallsPurchased,
+  // so the top-up expires automatically — no separate expiry logic needed.
+  const effectiveTotalLimit = totalLimit + extensionCallsPurchased;
+
   const baseMeter: MeterState = {
-    aiUsed, aiRemaining: Math.max(0, totalLimit - aiUsed), aiLimit: totalLimit, resetAt, plan: plan as any,
+    aiUsed,
+    aiRemaining: Math.max(0, effectiveTotalLimit - aiUsed),
+    aiLimit: effectiveTotalLimit,
+    resetAt,
+    plan: plan as any,
   };
 
-  if (aiUsed >= totalLimit) {
+  if (aiUsed >= effectiveTotalLimit) {
     const resetDate = new Date(resetAt).toLocaleDateString('en-NZ', { day: 'numeric', month: 'long' });
     return {
       allowed: false, meter: { ...baseMeter, aiRemaining: 0 },
       limitError: {
-        error: 'limit_reached', feature: 'total', used: aiUsed, limit: totalLimit, plan,
-        resetsAt: resetAt, upgradeAvailable: plan !== 'core_plus',
-        message: `You've used all ${totalLimit} AI calls for this month. Resets on ${resetDate}.\n\nNeed more? Contact us at office@hosti.co.nz`,
+        error: 'limit_reached', feature: 'total', used: aiUsed, limit: effectiveTotalLimit, plan,
+        resetsAt: resetAt, upgradeAvailable: true,
+        message: `You've used all ${effectiveTotalLimit} AI calls for this month. Resets on ${resetDate}.\n\nNeed more? Contact us at office@hosti.co.nz`,
       },
     };
   }
@@ -180,7 +207,7 @@ export async function checkAiLimit(venueId: string, callType: AiCallType): Promi
       allowed: false, meter: baseMeter,
       limitError: {
         error: 'limit_reached', feature: callType, used: featureUsed, limit: featureLimit, plan,
-        resetsAt: resetAt, upgradeAvailable: plan !== 'core_plus',
+        resetsAt: resetAt, upgradeAvailable: true,
         message: buildLimitMessage(callType, featureUsed, featureLimit, resetAt),
       },
     };

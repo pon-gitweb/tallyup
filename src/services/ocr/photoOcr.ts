@@ -127,7 +127,7 @@ export async function runPhotoOcrJob({
   });
 
   if (!res.ok) {
-    if (handleAiLimitError(json?.error?.details)) return null;
+    if (handleAiLimitError(json?.error?.details, venueId)) return null;
     const errMsg =
       json?.error?.message || json?.message || `HTTP ${res.status}`;
     throw new Error(`OCR call failed: ${errMsg}`);

@@ -9,7 +9,7 @@ import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
-import { AiCallType, checkAiLimit, trackAiCall } from './services/aiMeter';
+import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
 
 const app = express();
@@ -1324,6 +1324,51 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
   }
 });
 
+// POST /stripe/create-one-off-checkout-session
+// Creates a Stripe Checkout session in mode:"payment" for one-off purchases
+// (e.g. AI Meter Extension). Stores the lookupKey in session metadata so the
+// checkout.session.completed webhook can identify the product without a
+// separate line-items API call.
+app.post("/stripe/create-one-off-checkout-session", async (req, res) => {
+  try {
+    const uid = await verifyToken(req);
+    if (!uid) { res.status(401).json({ ok: false, error: "Unauthorized" }); return; }
+    const { venueId, lookupKey, priceId, successUrl, cancelUrl } = req.body || {};
+    if (!venueId || (!priceId && !lookupKey) || !successUrl || !cancelUrl) {
+      res.status(400).json({ ok: false, error: "Missing venueId, successUrl, cancelUrl, and either priceId or lookupKey" });
+      return;
+    }
+    if (!stripe) { res.status(503).json({ error: "Billing not yet configured" }); return; }
+    let resolvedPriceId: string;
+    try {
+      resolvedPriceId = await resolvePriceId(stripe, priceId, lookupKey);
+    } catch (e: any) {
+      res.status(400).json({ ok: false, error: e?.message || "Invalid priceId or lookupKey" });
+      return;
+    }
+    const db = admin.firestore();
+    const venueSnap = await db.doc(`venues/${venueId}`).get();
+    const existingCustomerId: string | undefined = venueSnap.data()?.subscription?.stripeCustomerId;
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [{ price: resolvedPriceId, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: venueId,
+      ...(existingCustomerId ? { customer: existingCustomerId } : {}),
+      // Store lookupKey in metadata so the webhook can identify the product
+      // without an extra stripe.checkout.sessions.listLineItems() call.
+      metadata: { venueId, uid, lookupKey: lookupKey || "" },
+    });
+    console.log("[api/stripe/create-one-off-checkout-session] OK", { uid, venueId, lookupKey, sessionId: session.id });
+    res.json({ ok: true, sessionId: session.id, url: session.url });
+  } catch (e: any) {
+    console.error("[api/stripe/create-one-off-checkout-session] ERROR", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || "Checkout session creation failed" });
+  }
+});
+
 // POST /stripe/add-subscription-item
 // Adds a new price (module) to an existing active Stripe subscription, or updates its quantity
 // if it is already present. Enforces "Core required first" — returns 400 if no active
@@ -1442,7 +1487,27 @@ app.post("/stripe/webhook", async (req, res) => {
         }, { merge: true });
         console.log("[api/stripe/webhook] checkout.session.completed", { venueId });
       } else if (venueId && session.mode === "payment") {
-        console.log("[api/stripe/webhook] one-off payment completed (not yet processed)", { venueId, sessionId: session.id });
+        const purchasedLookupKey = (session.metadata as any)?.lookupKey;
+        if (purchasedLookupKey === AI_METER_EXTENSION_LOOKUP_KEY) {
+          const now = new Date();
+          const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          // Resolve the venue's effective plan at purchase time so the extension
+          // grants exactly one plan-limit's worth of extra calls — doubling that
+          // venue's effective total for the rest of the month, rather than a fixed
+          // number that over- or under-delivers depending on which tier they're on.
+          const { effectivePlan } = await resolveVenuePlan(db, venueId);
+          const extensionCalls = PLAN_LIMITS[effectivePlan]?.total ?? PLAN_LIMITS.beta.total;
+          // Increment — not overwrite — so a venue can buy multiple extensions in one month.
+          // A new monthKey each month means extensionCallsPurchased resets automatically
+          // without any separate expiry logic.
+          await db.doc(`venues/${venueId}/aiUsage/${monthKey}`).set({
+            extensionCallsPurchased: admin.firestore.FieldValue.increment(extensionCalls),
+            lastExtensionPurchasedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          console.log("[api/stripe/webhook] ai_meter_extension purchased", { venueId, effectivePlan, added: extensionCalls, monthKey });
+        } else {
+          console.log("[api/stripe/webhook] one-off payment completed (unrecognised lookup key)", { venueId, purchasedLookupKey, sessionId: session.id });
+        }
       }
     } else if (event.type === "customer.subscription.updated") {
       const sub = event.data.object as any;

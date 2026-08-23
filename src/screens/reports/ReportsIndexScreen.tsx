@@ -393,7 +393,7 @@ export default function ReportsIndexScreen() {
         body: JSON.stringify({ question: text, venueId, history: suiteeMessages }),
       }, 30000);
       const json = await resp.json().catch(() => ({}));
-      if (handleAiLimitError(json)) { setSuiteeLoading(false); return; }
+      if (handleAiLimitError(json, venueId || undefined)) { setSuiteeLoading(false); return; }
       const answer = json?.answer || "I'm having trouble accessing your data right now. Please try again.";
       setSuiteeMessages([...newMessages, { role: 'assistant', text: answer }]);
     } catch {
