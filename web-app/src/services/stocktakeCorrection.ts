@@ -257,8 +257,8 @@ function computeSummary(
     itemsWithNoPrice: items.filter((it) => it.costPrice == null).length,
     itemsWithPositiveVariance: items.filter((it) => (it.totalVarianceQty as number) > 0).length,
     itemsWithNegativeVariance: items.filter((it) => (it.totalVarianceQty as number) < 0).length,
-    // Phase 1 display-tier fields — count/backfill carried forward; dollar aggregates recomputed
-    itemsPricedByInvoice: existingSummary.itemsPricedByInvoice ?? 0,
+    // Phase 1 display-tier fields — count derived fresh from items (self-healing); backfill flag carried forward
+    itemsPricedByInvoice: items.filter((it) => it.costPriceTier === 'invoice_verified').length,
     displayTotalStockValue,
     displayTotalVarianceDollars,
     displayUnexplainedVarianceDollars,
