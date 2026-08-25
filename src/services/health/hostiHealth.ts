@@ -191,15 +191,30 @@ async function calculateFullScore(
       ));
       if (snapsSnap.empty) continue;
       const snap = snapsSnap.docs[0].data() as any;
-      if (snap?.dataCompleteness?.hasPrices) {
+      // Widen hasPrices gate: snapshots with display-only pricing (invoice-verified items,
+      // no stamped costPrice) also contribute to Stock Accuracy and stock value totals.
+      if (snap?.dataCompleteness?.hasPrices || (snap.summary?.displayTotalStockValue ?? 0) > 0) {
         anyHasPrices = true;
-        // Sum absolute variance — shortages and excesses both count, don't cancel
-        sumVariance += Math.abs(snap.summary?.totalVarianceDollars ?? 0);
-        sumStockValue += snap.summary?.totalStockValue ?? 0;
+        // Sum absolute variance — shortages and excesses both count, don't cancel.
+        // Prefer display-tier dollars (stamped + invoice-verified); fall back to stamped-only
+        // for pre-Phase-1 snapshots that don't carry the display fields.
+        sumVariance += Math.abs((snap.summary?.displayTotalVarianceDollars ?? snap.summary?.totalVarianceDollars) ?? 0);
+        sumStockValue += (snap.summary?.displayTotalStockValue ?? snap.summary?.totalStockValue) ?? 0;
       }
       // pricedItemPercent is stored 0–100 on the snapshot; average across depts for confidence.
+      // For Phase 1+ snapshots, augment stamped-price coverage with invoice-verified items
+      // (costPriceTier 'invoice_verified'). Pre-Phase-1 snapshots have itemsPricedByInvoice
+      // undefined → invoiceVerifiedCount = 0 → displayPct = stampedPct (no change).
       if (typeof snap?.dataCompleteness?.pricedItemPercent === 'number') {
-        pricedItemPercentSum += snap.dataCompleteness.pricedItemPercent;
+        const stampedPct = snap.dataCompleteness.pricedItemPercent;
+        const invoiceVerifiedCount = typeof snap.summary?.itemsPricedByInvoice === 'number'
+          ? snap.summary.itemsPricedByInvoice : 0;
+        const totalCounted = typeof snap.summary?.totalItemsCounted === 'number'
+          ? snap.summary.totalItemsCounted : 0;
+        const displayPct = totalCounted > 0
+          ? Math.min(100, stampedPct + (invoiceVerifiedCount / totalCounted) * 100)
+          : stampedPct;
+        pricedItemPercentSum += displayPct;
         pricedItemPercentCount++;
       }
     }
@@ -238,13 +253,17 @@ async function calculateFullScore(
       if (!latestSnap) continue;
       const snapData = latestSnap.data() as any;
       for (const item of (snapData.items || [])) {
-        if (item.totalVarianceDollars == null) continue;
-        if (item.totalVarianceDollars === 0) continue;
+        // Prefer display-tier dollars (stamped + invoice-verified) so that items with no
+        // stamped price but a matched invoice line are visible in the Pareto list.
+        // Falls back to totalVarianceDollars for pre-Phase-1 snapshots.
+        const displayVarianceDollars = item.displayTotalVarianceDollars ?? item.totalVarianceDollars;
+        if (displayVarianceDollars == null) continue;
+        if (displayVarianceDollars === 0) continue;
         allVarianceItems.push({
           name: item.name || 'Unknown product',
           areaName: item.areaName || null,
           categoryName: item.categoryName || null,
-          varianceDollars: item.totalVarianceDollars,
+          varianceDollars: displayVarianceDollars,
           varianceQty: item.totalVarianceQty ?? 0,
         });
       }
@@ -359,7 +378,7 @@ async function calculateFullScore(
         );
         if (prevSnap.exists()) {
           const prev = prevSnap.data() as any;
-          prevCycleStockValue = (prevCycleStockValue ?? 0) + (prev.summary?.totalStockValue ?? 0);
+          prevCycleStockValue = (prevCycleStockValue ?? 0) + ((prev.summary?.displayTotalStockValue ?? prev.summary?.totalStockValue) ?? 0);
         }
       }
     }
@@ -581,7 +600,9 @@ async function calculateFullScore(
         (snapData.items || []).forEach((item: any) => {
           const name = (item.name || '').toLowerCase().trim();
           const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
-          const costPrice = item.costPrice ?? 0;
+          // Prefer display-tier cost price (stamped or invoice-verified); fall back for
+          // pre-Phase-1 snapshots that don't carry displayCostPrice.
+          const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
           const soldUnits = salesByName[name] || 0;
           const stockVal = Math.abs(varianceUnits) * costPrice;
           totalStockVal += stockVal;
@@ -626,7 +647,9 @@ async function calculateFullScore(
               const key = (item.name || item.productId || '').toLowerCase().trim();
               if (!key) return;
               const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
-              const costPrice = item.costPrice ?? 0;
+              // Prefer display-tier cost price (stamped or invoice-verified); fall back for
+              // pre-Phase-1 snapshots that don't carry displayCostPrice.
+              const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
               if (!productCycleMap[key]) productCycleMap[key] = { negative: 0, total: 0, dollarImpact: 0 };
               productCycleMap[key].total++;
               if (varianceUnits < 0) {
@@ -732,7 +755,8 @@ async function calculateFullScore(
       );
       if (!prevCycleSnap.exists()) continue;
       const prevCycleData = prevCycleSnap.data() as any;
-      const prevVariance = prevCycleData?.summary?.totalVarianceDollars;
+      // Prefer display-tier variance dollars; fall back for pre-Phase-1 snapshots.
+      const prevVariance = prevCycleData?.summary?.displayTotalVarianceDollars ?? prevCycleData?.summary?.totalVarianceDollars;
       if (typeof prevVariance === 'number') {
         prevCycleVarianceSum += Math.abs(prevVariance);
         prevCycleFound = true;
