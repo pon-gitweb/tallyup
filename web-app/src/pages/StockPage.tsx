@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { db } from '../firebase'
+import { resolveProduct, ProdEntry } from '../services/products/resolveProduct'
 import styles from './StockPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -94,10 +95,19 @@ export default function StockPage({ venueId }: { venueId: string }) {
       // Products: costPrice fallback + unplaced section (baselinePending === true)
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'))
       const productMap = new Map<string, any>()
+      // prodById mirrors productMap but typed for resolveProduct's chain-walker
+      const prodById: Record<string, ProdEntry> = {}
       const unplacedList: UnplacedRow[] = []
       productsSnap.docs.forEach(d => {
         const data = d.data() as any
         productMap.set(d.id, data)
+        prodById[d.id] = {
+          name: (data.name ?? '').trim(),
+          category: data.category ?? data.categorySuggested ?? 'Uncategorised',
+          costPrice: typeof data.costPrice === 'number' ? data.costPrice : undefined,
+          active: typeof data.active === 'boolean' ? data.active : undefined,
+          mergedInto: data.mergedInto ?? null,
+        }
         if (data.baselinePending === true) {
           const bc = typeof data.baselineCount === 'number' ? data.baselineCount : 0
           const cp = typeof data.costPrice === 'number' ? data.costPrice : null
@@ -143,8 +153,15 @@ export default function StockPage({ venueId }: { venueId: string }) {
               itemsSnap.docs.forEach(d => {
                 const item = d.data() as any
                 if (typeof item.lastCount !== 'number') return
-                const key = item.productId || `name:${(item.name || '').toLowerCase()}`
-                const prod = item.productId ? productMap.get(item.productId) : null
+                // Resolve through the mergedInto chain — fixes same-area-conflict items
+                // that are deliberately left un-re-pointed; without this they would use
+                // the inactive product's id as their key and split into a separate row
+                // instead of merging into the survivor's line.
+                const resolved = item.productId ? resolveProduct(item.productId, prodById) : null
+                const resolvedId = resolved?.id ?? item.productId ?? null
+                const key = resolvedId ? resolvedId : `name:${(item.name || '').toLowerCase()}`
+                // Look up the survivor's full product doc for costPrice/category/supplierName
+                const prod = resolvedId ? productMap.get(resolvedId) : null
                 const costPrice =
                   typeof item.costPrice === 'number' ? item.costPrice
                   : prod && typeof prod.costPrice === 'number' ? prod.costPrice
