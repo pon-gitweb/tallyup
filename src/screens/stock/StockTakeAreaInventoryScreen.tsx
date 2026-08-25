@@ -2152,13 +2152,43 @@ const qty = parseFloat(typed);
     if (!venueId) return;
     setMoveBusy(true);
     try {
-      const snap = await getDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', item.id));
+      const sourceRef = doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', item.id);
+      const snap = await getDoc(sourceRef);
       if (!snap.exists()) throw new Error('Item no longer exists.');
-      await addDoc(
-        collection(db, 'venues', venueId, 'departments', targetDeptId, 'areas', targetAreaId, 'items'),
-        { ...snap.data(), updatedAt: serverTimestamp() },
-      );
-      await deleteDoc(doc(db, 'venues', venueId, 'departments', departmentId, 'areas', areaId, 'items', item.id));
+      const d = snap.data() as Record<string, any>;
+
+      // Curated payload — carries item identity and count history across the move.
+      // Area-specific state (mergeConflictPending, variance*, flagRecount, active)
+      // is explicitly excluded: it belongs to the area being left, not the item itself.
+      const payload: Record<string, any> = {
+        name: d.name,
+        createdAt: d.createdAt ?? serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      const carry = [
+        'unit','supplierName','supplierId',
+        'productId','productName',
+        'category','brand','size',
+        'inductionStatus','inductionSource',
+        'countingUnit','caseSize',
+        'lastCount','lastCountAt','lastCountBy','lastCountByName',
+        'barcode','barcodeNumber',
+      ] as const;
+      for (const key of carry) {
+        if (key in d && d[key] !== undefined) payload[key] = d[key];
+      }
+      // Excluded (not in carry, not copied): mergeConflictPending, mergeConflictSurvivorId,
+      // varianceAccepted, varianceAcceptedBy, varianceAcceptedAt,
+      // varianceFlagged, varianceFlaggedBy, varianceFlaggedAt,
+      // flagRecount, active — confirmed absent from payload.
+
+      // Atomic batch: create in target + delete from source, or neither.
+      const targetRef = doc(collection(db, 'venues', venueId, 'departments', targetDeptId, 'areas', targetAreaId, 'items'));
+      const batch = writeBatch(db);
+      batch.set(targetRef, payload);
+      batch.delete(sourceRef);
+      await batch.commit();
+
       setDeleteOrMoveItem(null);
       showSuccess(`Moved to ${targetAreaName}`);
     } catch (e: any) {

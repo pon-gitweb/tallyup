@@ -572,7 +572,7 @@ service cloud.firestore {
                 && request.resource.data.lastCount is number;
             }
 
-            allow create: if hasVenueRole(venueId, ['manager','owner'])
+            allow create: if isVenueMember(venueId)
               && (
                 (
                   hasOnlyFields(request.resource.data, [
@@ -631,7 +631,7 @@ service cloud.firestore {
               && request.resource.data.diff(resource.data).affectedKeys()
                    .hasOnly(['lastCount', 'lastCountAt', 'incomingQty', 'soldQty', 'enrichedAt']);
 
-            allow delete: if isVenueMember(venueId) && areaOpen();
+            allow delete: if hasVenueRole(venueId, ['manager','owner']) && areaOpen();
           }
         }
 
