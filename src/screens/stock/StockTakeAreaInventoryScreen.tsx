@@ -3113,38 +3113,22 @@ const openHistory = throttleAction(async (item: Item) => {
     const _cu = getAuth().currentUser;
 
     let venueProductId: string | null = null;
+    let productLinkFailed = false;
     try {
-      const normName = displayName.toLowerCase().trim();
-      const existingSnap = await getDocs(
-        query(
-          collection(db, 'venues', venueId!, 'products'),
-          where('name', '>=', displayName),
-          where('name', '<=', displayName + ''),
-          limit(5)
-        )
-      );
-      const existing = existingSnap.docs.find(d => {
-        const pName = ((d.data() as any).name || '').toLowerCase().trim();
-        return pName === normName || pName.includes(normName) || normName.includes(pName);
+      const result = await quickAddProduct({
+        venueId,
+        name: displayName,
+        unit: product.unit || null,
+        size: (product as any).size || null,
+        barcode: barcode || null,
+        category: (product as any).category || null,
+        brand: (product as any).brand || null,
+        existingProducts: venueProductsRef.current,
+        venueCountry,
       });
-      if (existing) {
-        venueProductId = existing.id;
-        console.log('[QuickAdd] reusing existing product:', existing.id, displayName);
-      } else {
-        const prodRef = await addDoc(collection(db, 'venues', venueId!, 'products'), {
-          name: displayName,
-          brand: (product as any).brand || null,
-          size: (product as any).size || null,
-          category: (product as any).category || null,
-          unit: product.unit || null,
-          barcode: barcode,
-          barcodeNumber: barcode,
-          inductionSource: 'product-photo',
-          inductionStatus: 'pending',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        venueProductId = prodRef.id;
+      venueProductId = result.productId;
+      if (result.isNew && result.productPayload) {
+        setVenueProducts(prev => [...prev, result.productPayload]);
       }
     } catch (e: any) {
       console.warn('[ProductPhoto] venue product dedup failed (non-fatal):', {
@@ -3155,6 +3139,7 @@ const openHistory = throttleAction(async (item: Item) => {
       });
       captureError(e, 'handleProductPhotoConfirm:venueProductWrite');
       showError("Product couldn't be linked to its barcode — the count has been saved. Re-scan or add it manually from the Products list if needed.");
+      productLinkFailed = true;
     }
 
     await addDoc(
@@ -3173,6 +3158,7 @@ const openHistory = throttleAction(async (item: Item) => {
         lastCountAt: serverTimestamp(),
         lastCountBy: _cu?.uid ?? 'unknown',
         lastCountByName: _cu?.displayName || 'Unknown',
+        ...(productLinkFailed ? { productLinkFailed: true } : {}),
       }
     );
   };

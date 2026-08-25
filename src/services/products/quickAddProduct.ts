@@ -14,6 +14,8 @@ export type QuickAddProductParams = {
   barcode?: string | null;
   /** Invoice unit price, persisted as costPrice when creating a new product. */
   costPrice?: number | null;
+  category?: string | null;
+  brand?: string | null;
   /**
    * Existing venue products to match against.
    * Pass this when the caller already holds the list to avoid a redundant read.
@@ -68,7 +70,7 @@ export type QuickAddProductResult = {
 export async function quickAddProduct(
   params: QuickAddProductParams,
 ): Promise<QuickAddProductResult> {
-  const { venueId, name, unit, size, supplierName, barcode, costPrice, existingProducts, venueCountry } = params;
+  const { venueId, name, unit, size, supplierName, barcode, costPrice, existingProducts, venueCountry, category, brand } = params;
 
   // Resolve product list — use caller-supplied list to avoid a redundant read.
   let products: VenueProduct[];
@@ -97,6 +99,8 @@ export async function quickAddProduct(
     gstPercent: venueCountry === 'AU' ? 10 : 15,
     ...(barcode ? { barcode, barcodeNumber: barcode } : {}),
     ...(costPrice != null && Number.isFinite(costPrice) ? { costPrice } : {}),
+    ...(category ? { category } : {}),
+    ...(brand ? { brand } : {}),
     createdAt: nowTs,
     updatedAt: nowTs,
   };
@@ -148,6 +152,8 @@ export async function quickAddProduct(
     size: size || null,
     ...(barcode ? { barcode, barcodeNumber: barcode } : {}),
     ...(costPrice != null && Number.isFinite(costPrice) ? { costPrice } : {}),
+    ...(category ? { category } : {}),
+    ...(brand ? { brand } : {}),
   };
 
   return { productId: newProdRef.id, isNew: true, productPayload };
