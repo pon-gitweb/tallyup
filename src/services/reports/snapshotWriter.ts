@@ -172,6 +172,27 @@ export function computeSnapshotItemFigures(
       ? si.unexplainedVarianceQty * si.costPrice : null;
   }
 
+  // STEP A3 — Pricing tier classification
+  // Tier 1 'stamped': item carries its own costPrice (from stocktake entry or product stamp).
+  // Tier 2 'invoice_verified': no stamped costPrice but _invoiceUnitCost matched this cycle.
+  // 'none': neither. Never falls back to a product's current price.
+  for (const si of snapshotItems) {
+    if (si.costPrice != null) {
+      si.costPriceTier = 'stamped';
+      si.displayCostPrice = si.costPrice;
+    } else if (si._invoiceUnitCost != null) {
+      si.costPriceTier = 'invoice_verified';
+      si.displayCostPrice = si._invoiceUnitCost;
+    } else {
+      si.costPriceTier = 'none';
+      si.displayCostPrice = null;
+    }
+    si.displayTotalVarianceDollars = si.displayCostPrice != null
+      ? si.totalVarianceQty * si.displayCostPrice : null;
+    si.displayUnexplainedVarianceDollars = si.displayCostPrice != null
+      ? si.unexplainedVarianceQty * si.displayCostPrice : null;
+  }
+
   // STEP B — Missing invoice detection + unexplained loss
   const likelyMissingInvoices: any[] = [];
   for (const si of snapshotItems) {
@@ -486,6 +507,17 @@ export async function writeDepartmentSnapshot(
       itemsWithNoPrice: snapshotItems.filter(si => si.costPrice == null).length,
       itemsWithPositiveVariance: snapshotItems.filter(si => si.totalVarianceQty > 0).length,
       itemsWithNegativeVariance: snapshotItems.filter(si => si.totalVarianceQty < 0).length,
+      itemsPricedByInvoice: snapshotItems.filter(si => si.costPriceTier === 'invoice_verified').length,
+      displayTotalStockValue: snapshotItems.some(si => si.displayCostPrice != null)
+        ? snapshotItems.reduce((s, si) => s + (si.displayCostPrice != null ? si.actualClosing * si.displayCostPrice : 0), 0)
+        : null,
+      displayTotalVarianceDollars: snapshotItems.some(si => si.displayCostPrice != null)
+        ? snapshotItems.reduce((s, si) => s + (si.displayTotalVarianceDollars ?? 0), 0)
+        : null,
+      displayUnexplainedVarianceDollars: snapshotItems.some(si => si.displayCostPrice != null)
+        ? snapshotItems.reduce((s, si) => s + (si.displayUnexplainedVarianceDollars ?? 0), 0)
+        : null,
+      pricingBackfillAppliedAt: null,
     };
 
     // Clean internal helpers from items before writing
