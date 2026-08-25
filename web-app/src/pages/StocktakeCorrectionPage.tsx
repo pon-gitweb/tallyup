@@ -234,10 +234,10 @@ function PreviewTable({ preview }: { preview: CorrectionPreview }) {
                 highlight
               />
               <PreviewRow
-                label="Total Variance $"
-                before={line.before.totalVarianceDollars != null ? `$${fmt(line.before.totalVarianceDollars)}` : '—'}
-                after={line.after.totalVarianceDollars != null ? `$${fmt(line.after.totalVarianceDollars)}` : '—'}
-                changed={line.before.totalVarianceDollars !== line.after.totalVarianceDollars}
+                label={`Total Variance $${line.after.costPriceTier === 'invoice_verified' ? ' 📄' : ''}`}
+                before={(line.before.displayTotalVarianceDollars ?? line.before.totalVarianceDollars) != null ? `$${fmt(line.before.displayTotalVarianceDollars ?? line.before.totalVarianceDollars)}` : '—'}
+                after={(line.after.displayTotalVarianceDollars ?? line.after.totalVarianceDollars) != null ? `$${fmt(line.after.displayTotalVarianceDollars ?? line.after.totalVarianceDollars)}` : '—'}
+                changed={(line.before.displayTotalVarianceDollars ?? line.before.totalVarianceDollars) !== (line.after.displayTotalVarianceDollars ?? line.after.totalVarianceDollars)}
                 highlight
               />
               <PreviewRow
@@ -248,10 +248,10 @@ function PreviewTable({ preview }: { preview: CorrectionPreview }) {
                 highlight
               />
               <PreviewRow
-                label="Unexplained Variance $"
-                before={line.before.unexplainedVarianceDollars != null ? `$${fmt(line.before.unexplainedVarianceDollars)}` : '—'}
-                after={line.after.unexplainedVarianceDollars != null ? `$${fmt(line.after.unexplainedVarianceDollars)}` : '—'}
-                changed={line.before.unexplainedVarianceDollars !== line.after.unexplainedVarianceDollars}
+                label={`Unexplained Variance $${line.after.costPriceTier === 'invoice_verified' ? ' 📄' : ''}`}
+                before={(line.before.displayUnexplainedVarianceDollars ?? line.before.unexplainedVarianceDollars) != null ? `$${fmt(line.before.displayUnexplainedVarianceDollars ?? line.before.unexplainedVarianceDollars)}` : '—'}
+                after={(line.after.displayUnexplainedVarianceDollars ?? line.after.unexplainedVarianceDollars) != null ? `$${fmt(line.after.displayUnexplainedVarianceDollars ?? line.after.unexplainedVarianceDollars)}` : '—'}
+                changed={(line.before.displayUnexplainedVarianceDollars ?? line.before.unexplainedVarianceDollars) !== (line.after.displayUnexplainedVarianceDollars ?? line.after.unexplainedVarianceDollars)}
                 highlight
               />
               <PreviewRow
@@ -724,7 +724,7 @@ export default function StocktakeCorrectionPage({
                     }}
                   >
                     {it.actualClosing != null ? `${fmtQty(it.actualClosing)} on hand` : '—'}
-                    {it.costPrice != null ? ` · $${fmt(it.costPrice)}/unit` : ''}
+                    {(it.displayCostPrice ?? it.costPrice) != null ? ` · $${fmt(it.displayCostPrice ?? it.costPrice)}/unit${it.costPriceTier === 'invoice_verified' ? ' 📄' : ''}` : ''}
                   </span>
                 </button>
               ))}

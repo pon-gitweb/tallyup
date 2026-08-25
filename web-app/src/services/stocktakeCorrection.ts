@@ -47,6 +47,11 @@ export interface RecalcResult {
   unexplainedVarianceDollars: number | null
   belowPAR: boolean
   ranToZero: boolean
+  // Phase W1 — display-tier fields (carried forward from item, dollar amounts recomputed)
+  costPriceTier: 'stamped' | 'invoice_verified' | 'none'
+  displayCostPrice: number | null
+  displayTotalVarianceDollars: number | null
+  displayUnexplainedVarianceDollars: number | null
 }
 
 export interface PreviewLine {
@@ -87,10 +92,17 @@ export function recalculateItem(
   const receivedQty: number = (item.receivedQty as number) || 0
   const soldQty: number | null = (item.soldQty as number | null) ?? null
 
+  // Pricing-tier evidence is not affected by a quantity correction — carry forward as-is
+  const costPriceTier: 'stamped' | 'invoice_verified' | 'none' =
+    (item.costPriceTier as 'stamped' | 'invoice_verified' | 'none') ?? 'none'
+  const displayCostPrice: number | null = (item.displayCostPrice as number | null) ?? null
+
   // ── Base figures (snapshotWriter lines 76-108) ──────────────────────────
   const totalVarianceQty = actualClosing - (openingCount ?? 0)
   const totalVarianceDollars =
     costPrice != null ? totalVarianceQty * costPrice : null
+  const displayTotalVarianceDollars =
+    displayCostPrice != null ? totalVarianceQty * displayCostPrice : null
 
   const belowPAR = parLevel != null ? actualClosing < parLevel : false
   const ranToZero = actualClosing === 0 && (openingCount ?? 0) > 0
@@ -100,12 +112,15 @@ export function recalculateItem(
   let expectedClosing: number | null = null
   let unexplainedVarianceQty = totalVarianceQty
   let unexplainedVarianceDollars = totalVarianceDollars
+  let displayUnexplainedVarianceDollars: number | null = null
 
   if (openingCount != null) {
     expectedClosing = openingCount + receivedQty - (soldQty ?? 0)
     unexplainedVarianceQty = actualClosing - expectedClosing
     unexplainedVarianceDollars =
       costPrice != null ? unexplainedVarianceQty * costPrice : null
+    displayUnexplainedVarianceDollars =
+      displayCostPrice != null ? unexplainedVarianceQty * displayCostPrice : null
   }
 
   return {
@@ -116,6 +131,10 @@ export function recalculateItem(
     unexplainedVarianceDollars,
     belowPAR,
     ranToZero,
+    costPriceTier,
+    displayCostPrice,
+    displayTotalVarianceDollars,
+    displayUnexplainedVarianceDollars,
   }
 }
 
@@ -150,12 +169,12 @@ export async function listCycles(
   return rows.sort((a, b) => a.cycleNumber - b.cycleNumber)
 }
 
-/** Returns the item and its index inside the `items` array, or null if not found. */
+/** Returns items, the snapshot ref, and the existing summary (for preserving display-tier fields). */
 export async function findSnapshotItem(
   venueId: string,
   departmentId: string,
   cycleNumber: number,
-): Promise<{ items: SnapshotItem[]; snapshotRef: ReturnType<typeof doc> } | null> {
+): Promise<{ items: SnapshotItem[]; snapshotRef: ReturnType<typeof doc>; summary: Record<string, unknown> } | null> {
   const ref = doc(
     db,
     'venues', venueId,
@@ -164,8 +183,10 @@ export async function findSnapshotItem(
   )
   const snap = await getDoc(ref)
   if (!snap.exists()) return null
-  const items: SnapshotItem[] = (snap.data() as any).items ?? []
-  return { items, snapshotRef: ref }
+  const data = snap.data() as any
+  const items: SnapshotItem[] = data.items ?? []
+  const summary: Record<string, unknown> = data.summary ?? {}
+  return { items, snapshotRef: ref, summary }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +203,16 @@ export async function findSnapshotItem(
  * dataCompleteness is NOT recomputed here: all its fields (hasBaseline,
  * hasInvoices, hasSales, pricedItemPercent) depend on invoice/sales records
  * and item-count ratios that a quantity correction never touches.
+ *
+ * existingSummary is passed through so that Phase 1 display-tier fields
+ * (pricingBackfillAppliedAt, itemsPricedByInvoice) are preserved — without
+ * this, batch.update(ref, { summary }) replaces the whole map and silently
+ * drops them on every snapshot a correction touches.
  */
-function computeSummary(items: SnapshotItem[]): Record<string, unknown> {
+function computeSummary(
+  items: SnapshotItem[],
+  existingSummary: Record<string, unknown> = {},
+): Record<string, unknown> {
   const pricedItems = items.filter((it) => it.costPrice != null)
   const hasPrices = pricedItems.length > 0
 
@@ -195,6 +224,24 @@ function computeSummary(items: SnapshotItem[]): Record<string, unknown> {
     : null
   const unexplainedVarianceDollars = hasPrices
     ? items.reduce((s, it) => s + ((it.unexplainedVarianceDollars as number) ?? 0), 0)
+    : null
+
+  // Display-tier summary — recomputed from corrected item figures
+  const displayPricedItems = items.filter((it) => it.displayCostPrice != null)
+  const hasDisplayPrices = displayPricedItems.length > 0
+
+  const displayTotalStockValue = hasDisplayPrices
+    ? items.reduce(
+        (s, it) =>
+          s + (it.displayCostPrice != null ? (it.actualClosing as number) * (it.displayCostPrice as number) : 0),
+        0,
+      )
+    : null
+  const displayTotalVarianceDollars = hasDisplayPrices
+    ? items.reduce((s, it) => s + ((it.displayTotalVarianceDollars as number) ?? 0), 0)
+    : null
+  const displayUnexplainedVarianceDollars = hasDisplayPrices
+    ? items.reduce((s, it) => s + ((it.displayUnexplainedVarianceDollars as number) ?? 0), 0)
     : null
 
   return {
@@ -210,6 +257,12 @@ function computeSummary(items: SnapshotItem[]): Record<string, unknown> {
     itemsWithNoPrice: items.filter((it) => it.costPrice == null).length,
     itemsWithPositiveVariance: items.filter((it) => (it.totalVarianceQty as number) > 0).length,
     itemsWithNegativeVariance: items.filter((it) => (it.totalVarianceQty as number) < 0).length,
+    // Phase 1 display-tier fields — count/backfill carried forward; dollar aggregates recomputed
+    itemsPricedByInvoice: existingSummary.itemsPricedByInvoice ?? 0,
+    displayTotalStockValue,
+    displayTotalVarianceDollars,
+    displayUnexplainedVarianceDollars,
+    pricingBackfillAppliedAt: existingSummary.pricingBackfillAppliedAt ?? null,
   }
 }
 
@@ -328,9 +381,12 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
     unexplainedVarianceDollars: afterN.unexplainedVarianceDollars,
     belowPAR: afterN.belowPAR,
     ranToZero: afterN.ranToZero,
+    // Display-tier dollar figures recomputed against corrected qty; tier + displayCostPrice unchanged
+    displayTotalVarianceDollars: afterN.displayTotalVarianceDollars,
+    displayUnexplainedVarianceDollars: afterN.displayUnexplainedVarianceDollars,
   }
 
-  const summaryN = computeSummary(updatedItemsN)
+  const summaryN = computeSummary(updatedItemsN, snapN.summary)
   const batch = writeBatch(db)
 
   batch.update(snapN.snapshotRef, { items: updatedItemsN, summary: summaryN })
@@ -355,9 +411,11 @@ export async function commitCorrection(args: CommitCorrectionArgs): Promise<stri
         unexplainedVarianceDollars: afterN1.unexplainedVarianceDollars,
         belowPAR: afterN1.belowPAR,
         ranToZero: afterN1.ranToZero,
+        displayTotalVarianceDollars: afterN1.displayTotalVarianceDollars,
+        displayUnexplainedVarianceDollars: afterN1.displayUnexplainedVarianceDollars,
       }
 
-      const summaryN1 = computeSummary(updatedItemsN1)
+      const summaryN1 = computeSummary(updatedItemsN1, snapN1.summary)
       batch.update(snapN1.snapshotRef, { items: updatedItemsN1, summary: summaryN1 })
       downstreamUpdated = true
     }
