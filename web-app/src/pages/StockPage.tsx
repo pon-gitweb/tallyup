@@ -177,7 +177,7 @@ export default function StockPage({ venueId }: { venueId: string }) {
                 } else {
                   agg.set(key, {
                     id: key,
-                    name: item.name || '',
+                    name: prod?.name || item.name || '',
                     category: item.category ?? prod?.category ?? null,
                     supplierName: item.supplierName ?? prod?.supplierName ?? null,
                     onHand: item.lastCount,
