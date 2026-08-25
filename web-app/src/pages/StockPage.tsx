@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { db } from '../firebase'
-import { resolveProduct, ProdEntry } from '../services/products/resolveProduct'
+import { resolveProduct } from '../services/products/resolveProduct'
+import type { ProdEntry } from '../services/products/resolveProduct'
 import styles from './StockPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────

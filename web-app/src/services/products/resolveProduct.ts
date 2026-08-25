@@ -1,4 +1,4 @@
-import { QuerySnapshot, DocumentData } from 'firebase/firestore';
+import { type QuerySnapshot, type DocumentData } from 'firebase/firestore';
 
 /**
  * Shape of a venue product entry used for merge-chain resolution and
