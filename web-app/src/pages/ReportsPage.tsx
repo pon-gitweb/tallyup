@@ -23,8 +23,11 @@ type VarianceRow = {
   expectedQty: number | null
   actualQty: number
   varianceUnits: number
-  varianceDollars: number | null
+  varianceDollars: number | null          // original — kept intact for backward compat
   costPrice: number | null
+  // Phase W2 — display-tier additions
+  displayVarianceDollars: number | null   // display-preferred; used in chart, sort, table, CSV
+  costPriceTier: 'stamped' | 'invoice_verified' | 'none'
 }
 
 type CycleRow = {
@@ -33,8 +36,8 @@ type CycleRow = {
   cycleNumber: number
   completedAt: Date | null
   itemsCounted: number
-  totalStockValue: number | null
-  totalVarianceDollars: number | null
+  totalStockValue: number | null          // loaded as display ?? original at source (Phase W2)
+  totalVarianceDollars: number | null     // loaded as display ?? original at source (Phase W2)
   durationMinutes: number | null
 }
 
@@ -58,6 +61,11 @@ type DeptSummary = {
   totalStockValue: number | null
   totalVarianceDollars: number | null
   unexplainedVarianceDollars: number | null
+  // Phase W2 — display-tier additions
+  displayTotalStockValue: number | null
+  displayTotalVarianceDollars: number | null
+  displayUnexplainedVarianceDollars: number | null
+  itemsPricedByInvoice: number
 }
 
 type SortConfig<K extends string> = { key: K; dir: 'asc' | 'desc' }
@@ -179,6 +187,10 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               totalStockValue: null,
               totalVarianceDollars: null,
               unexplainedVarianceDollars: null,
+              displayTotalStockValue: null,
+              displayTotalVarianceDollars: null,
+              displayUnexplainedVarianceDollars: null,
+              itemsPricedByInvoice: 0,
             })
             return
           }
@@ -195,6 +207,10 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
             totalStockValue: latestData.summary?.totalStockValue ?? null,
             totalVarianceDollars: latestData.summary?.totalVarianceDollars ?? null,
             unexplainedVarianceDollars: latestData.summary?.unexplainedVarianceDollars ?? null,
+            displayTotalStockValue: latestData.summary?.displayTotalStockValue ?? latestData.summary?.totalStockValue ?? null,
+            displayTotalVarianceDollars: latestData.summary?.displayTotalVarianceDollars ?? latestData.summary?.totalVarianceDollars ?? null,
+            displayUnexplainedVarianceDollars: latestData.summary?.displayUnexplainedVarianceDollars ?? latestData.summary?.unexplainedVarianceDollars ?? null,
+            itemsPricedByInvoice: latestData.summary?.itemsPricedByInvoice ?? 0,
           })
 
           for (const item of (latestData.items || []) as any[]) {
@@ -210,6 +226,9 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               varianceUnits,
               varianceDollars: item.unexplainedVarianceDollars ?? item.totalVarianceDollars ?? null,
               costPrice: item.costPrice ?? null,
+              displayVarianceDollars: (item.displayUnexplainedVarianceDollars ?? item.displayTotalVarianceDollars)
+                ?? (item.unexplainedVarianceDollars ?? item.totalVarianceDollars) ?? null,
+              costPriceTier: item.costPriceTier ?? 'none',
             })
           }
 
@@ -222,8 +241,9 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               cycleNumber: sd.cycleNumber ?? 1,
               completedAt: sd.completedAt?.toDate?.() ?? null,
               itemsCounted: sd.summary?.totalItemsCounted ?? 0,
-              totalStockValue: sd.summary?.totalStockValue ?? null,
-              totalVarianceDollars: sd.summary?.totalVarianceDollars ?? null,
+              // Display-preferred at load — trend chart and history CSV inherit for free (Phase W2)
+              totalStockValue: sd.summary?.displayTotalStockValue ?? sd.summary?.totalStockValue ?? null,
+              totalVarianceDollars: sd.summary?.displayTotalVarianceDollars ?? sd.summary?.totalVarianceDollars ?? null,
               durationMinutes: sd.durationMinutes ?? null,
             })
           }
@@ -289,15 +309,21 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
   // ── Chart B: top variance drivers ─────────────────────────────────────────
   const topDrivers = useMemo(() =>
     varianceRows
-      .filter((r) => r.varianceDollars != null)
-      .sort((a, b) => Math.abs(b.varianceDollars!) - Math.abs(a.varianceDollars!))
+      .filter((r) => (r.displayVarianceDollars ?? r.varianceDollars) != null)
+      .sort((a, b) =>
+        Math.abs((b.displayVarianceDollars ?? b.varianceDollars)!) -
+        Math.abs((a.displayVarianceDollars ?? a.varianceDollars)!),
+      )
       .slice(0, 10)
-      .map((r) => ({
-        name: truncate(r.name, 15),
-        fullName: r.name,
-        value: Math.abs(r.varianceDollars!),
-        shortage: r.varianceDollars! < 0,
-      })),
+      .map((r) => {
+        const displayVal = r.displayVarianceDollars ?? r.varianceDollars!
+        return {
+          name: truncate(r.name, 15),
+          fullName: r.name,
+          value: Math.abs(displayVal),
+          shortage: displayVal < 0,
+        }
+      }),
   [varianceRows])
 
   const fmtAxis = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
@@ -313,10 +339,10 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       const av = a[key] as number | string | null
       const bv = b[key] as number | string | null
 
-      // Default sort on varianceDollars: by absolute value
+      // Default sort on varianceDollars: by absolute display-preferred value
       if (key === 'varianceDollars') {
-        const aabs = Math.abs((av as number | null) ?? 0)
-        const babs = Math.abs((bv as number | null) ?? 0)
+        const aabs = Math.abs((a.displayVarianceDollars ?? a.varianceDollars) ?? 0)
+        const babs = Math.abs((b.displayVarianceDollars ?? b.varianceDollars) ?? 0)
         return dir === 'desc' ? babs - aabs : aabs - babs
       }
 
@@ -344,8 +370,9 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
 
   function exportVarianceCsv() {
     const dateStr = new Date().toISOString().slice(0, 10)
-    let csv = 'Product,Department,Area,Expected,Counted,Unexplained (units),Unexplained ($)\n'
+    let csv = 'Product,Department,Area,Expected,Counted,Unexplained (units),Unexplained ($),Recovered Variance ($)\n'
     for (const r of filteredVariance) {
+      const recoveredVar = r.displayVarianceDollars ?? r.varianceDollars
       csv +=
         [
           escCsv(r.name),
@@ -354,7 +381,8 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
           r.expectedQty ?? '',
           r.actualQty,
           r.varianceUnits,
-          r.varianceDollars != null ? r.varianceDollars.toFixed(2) : '',
+          r.varianceDollars != null ? r.varianceDollars.toFixed(2) : '',   // original — byte-identical
+          recoveredVar != null ? recoveredVar.toFixed(2) : '',             // display-preferred (additive)
         ].join(',') + '\n'
     }
     downloadCsv(`variance-${dateStr}.csv`, csv)
@@ -470,7 +498,9 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                     <p className={styles.cardNoData}>No stocktake data yet</p>
                   </div>
                 )
-                const showVariance = dept.unexplainedVarianceDollars ?? dept.totalVarianceDollars
+                const displayStockValue = dept.displayTotalStockValue ?? dept.totalStockValue
+                const showVariance = dept.displayUnexplainedVarianceDollars ?? dept.displayTotalVarianceDollars
+                  ?? dept.unexplainedVarianceDollars ?? dept.totalVarianceDollars
                 const isEnriched = dept.unexplainedVarianceDollars != null && dept.unexplainedVarianceDollars !== dept.totalVarianceDollars
                 return (
                   <div key={dept.deptId} className={styles.card}>
@@ -479,8 +509,8 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       {fmtDate(dept.completedAt)} · Stocktake {dept.cycleNumber}
                     </p>
                     <p className={styles.cardMeta}>{dept.itemsCounted} items counted</p>
-                    {dept.totalStockValue != null && (
-                      <p className={styles.cardValue}>{fmtMoney(dept.totalStockValue)} stock value</p>
+                    {displayStockValue != null && (
+                      <p className={styles.cardValue}>{fmtMoney(displayStockValue)} stock value</p>
                     )}
                     {showVariance != null ? (
                       <p
@@ -503,6 +533,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       </p>
                     ) : (
                       <p className={styles.cardNoData}>Add cost prices to see variance</p>
+                    )}
+                    {dept.itemsPricedByInvoice > 0 && (
+                      <p style={{ fontSize: 12, color: theme.slateMid, margin: '4px 0 0', fontFamily: theme.fontBody }}>
+                        📄 {dept.itemsPricedByInvoice} item{dept.itemsPricedByInvoice !== 1 ? 's' : ''} priced via invoice
+                      </p>
                     )}
                   </div>
                 )
@@ -643,17 +678,19 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                           className={styles.tdNum}
                           style={{
                             color:
-                              r.varianceDollars == null
+                              (r.displayVarianceDollars ?? r.varianceDollars) == null
                                 ? theme.slateMid
-                                : r.varianceDollars < 0
+                                : (r.displayVarianceDollars ?? r.varianceDollars)! < 0
                                   ? theme.error
                                   : theme.success,
                             fontWeight: 600,
                           }}
                         >
-                          {r.varianceDollars == null
+                          {(r.displayVarianceDollars ?? r.varianceDollars) == null
                             ? '—'
-                            : (r.varianceDollars > 0 ? '+' : '') + fmtMoney(r.varianceDollars)}
+                            : ((r.displayVarianceDollars ?? r.varianceDollars)! > 0 ? '+' : '') +
+                              fmtMoney(r.displayVarianceDollars ?? r.varianceDollars) +
+                              (r.costPriceTier === 'invoice_verified' ? ' 📄' : '')}
                         </td>
                       </tr>
                     ))
@@ -873,6 +910,8 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
     else if (filter === 'excesses') rows = rows.filter((r: any) => (r.totalVarianceQty ?? 0) > 0)
     else if (filter === 'none') rows = rows.filter((r: any) => (r.totalVarianceQty ?? 0) === 0)
     return [...rows].sort((a: any, b: any) => {
+      // TODO(pre-existing bug — do not fix here): sortKey 'varianceDollars' doesn't match
+      // the item field name 'totalVarianceDollars', so that column sort silently does nothing.
       const av = sortKey === 'name' ? (a.name || '') : (Math.abs(a[sortKey] ?? 0))
       const bv = sortKey === 'name' ? (b.name || '') : (Math.abs(b[sortKey] ?? 0))
       if (av < bv) return sortDir === 'asc' ? -1 : 1
@@ -889,9 +928,19 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
   function exportCsv() {
     const deptName = depts.find(d => d.deptId === selectedDeptId)?.deptName ?? 'dept'
     const dateStr = new Date().toISOString().slice(0, 10)
-    let csv = 'Product,Area,Expected,Actual,Variance Units,Variance Dollars,Cost Price\n'
+    // Additive columns — Variance Dollars and Cost Price columns are byte-identical to pre-Phase-W2
+    let csv = 'Product,Area,Expected,Actual,Variance Units,Variance Dollars,Recovered Variance Dollars,Cost Price,Recovered Cost Price\n'
     for (const r of visibleItems) {
-      csv += [r.name, r.areaName, r.openingCount ?? '', r.actualClosing ?? '', r.totalVarianceQty ?? '', r.totalVarianceDollars ?? '', r.costPrice ?? ''].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',') + '\n'
+      const recoveredVar = r.displayTotalVarianceDollars ?? r.totalVarianceDollars
+      const recoveredCost = r.displayCostPrice ?? r.costPrice
+      csv += [
+        r.name, r.areaName, r.openingCount ?? '', r.actualClosing ?? '',
+        r.totalVarianceQty ?? '',
+        r.totalVarianceDollars ?? '',          // original — byte-identical
+        recoveredVar ?? '',                     // display-preferred (additive)
+        r.costPrice ?? '',                      // original — byte-identical
+        recoveredCost ?? '',                    // display-preferred (additive)
+      ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',') + '\n'
     }
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -1020,13 +1069,16 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
               <tbody>
                 {visibleItems.map((r: any, i: number) => {
                   const vUnits = r.totalVarianceQty ?? 0
-                  const vDollars = r.totalVarianceDollars
+                  // Display-preferred variance dollars — Phase W2
+                  const vDollars = r.displayTotalVarianceDollars ?? r.totalVarianceDollars
                   const unitColor = vUnits < 0 ? theme.error : vUnits > 0 ? theme.success : theme.slateMid
                   const dollarColor = vDollars == null ? theme.slateMid : vDollars < 0 ? theme.error : vDollars > 0 ? theme.success : theme.slateMid
+                  // Display-preferred cost price — Phase W2
+                  const displayCostPrice = r.displayCostPrice ?? r.costPrice
                   const compareItem = compareMap.get(r.name)
                   return (
                     <tr key={i} className={styles.dataRow}>
-                      <td className={styles.td}>{r.name}</td>
+                      <td className={styles.td}>{r.name}{r.costPriceTier === 'invoice_verified' ? ' 📄' : ''}</td>
                       <td className={styles.td}>{r.areaName || '—'}</td>
                       <td className={styles.tdNum}>{r.openingCount != null ? r.openingCount.toFixed(2) : '—'}</td>
                       <td className={styles.tdNum}>{r.actualClosing != null ? r.actualClosing.toFixed(2) : '—'}</td>
@@ -1034,7 +1086,7 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
                       <td className={styles.tdNum} style={{ color: dollarColor, fontWeight: 600 }}>
                         {vDollars == null ? '—' : (vDollars > 0 ? '+' : '') + '$' + Math.abs(Math.round(vDollars)).toLocaleString('en-NZ')}
                       </td>
-                      <td className={styles.tdNum}>{r.costPrice != null ? `$${r.costPrice.toFixed(2)}` : '—'}</td>
+                      <td className={styles.tdNum}>{displayCostPrice != null ? `$${displayCostPrice.toFixed(2)}${r.costPriceTier === 'invoice_verified' ? ' 📄' : ''}` : '—'}</td>
                       {compareMode && compareItems.length > 0 && (
                         <td className={styles.tdNum} style={{ color: compareItem ? (compareItem.totalVarianceQty < vUnits ? theme.success : compareItem.totalVarianceQty > vUnits ? theme.error : theme.slateMid) : theme.slateMid }}>
                           {compareItem ? `${compareItem.totalVarianceQty > 0 ? '+' : ''}${compareItem.totalVarianceQty} → ${vUnits > 0 ? '+' : ''}${vUnits}` : 'Not in compare'}
@@ -1072,7 +1124,7 @@ function AnalysisTab({ venueId }: { venueId: string }) {
         const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'))
 
         // Collect all snapshot items across all depts and cycles
-        const allItems: Array<{ name: string; supplierName: string | null; actualClosing: number; costPrice: number | null; cycleNumber: number; completedAt: Date | null; deptId: string }> = []
+        const allItems: Array<{ name: string; supplierName: string | null; actualClosing: number; costPrice: number | null; displayCostPrice: number | null; cycleNumber: number; completedAt: Date | null; deptId: string }> = []
 
         await Promise.all(deptsSnap.docs.map(async deptDoc => {
           const snapsSnap = await getDocs(
@@ -1087,6 +1139,7 @@ function AnalysisTab({ venueId }: { venueId: string }) {
                 supplierName: item.supplierName || null,
                 actualClosing: item.actualClosing ?? 0,
                 costPrice: item.costPrice ?? null,
+                displayCostPrice: item.displayCostPrice ?? null,   // Phase W2
                 cycleNumber: sd.cycleNumber ?? 0,
                 completedAt,
                 deptId: deptDoc.id,
@@ -1098,12 +1151,14 @@ function AnalysisTab({ venueId }: { venueId: string }) {
         // Supplier spend aggregation
         const supplierMap = new Map<string, { total: number; count: number; costs: number[] }>()
         for (const it of allItems) {
-          if (!it.supplierName || !it.costPrice) continue
+          // Phase W2: use display-preferred cost price — previously excluded invoice_verified items entirely
+          const effectiveCostPrice = it.displayCostPrice ?? it.costPrice
+          if (!it.supplierName || !effectiveCostPrice) continue
           const key = it.supplierName
           const existing = supplierMap.get(key) || { total: 0, count: 0, costs: [] }
-          existing.total += it.actualClosing * it.costPrice
+          existing.total += it.actualClosing * effectiveCostPrice
           existing.count++
-          existing.costs.push(it.costPrice)
+          existing.costs.push(effectiveCostPrice)
           supplierMap.set(key, existing)
         }
         const supplierRows = Array.from(supplierMap.entries())
