@@ -14,6 +14,7 @@ import OfflineBanner from '../../components/OfflineBanner';
 import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { buildProductMaps, resolveProduct } from '../../services/products/resolveProduct';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -119,41 +120,7 @@ export default function StockHoldingScreen() {
       // Products — keyed by doc id for merge-chain resolution, and by lowercased
       // name as a fallback for items that carry no productId.
       const prodSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-      type ProdEntry = {
-        name: string; category: string; costPrice?: number;
-        active?: boolean; mergedInto?: string | null;
-      };
-      const prodById: Record<string, ProdEntry> = {};
-      const prodByName: Record<string, { category: string; costPrice?: number }> = {};
-      prodSnap.forEach(d => {
-        const p = d.data() as any;
-        const name = (p.name ?? '').trim();
-        const entry: ProdEntry = {
-          name,
-          category: p.category ?? p.categorySuggested ?? 'Uncategorised',
-          costPrice: typeof p.costPrice === 'number' ? p.costPrice : undefined,
-          active: typeof p.active === 'boolean' ? p.active : undefined,
-          mergedInto: p.mergedInto ?? null,
-        };
-        prodById[d.id] = entry;
-        const nameKey = name.toLowerCase();
-        if (nameKey) prodByName[nameKey] = { category: entry.category, costPrice: entry.costPrice };
-      });
-
-      // Walk the mergedInto chain to find the active survivor.
-      // Returns { id, entry } when an active product is reached, null if unresolvable.
-      // Capped at 5 hops to guard against any accidental circular reference.
-      function resolveProduct(startId: string): { id: string; entry: ProdEntry } | null {
-        let id = startId;
-        for (let hop = 0; hop < 5; hop++) {
-          const entry = prodById[id];
-          if (!entry) return null;                          // product doc missing
-          if (entry.active !== false) return { id, entry }; // active (or field absent → default active)
-          if (!entry.mergedInto) return null;               // inactive, no forwarding pointer
-          id = entry.mergedInto;                            // follow the chain
-        }
-        return null; // hop cap reached without landing on an active product
-      }
+      const { prodById, prodByName } = buildProductMaps(prodSnap);
 
       // Aggregate counts from all area items — completedAt not required
       // After a reset, lastCount is restored from confirmedCount so data still exists
@@ -187,7 +154,7 @@ export default function StockHoldingScreen() {
 
             // Resolve via productId: walk mergedInto chain to find the active survivor.
             // Falls back to name-keyed lookup when productId is absent or chain fails.
-            const resolved = item.productId ? resolveProduct(item.productId) : null;
+            const resolved = item.productId ? resolveProduct(item.productId, prodById) : null;
 
             let key: string;
             let rowName: string;
