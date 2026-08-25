@@ -248,7 +248,7 @@ export default function DashboardScreen() {
         const snapData = latestSnap.data() as any;
         const depts = snapData?.departments ?? [];
         const total = depts.reduce(
-          (sum: number, d: any) => sum + (d?.summary?.totalStockValue ?? 0),
+          (sum: number, d: any) => sum + ((d?.summary?.displayTotalStockValue ?? d?.summary?.totalStockValue) ?? 0),
           0
         );
         setStockValue(total);

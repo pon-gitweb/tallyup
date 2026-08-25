@@ -80,8 +80,8 @@ export default function CycleComparisonScreen() {
       const countA = a?.actualClosing ?? null;
       const countB = b?.actualClosing ?? null;
       const change = countA != null && countB != null ? countB - countA : null;
-      const valA = a?.totalVarianceDollars ?? null;
-      const valB = b?.totalVarianceDollars ?? null;
+      const valA = a != null ? (a.displayTotalVarianceDollars ?? a.totalVarianceDollars ?? null) : null;
+      const valB = b != null ? (b.displayTotalVarianceDollars ?? b.totalVarianceDollars ?? null) : null;
       const valChange = valA != null && valB != null ? valB - valA : null;
       result.push({
         name: (a || b)?.name,
@@ -133,8 +133,8 @@ export default function CycleComparisonScreen() {
     const removed = comparedProducts.filter(p => p.isRemoved);
     const biggestLoss = losses.sort((a, b) => a.change - b.change)[0];
     const biggestGain = gains.sort((a, b) => b.change - a.change)[0];
-    const valATotal = snapA.summary?.totalStockValue ?? null;
-    const valBTotal = snapB.summary?.totalStockValue ?? null;
+    const valATotal = (snapA.summary?.displayTotalStockValue ?? snapA.summary?.totalStockValue) ?? null;
+    const valBTotal = (snapB.summary?.displayTotalStockValue ?? snapB.summary?.totalStockValue) ?? null;
     const valChange = valATotal != null && valBTotal != null ? valBTotal - valATotal : null;
     return { dateA, dateB, daysBetween, losses, gains, added, removed, biggestLoss, biggestGain, valATotal, valBTotal, valChange };
   }, [snapA, snapB, comparedProducts]);
@@ -255,8 +255,8 @@ td{padding:5px 8px;border-bottom:1px solid #eee;}
           {[
             ['Products counted', String(snapA.summary?.totalItemsCounted ?? '–'), String(snapB.summary?.totalItemsCounted ?? '–')],
             ['Stock value',
-              snapA.summary?.totalStockValue != null ? `$${snapA.summary.totalStockValue.toFixed(0)}` : '–',
-              snapB.summary?.totalStockValue != null ? `$${snapB.summary.totalStockValue.toFixed(0)}` : '–',
+              (snapA.summary?.displayTotalStockValue ?? snapA.summary?.totalStockValue) != null ? `$${(snapA.summary.displayTotalStockValue ?? snapA.summary.totalStockValue).toFixed(0)}` : '–',
+              (snapB.summary?.displayTotalStockValue ?? snapB.summary?.totalStockValue) != null ? `$${(snapB.summary.displayTotalStockValue ?? snapB.summary.totalStockValue).toFixed(0)}` : '–',
             ],
             ['Total variance qty', String(snapA.summary?.totalVarianceQty ?? '–'), String(snapB.summary?.totalVarianceQty ?? '–')],
           ].map(([label, valA, valB], i) => (

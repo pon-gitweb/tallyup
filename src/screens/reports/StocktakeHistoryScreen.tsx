@@ -94,7 +94,7 @@ export default function StocktakeHistoryScreen() {
               durationMinutes: d.durationMinutes ?? 0,
               completedByName: d.completedByName || null,
               totalItems: d.summary?.totalItemsCounted ?? 0,
-              totalStockValue: d.summary?.totalStockValue ?? null,
+              totalStockValue: d.summary?.displayTotalStockValue ?? d.summary?.totalStockValue ?? null,
             });
           });
         } catch {}
@@ -198,7 +198,7 @@ export default function StocktakeHistoryScreen() {
           <td style="text-align:right">${it.openingCount ?? '–'}</td>
           <td style="text-align:right">${it.actualClosing}</td>
           <td style="text-align:right;color:${it.totalVarianceQty < 0 ? '#dc2626' : it.totalVarianceQty > 0 ? '#059669' : '#374151'}">${it.totalVarianceQty > 0 ? '+' : ''}${it.totalVarianceQty}</td>
-          <td style="text-align:right">${it.totalVarianceDollars != null ? (it.totalVarianceDollars < 0 ? '-' : '+') + '$' + Math.abs(it.totalVarianceDollars).toFixed(0) : '–'}</td>
+          <td style="text-align:right">${(() => { const v = it.displayTotalVarianceDollars ?? it.totalVarianceDollars; return v != null ? (v < 0 ? '-' : '+') + '$' + Math.abs(v).toFixed(0) : '–'; })()}</td>
         </tr>`).join('');
 
       const html = `<!DOCTYPE html>
@@ -252,13 +252,15 @@ td { padding: 5px 8px; border-bottom: 1px solid #eee; }
 
       const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const dateStr = e.completedAt.toISOString().slice(0, 10);
-      let csv = 'Product Name,Category,Area,Previous Count,Current Count,Variance Qty,Cost Price,Variance Value,Counted By,Counted At,Cycle Number,Cycle Date,Department\n';
+      let csv = 'Product Name,Category,Area,Previous Count,Current Count,Variance Qty,Cost Price,Variance Value,Recovered Variance Value,Counted By,Counted At,Cycle Number,Cycle Date,Department\n';
       items.forEach(it => {
         const countedAt = it.lastCountAt?.toDate?.()?.toISOString?.() ?? '';
+        const recoveredVar = it.displayTotalVarianceDollars ?? it.totalVarianceDollars;
         csv += [
           esc(it.name), esc(it.categoryName), esc(it.areaName),
           it.openingCount ?? '', it.actualClosing, it.totalVarianceQty,
           it.costPrice ?? '', it.totalVarianceDollars != null ? it.totalVarianceDollars.toFixed(2) : '',
+          recoveredVar != null ? recoveredVar.toFixed(2) : '',
           esc(it.lastCountByName), esc(countedAt),
           e.cycleNumber, dateStr, esc(e.departmentName),
         ].join(',') + '\n';

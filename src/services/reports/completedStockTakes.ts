@@ -43,9 +43,8 @@ export async function listCompletedStockTakes(
           completedAt: data.completedAt ?? null,
           completedByName: data.completedByName ?? null,
           totalItemsCounted: data.summary?.totalItemsCounted ?? 0,
-          totalStockValue: typeof data.summary?.totalStockValue === 'number'
-            ? data.summary.totalStockValue
-            : null,
+          totalStockValue: data.summary?.displayTotalStockValue
+            ?? (typeof data.summary?.totalStockValue === 'number' ? data.summary.totalStockValue : null),
           itemsBelowPAR: data.summary?.itemsBelowPAR ?? 0,
           durationMinutes: typeof data.durationMinutes === 'number' ? data.durationMinutes : null,
           status: 'completed',

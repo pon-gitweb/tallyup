@@ -119,7 +119,7 @@ export default function ProfitInsightsScreen() {
           const latestSnap = await getDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current'));
           if (latestSnap.exists()) {
             const depts = (latestSnap.data() as any)?.departments ?? [];
-            stockValue = depts.reduce((sum: number, d: any) => sum + (d?.summary?.totalStockValue ?? 0), 0);
+            stockValue = depts.reduce((sum: number, d: any) => sum + ((d?.summary?.displayTotalStockValue ?? d?.summary?.totalStockValue) ?? 0), 0);
           }
         } catch {}
 
