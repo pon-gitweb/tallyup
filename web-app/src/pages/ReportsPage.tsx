@@ -534,11 +534,22 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                     ) : (
                       <p className={styles.cardNoData}>Add cost prices to see variance</p>
                     )}
-                    {dept.itemsPricedByInvoice > 0 && (
-                      <p style={{ fontSize: 12, color: theme.slateMid, margin: '4px 0 0', fontFamily: theme.fontBody }}>
-                        📄 {dept.itemsPricedByInvoice} item{dept.itemsPricedByInvoice !== 1 ? 's' : ''} priced via invoice
-                      </p>
-                    )}
+                    {dept.itemsPricedByInvoice > 0 && (() => {
+                      // displayTotalStockValue is display??original; totalStockValue is raw original
+                      // so the difference is the exact dollar amount recovered by invoice pricing
+                      const recoveredAmt =
+                        dept.displayTotalStockValue != null && dept.totalStockValue != null
+                          ? dept.displayTotalStockValue - dept.totalStockValue
+                          : null
+                      const recoveredStr = recoveredAmt != null && recoveredAmt !== 0
+                        ? `$${Math.abs(Math.round(recoveredAmt)).toLocaleString('en-NZ')} recovered from `
+                        : ''
+                      return (
+                        <p style={{ fontSize: 12, color: theme.slateMid, margin: '4px 0 0', fontFamily: theme.fontBody }}>
+                          📄 {recoveredStr}{dept.itemsPricedByInvoice} item{dept.itemsPricedByInvoice !== 1 ? 's' : ''} priced via invoice
+                        </p>
+                      )
+                    })()}
                   </div>
                 )
               })}
