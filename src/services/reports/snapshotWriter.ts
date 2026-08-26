@@ -4,6 +4,7 @@ import {
   query, where, orderBy, limit, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { resolveProduct, type ProdEntry } from '../products/resolveProduct';
 
 function toMs(val: any): number | null {
   if (!val) return null;
@@ -155,6 +156,12 @@ export function computeSnapshotItemFigures(
     if (lineRecords.length > 0) hasInvoices = true;
     for (const line of lineRecords) {
       const lineProductId = line.productId || line._docId || null;
+      // Resolve the invoice line's id too — symmetric match handles the reverse
+      // case where the invoice was filed under an old/inactive id but the item has
+      // already been re-pointed to the survivor (or vice versa).
+      const resolvedLineProductId = lineProductId
+        ? (productResolution.resolvedIdById[lineProductId] ?? lineProductId)
+        : null;
       const lineName = (line.productName || line.name || '').toLowerCase().trim();
       const lineQty = typeof line.qty === 'number' ? line.qty :
                       typeof line.quantity === 'number' ? line.quantity : 0;
@@ -164,9 +171,10 @@ export function computeSnapshotItemFigures(
                            typeof line.price === 'number' ? line.price : 0;
       const match = snapshotItems.find(si =>
         (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
-        // Resolved-id match: catches conflict-merge items whose _rawProductId is still
-        // the old/inactive id but whose invoice was filed under the survivor's id.
-        (si._resolvedProductId && lineProductId && si._resolvedProductId === lineProductId) ||
+        // Symmetric resolved-id match: both item and invoice line ids walked to their
+        // survivor — catches all four combinations of old/new id on either side.
+        (si._resolvedProductId && resolvedLineProductId &&
+          si._resolvedProductId === resolvedLineProductId) ||
         (si._rawName && lineName && si._rawName === lineName),
       );
       if (match) {
@@ -252,22 +260,6 @@ export function computeSnapshotItemFigures(
 
 // ── I/O wrapper ──────────────────────────────────────────────────────────────
 
-/** Walk a product's mergedInto chain up to 5 hops. Returns survivor id or null. */
-function resolveProductChain(
-  startId: string,
-  prodById: Record<string, { active?: boolean; mergedInto?: string | null }>,
-): string | null {
-  let id = startId;
-  for (let hop = 0; hop < 5; hop++) {
-    const entry = prodById[id];
-    if (!entry) return null;
-    if (entry.active !== false) return id;
-    if (!entry.mergedInto) return null;
-    id = entry.mergedInto;
-  }
-  return null;
-}
-
 export async function writeDepartmentSnapshot(
   venueId: string,
   departmentId: string,
@@ -284,21 +276,25 @@ export async function writeDepartmentSnapshot(
     const productResolution: ProductResolution = { resolvedIdById: {}, resolvedIdByName: {} };
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
-      const prodById: Record<string, { name: string; active?: boolean; mergedInto?: string | null }> = {};
+      // ProdEntry shape matches resolveProduct()'s expectations — same type used by
+      // src/services/products/resolveProduct.ts (shared, no duplicate logic here).
+      const prodById: Record<string, ProdEntry> = {};
       productsSnap.forEach(d => {
         const p = d.data() as any;
         prodById[d.id] = {
           name: (p.name || '').toLowerCase().trim(),
+          category: p.category ?? p.categorySuggested ?? 'Uncategorised',
+          costPrice: typeof p.costPrice === 'number' ? p.costPrice : undefined,
           active: typeof p.active === 'boolean' ? p.active : undefined,
           mergedInto: p.mergedInto ?? null,
         };
       });
       productsSnap.forEach(d => {
-        const resolved = resolveProductChain(d.id, prodById);
+        const resolved = resolveProduct(d.id, prodById);
         if (resolved) {
-          productResolution.resolvedIdById[d.id] = resolved;
+          productResolution.resolvedIdById[d.id] = resolved.id;
           const name = prodById[d.id].name;
-          if (name) productResolution.resolvedIdByName[name] = resolved;
+          if (name) productResolution.resolvedIdByName[name] = resolved.id;
         }
       });
     } catch (e: any) {
@@ -473,9 +469,14 @@ export async function writeDepartmentSnapshot(
             const line = lineDoc.data() as any;
             const orderedQty = typeof line.qty === 'number' ? line.qty : 0;
             const lineName = (line.productName || line.name || '').toLowerCase().trim();
+            const lineProductId = line.productId || lineDoc.id || null;
+            const resolvedLineProductId = lineProductId
+              ? (productResolution.resolvedIdById[lineProductId] ?? lineProductId)
+              : null;
             const match = snapshotItems.find(si =>
-              (si._rawProductId && si._rawProductId === (line.productId || lineDoc.id)) ||
-              (si._resolvedProductId && si._resolvedProductId === (line.productId || lineDoc.id)) ||
+              (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
+              (si._resolvedProductId && resolvedLineProductId &&
+                si._resolvedProductId === resolvedLineProductId) ||
               (si._rawName && lineName && si._rawName === lineName),
             );
             if (match && orderedQty > 0 && match.receivedQty < orderedQty) {

@@ -321,6 +321,21 @@ describe('computeSnapshotItemFigures — ProductResolution (mergedInto chain)', 
     expect(snapshotItems[0].soldQty).toBe(3);
   });
 
+  it('[fixed-symmetric] invoice with old inactive id matches re-pointed item via symmetric resolution', () => {
+    // Reverse direction: item already re-pointed to survivor-id (clean merge);
+    // invoice was filed under the old id before the merge happened.
+    // Before symmetric fix: si._resolvedProductId('survivor-id') !== lineProductId('old-id') → miss.
+    // After: resolvedLineProductId('old-id') → 'survivor-id' === si._resolvedProductId → match.
+    const item = makeItem({ productId: 'survivor-id', name: 'Old Fashioned', lastCount: 4, costPrice: null });
+    const lines = [[{ productId: 'old-id', qty: 5, unitCost: 22 }]];
+    const symmetricPr: ProductResolution = {
+      resolvedIdById: { 'old-id': 'survivor-id', 'survivor-id': 'survivor-id' },
+      resolvedIdByName: {},
+    };
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, lines, [], symmetricPr);
+    expect(snapshotItems[0].receivedQty).toBe(5);
+  });
+
   it('multi-hop chain: item with grandparent id resolves to survivor via 2-hop PR', () => {
     // The resolveProductChain helper (called in the I/O wrapper) handles multi-hop.
     // Here we supply the already-walked result directly — confirms the computed
