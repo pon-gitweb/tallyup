@@ -34,6 +34,23 @@ export interface SnapshotSalesLine {
 }
 
 /**
+ * Pre-resolved product id maps, built from the venue products collection in
+ * writeDepartmentSnapshot before calling computeSnapshotItemFigures.
+ *
+ * Optional with a safe empty-map default — all 23 existing test call sites
+ * pass nothing here and remain unaffected; matching degrades to today's
+ * exact-id/name-only behavior when either map is empty.
+ */
+export type ProductResolution = {
+  /** Maps any product id → its resolved (survivor) product id. */
+  resolvedIdById: Record<string, string>;
+  /** Maps lowercased product name → resolved (survivor) product id. */
+  resolvedIdByName: Record<string, string>;
+};
+
+const EMPTY_RESOLUTION: ProductResolution = { resolvedIdById: {}, resolvedIdByName: {} };
+
+/**
  * Pure computation: builds per-item snapshot figures from already-fetched data.
  * Wrapper responsibility: Firestore I/O only. This fn owns the math.
  *
@@ -46,6 +63,7 @@ export function computeSnapshotItemFigures(
   cycleNumber: number,
   allInvoiceLines: SnapshotLineRecord[][],
   salesLines: SnapshotSalesLine[],
+  productResolution: ProductResolution = EMPTY_RESOLUTION,
 ): {
   snapshotItems: any[];
   hasBaseline: boolean;
@@ -61,6 +79,11 @@ export function computeSnapshotItemFigures(
 
   const snapshotItems: any[] = rawItems.map(item => {
     const rawName = (item.name || '').toLowerCase().trim();
+    // Resolve through mergedInto chain once — used in STEP A, A2, and PO-discrepancy.
+    // Falls back to the raw productId when the map is empty (safe degrade).
+    const _resolvedProductId: string | null = item.productId
+      ? (productResolution.resolvedIdById[item.productId] ?? item.productId)
+      : null;
 
     const openingCount: number | null = cycleNumber > 0
       ? (prevItemMap.has(rawName) ? prevItemMap.get(rawName)! : null)
@@ -120,6 +143,7 @@ export function computeSnapshotItemFigures(
       lastCountAt: item.lastCountAt || null,
 
       _rawProductId: item.productId || null,
+      _resolvedProductId,
       _rawName: rawName,
     };
   });
@@ -140,6 +164,9 @@ export function computeSnapshotItemFigures(
                            typeof line.price === 'number' ? line.price : 0;
       const match = snapshotItems.find(si =>
         (si._rawProductId && lineProductId && si._rawProductId === lineProductId) ||
+        // Resolved-id match: catches conflict-merge items whose _rawProductId is still
+        // the old/inactive id but whose invoice was filed under the survivor's id.
+        (si._resolvedProductId && lineProductId && si._resolvedProductId === lineProductId) ||
         (si._rawName && lineName && si._rawName === lineName),
       );
       if (match) {
@@ -152,9 +179,16 @@ export function computeSnapshotItemFigures(
   }
 
   // STEP A2 — Sales enrichment (soldQty)
+  // Sales lines carry no productId, so we match by name first.
+  // The resolvedIdByName fallback handles the cross-name case: a sales line uses the
+  // survivor's name while the stocktake item still carries the old product name.
   let hasSales = false;
   for (const line of salesLines) {
-    const match = snapshotItems.find(si => si._rawName === line.name);
+    const resolvedByName = productResolution.resolvedIdByName[line.name];
+    const match = snapshotItems.find(si =>
+      si._rawName === line.name ||
+      (resolvedByName != null && si._resolvedProductId === resolvedByName),
+    );
     if (match) {
       match.soldQty = (match.soldQty ?? 0) + line.qtySold;
       hasSales = true;
@@ -218,6 +252,22 @@ export function computeSnapshotItemFigures(
 
 // ── I/O wrapper ──────────────────────────────────────────────────────────────
 
+/** Walk a product's mergedInto chain up to 5 hops. Returns survivor id or null. */
+function resolveProductChain(
+  startId: string,
+  prodById: Record<string, { active?: boolean; mergedInto?: string | null }>,
+): string | null {
+  let id = startId;
+  for (let hop = 0; hop < 5; hop++) {
+    const entry = prodById[id];
+    if (!entry) return null;
+    if (entry.active !== false) return id;
+    if (!entry.mergedInto) return null;
+    id = entry.mergedInto;
+  }
+  return null;
+}
+
 export async function writeDepartmentSnapshot(
   venueId: string,
   departmentId: string,
@@ -228,6 +278,32 @@ export async function writeDepartmentSnapshot(
     const auth = getAuth();
     const completedBy: string | null = auth.currentUser?.uid || null;
     const completedByName: string | null = auth.currentUser?.displayName || null;
+
+    // Build product resolution maps for mergedInto-aware matching in STEP A/A2/PO.
+    // Fails safe: any error leaves both maps empty → every match degrades to today's behavior.
+    const productResolution: ProductResolution = { resolvedIdById: {}, resolvedIdByName: {} };
+    try {
+      const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
+      const prodById: Record<string, { name: string; active?: boolean; mergedInto?: string | null }> = {};
+      productsSnap.forEach(d => {
+        const p = d.data() as any;
+        prodById[d.id] = {
+          name: (p.name || '').toLowerCase().trim(),
+          active: typeof p.active === 'boolean' ? p.active : undefined,
+          mergedInto: p.mergedInto ?? null,
+        };
+      });
+      productsSnap.forEach(d => {
+        const resolved = resolveProductChain(d.id, prodById);
+        if (resolved) {
+          productResolution.resolvedIdById[d.id] = resolved;
+          const name = prodById[d.id].name;
+          if (name) productResolution.resolvedIdByName[name] = resolved;
+        }
+      });
+    } catch (e: any) {
+      console.warn('[snapshotWriter] product resolution build failed (safe degrade):', e?.message);
+    }
 
     // Read department name + previous cycle date
     const deptRef = doc(db, 'venues', venueId, 'departments', departmentId);
@@ -372,7 +448,7 @@ export async function writeDepartmentSnapshot(
 
     // ── Pure computation ──────────────────────────────────────────────────────
     const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
-      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines);
+      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
@@ -399,6 +475,7 @@ export async function writeDepartmentSnapshot(
             const lineName = (line.productName || line.name || '').toLowerCase().trim();
             const match = snapshotItems.find(si =>
               (si._rawProductId && si._rawProductId === (line.productId || lineDoc.id)) ||
+              (si._resolvedProductId && si._resolvedProductId === (line.productId || lineDoc.id)) ||
               (si._rawName && lineName && si._rawName === lineName),
             );
             if (match && orderedQty > 0 && match.receivedQty < orderedQty) {
@@ -522,7 +599,7 @@ export async function writeDepartmentSnapshot(
 
     // Clean internal helpers from items before writing
     const cleanItems = snapshotItems.slice(0, 200).map(si => {
-      const { _rawProductId, _rawName, _invoiceUnitCost, ...rest } = si;
+      const { _rawProductId, _resolvedProductId, _rawName, _invoiceUnitCost, ...rest } = si;
       return rest;
     });
 

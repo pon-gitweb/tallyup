@@ -1,4 +1,5 @@
 import { computeSnapshotItemFigures } from '../snapshotWriter';
+import type { ProductResolution } from '../snapshotWriter';
 
 // snapshotWriter.ts imports firebase SDK at module level; mock it so tests
 // run without an initialised Firebase app.
@@ -257,5 +258,82 @@ describe('computeSnapshotItemFigures — hasBaseline contract', () => {
   it('cycle-1 with empty prevItemMap (legacy first cycle): hasBaseline is false — skipped', () => {
     const { hasBaseline } = computeSnapshotItemFigures([item], new Map(), 1, [], []);
     expect(hasBaseline).toBe(false);
+  });
+});
+
+// ── Suite: ProductResolution — mergedInto-aware matching ──────────────────────
+//
+// A same-area-conflict merge leaves the area item's productId pointing to the
+// now-inactive product. Invoice lines and sales reports reference the survivor.
+// Without ProductResolution the match fails; with it, the resolved id bridges
+// the gap. Tests 1 and 3 pin the pre-fix broken behavior; 2, 4, 5 assert the fix.
+
+describe('computeSnapshotItemFigures — ProductResolution (mergedInto chain)', () => {
+  // Item left behind by a same-area-conflict merge: productId still points to
+  // the old/inactive product, raw name is the old product's name.
+  function makeConflictItem() {
+    return makeItem({
+      _id: 'area-item-x',
+      name: 'Batch Old Fashioned',
+      productId: 'old-id',   // inactive — mergedInto survivor-id
+      lastCount: 5,
+      costPrice: null,        // no stamped price → Tier 2 path via invoice
+    });
+  }
+
+  const pr: ProductResolution = {
+    resolvedIdById: { 'old-id': 'survivor-id' },
+    resolvedIdByName: {
+      'batch old fashioned': 'survivor-id', // old product name maps to survivor
+      'old fashioned': 'survivor-id',       // survivor name maps to itself
+    },
+  };
+
+  it('[pre-fix] invoice line with survivor id does NOT match item with old id (no PR)', () => {
+    // Without ProductResolution only _rawProductId and name are checked.
+    // Invoice line has survivor's id; item has old id; names differ → no match → receivedQty 0.
+    const item = makeConflictItem();
+    const lines = [[{ productId: 'survivor-id', qty: 6, unitCost: 18 }]];
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, lines, []);
+    expect(snapshotItems[0].receivedQty).toBe(0);
+  });
+
+  it('[fixed] invoice line with survivor id matches item with old id via resolvedIdById', () => {
+    const item = makeConflictItem();
+    const lines = [[{ productId: 'survivor-id', qty: 6, unitCost: 18 }]];
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, lines, [], pr);
+    expect(snapshotItems[0].receivedQty).toBe(6);
+  });
+
+  it('[pre-fix] sales line with survivor name does NOT match item whose _rawName is old name (no PR)', () => {
+    // Sales lines carry no productId. Without PR, only _rawName is checked.
+    // Sales line name is the survivor product's name; item's raw name is the old name → no match.
+    const item = makeConflictItem();
+    const salesLines = [{ name: 'old fashioned', qtySold: 3 }];
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, [], salesLines);
+    expect(snapshotItems[0].soldQty).toBeNull();
+  });
+
+  it('[fixed] sales line with survivor name matches via resolvedIdByName → _resolvedProductId', () => {
+    const item = makeConflictItem();
+    const salesLines = [{ name: 'old fashioned', qtySold: 3 }];
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, [], salesLines, pr);
+    expect(snapshotItems[0].soldQty).toBe(3);
+  });
+
+  it('multi-hop chain: item with grandparent id resolves to survivor via 2-hop PR', () => {
+    // The resolveProductChain helper (called in the I/O wrapper) handles multi-hop.
+    // Here we supply the already-walked result directly — confirms the computed
+    // _resolvedProductId is used, not the raw productId, all the way to the match.
+    const item = makeItem({
+      name: 'Product X', productId: 'old-id-1', lastCount: 3, costPrice: null,
+    });
+    const multiHopPr: ProductResolution = {
+      resolvedIdById: { 'old-id-1': 'survivor-id', 'old-id-2': 'survivor-id' },
+      resolvedIdByName: {},
+    };
+    const lines = [[{ productId: 'survivor-id', qty: 4, unitCost: 10 }]];
+    const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, lines, [], multiHopPr);
+    expect(snapshotItems[0].receivedQty).toBe(4);
   });
 });
