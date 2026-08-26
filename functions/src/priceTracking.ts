@@ -53,27 +53,40 @@ function computeCaseSizeFields(
 
 /**
  * Shape-builder for per-supplier `invoiceHistory` subcollection entries.
- * Produces a plain object keyed by the supplied options; optional fields are
- * omitted (not written as `undefined`) when not provided.
+ * `lineTotal` is computed internally (unitCost × qty, rounded to 2 dp).
+ * Optional fields (oldPrice, changePercent, direction, note) are omitted from
+ * the output when not supplied rather than written as `undefined`.
  */
 function buildInvoiceHistoryEntry(opts: {
   invoiceId: string;
+  productId: string;
+  productName: string;
+  supplierId: string | null;
+  supplierName: string | null;
   unitCost: number;
   qty: number;
   caseSize: number | null;
   type: 'priceChange' | 'firstTime' | 'samePriceTouch' | 'nearDuplicate' | 'newProduct' | 'supplierLink';
+  wasPreferredSupplier: boolean | null;
   oldPrice?: number | null;
   changePercent?: number | null;
   direction?: 'increase' | 'decrease' | 'initial';
   note?: string;
 }): Record<string, unknown> {
+  const lineTotal = Math.round(opts.unitCost * opts.qty * 100) / 100;
   const entry: Record<string, unknown> = {
     date: admin.firestore.FieldValue.serverTimestamp(),
     invoiceId: opts.invoiceId,
+    productId: opts.productId,
+    productName: opts.productName,
+    supplierId: opts.supplierId,
+    supplierName: opts.supplierName,
     unitCost: opts.unitCost,
     qty: opts.qty,
     caseSize: opts.caseSize,
+    lineTotal,
     type: opts.type,
+    wasPreferredSupplier: opts.wasPreferredSupplier,
   };
   if (opts.oldPrice !== undefined) entry.oldPrice = opts.oldPrice;
   if (opts.changePercent !== undefined) entry.changePercent = opts.changePercent;
@@ -368,10 +381,17 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             const invHistRef = suppRef.collection("invoiceHistory").doc();
             batch.set(invHistRef, buildInvoiceHistoryEntry({
               invoiceId,
+              productId: matched.id,
+              productName: matched.name || line.name,
+              supplierId: cleanSupplierId,
+              supplierName: cleanSupplierName,
               unitCost: unitPrice,
               qty: line.qty,
               caseSize: cs,
               type: "samePriceTouch",
+              wasPreferredSupplier: typeof matched.primarySupplierId === "string"
+                && matched.primarySupplierId.length > 0
+                && matched.primarySupplierId === cleanSupplierId,
               oldPrice: existing,
               changePercent: 0,
             }));
@@ -409,10 +429,17 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           const invHistRef = suppRef.collection("invoiceHistory").doc();
           batch.set(invHistRef, buildInvoiceHistoryEntry({
             invoiceId,
+            productId: matched.id,
+            productName: matched.name || line.name,
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
             unitCost: unitPrice,
             qty: line.qty,
             caseSize: cs,
             type: "firstTime",
+            wasPreferredSupplier: typeof matched.primarySupplierId === "string"
+              && matched.primarySupplierId.length > 0
+              && matched.primarySupplierId === cleanSupplierId,
             oldPrice: null,
             changePercent: null,
             direction: "initial",
@@ -659,16 +686,23 @@ export async function commitInvoiceChanges(
       });
       ops += 2;
       changed++;
-      // Site 3: per-supplier invoiceHistory for confirmed price change
+      // Site 3: per-supplier invoiceHistory for confirmed price change.
+      // wasPreferredSupplier: supplierMismatch=true means the invoice supplier is NOT the preferred
+      // one; if no reasoning was attached (below 25% threshold), assume it IS preferred.
       if (cleanSupplierId) {
         const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
         const invHistRef = suppRef.collection("invoiceHistory").doc();
         batch.set(invHistRef, buildInvoiceHistoryEntry({
           invoiceId,
+          productId: proposal.productId,
+          productName: proposal.productName,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
           unitCost: effectivePrice,
           qty: proposal.qty,
           caseSize: cs,
           type: "priceChange",
+          wasPreferredSupplier: !(proposal.reasoning?.supplierMismatch ?? false),
           oldPrice: proposal.oldPrice,
           changePercent: effectiveChangePercent,
           direction: proposal.direction,
@@ -776,10 +810,17 @@ export async function commitInvoiceChanges(
         const invHistRef = suppRef.collection("invoiceHistory").doc();
         batch.set(invHistRef, buildInvoiceHistoryEntry({
           invoiceId,
+          productId: proposal.candidateProductId,
+          productName: proposal.candidateProductName,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
           unitCost: proposal.newPrice,
           qty: proposal.qty,
           caseSize: proposal.caseSize,
           type: "nearDuplicate",
+          // wasPreferredSupplier is genuinely unknown here without an extra product read;
+          // null signals "not determined" rather than a wrong false.
+          wasPreferredSupplier: null,
           oldPrice: existingP ?? null,
           changePercent,
           direction,
@@ -854,16 +895,22 @@ export async function commitInvoiceChanges(
         });
         ops++;
       }
-      // Site 5: per-supplier invoiceHistory for new product induction
+      // Site 5: per-supplier invoiceHistory for new product induction.
+      // wasPreferredSupplier: true because cleanSupplierId is set as primarySupplierId above.
       if (cleanSupplierId && proposal.unitPrice != null) {
         const suppRef = newRef.collection("suppliers").doc(cleanSupplierId);
         const invHistRef = suppRef.collection("invoiceHistory").doc();
         batch.set(invHistRef, buildInvoiceHistoryEntry({
           invoiceId,
+          productId: newRef.id,
+          productName: proposal.lineName,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
           unitCost: proposal.unitPrice,
           qty: proposal.qty,
           caseSize: cs,
           type: "newProduct",
+          wasPreferredSupplier: true,
           oldPrice: null,
           changePercent: null,
           direction: "initial",
@@ -901,6 +948,10 @@ export async function commitInvoiceChanges(
         ? proposal.unitCost * proposal.caseSize
         : proposal.unitCost;
 
+      // wasPreferredSupplierForLink: set inside each branch; used by the invoiceHistory write below.
+      // (The legacy-same-supplier continue path writes its own entry with wasPreferredSupplier:true.)
+      let wasPreferredSupplierForLink = false;
+
       if (!snap.exists) {
         // Fresh product read (state may have changed since propose)
         const productSnap = await db
@@ -910,6 +961,8 @@ export async function commitInvoiceChanges(
         const legacySupplierId: string | null = productData?.supplierId || null;
         const hasPrimarySet = !!(productData?.primarySupplierId);
         const hasPreferred = !!(productData?.primarySupplierId || productData?.supplierId);
+        // supplier becomes preferred only if no preferred link existed before this invoice
+        wasPreferredSupplierForLink = !hasPreferred;
 
         // Backfill legacy-only products into the new model before processing the new link
         if (!hasPrimarySet && legacySupplierId) {
@@ -945,13 +998,19 @@ export async function commitInvoiceChanges(
               lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
               lastInvoicePrice: invoicePrice,
             });
-            // Site 6a: invoiceHistory for legacy-same-supplier continue path
+            // Site 6a: invoiceHistory for legacy-same-supplier path.
+            // wasPreferredSupplier: true — this IS the legacy preferred supplier being updated.
             await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
               invoiceId,
+              productId: proposal.productId,
+              productName: proposal.productName,
+              supplierId: proposal.supplierId,
+              supplierName: proposal.supplierName,
               unitCost: proposal.unitCost,
               qty: proposal.qty,
               caseSize: proposal.caseSize,
               type: "supplierLink",
+              wasPreferredSupplier: true,
             }));
             continue;
           }
@@ -980,6 +1039,8 @@ export async function commitInvoiceChanges(
           });
         }
       } else {
+        // Existing link — record whether it was already the preferred supplier
+        wasPreferredSupplierForLink = (snap.data() as any)?.isPreferred === true;
         await supplierRef.update({
           unitCost: proposal.unitCost,
           caseSize: proposal.caseSize,
@@ -987,14 +1048,19 @@ export async function commitInvoiceChanges(
           lastInvoicePrice: invoicePrice,
         });
       }
-      // Sites 6 & 7: per-supplier invoiceHistory — one entry per supplier-link confirmation
-      // (covers both the new-link set path and the existing-link update path above)
+      // Sites 6b & 7: per-supplier invoiceHistory — one entry covering both the new-link
+      // and existing-link paths (legacy-same-supplier continue path is handled at site 6a above)
       await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
         invoiceId,
+        productId: proposal.productId,
+        productName: proposal.productName,
+        supplierId: proposal.supplierId,
+        supplierName: proposal.supplierName,
         unitCost: proposal.unitCost,
         qty: proposal.qty,
         caseSize: proposal.caseSize,
         type: "supplierLink",
+        wasPreferredSupplier: wasPreferredSupplierForLink,
       }));
     } catch (e: any) {
       console.log("[commitInvoiceChanges] supplier link error", proposal.productId, e?.message);
