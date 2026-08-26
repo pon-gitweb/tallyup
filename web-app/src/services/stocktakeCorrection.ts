@@ -92,10 +92,15 @@ export function recalculateItem(
   const receivedQty: number = (item.receivedQty as number) || 0
   const soldQty: number | null = (item.soldQty as number | null) ?? null
 
-  // Pricing-tier evidence is not affected by a quantity correction — carry forward as-is
+  // Pricing-tier evidence is not affected by a quantity correction — carry forward as-is.
+  // Legacy (pre-Phase-1) items have no costPriceTier field; derive it from costPrice,
+  // mirroring snapshotWriter STEP A3 exactly so the correction tool is consistent.
   const costPriceTier: 'stamped' | 'invoice_verified' | 'none' =
-    (item.costPriceTier as 'stamped' | 'invoice_verified' | 'none') ?? 'none'
-  const displayCostPrice: number | null = (item.displayCostPrice as number | null) ?? null
+    (item.costPriceTier as 'stamped' | 'invoice_verified' | 'none') ??
+    (typeof item.costPrice === 'number' ? 'stamped' : 'none')
+  const displayCostPrice: number | null =
+    (item.displayCostPrice as number | null) ??
+    (costPriceTier === 'stamped' ? (item.costPrice as number) : null)
 
   // ── Base figures (snapshotWriter lines 76-108) ──────────────────────────
   const totalVarianceQty = actualClosing - (openingCount ?? 0)
