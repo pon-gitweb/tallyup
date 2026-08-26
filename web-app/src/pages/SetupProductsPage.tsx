@@ -177,7 +177,14 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
     }
     case 'costPrice': {
       const n = trimmed === '' ? null : Number(trimmed)
-      return { costPrice: n != null && Number.isFinite(n) ? n : null, updatedAt: serverTimestamp() }
+      const costPrice = n != null && Number.isFinite(n) ? n : null
+      return {
+        costPrice,
+        ...(costPrice != null
+          ? { costPriceSource: 'manual', costPriceUpdatedAt: serverTimestamp() }
+          : {}),
+        updatedAt: serverTimestamp(),
+      }
     }
     case 'supplierName':
       // "Unassigned" is the mobile app's convention for "no supplier set".
@@ -1026,12 +1033,32 @@ function RecipeLinkModal({
     setWorking(true)
     try {
       const costPrice = Math.round(recipe.cogs * 10000) / 10000
-      await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+      const oldPrice = product.costPrice ?? null
+      const batch = writeBatch(db)
+      const productRef = doc(db, 'venues', venueId, 'products', product.id)
+      batch.update(productRef, {
         costPrice,
         linkedRecipeId: recipe.id,
         linkedRecipeName: recipe.name,
+        costPriceSource: 'recipe',
+        costPriceUpdatedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
+      const histRef = doc(collection(db, 'venues', venueId, 'products', product.id, 'priceHistory'))
+      batch.set(histRef, {
+        date: serverTimestamp(),
+        oldPrice,
+        newPrice: costPrice,
+        source: 'recipe',
+        linkedRecipeId: recipe.id,
+        linkedRecipeName: recipe.name,
+        changePercent: oldPrice != null && oldPrice > 0
+          ? Math.round(((costPrice - oldPrice) / oldPrice) * 10000) / 100
+          : null,
+        direction: oldPrice == null ? 'initial' : costPrice > oldPrice ? 'increase' : costPrice < oldPrice ? 'decrease' : 'unchanged',
+        note: `Linked to recipe "${recipe.name}"`,
+      })
+      await batch.commit()
       setDoneMsg(`Linked to "${recipe.name}" — cost price set to $${costPrice.toFixed(4)}`)
       setDone(true)
     } catch {
@@ -1317,7 +1344,38 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   async function commitEdit(id: string, field: EditableField, rawValue: string) {
     try {
-      await updateDoc(doc(db, 'venues', venueId, 'products', id), buildUpdatePayload(field, rawValue))
+      const payload = buildUpdatePayload(field, rawValue)
+      if (field === 'costPrice') {
+        // costPrice edits: also write a priceHistory entry so manual changes are auditable
+        const n = rawValue.trim() === '' ? null : Number(rawValue.trim())
+        const newPrice = n != null && Number.isFinite(n) ? n : null
+        if (newPrice != null) {
+          const batch = writeBatch(db)
+          const productRef = doc(db, 'venues', venueId, 'products', id)
+          batch.update(productRef, payload)
+          const oldPrice = products.find((p) => p.id === id)?.costPrice ?? null
+          const histRef = doc(collection(db, 'venues', venueId, 'products', id, 'priceHistory'))
+          batch.set(histRef, {
+            date: serverTimestamp(),
+            oldPrice,
+            newPrice,
+            source: 'manual',
+            changePercent: oldPrice != null && oldPrice > 0
+              ? Math.round(((newPrice - oldPrice) / oldPrice) * 10000) / 100
+              : null,
+            direction: oldPrice == null ? 'initial'
+              : newPrice > oldPrice ? 'increase'
+              : newPrice < oldPrice ? 'decrease'
+              : 'unchanged',
+            note: 'Manual price edit',
+          })
+          await batch.commit()
+        } else {
+          await updateDoc(doc(db, 'venues', venueId, 'products', id), payload)
+        }
+      } else {
+        await updateDoc(doc(db, 'venues', venueId, 'products', id), payload)
+      }
     } catch (e) {
       console.error('[SetupProductsPage] failed to save field', field, e)
     }
@@ -1451,6 +1509,9 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             packSize: row.packSize,
             caseSize: row.packSize,
             costPrice: row.costPrice,
+            ...(row.costPrice != null
+              ? { costPriceSource: 'csv_import', costPriceUpdatedAt: serverTimestamp() }
+              : {}),
             supplierId: null,
             supplierName: row.supplierName || 'Unassigned',
             gstPercent: venueCountry === 'AU' ? 10 : 15,
@@ -1458,6 +1519,18 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           })
+          if (row.costPrice != null) {
+            const histRef = doc(collection(db, 'venues', venueId, 'products', ref.id, 'priceHistory'))
+            batch.set(histRef, {
+              date: serverTimestamp(),
+              oldPrice: null,
+              newPrice: row.costPrice,
+              source: 'csv_import',
+              changePercent: null,
+              direction: 'initial',
+              note: 'Initial price set from CSV import',
+            })
+          }
         }
         await batch.commit()
       }
@@ -1520,10 +1593,29 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         return
       }
       const costPrice = Math.round(cogs * 10000) / 10000
-      await updateDoc(doc(db, 'venues', venueId, 'products', product.id), {
+      const oldPrice = product.costPrice ?? null
+      const batch = writeBatch(db)
+      const productRef = doc(db, 'venues', venueId, 'products', product.id)
+      batch.update(productRef, {
         costPrice,
+        costPriceSource: 'recipe',
+        costPriceUpdatedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
+      const histRef = doc(collection(db, 'venues', venueId, 'products', product.id, 'priceHistory'))
+      batch.set(histRef, {
+        date: serverTimestamp(),
+        oldPrice,
+        newPrice: costPrice,
+        source: 'recipe',
+        linkedRecipeId: product.linkedRecipeId ?? null,
+        changePercent: oldPrice != null && oldPrice > 0
+          ? Math.round(((costPrice - oldPrice) / oldPrice) * 10000) / 100
+          : null,
+        direction: oldPrice == null ? 'initial' : costPrice > oldPrice ? 'increase' : costPrice < oldPrice ? 'decrease' : 'unchanged',
+        note: 'Recipe cost sync',
+      })
+      await batch.commit()
       setRefreshLinkMsg({ id: product.id, msg: `Cost synced to $${costPrice.toFixed(4)} (recipe COGS)`, ok: true })
     } catch {
       setRefreshLinkMsg({ id: product.id, msg: 'Sync failed — try again.', ok: false })

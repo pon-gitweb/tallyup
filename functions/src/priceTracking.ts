@@ -606,19 +606,37 @@ export async function commitInvoiceChanges(
           (proposal.newPrice - proposal.existingPrice) / proposal.existingPrice
         );
         if (pctDiff > 0.01) {
+          // Price change on confirmed near-duplicate — tag source + write priceHistory
+          const changePercent = Math.round(
+            ((proposal.newPrice - proposal.existingPrice) / proposal.existingPrice) * 10000
+          ) / 100;
+          const nearDupHistRef = productRef.collection("priceHistory").doc();
+          batch.set(nearDupHistRef, {
+            date: admin.firestore.FieldValue.serverTimestamp(),
+            oldPrice: proposal.existingPrice,
+            newPrice: proposal.newPrice,
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
+            invoiceId,
+            changePercent,
+            direction: proposal.newPrice > proposal.existingPrice ? "increase" : "decrease",
+            note: "Near-duplicate match confirmed",
+          });
           batch.update(productRef, {
             costPrice: proposal.newPrice,
             costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            costPriceSource: "invoice",
             lastInvoicePrice: proposal.newPrice,
             lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             ...caseSizeFields,
           });
-          ops++;
+          ops += 2;
           changed++;
         } else {
-          // Same price — touch to record that the user confirmed this match
+          // Same price — touch to record that the user confirmed this match; tag source
           batch.update(productRef, {
+            costPriceSource: "invoice",
             lastInvoicePrice: proposal.newPrice,
             lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -627,16 +645,29 @@ export async function commitInvoiceChanges(
           ops++;
         }
       } else {
-        // First-time price set on confirmed near-duplicate
+        // First-time price set on confirmed near-duplicate — tag source + write priceHistory
+        const nearDupHistRef = productRef.collection("priceHistory").doc();
+        batch.set(nearDupHistRef, {
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          oldPrice: null,
+          newPrice: proposal.newPrice,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
+          invoiceId,
+          changePercent: null,
+          direction: "initial",
+          note: "Initial price set from near-duplicate match",
+        });
         batch.update(productRef, {
           costPrice: proposal.newPrice,
           costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          costPriceSource: "invoice",
           lastInvoicePrice: proposal.newPrice,
           lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           ...caseSizeFields,
         });
-        ops++;
+        ops += 2;
       }
       // Now has a real product ID — queue for area-item linking
       newlyResolvedMap[proposal.lineName] = proposal.candidateProductId;
@@ -685,6 +716,22 @@ export async function commitInvoiceChanges(
           lastInvoicePrice: proposal.unitPrice,
           addedAt: admin.firestore.FieldValue.serverTimestamp(),
           addedBy: "invoice-import",
+        });
+        ops++;
+      }
+      // priceHistory entry for the initial price — costPriceSource already set on the product doc above
+      if (proposal.unitPrice != null) {
+        const newHistRef = newRef.collection("priceHistory").doc();
+        batch.set(newHistRef, {
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          oldPrice: null,
+          newPrice: proposal.unitPrice,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
+          invoiceId,
+          changePercent: null,
+          direction: "initial",
+          note: "Initial price set — new product from invoice",
         });
         ops++;
       }
