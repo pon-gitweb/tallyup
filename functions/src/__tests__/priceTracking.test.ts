@@ -1,31 +1,39 @@
-// Tests for commitInvoiceChanges — covers the four new source-tagging write sites
-// (nearDuplicateMatch price change, same-price touch, first-time price; newProduct priceHistory).
-// proposeInvoiceChanges first-time and priceChange were already tagged before Phase P1.
+// Tests for commitInvoiceChanges — covers source-tagging and the per-supplier
+// invoiceHistory ledger (Phase P2). Proposal types tested: priceChange,
+// nearDuplicateMatch (all three sub-cases), newProduct, supplierLink (new + existing).
 
 // ── Firebase-admin mock ───────────────────────────────────────────────────────
-// Capture every batch.set() and batch.update() call so we can assert on them.
+// Capture every batch.set() / batch.update() call and every direct doc.set() /
+// doc.update() call so tests can assert on both batch and individual-await writes.
 const mockBatchSets: Array<{ path: string; data: any }> = [];
 const mockBatchUpdates: Array<{ path: string; data: any }> = [];
 const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
 
-// Supplier link snaps: return { exists: false } by default so supplierLink
-// proposals fall into the "new link" branch without complex read mocks.
+const mockDocSets: Array<{ path: string; data: any }> = [];
+const mockDocUpdates: Array<{ path: string; data: any }> = [];
+
+// Supplier link snaps: defaults to { exists: false } so the new-link code path runs.
 const mockSupplierGet = jest.fn().mockResolvedValue({ exists: false, data: () => ({}) });
 const mockProductGet = jest.fn().mockResolvedValue({
   exists: true,
   data: () => ({ supplierId: null, primarySupplierId: null, supplierName: null }),
 });
 
-// doc(path) factory — returns an object whose shape matches what priceTracking.ts uses.
 function makeDocRef(path: string) {
   return {
     path,
     get: () => (path.includes('/suppliers/') ? mockSupplierGet() : mockProductGet()),
     collection: (sub: string) => ({
-      doc: () => makeDocRef(`${path}/${sub}/__auto__`),
+      doc: (id?: string) => makeDocRef(`${path}/${sub}/${id ?? '__auto__'}`),
     }),
-    update: jest.fn().mockResolvedValue(undefined),
-    set: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn((data: any) => {
+      mockDocUpdates.push({ path, data });
+      return Promise.resolve();
+    }),
+    set: jest.fn((data: any) => {
+      mockDocSets.push({ path, data });
+      return Promise.resolve();
+    }),
   };
 }
 
@@ -52,7 +60,7 @@ jest.mock('firebase-admin', () => {
         get: jest.fn().mockResolvedValue({ docs: [] }),
       }),
       get: jest.fn().mockResolvedValue({ docs: [] }),
-      doc: () => makeDocRef(`${path}/__auto__`),
+      doc: (id?: string) => makeDocRef(`${path}/${id ?? '__auto__'}`),
     }),
   };
 
@@ -69,18 +77,64 @@ function clearMocks() {
   mockBatchSets.length = 0;
   mockBatchUpdates.length = 0;
   mockBatchCommit.mockClear();
+  mockDocSets.length = 0;
+  mockDocUpdates.length = 0;
 }
 
 const VENUE_ID = 'venue-1';
 const INVOICE_ID = 'inv-001';
 const CTX = { supplierId: 'sup-1', supplierName: 'Acme', invoiceId: INVOICE_ID };
 
+// ── Suite: priceChange — commit ───────────────────────────────────────────────
+
+describe('commitInvoiceChanges — priceChange', () => {
+  beforeEach(clearMocks);
+
+  it('writes a priceHistory entry, tags costPriceSource:invoice, and writes invoiceHistory', async () => {
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-pc1`,
+      type: 'priceChange',
+      productId: 'prod-pc1',
+      productName: 'Aged Rum 700ml',
+      lineName: 'Aged Rum',
+      oldPrice: 30,
+      newPrice: 33,
+      changePercent: 10,
+      direction: 'increase',
+      qty: 6,
+      caseSize: null,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    const priceHistEntry = mockBatchSets.find(
+      (s) => s.path.includes('prod-pc1') && s.path.includes('/priceHistory/')
+    );
+    expect(priceHistEntry).toBeDefined();
+    expect(priceHistEntry!.data.source).toBe('invoice');
+    expect(priceHistEntry!.data.direction).toBe('increase');
+
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-pc1'));
+    expect(productUpdate!.data.costPriceSource).toBe('invoice');
+    expect(productUpdate!.data.costPrice).toBe(33);
+
+    // invoiceHistory written under the supplier subcollection
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('priceChange');
+    expect(invHist!.data.unitCost).toBe(33);
+    expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
+    expect(invHist!.data.oldPrice).toBe(30);
+    expect(invHist!.data.direction).toBe('increase');
+  });
+});
+
 // ── Suite: nearDuplicateMatch — price change ───────────────────────────────────
 
 describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
   beforeEach(clearMocks);
 
-  it('writes a priceHistory entry and tags costPriceSource: "invoice"', async () => {
+  it('writes priceHistory, tags costPriceSource:invoice, and writes invoiceHistory', async () => {
     const proposal: ProposedAction = {
       id: `${INVOICE_ID}:nearDuplicateMatch:oldwhisky`,
       type: 'nearDuplicateMatch',
@@ -95,20 +149,26 @@ describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
 
     await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
 
-    // priceHistory entry must be present
-    const histEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
-    expect(histEntry).toBeDefined();
-    expect(histEntry!.data.oldPrice).toBe(40);
-    expect(histEntry!.data.newPrice).toBe(44);
-    expect(histEntry!.data.direction).toBe('increase');
-    expect(histEntry!.data.source).toBe('invoice');
-    expect(histEntry!.data.invoiceId).toBe(INVOICE_ID);
+    const priceHistEntry = mockBatchSets.find(
+      (s) => s.path.includes('prod-123') && s.path.includes('/priceHistory/')
+    );
+    expect(priceHistEntry).toBeDefined();
+    expect(priceHistEntry!.data.oldPrice).toBe(40);
+    expect(priceHistEntry!.data.newPrice).toBe(44);
+    expect(priceHistEntry!.data.direction).toBe('increase');
+    expect(priceHistEntry!.data.source).toBe('invoice');
+    expect(priceHistEntry!.data.invoiceId).toBe(INVOICE_ID);
 
-    // Product update must include costPriceSource
     const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-123'));
-    expect(productUpdate).toBeDefined();
     expect(productUpdate!.data.costPriceSource).toBe('invoice');
     expect(productUpdate!.data.costPrice).toBe(44);
+
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('nearDuplicate');
+    expect(invHist!.data.unitCost).toBe(44);
+    expect(invHist!.data.direction).toBe('increase');
+    expect(invHist!.data.oldPrice).toBe(40);
   });
 });
 
@@ -117,7 +177,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
 describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
   beforeEach(clearMocks);
 
-  it('tags costPriceSource: "invoice" without a priceHistory entry', async () => {
+  it('tags costPriceSource:invoice, no priceHistory entry, but writes invoiceHistory', async () => {
     const proposal: ProposedAction = {
       id: `${INVOICE_ID}:nearDuplicateMatch:rum`,
       type: 'nearDuplicateMatch',
@@ -125,7 +185,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
       candidateProductName: 'Rum 1L',
       lineName: 'Rum',
       existingPrice: 35,
-      newPrice: 35,     // same price → pctDiff === 0
+      newPrice: 35,  // same price → pctDiff === 0
       qty: 3,
       caseSize: null,
     };
@@ -133,13 +193,20 @@ describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
     await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
 
     // No priceHistory entry for a same-price touch
-    const histEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
-    expect(histEntry).toBeUndefined();
+    const priceHistEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
+    expect(priceHistEntry).toBeUndefined();
 
-    // Product update must still tag costPriceSource
     const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-456'));
-    expect(productUpdate).toBeDefined();
     expect(productUpdate!.data.costPriceSource).toBe('invoice');
+
+    // invoiceHistory IS written even for same-price — records the invoice appearance
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('nearDuplicate');
+    expect(invHist!.data.unitCost).toBe(35);
+    // Same-price sub-case omits direction
+    expect(invHist!.data.direction).toBeUndefined();
+    expect(invHist!.data.oldPrice).toBe(35);
   });
 });
 
@@ -148,7 +215,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
 describe('commitInvoiceChanges — nearDuplicateMatch first-time price', () => {
   beforeEach(clearMocks);
 
-  it('writes an initial priceHistory entry and tags costPriceSource: "invoice"', async () => {
+  it('writes initial priceHistory, tags costPriceSource:invoice, and writes invoiceHistory', async () => {
     const proposal: ProposedAction = {
       id: `${INVOICE_ID}:nearDuplicateMatch:gin`,
       type: 'nearDuplicateMatch',
@@ -163,25 +230,58 @@ describe('commitInvoiceChanges — nearDuplicateMatch first-time price', () => {
 
     await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
 
-    const histEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
-    expect(histEntry).toBeDefined();
-    expect(histEntry!.data.oldPrice).toBeNull();
-    expect(histEntry!.data.newPrice).toBe(38);
-    expect(histEntry!.data.direction).toBe('initial');
-    expect(histEntry!.data.source).toBe('invoice');
+    const priceHistEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
+    expect(priceHistEntry).toBeDefined();
+    expect(priceHistEntry!.data.oldPrice).toBeNull();
+    expect(priceHistEntry!.data.newPrice).toBe(38);
+    expect(priceHistEntry!.data.direction).toBe('initial');
+    expect(priceHistEntry!.data.source).toBe('invoice');
 
     const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-789'));
     expect(productUpdate!.data.costPriceSource).toBe('invoice');
     expect(productUpdate!.data.costPrice).toBe(38);
+
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('nearDuplicate');
+    expect(invHist!.data.unitCost).toBe(38);
+    expect(invHist!.data.direction).toBe('initial');
+    expect(invHist!.data.oldPrice).toBeNull();
   });
 });
 
-// ── Suite: newProduct — priceHistory entry ────────────────────────────────────
+// ── Suite: nearDuplicateMatch — single invoiceHistory call guarantee ──────────
 
-describe('commitInvoiceChanges — newProduct priceHistory', () => {
+describe('commitInvoiceChanges — nearDuplicateMatch invoiceHistory single-call guarantee', () => {
   beforeEach(clearMocks);
 
-  it('writes an initial priceHistory entry alongside the product doc', async () => {
+  it('writes exactly one invoiceHistory entry regardless of sub-case', async () => {
+    // Use the price-change sub-case; same guarantee holds for the other two
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:nearDuplicateMatch:vodka`,
+      type: 'nearDuplicateMatch',
+      candidateProductId: 'prod-vdk',
+      candidateProductName: 'Vodka 1L',
+      lineName: 'Vodka',
+      existingPrice: 25,
+      newPrice: 28,
+      qty: 12,
+      caseSize: 12,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    const invHistEntries = mockBatchSets.filter((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHistEntries).toHaveLength(1);
+  });
+});
+
+// ── Suite: newProduct — priceHistory + invoiceHistory ────────────────────────
+
+describe('commitInvoiceChanges — newProduct priceHistory + invoiceHistory', () => {
+  beforeEach(clearMocks);
+
+  it('writes product doc, priceHistory, and invoiceHistory with type:newProduct', async () => {
     const proposal: ProposedAction = {
       id: `${INVOICE_ID}:newProduct:newbeer`,
       type: 'newProduct',
@@ -195,19 +295,103 @@ describe('commitInvoiceChanges — newProduct priceHistory', () => {
 
     await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
 
-    // One batch.set for the product doc
     const productSet = mockBatchSets.find(
-      (s) => !s.path.includes('/priceHistory/') && !s.path.includes('/suppliers/')
+      (s) => !s.path.includes('/priceHistory/') && !s.path.includes('/suppliers/') && !s.path.includes('/invoiceHistory/')
     );
     expect(productSet).toBeDefined();
     expect(productSet!.data.costPriceSource).toBe('invoice');
 
-    // One batch.set for the initial priceHistory
-    const histEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
-    expect(histEntry).toBeDefined();
-    expect(histEntry!.data.newPrice).toBe(5.5);
-    expect(histEntry!.data.direction).toBe('initial');
-    expect(histEntry!.data.source).toBe('invoice');
-    expect(histEntry!.data.oldPrice).toBeNull();
+    const priceHistEntry = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
+    expect(priceHistEntry).toBeDefined();
+    expect(priceHistEntry!.data.newPrice).toBe(5.5);
+    expect(priceHistEntry!.data.direction).toBe('initial');
+    expect(priceHistEntry!.data.source).toBe('invoice');
+
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('newProduct');
+    expect(invHist!.data.unitCost).toBe(5.5);
+    expect(invHist!.data.direction).toBe('initial');
+    expect(invHist!.data.oldPrice).toBeNull();
+  });
+});
+
+// ── Suite: supplierLink — new link ────────────────────────────────────────────
+
+describe('commitInvoiceChanges — supplierLink new link', () => {
+  beforeEach(clearMocks);
+
+  it('creates supplier doc and writes an invoiceHistory entry with type:supplierLink', async () => {
+    // mockSupplierGet defaults to { exists: false } → new-link path
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:supplierLink:prod-existing:sup-1`,
+      type: 'supplierLink',
+      productId: 'prod-existing',
+      productName: 'Existing Product',
+      supplierId: 'sup-1',
+      supplierName: 'Acme',
+      unitCost: 12,
+      caseSize: null,
+      wouldBecomePreferred: true,
+      qty: 4,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    // Supplier doc created via direct .set()
+    const supplierSet = mockDocSets.find(
+      (s) => s.path.includes('/suppliers/') && !s.path.includes('/invoiceHistory/')
+    );
+    expect(supplierSet).toBeDefined();
+    expect(supplierSet!.data.supplierId).toBe('sup-1');
+
+    // invoiceHistory entry written via direct .set() (not batch — outside batch loop)
+    const invHist = mockDocSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('supplierLink');
+    expect(invHist!.data.unitCost).toBe(12);
+    expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
+    expect(invHist!.data.qty).toBe(4);
+  });
+});
+
+// ── Suite: supplierLink — existing link update ────────────────────────────────
+
+describe('commitInvoiceChanges — supplierLink existing link update', () => {
+  beforeEach(clearMocks);
+
+  it('updates supplier doc and writes an invoiceHistory entry with type:supplierLink', async () => {
+    // Override to snap.exists = true for this one test
+    mockSupplierGet.mockResolvedValueOnce({ exists: true, data: () => ({}) });
+
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:supplierLink:prod-existing:sup-1`,
+      type: 'supplierLink',
+      productId: 'prod-existing',
+      productName: 'Existing Product',
+      supplierId: 'sup-1',
+      supplierName: 'Acme',
+      unitCost: 15,
+      caseSize: 6,
+      wouldBecomePreferred: false,
+      qty: 2,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    // Supplier updated via direct .update()
+    const supplierUpdate = mockDocUpdates.find(
+      (u) => u.path.includes('/suppliers/') && !u.path.includes('/invoiceHistory/')
+    );
+    expect(supplierUpdate).toBeDefined();
+    expect(supplierUpdate!.data.unitCost).toBe(15);
+
+    // invoiceHistory written
+    const invHist = mockDocSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist).toBeDefined();
+    expect(invHist!.data.type).toBe('supplierLink');
+    expect(invHist!.data.unitCost).toBe(15);
+    expect(invHist!.data.caseSize).toBe(6);
+    expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
   });
 });

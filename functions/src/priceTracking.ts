@@ -51,6 +51,37 @@ function computeCaseSizeFields(
 // Propose / commit split — replaces trackPriceChanges once callers are migrated
 // ---------------------------------------------------------------------------
 
+/**
+ * Shape-builder for per-supplier `invoiceHistory` subcollection entries.
+ * Produces a plain object keyed by the supplied options; optional fields are
+ * omitted (not written as `undefined`) when not provided.
+ */
+function buildInvoiceHistoryEntry(opts: {
+  invoiceId: string;
+  unitCost: number;
+  qty: number;
+  caseSize: number | null;
+  type: 'priceChange' | 'firstTime' | 'samePriceTouch' | 'nearDuplicate' | 'newProduct' | 'supplierLink';
+  oldPrice?: number | null;
+  changePercent?: number | null;
+  direction?: 'increase' | 'decrease' | 'initial';
+  note?: string;
+}): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    date: admin.firestore.FieldValue.serverTimestamp(),
+    invoiceId: opts.invoiceId,
+    unitCost: opts.unitCost,
+    qty: opts.qty,
+    caseSize: opts.caseSize,
+    type: opts.type,
+  };
+  if (opts.oldPrice !== undefined) entry.oldPrice = opts.oldPrice;
+  if (opts.changePercent !== undefined) entry.changePercent = opts.changePercent;
+  if (opts.direction !== undefined) entry.direction = opts.direction;
+  if (opts.note !== undefined) entry.note = opts.note;
+  return entry;
+}
+
 export type ProposedAction =
   | {
       id: string;
@@ -331,6 +362,21 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             ...caseSizeFields,
           });
           ops++;
+          // Site 1: per-supplier invoiceHistory — record every invoice appearance
+          if (cleanSupplierId) {
+            const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
+            const invHistRef = suppRef.collection("invoiceHistory").doc();
+            batch.set(invHistRef, buildInvoiceHistoryEntry({
+              invoiceId,
+              unitCost: unitPrice,
+              qty: line.qty,
+              caseSize: cs,
+              type: "samePriceTouch",
+              oldPrice: existing,
+              changePercent: 0,
+            }));
+            ops++;
+          }
         }
       } else {
         // First-time price set — automatic
@@ -357,6 +403,23 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           ...caseSizeFields,
         });
         ops += 2;
+        // Site 2: per-supplier invoiceHistory for first-time automatic price set
+        if (cleanSupplierId) {
+          const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
+          const invHistRef = suppRef.collection("invoiceHistory").doc();
+          batch.set(invHistRef, buildInvoiceHistoryEntry({
+            invoiceId,
+            unitCost: unitPrice,
+            qty: line.qty,
+            caseSize: cs,
+            type: "firstTime",
+            oldPrice: null,
+            changePercent: null,
+            direction: "initial",
+            note: "Initial price set from invoice",
+          }));
+          ops++;
+        }
       }
     } else {
       const normLine = normalizeName(line.name);
@@ -596,6 +659,22 @@ export async function commitInvoiceChanges(
       });
       ops += 2;
       changed++;
+      // Site 3: per-supplier invoiceHistory for confirmed price change
+      if (cleanSupplierId) {
+        const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
+        const invHistRef = suppRef.collection("invoiceHistory").doc();
+        batch.set(invHistRef, buildInvoiceHistoryEntry({
+          invoiceId,
+          unitCost: effectivePrice,
+          qty: proposal.qty,
+          caseSize: cs,
+          type: "priceChange",
+          oldPrice: proposal.oldPrice,
+          changePercent: effectiveChangePercent,
+          direction: proposal.direction,
+        }));
+        ops++;
+      }
       // Area-item linking for this product already ran in proposeInvoiceChanges
 
     } else if (proposal.type === "nearDuplicateMatch") {
@@ -673,6 +752,41 @@ export async function commitInvoiceChanges(
         });
         ops += 2;
       }
+      // Site 4: per-supplier invoiceHistory — ONE call covering all three sub-cases above.
+      // Re-derives direction and changePercent from the proposal so no per-branch duplication.
+      if (cleanSupplierId) {
+        const existingP = proposal.existingPrice;
+        const pctD = existingP != null
+          ? Math.abs((proposal.newPrice - existingP) / existingP)
+          : null;
+        const changePercent =
+          existingP != null
+            ? Math.round(((proposal.newPrice - existingP) / existingP) * 10000) / 100
+            : null;
+        // same-price sub-case omits direction; first-time is 'initial'; price-change is increase/decrease
+        const direction: 'increase' | 'decrease' | 'initial' | undefined =
+          existingP == null
+            ? 'initial'
+            : pctD != null && pctD <= 0.01
+            ? undefined
+            : proposal.newPrice > existingP
+            ? 'increase'
+            : 'decrease';
+        const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
+        const invHistRef = suppRef.collection("invoiceHistory").doc();
+        batch.set(invHistRef, buildInvoiceHistoryEntry({
+          invoiceId,
+          unitCost: proposal.newPrice,
+          qty: proposal.qty,
+          caseSize: proposal.caseSize,
+          type: "nearDuplicate",
+          oldPrice: existingP ?? null,
+          changePercent,
+          direction,
+          note: "Near-duplicate match confirmed",
+        }));
+        ops++;
+      }
       // Now has a real product ID — queue for area-item linking
       newlyResolvedMap[proposal.lineName] = proposal.candidateProductId;
 
@@ -738,6 +852,23 @@ export async function commitInvoiceChanges(
           source: "invoice",
           note: "Initial price set — new product from invoice",
         });
+        ops++;
+      }
+      // Site 5: per-supplier invoiceHistory for new product induction
+      if (cleanSupplierId && proposal.unitPrice != null) {
+        const suppRef = newRef.collection("suppliers").doc(cleanSupplierId);
+        const invHistRef = suppRef.collection("invoiceHistory").doc();
+        batch.set(invHistRef, buildInvoiceHistoryEntry({
+          invoiceId,
+          unitCost: proposal.unitPrice,
+          qty: proposal.qty,
+          caseSize: cs,
+          type: "newProduct",
+          oldPrice: null,
+          changePercent: null,
+          direction: "initial",
+          note: "Initial price set — new product from invoice",
+        }));
         ops++;
       }
       ops++;
@@ -814,6 +945,14 @@ export async function commitInvoiceChanges(
               lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
               lastInvoicePrice: invoicePrice,
             });
+            // Site 6a: invoiceHistory for legacy-same-supplier continue path
+            await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
+              invoiceId,
+              unitCost: proposal.unitCost,
+              qty: proposal.qty,
+              caseSize: proposal.caseSize,
+              type: "supplierLink",
+            }));
             continue;
           }
         }
@@ -848,6 +987,15 @@ export async function commitInvoiceChanges(
           lastInvoicePrice: invoicePrice,
         });
       }
+      // Sites 6 & 7: per-supplier invoiceHistory — one entry per supplier-link confirmation
+      // (covers both the new-link set path and the existing-link update path above)
+      await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
+        invoiceId,
+        unitCost: proposal.unitCost,
+        qty: proposal.qty,
+        caseSize: proposal.caseSize,
+        type: "supplierLink",
+      }));
     } catch (e: any) {
       console.log("[commitInvoiceChanges] supplier link error", proposal.productId, e?.message);
     }

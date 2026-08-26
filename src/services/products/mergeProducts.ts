@@ -18,6 +18,7 @@ export type MergeProductsResult = {
   areaItemsUpdated: number;
   sameAreaConflicts: SameAreaConflict[];
   priceHistoryMoved: number;
+  invoiceHistoryMoved: number;
   supplierLinksHandled: number;
   fieldsBackfilled: string[];
 };
@@ -35,6 +36,7 @@ export async function mergeProducts(
   let areaItemsUpdated = 0;
   const sameAreaConflicts: SameAreaConflict[] = [];
   let priceHistoryMoved = 0;
+  let invoiceHistoryMoved = 0;
   let supplierLinksHandled = 0;
   const fieldsBackfilled: string[] = [];
 
@@ -95,6 +97,18 @@ export async function mergeProducts(
       } else {
         await setDoc(keepSuppRef, mergeSuppDoc.data());
       }
+      // Migrate invoiceHistory sub-subcollection before deleting the source supplier doc
+      const mergeInvHistSnap = await getDocs(
+        collection(db, 'venues', venueId, 'products', mergeId, 'suppliers', suppId, 'invoiceHistory')
+      );
+      for (const invHistDoc of mergeInvHistSnap.docs) {
+        await addDoc(
+          collection(db, 'venues', venueId, 'products', keepId, 'suppliers', suppId, 'invoiceHistory'),
+          invHistDoc.data(),
+        );
+        await deleteDoc(invHistDoc.ref);
+        invoiceHistoryMoved++;
+      }
       await deleteDoc(mergeSuppDoc.ref);
     }
     supplierLinksHandled++;
@@ -139,5 +153,5 @@ export async function mergeProducts(
     });
   }
 
-  return { areaItemsUpdated, sameAreaConflicts, priceHistoryMoved, supplierLinksHandled, fieldsBackfilled };
+  return { areaItemsUpdated, sameAreaConflicts, priceHistoryMoved, invoiceHistoryMoved, supplierLinksHandled, fieldsBackfilled };
 }
