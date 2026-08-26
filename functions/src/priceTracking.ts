@@ -344,6 +344,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           invoiceId,
           changePercent: null,
           direction: "initial",
+          source: "invoice",
           note: "Initial price set from invoice",
         });
         batch.update(productRef, {
@@ -580,6 +581,7 @@ export async function commitInvoiceChanges(
         invoiceId,
         changePercent: effectiveChangePercent,
         direction: proposal.direction,
+        source: "invoice",
       });
       batch.update(productRef, {
         costPrice: effectivePrice,
@@ -620,6 +622,7 @@ export async function commitInvoiceChanges(
             invoiceId,
             changePercent,
             direction: proposal.newPrice > proposal.existingPrice ? "increase" : "decrease",
+            source: "invoice",
             note: "Near-duplicate match confirmed",
           });
           batch.update(productRef, {
@@ -656,6 +659,7 @@ export async function commitInvoiceChanges(
           invoiceId,
           changePercent: null,
           direction: "initial",
+          source: "invoice",
           note: "Initial price set from near-duplicate match",
         });
         batch.update(productRef, {
@@ -731,6 +735,7 @@ export async function commitInvoiceChanges(
           invoiceId,
           changePercent: null,
           direction: "initial",
+          source: "invoice",
           note: "Initial price set — new product from invoice",
         });
         ops++;

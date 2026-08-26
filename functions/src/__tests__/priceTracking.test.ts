@@ -101,6 +101,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
     expect(histEntry!.data.oldPrice).toBe(40);
     expect(histEntry!.data.newPrice).toBe(44);
     expect(histEntry!.data.direction).toBe('increase');
+    expect(histEntry!.data.source).toBe('invoice');
     expect(histEntry!.data.invoiceId).toBe(INVOICE_ID);
 
     // Product update must include costPriceSource
@@ -167,6 +168,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch first-time price', () => {
     expect(histEntry!.data.oldPrice).toBeNull();
     expect(histEntry!.data.newPrice).toBe(38);
     expect(histEntry!.data.direction).toBe('initial');
+    expect(histEntry!.data.source).toBe('invoice');
 
     const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-789'));
     expect(productUpdate!.data.costPriceSource).toBe('invoice');
@@ -205,6 +207,7 @@ describe('commitInvoiceChanges — newProduct priceHistory', () => {
     expect(histEntry).toBeDefined();
     expect(histEntry!.data.newPrice).toBe(5.5);
     expect(histEntry!.data.direction).toBe('initial');
+    expect(histEntry!.data.source).toBe('invoice');
     expect(histEntry!.data.oldPrice).toBeNull();
   });
 });
