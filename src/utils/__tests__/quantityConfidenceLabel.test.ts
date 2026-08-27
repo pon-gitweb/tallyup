@@ -57,11 +57,11 @@ describe('quantityConfidenceCaption', () => {
     expect(result).toMatch(/Jan 2026/);
   });
 
-  // 3. estimated_no_sales + date → Q3 copy, distinct from Q2
-  it('estimated_no_sales + date → Q3 copy containing "without sales data"', () => {
+  // 3. estimated_no_sales + date → Q3 copy, distinct from Q2 (names the bias)
+  it('estimated_no_sales + date → Q3 copy containing "likely understates" bias explanation', () => {
     const result = quantityConfidenceCaption('estimated_no_sales', mockTimestamp);
     expect(result).not.toBeNull();
-    expect(result).toContain('without sales data');
+    expect(result).toContain('likely understates');
     expect(result).not.toContain('using sales data');
   });
 
@@ -69,15 +69,15 @@ describe('quantityConfidenceCaption', () => {
   it('absent quantityConfidence + date → Q3 copy (same as estimated_no_sales)', () => {
     const withNull = quantityConfidenceCaption(null, mockTimestamp);
     const withUndef = quantityConfidenceCaption(undefined, mockTimestamp);
-    expect(withNull).toContain('without sales data');
-    expect(withUndef).toContain('without sales data');
+    expect(withNull).toContain('likely understates');
+    expect(withUndef).toContain('likely understates');
   });
 
   // 5. Absent costPriceBasisAt → fallback, never a broken date string
-  it('absent costPriceBasisAt → "No confirmed count on file yet" fallback', () => {
+  it('absent costPriceBasisAt → "early estimate" fallback', () => {
     const result = quantityConfidenceCaption('estimated_with_sales', null);
     expect(result).not.toBeNull();
-    expect(result).toContain('No confirmed count on file yet');
+    expect(result).toContain('early estimate');
     // Must NOT contain any broken date fragment
     expect(result).not.toContain('undefined');
     expect(result).not.toContain('null');
@@ -87,9 +87,9 @@ describe('quantityConfidenceCaption', () => {
 
   it('absent costPriceBasisAt → fallback for all non-physical tiers', () => {
     expect(quantityConfidenceCaption('estimated_no_sales', undefined))
-      .toContain('No confirmed count on file yet');
+      .toContain('early estimate');
     expect(quantityConfidenceCaption(undefined, undefined))
-      .toContain('No confirmed count on file yet');
+      .toContain('early estimate');
   });
 
   // 6. isEstimate priority (web): catalogue_estimate wins over quantityConfidence

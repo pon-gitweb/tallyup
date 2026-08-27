@@ -33,9 +33,9 @@ export function quantityConfidenceCaption(
 ): string | null {
   if (qc === 'physical_count') return null;
   const date = fmtBasisDate(costPriceBasisAt);
-  if (!date) return 'No confirmed count on file yet — quantity basis is an early estimate.';
+  if (!date) return 'No confirmed count yet, so this is an early estimate. A stocktake will help lock it in.';
   if (qc === 'estimated_with_sales') {
-    return `Quantity basis last estimated using sales data (as of ${date}). Run a stocktake to confirm.`;
+    return `Estimated using sales data as of ${date} — a stocktake will help keep it accurate.`;
   }
-  return `Quantity basis last estimated without sales data (as of ${date}). Run a stocktake to confirm.`;
+  return `Estimated from invoices only as of ${date} — without sales data, this likely understates how much the price has really moved. A stocktake would help close that gap.`;
 }
