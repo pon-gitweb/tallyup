@@ -28,6 +28,8 @@ type HoldingRow = {
   unit?: string;
   costPrice?: number;
   value?: number;
+  /** Sourced from the resolved product only — never from the item itself. */
+  quantityConfidence?: string;
 };
 
 type CategoryGroup = {
@@ -161,6 +163,8 @@ export default function StockHoldingScreen() {
             let category: string;
             let costPrice: number | undefined;
 
+            let quantityConfidence: string | undefined;
+
             if (resolved) {
               // Success — attribute this item's stock to the active survivor's identity.
               key = resolved.id;
@@ -169,6 +173,8 @@ export default function StockHoldingScreen() {
               // Item-level costPrice wins (individual pricing override);
               // fall back to the resolved product's current costPrice.
               costPrice = typeof item.costPrice === 'number' ? item.costPrice : resolved.entry.costPrice;
+              // quantityConfidence lives on the product only — never on the item.
+              quantityConfidence = resolved.entry.quantityConfidence;
             } else {
               // No productId, or resolution failed (doc missing / chain broken / cap exceeded).
               // Preserve exactly the current behaviour — no data is ever silently dropped.
@@ -178,6 +184,7 @@ export default function StockHoldingScreen() {
               const prod = prodByName[nameKey];
               category = item.category ?? item.categorySuggested ?? prod?.category ?? 'Uncategorised';
               costPrice = typeof item.costPrice === 'number' ? item.costPrice : prod?.costPrice;
+              quantityConfidence = prod?.quantityConfidence;
             }
 
             const onHand = estimatedOnHand(item);
@@ -187,6 +194,8 @@ export default function StockHoldingScreen() {
                 rowMap[key].costPrice = costPrice;
                 rowMap[key].value = rowMap[key].count * costPrice;
               }
+              // quantityConfidence: keep the first-set value — all items for the
+              // same product resolve to the same product, so it's constant.
             } else {
               rowMap[key] = {
                 name: rowName,
@@ -195,6 +204,7 @@ export default function StockHoldingScreen() {
                 unit: item.unit,
                 costPrice,
                 value: costPrice != null ? onHand * costPrice : undefined,
+                quantityConfidence,
               };
             }
           });
@@ -243,7 +253,7 @@ export default function StockHoldingScreen() {
         <h1>Stock Holding Report</h1>
         <div class="sub">${venueName ? venueName + ' · ' : ''}${dateStr}</div>
         <table>
-          <tr><th>Product</th><th class="right">Count</th><th class="right">Unit</th><th class="right">Cost Price</th><th class="right">Value</th></tr>`;
+          <tr><th>Product</th><th class="right">Count</th><th class="right">Unit</th><th class="right">Cost Price</th><th class="right">Value</th><th class="right">Qty Basis</th></tr>`;
 
       for (const g of groups) {
         html += `<tr><td colspan="5" class="cat">${g.category}</td></tr>`;
@@ -254,6 +264,7 @@ export default function StockHoldingScreen() {
             <td class="right">${r.unit ?? '–'}</td>
             <td class="right">${r.costPrice != null ? '$' + r.costPrice.toFixed(2) : '–'}</td>
             <td class="right">${r.value != null ? fmtVal(r.value) : '–'}</td>
+            <td class="right">${r.quantityConfidence ?? '–'}</td>
           </tr>`;
         }
         html += `<tr class="subtotal">
@@ -261,6 +272,7 @@ export default function StockHoldingScreen() {
           <td class="right">${g.totalCount.toFixed(2)}</td>
           <td></td><td></td>
           <td class="right">${g.totalValue != null ? fmtVal(g.totalValue) : '–'}</td>
+          <td></td>
         </tr>`;
       }
 
@@ -269,6 +281,7 @@ export default function StockHoldingScreen() {
         <td class="right">${grandCount.toFixed(2)}</td>
         <td></td><td></td>
         <td class="right">${grandValue != null ? fmtVal(grandValue) : '–'}</td>
+        <td></td>
       </tr>`;
       html += `</table></body></html>`;
 
@@ -291,7 +304,7 @@ export default function StockHoldingScreen() {
     setExporting(true);
     try {
       const dateStr = new Date().toISOString().slice(0, 10);
-      let csv = 'Category,Product,Count,Unit,Cost Price,Value\n';
+      let csv = 'Category,Product,Count,Unit,Cost Price,Value,Quantity Basis\n';
       for (const g of groups) {
         for (const r of g.rows) {
           const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
@@ -302,6 +315,7 @@ export default function StockHoldingScreen() {
             r.unit ?? '',
             r.costPrice != null ? r.costPrice.toFixed(2) : '',
             r.value != null ? r.value.toFixed(2) : '',
+            r.quantityConfidence ?? '',
           ].join(',') + '\n';
         }
       }
@@ -465,7 +479,11 @@ export default function StockHoldingScreen() {
                 <Text style={[s.rowCount, { width: 60 }]}>{r.count.toFixed(2)}</Text>
                 {g.hasValue && (
                   <Text style={[s.rowValue, { width: 72 }]}>
-                    {r.value != null ? fmtVal(r.value) : '–'}
+                    {r.value != null
+                      ? r.quantityConfidence !== 'physical_count'
+                          ? <><Text style={{ color: c.amber }}>~</Text>{fmtVal(r.value)}</>
+                          : fmtVal(r.value)
+                      : '–'}
                   </Text>
                 )}
               </View>

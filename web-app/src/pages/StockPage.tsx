@@ -17,6 +17,8 @@ type Row = {
   lineValue: number | null
   deptId: string
   deptName: string
+  /** From the resolved product only — undefined means treat as estimated. */
+  quantityConfidence?: string
 }
 
 type UnplacedRow = {
@@ -27,6 +29,8 @@ type UnplacedRow = {
   onHand: number   // = baselineCount
   costPrice: number | null
   lineValue: number | null
+  /** From the product document directly. */
+  quantityConfidence?: string
 }
 
 type SortKey = 'name' | 'category' | 'supplierName' | 'onHand' | 'costPrice' | 'lineValue'
@@ -59,13 +63,14 @@ function exportCsvBlob(
   deptGroups: Map<string, { deptName: string; rows: Row[] }>,
   unplaced: UnplacedRow[],
 ) {
-  const headers = ['Department', 'Product', 'Category', 'Supplier', 'On Hand', 'Unit Cost', 'Line Value']
+  const headers = ['Department', 'Product', 'Category', 'Supplier', 'On Hand', 'Unit Cost', 'Line Value', 'Quantity Basis']
   const placed = [...deptGroups.entries()].flatMap(([, g]) =>
     g.rows.map(r => [
       g.deptName, r.name, r.category || '', r.supplierName || '',
       fmtQty(r.onHand),
       r.costPrice != null ? r.costPrice.toFixed(2) : '',
       r.lineValue != null ? r.lineValue.toFixed(2) : '',
+      r.quantityConfidence ?? '',
     ])
   )
   const unpl = unplaced.map(r => [
@@ -73,6 +78,7 @@ function exportCsvBlob(
     fmtQty(r.onHand),
     r.costPrice != null ? r.costPrice.toFixed(2) : '',
     r.lineValue != null ? r.lineValue.toFixed(2) : '',
+    r.quantityConfidence ?? '',
   ])
   return [headers, ...placed, ...unpl]
     .map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
@@ -108,6 +114,7 @@ export default function StockPage({ venueId }: { venueId: string }) {
           costPrice: typeof data.costPrice === 'number' ? data.costPrice : undefined,
           active: typeof data.active === 'boolean' ? data.active : undefined,
           mergedInto: data.mergedInto ?? null,
+          quantityConfidence: data.quantityConfidence ?? undefined,
         }
         if (data.baselinePending === true) {
           const bc = typeof data.baselineCount === 'number' ? data.baselineCount : 0
@@ -120,6 +127,7 @@ export default function StockPage({ venueId }: { venueId: string }) {
             onHand: bc,
             costPrice: cp,
             lineValue: cp != null ? bc * cp : null,
+            quantityConfidence: data.quantityConfidence ?? undefined,
           })
         }
       })
@@ -167,6 +175,8 @@ export default function StockPage({ venueId }: { venueId: string }) {
                   typeof item.costPrice === 'number' ? item.costPrice
                   : prod && typeof prod.costPrice === 'number' ? prod.costPrice
                   : null
+                // quantityConfidence lives on the product only — never on the item.
+                const quantityConfidence: string | undefined = prod?.quantityConfidence ?? undefined
                 const existing = agg.get(key)
                 if (existing) {
                   const newOnHand = existing.onHand + item.lastCount
@@ -174,6 +184,8 @@ export default function StockPage({ venueId }: { venueId: string }) {
                     ...existing,
                     onHand: newOnHand,
                     lineValue: costPrice != null ? newOnHand * costPrice : null,
+                    // keep existing.quantityConfidence — all items for the same product
+                    // resolve to the same product doc, so the value is constant.
                   })
                 } else {
                   agg.set(key, {
@@ -186,6 +198,7 @@ export default function StockPage({ venueId }: { venueId: string }) {
                     lineValue: costPrice != null ? item.lastCount * costPrice : null,
                     deptId: deptDoc.id,
                     deptName,
+                    quantityConfidence,
                   })
                 }
               })
@@ -273,6 +286,8 @@ export default function StockPage({ venueId }: { venueId: string }) {
   )
 
   function trow(r: Row | UnplacedRow) {
+    // Mark line value as estimated when quantityConfidence is absent or not 'physical_count'.
+    const isEstimated = r.quantityConfidence !== 'physical_count'
     return (
       <tr key={r.id} className={styles.dataRow}>
         <td className={styles.td}>{r.name}</td>
@@ -280,7 +295,11 @@ export default function StockPage({ venueId }: { venueId: string }) {
         <td className={styles.td}><span className={r.supplierName ? undefined : styles.dim}>{r.supplierName || '—'}</span></td>
         <td className={styles.tdNum}>{fmtQty(r.onHand)}</td>
         <td className={styles.tdNum}>{fmtCurrency(r.costPrice)}</td>
-        <td className={styles.tdNum}>{fmtCurrency(r.lineValue)}</td>
+        <td className={styles.tdNum}>
+          {r.lineValue != null && isEstimated
+            ? <><span style={{ color: '#c47b2b' }}>~</span>{fmtCurrency(r.lineValue)}</>
+            : fmtCurrency(r.lineValue)}
+        </td>
       </tr>
     )
   }

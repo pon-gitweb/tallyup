@@ -11,13 +11,21 @@ export type ProdEntry = {
   costPrice?: number;
   active?: boolean;
   mergedInto?: string | null;
+  /**
+   * How the product's quantity basis was last established.
+   * 'physical_count'        — set after a stocktake cycle-reset (most reliable).
+   * 'estimated_with_sales'  — WAC engine estimate, sales data available.
+   * 'estimated_no_sales'    — WAC engine estimate, no sales data.
+   * undefined               — not yet set; treat the same as "estimated" for display.
+   */
+  quantityConfidence?: 'physical_count' | 'estimated_with_sales' | 'estimated_no_sales';
 };
 
 export type ProdMaps = {
   /** All venue products keyed by Firestore document id. */
   prodById: Record<string, ProdEntry>;
   /** Products keyed by lowercased name — fallback for items with no productId. */
-  prodByName: Record<string, { category: string; costPrice?: number }>;
+  prodByName: Record<string, { category: string; costPrice?: number; quantityConfidence?: ProdEntry['quantityConfidence'] }>;
 };
 
 /**
@@ -41,10 +49,11 @@ export function buildProductMaps(prodSnap: QuerySnapshot<DocumentData>): ProdMap
       costPrice: typeof p.costPrice === 'number' ? p.costPrice : undefined,
       active: typeof p.active === 'boolean' ? p.active : undefined,
       mergedInto: p.mergedInto ?? null,
+      quantityConfidence: p.quantityConfidence ?? undefined,
     };
     prodById[d.id] = entry;
     const nameKey = name.toLowerCase();
-    if (nameKey) prodByName[nameKey] = { category: entry.category, costPrice: entry.costPrice };
+    if (nameKey) prodByName[nameKey] = { category: entry.category, costPrice: entry.costPrice, quantityConfidence: entry.quantityConfidence };
   });
 
   return { prodById, prodByName };
