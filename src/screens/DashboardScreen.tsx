@@ -23,6 +23,7 @@ import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 import { getHostiHealthStage, HostiHealthData } from '../services/health/hostiHealth';
 import { openIzzy } from '../components/IzzyAssistant';
+import { refreshPricesForVenue } from '../services/refreshPricesForDepartment';
 
 const NUDGE_KEYS = {
   invoiceFirst:       'tallyup_nudge_invoice_first_v1',
@@ -143,6 +144,7 @@ export default function DashboardScreen() {
   const venueName = liveVenueName;
 
   const [busy, setBusy] = useState(false);
+  const [refreshingPrices, setRefreshingPrices] = useState(false);
   const [lastArea, setLastArea] = React.useState<{deptId:string;areaId:string;areaName:string;deptName:string;startedAt?:number;lockedBy?:string|null} | null>(null);
 
   React.useEffect(() => {
@@ -552,6 +554,23 @@ export default function DashboardScreen() {
       nav.navigate('DepartmentSelection');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onRefreshAllPrices = async () => {
+    if (!venueId || refreshingPrices) return;
+    try {
+      setRefreshingPrices(true);
+      const result = await refreshPricesForVenue(venueId);
+      if (result.itemsPriceRefreshed > 0) {
+        showSuccess(`✓ ${result.itemsPriceRefreshed} price${result.itemsPriceRefreshed !== 1 ? 's' : ''} refreshed across all departments`);
+      } else {
+        showInfo('All prices already current.');
+      }
+    } catch (e: any) {
+      showError(e?.message || 'Price refresh failed.');
+    } finally {
+      setRefreshingPrices(false);
     }
   };
 
@@ -1174,6 +1193,20 @@ export default function DashboardScreen() {
             <Text style={{ color: colours.primary, fontSize: 12, flex: 1, fontWeight: '600' }}>
               AI has learned from {stocktakeCount} stocktake{stocktakeCount > 1 ? 's' : ''} — suggestions improve over time
             </Text>
+          </View>
+        )}
+
+        {venueId && (
+          <View style={{ marginTop: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+            <TouchableOpacity
+              style={[styles.buttonSmall, styles.muted]}
+              onPress={onRefreshAllPrices}
+              disabled={refreshingPrices}
+            >
+              <Text style={styles.buttonSmallTextDark}>
+                {refreshingPrices ? 'Refreshing prices…' : 'Refresh all prices'}
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
 

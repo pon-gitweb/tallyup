@@ -33,6 +33,7 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { useDebouncedValue } from '../../utils/useDebouncedValue';
 import { seedDefaultDepartmentsAndAreas } from '../../services/onboarding/defaultDepartments';
 import { resetDepartment } from '../../services/reset';
+import { refreshPricesForDepartment } from '../../services/refreshPricesForDepartment';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type DeptRow = {
@@ -423,6 +424,23 @@ function DepartmentSelectionScreen() {
     [venueId, confirm, showSuccess, showError],
   );
 
+  const refreshPrices = useCallback(
+    async (dept: DeptRow) => {
+      if (!venueId) return;
+      try {
+        const result = await refreshPricesForDepartment(venueId, dept.id);
+        if (result.itemsPriceRefreshed > 0) {
+          showSuccess(`✓ ${result.itemsPriceRefreshed} price${result.itemsPriceRefreshed !== 1 ? 's' : ''} refreshed`);
+        } else {
+          showInfo('All prices already current.');
+        }
+      } catch (e: any) {
+        showError(e?.message || 'Price refresh failed.');
+      }
+    },
+    [venueId, showSuccess, showInfo, showError],
+  );
+
   const renderDept = ({ item }: { item: DeptRow }) => {
     const status: 'idle' | 'inprog' | 'done' =
       item.status ?? (item.completedAt ? 'done' : item.startedAt ? 'inprog' : 'idle');
@@ -488,20 +506,34 @@ function DepartmentSelectionScreen() {
           )}
           <MaterialIcons name="chevron-right" size={20} color={colours.textSecondary} />
         </View>
-        {status === 'done' && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          {status === 'done' && (
+            <TouchableOpacity
+              onPress={() => resetDept(item)}
+              style={{
+                alignSelf: 'flex-start',
+                backgroundColor: colours.positiveSoft, paddingHorizontal: 12, paddingVertical: 6,
+                borderRadius: 8, borderWidth: 1, borderColor: colours.success + '40',
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colours.success }}>
+                Start next {item.name || 'department'} stocktake →
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            onPress={() => resetDept(item)}
+            onPress={() => refreshPrices(item)}
             style={{
-              marginTop: 10, alignSelf: 'flex-start',
-              backgroundColor: colours.positiveSoft, paddingHorizontal: 12, paddingVertical: 6,
-              borderRadius: 8, borderWidth: 1, borderColor: colours.success + '40',
+              alignSelf: 'flex-start',
+              backgroundColor: colours.stellarAmber + '18', paddingHorizontal: 12, paddingVertical: 6,
+              borderRadius: 8, borderWidth: 1, borderColor: colours.stellarAmber + '40',
             }}
           >
-            <Text style={{ fontSize: 12, fontWeight: '700', color: colours.success }}>
-              Start next {item.name || 'department'} stocktake →
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colours.stellarAmber }}>
+              Refresh prices ↻
             </Text>
           </TouchableOpacity>
-        )}
+        </View>
       </View>
     );
   };

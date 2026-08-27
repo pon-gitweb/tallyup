@@ -119,3 +119,33 @@ export async function refreshPricesForDepartment(
 
   return { itemsPriceRefreshed, itemsAlreadyCurrent };
 }
+
+/**
+ * Venue-wide price refresh — loops refreshPricesForDepartment across every
+ * active department and aggregates the results.
+ *
+ * Safe to run at any time: unlike resetAllDepartmentsStockTake this function
+ * has no side effects on area state, stocktakeActive, session documents, or
+ * queued invoices. It only writes item.costPrice and product.costPriceQuantityBasis
+ * via the dual-pass logic inside refreshPricesForDepartment.
+ *
+ * Inactive departments (active === false) are skipped, following the same
+ * convention used by startNewVenueCycle in cycles.ts.
+ */
+export async function refreshPricesForVenue(
+  venueId: string,
+): Promise<{ itemsPriceRefreshed: number; itemsAlreadyCurrent: number }> {
+  const depsSnap = await getDocs(collection(db, `venues/${venueId}/departments`));
+  let totalRefreshed = 0;
+  let totalCurrent = 0;
+  for (const dep of depsSnap.docs) {
+    const data = dep.data() as any;
+    // Default to active when the field is absent (same convention as startNewVenueCycle)
+    const active = typeof data?.active === 'boolean' ? data.active : true;
+    if (!active) continue;
+    const result = await refreshPricesForDepartment(venueId, dep.id);
+    totalRefreshed += result.itemsPriceRefreshed;
+    totalCurrent += result.itemsAlreadyCurrent;
+  }
+  return { itemsPriceRefreshed: totalRefreshed, itemsAlreadyCurrent: totalCurrent };
+}
