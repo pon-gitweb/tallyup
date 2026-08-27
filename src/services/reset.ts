@@ -1,8 +1,9 @@
 import {
-  collection, getDoc, getDocs, writeBatch, doc, serverTimestamp, query, where,
+  collection, getDocs, writeBatch, doc, serverTimestamp, query, where,
   setDoc, updateDoc, increment, deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { refreshPricesForDepartment } from './refreshPricesForDepartment';
 
 /**
  * Pure decision: should the venue-wide stocktakeActive flag be cleared?
@@ -31,8 +32,11 @@ function resetAreaInBatch(batch: ReturnType<typeof writeBatch>, areaRef: any, no
   });
 }
 
-export async function resetDepartment(venueId: string, departmentId: string) {
-  if (!venueId || !departmentId) return;
+export async function resetDepartment(
+  venueId: string,
+  departmentId: string,
+): Promise<{ itemsPriceRefreshed: number; itemsAlreadyCurrent: number }> {
+  if (!venueId || !departmentId) return { itemsPriceRefreshed: 0, itemsAlreadyCurrent: 0 };
   const now = serverTimestamp();
 
   // Step 1: Reset area flags
@@ -50,27 +54,13 @@ export async function resetDepartment(venueId: string, departmentId: string) {
   } catch {}
   await areaBatch.commit();
 
-  // Step 2: Restore lastCount from confirmedCount on all items, and sync costPrice from
-  // the linked product (separate batch per area).
-  // Products are batch-fetched once per area (distinct productIds only) — not once per item.
+  // Step 2: Restore lastCount from confirmedCount on all items (separate batch per area).
+  // The costPrice sync is handled by refreshPricesForDepartment below, after these
+  // batches commit — so the basis aggregation reads post-restoration lastCount values.
   for (const areaDoc of areasSnap.docs) {
     const itemsSnap = await getDocs(
       collection(db, 'venues', venueId, 'departments', departmentId, 'areas', areaDoc.id, 'items')
     );
-
-    // Collect distinct productIds across this area, then fetch all in one parallel round-trip
-    const productIds = [...new Set(
-      itemsSnap.docs
-        .map(d => d.data().productId as string | null | undefined)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    )];
-    const productPrices = new Map<string, number | null>();
-    if (productIds.length > 0) {
-      const snaps = await Promise.all(
-        productIds.map(id => getDoc(doc(db, 'venues', venueId, 'products', id)))
-      );
-      snaps.forEach(s => { if (s.exists()) productPrices.set(s.id, s.data().costPrice ?? null); });
-    }
 
     const itemBatch = writeBatch(db);
     let hasUpdates = false;
@@ -85,13 +75,6 @@ export async function resetDepartment(venueId: string, departmentId: string) {
         patch.soldQty = 0;
       }
 
-      if (data.productId && productPrices.has(data.productId)) {
-        const freshPrice = productPrices.get(data.productId) ?? null;
-        if (freshPrice !== (data.costPrice ?? null)) {
-          patch.costPrice = freshPrice;
-        }
-      }
-
       if (Object.keys(patch).length > 0) {
         itemBatch.update(itemDoc.ref, patch);
         hasUpdates = true;
@@ -99,6 +82,10 @@ export async function resetDepartment(venueId: string, departmentId: string) {
     });
     if (hasUpdates) await itemBatch.commit();
   }
+
+  // Step 3: Price refresh + physical-count basis — runs after Step 2 has committed
+  // so that Pass 2's lastCount aggregation sees the restored (confirmedCount) values.
+  const priceResult = await refreshPricesForDepartment(venueId, departmentId);
 
   // Drain queued invoices for this department (parked while stocktakeActive was true)
   try {
@@ -150,10 +137,14 @@ export async function resetDepartment(venueId: string, departmentId: string) {
   } catch (e: any) {
     console.warn('[Reset] stocktakeActive clear check failed (non-fatal):', e?.message);
   }
+
+  return priceResult;
 }
 
-export async function resetAllDepartmentsStockTake(venueId: string) {
-  if (!venueId) return;
+export async function resetAllDepartmentsStockTake(
+  venueId: string,
+): Promise<{ itemsPriceRefreshed: number; itemsAlreadyCurrent: number }> {
+  if (!venueId) return { itemsPriceRefreshed: 0, itemsAlreadyCurrent: 0 };
 
   // Step 1: Reset all area flags — split into separate writes to identify failures
   const now = serverTimestamp();
@@ -202,29 +193,18 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
     // Non-fatal — area resets already succeeded
   }
 
-  // Step 2: Restore lastCount from confirmedCount on all items, and sync costPrice from
-  // the linked product (separate batches per area).
-  // Products are batch-fetched once per area (distinct productIds only) — not once per item.
+  // Step 2: Restore lastCount from confirmedCount on all items (separate batches per area).
+  // The costPrice sync is handled by refreshPricesForDepartment below, after each
+  // department's batches commit — so the basis aggregation reads post-restoration values.
+  let totalRefreshed = 0;
+  let totalCurrent = 0;
+
   for (const dep of depsSnap.docs) {
     const areasSnap2 = await getDocs(collection(db, 'venues', venueId, 'departments', dep.id, 'areas'));
     for (const a of areasSnap2.docs) {
       const itemsSnap = await getDocs(
         collection(db, 'venues', venueId, 'departments', dep.id, 'areas', a.id, 'items')
       );
-
-      // Collect distinct productIds across this area, then fetch all in one parallel round-trip
-      const productIds = [...new Set(
-        itemsSnap.docs
-          .map(d => d.data().productId as string | null | undefined)
-          .filter((id): id is string => typeof id === 'string' && id.length > 0)
-      )];
-      const productPrices = new Map<string, number | null>();
-      if (productIds.length > 0) {
-        const snaps = await Promise.all(
-          productIds.map(id => getDoc(doc(db, 'venues', venueId, 'products', id)))
-        );
-        snaps.forEach(s => { if (s.exists()) productPrices.set(s.id, s.data().costPrice ?? null); });
-      }
 
       const itemBatch = writeBatch(db);
       let hasUpdates = false;
@@ -239,13 +219,6 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
           patch.soldQty = 0;
         }
 
-        if (data.productId && productPrices.has(data.productId)) {
-          const freshPrice = productPrices.get(data.productId) ?? null;
-          if (freshPrice !== (data.costPrice ?? null)) {
-            patch.costPrice = freshPrice;
-          }
-        }
-
         if (Object.keys(patch).length > 0) {
           itemBatch.update(itemDoc.ref, patch);
           hasUpdates = true;
@@ -253,6 +226,12 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
       });
       if (hasUpdates) await itemBatch.commit();
     }
+
+    // Price refresh for this department — runs after all area batches above have
+    // committed, so Pass 2 reads the restored lastCount values for basis aggregation.
+    const result = await refreshPricesForDepartment(venueId, dep.id);
+    totalRefreshed += result.itemsPriceRefreshed;
+    totalCurrent += result.itemsAlreadyCurrent;
   }
 
   // Clear stocktake active flag
@@ -285,4 +264,6 @@ export async function resetAllDepartmentsStockTake(venueId: string) {
   } catch (e: any) {
     console.warn('[Reset] queued invoice processing failed (non-fatal):', e?.message);
   }
+
+  return { itemsPriceRefreshed: totalRefreshed, itemsAlreadyCurrent: totalCurrent };
 }

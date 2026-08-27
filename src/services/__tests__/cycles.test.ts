@@ -96,17 +96,19 @@ describe('startNewDepartmentCycle — item price refresh (Pass 1)', () => {
     expect(result.itemsPriceRefreshed).toBe(1);
     expect(result.itemsAlreadyCurrent).toBe(0);
 
-    const itemCall = batchUpdate.mock.calls.find(([ref]: any[]) =>
-      ref._path.includes('/items/item-1'),
+    // Two batchUpdate calls reach item-1: the incomingQty/soldQty write from
+    // startNewDepartmentCycle's own item loop, then the price-refresh write from
+    // refreshPricesForDepartment. Find the latter by the presence of costPrice.
+    const itemCall = batchUpdate.mock.calls.find(([ref, data]: any[]) =>
+      ref._path.includes('/items/item-1') && data.costPrice !== undefined,
     );
     expect(itemCall).toBeDefined();
     expect(itemCall![1].costPrice).toBe(10);
     expect(itemCall![1].previousCostPrice).toBe(5);
     expect(itemCall![1].costPriceSource).toBe('cycle_reset');
     expect(itemCall![1].costPriceRefreshedAt).toBe('__ts__');
-    // incomingQty/soldQty still zeroed in the same write
-    expect(itemCall![1].incomingQty).toBe(0);
-    expect(itemCall![1].soldQty).toBe(0);
+    // incomingQty/soldQty are in the separate cycles.ts batch, not this write
+    expect(itemCall![1].incomingQty).toBeUndefined();
   });
 
   it('leaves an item whose costPrice already matches and counts it as alreadyCurrent', async () => {
@@ -176,8 +178,8 @@ describe('startNewDepartmentCycle — merged product resolution (Pass 1)', () =>
     const result = await startNewDepartmentCycle(VENUE, DEPT);
 
     expect(result.itemsPriceRefreshed).toBe(1);
-    const itemCall = batchUpdate.mock.calls.find(([ref]: any[]) =>
-      ref._path.includes('/items/item-1'),
+    const itemCall = batchUpdate.mock.calls.find(([ref, data]: any[]) =>
+      ref._path.includes('/items/item-1') && data.costPrice !== undefined,
     );
     expect(itemCall![1].costPrice).toBe(12); // survivor's price, not defunct's
   });
