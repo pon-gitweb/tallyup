@@ -30,9 +30,9 @@ function namesMatch(a: string, b: string): { isMatch: boolean; score: number } {
 }
 
 /** Returns the correct caseSize/unitCost/caseCost fields for a product or supplier-link
- * document update. perUnitPrice is already per-unit — the OCR extraction prompt divides
+ * document update. perUnitPrice is already per-unit â the OCR extraction prompt divides
  * the case total by caseSize before returning unitPrice, so no further division is needed.
- * caseCost is the actual case total (perUnitPrice × cs).
+ * caseCost is the actual case total (perUnitPrice Ã cs).
  * Returns {} when cs is null/falsy.
  */
 function computeCaseSizeFields(
@@ -48,12 +48,12 @@ function computeCaseSizeFields(
 }
 
 // ---------------------------------------------------------------------------
-// Propose / commit split — replaces trackPriceChanges once callers are migrated
+// Propose / commit split â replaces trackPriceChanges once callers are migrated
 // ---------------------------------------------------------------------------
 
 /**
  * Shape-builder for per-supplier `invoiceHistory` subcollection entries.
- * `lineTotal` is computed internally (unitCost × qty, rounded to 2 dp).
+ * `lineTotal` is computed internally (unitCost Ã qty, rounded to 2 dp).
  * Optional fields (oldPrice, changePercent, direction, note) are omitted from
  * the output when not supplied rather than written as `undefined`.
  */
@@ -93,6 +93,119 @@ function buildInvoiceHistoryEntry(opts: {
   if (opts.direction !== undefined) entry.direction = opts.direction;
   if (opts.note !== undefined) entry.note = opts.note;
   return entry;
+}
+
+/**
+ * Computes a new periodic weighted-average cost from the product's current
+ * quantity basis + price and a new purchase. See
+ * price-provenance-supplier-history-scope.md Â§8/Â§8a â this is the corrected
+ * model: a genuine new price from ANY supplier must move the canonical cost,
+ * blended by how much of each cost is actually on hand, not gated by whether
+ * the supplier is the preferred one.
+ *
+ * When priorQty is 0 (nothing on hand, or a product/legacy-basis with no
+ * prior recompute at all), this correctly collapses to the trivial
+ * first-ever-price case: the new price becomes the cost outright, with no
+ * special-casing needed.
+ */
+function computeWeightedAverageCost(
+  priorQty: number,
+  priorPrice: number | null,
+  newQty: number,
+  newPrice: number,
+): { blendedPrice: number; newQuantityBasis: number } {
+  // If there's no known prior price, there's no valid prior cost basis to
+  // blend against â treat the prior quantity as 0 too, rather than silently
+  // assuming unpriced stock cost $0 (which would wrongly drag the blended
+  // average toward zero instead of correctly collapsing to just newPrice).
+  const hasValidPriorPrice = typeof priorPrice === "number" && priorPrice > 0;
+  const safePriorQty = hasValidPriorPrice ? Math.max(0, priorQty || 0) : 0;
+  const safePriorPrice = hasValidPriorPrice ? (priorPrice as number) : 0;
+  const safeNewQty = Math.max(0, newQty || 0);
+  const totalQty = safePriorQty + safeNewQty;
+  if (totalQty <= 0) {
+    return { blendedPrice: newPrice, newQuantityBasis: safeNewQty };
+  }
+  const blendedPrice = (safePriorQty * safePriorPrice + safeNewQty * newPrice) / totalQty;
+  return {
+    blendedPrice: Math.round(blendedPrice * 10000) / 10000,
+    newQuantityBasis: totalQty,
+  };
+}
+
+/**
+ * Checks whether any pre-fetched salesReports document's period overlaps the
+ * window [since, now]. Reuses the exact overlap-check pattern
+ * snapshotWriter.ts already established for cycle-scoped sales enrichment
+ * (see Â§8a) â investigated directly rather than assumed, since salesReports
+ * already stores each report's own period independent of any stocktake
+ * cycle, so the same logic answers this new question for free.
+ * Venue-level: confirms SOME report covers the window, not specific to one
+ * product â a report covering the period but not mentioning a given
+ * product's line is treated as confirming zero sold for it, consistent with
+ * how snapshotWriter.ts's own sales matching already works (no line = not sold).
+ */
+function hasSalesDataForWindow(
+  salesReportsData: Array<{ report?: { period?: { start?: string; end?: string } } }>,
+  since: Date,
+): boolean {
+  const sinceIso = since.toISOString().slice(0, 10);
+  const nowIso = new Date().toISOString().slice(0, 10);
+  for (const doc of salesReportsData) {
+    const report = doc.report;
+    if (!report) continue;
+    const periodStart = report.period?.start ?? null;
+    const periodEnd = report.period?.end ?? null;
+    // A report with NEITHER bound at all carries no real date information â
+    // skip it rather than treat missing data as "covers everything," which
+    // would wrongly mark unrelated windows as having real sales data. One
+    // malformed report here could otherwise falsely tag every product's
+    // recompute across the whole venue as estimated_with_sales â a bigger
+    // blast radius than the same ambiguity in snapshotWriter.ts's original
+    // per-cycle version, worth hardening rather than copying forward as-is.
+    if (periodStart == null && periodEnd == null) continue;
+    const overlapStart = !periodEnd || periodEnd >= sinceIso;
+    const overlapEnd = !periodStart || periodStart <= nowIso;
+    if (overlapStart && overlapEnd) return true;
+  }
+  return false;
+}
+
+/**
+ * Orchestrates a single product's weighted-average recompute. All I/O
+ * (product read, sales report fetch) happens in the CALLER and is passed in
+ * already-fetched â never an extra read inside here â since multiple
+ * proposals processed in one commitInvoiceChanges/proposeInvoiceChanges call
+ * would otherwise redundantly re-fetch the same salesReports collection once
+ * per proposal instead of once per call. See Â§8a for the full design.
+ */
+function recomputeWeightedAverageCost(
+  productData: any,
+  salesReportsData: Array<{ report?: { period?: { start?: string; end?: string } } }>,
+  newQty: number,
+  newPrice: number,
+): {
+  costPrice: number;
+  costPriceQuantityBasis: number;
+  quantityConfidence: "estimated_with_sales" | "estimated_no_sales";
+} {
+  const priorQty = typeof productData?.costPriceQuantityBasis === "number"
+    ? productData.costPriceQuantityBasis : 0;
+  const priorPrice = typeof productData?.costPrice === "number" ? productData.costPrice : null;
+  const priorBasisAt: FirebaseFirestore.Timestamp | null = productData?.costPriceBasisAt ?? null;
+
+  const { blendedPrice, newQuantityBasis } = computeWeightedAverageCost(priorQty, priorPrice, newQty, newPrice);
+
+  // No prior basis at all (legacy product predating this feature, or genuinely
+  // first-ever price) â nothing to check sales against, since there's no
+  // window that could have decayed. Conservative default, not physical_count
+  // â that tier is reserved specifically for the cycle-reset trigger (Â§8a,
+  // Phase P3b), not for an ad-hoc invoice-driven recompute like this one.
+  const quantityConfidence = priorBasisAt && hasSalesDataForWindow(salesReportsData, priorBasisAt.toDate())
+    ? "estimated_with_sales"
+    : "estimated_no_sales";
+
+  return { costPrice: blendedPrice, costPriceQuantityBasis: newQuantityBasis, quantityConfidence };
 }
 
 export type ProposedAction =
@@ -241,7 +354,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   const cleanSupplierName = supplierName && supplierName.trim() ? supplierName.trim() : null;
   const db = admin.firestore();
 
-  // Classify all input lines first — non-product lines (freight, deposits, etc.)
+  // Classify all input lines first â non-product lines (freight, deposits, etc.)
   // are excluded from matching/proposal logic and surfaced in excludedLines instead
   const productLines: InvoiceLine[] = [];
   const nonProductLines: InvoiceLine[] = [];
@@ -265,12 +378,22 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
   const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 
+  // Fetched once for the whole call â see recomputeWeightedAverageCost's own
+  // comment on why this must not be re-fetched per line/proposal.
+  let salesReportsData: Array<{ report?: { period?: { start?: string; end?: string } } }> = [];
+  try {
+    const salesReportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
+    salesReportsData = salesReportsSnap.docs.map(d => d.data() as any);
+  } catch (e: any) {
+    console.warn("[proposeInvoiceChanges] salesReports fetch failed (safe degrade to estimated_no_sales):", e?.message);
+  }
+
   const batch = db.batch();
   let ops = 0;
   const proposals: ProposedAction[] = [];
-  // Confident namesMatch lines — fed to area-item linking even when price write waits
+  // Confident namesMatch lines â fed to area-item linking even when price write waits
   const autoProductMap: Record<string, string> = {};
-  // Per-line price-change records — used for the trend signal in Phase 3 reasoning
+  // Per-line price-change records â used for the trend signal in Phase 3 reasoning
   const invoiceLineData: Array<{
     direction: "increase" | "decrease";
     changePercent: number;
@@ -294,7 +417,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
 
     if (matched) {
-      // Trusted product ID — queue for area-item linking regardless of price outcome
+      // Trusted product ID â queue for area-item linking regardless of price outcome
       autoProductMap[line.name] = matched.id;
       const existing: number | null = (typeof matched.costPrice === "number" && matched.costPrice > 0) ? matched.costPrice : null;
       const productRef = db.doc(`venues/${venueId}/products/${matched.id}`);
@@ -302,9 +425,9 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       if (existing != null) {
         const pctDiff = Math.abs((unitPrice - existing) / existing);
         if (pctDiff > 0.01) {
-          // Price change — waits for user confirmation
+          // Price change â waits for user confirmation
           const changePercent = Math.round(((unitPrice - existing) / existing) * 10000) / 100;
-          // Case-mismatch detection — only fires for suspiciously large changes (>50%)
+          // Case-mismatch detection â only fires for suspiciously large changes (>50%)
           let caseMismatchFields: {
             possibleCaseMismatch?: boolean;
             caseMismatchGuess?: number | null;
@@ -367,15 +490,24 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             ...caseMismatchFields,
           });
         } else {
-          // Same price — automatic touch (no meaningful change)
+          // Same price â automatic touch (no meaningful price change), but the
+          // quantity basis still needs to grow: new stock arrived even though
+          // the price didn't move, and the next genuinely different price
+          // must weight against the correct, current on-hand quantity, not a
+          // stale one. See Â§8a â this is the corrected weighted-average model.
+          const wac = recomputeWeightedAverageCost(matched, salesReportsData, line.qty, unitPrice);
           batch.update(productRef, {
+            costPrice: wac.costPrice,
+            costPriceQuantityBasis: wac.costPriceQuantityBasis,
+            costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+            quantityConfidence: wac.quantityConfidence,
             lastInvoicePrice: unitPrice,
             lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             ...caseSizeFields,
           });
           ops++;
-          // Site 1: per-supplier invoiceHistory — record every invoice appearance
+          // Site 1: per-supplier invoiceHistory â record every invoice appearance
           if (cleanSupplierId) {
             const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
             const invHistRef = suppRef.collection("invoiceHistory").doc();
@@ -399,7 +531,12 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           }
         }
       } else {
-        // First-time price set — automatic
+        // First-time price set â automatic. Trivial case of the weighted-average
+        // formula (priorQty=0 collapses to newPrice outright), but this still
+        // needs to ESTABLISH costPriceQuantityBasis/costPriceBasisAt so the
+        // NEXT invoice for this product has a real basis to chain from,
+        // rather than being treated as first-time again. See Â§8a.
+        const wac = recomputeWeightedAverageCost(matched, salesReportsData, line.qty, unitPrice);
         const initHistRef = productRef.collection("priceHistory").doc();
         batch.set(initHistRef, {
           date: admin.firestore.FieldValue.serverTimestamp(),
@@ -414,7 +551,10 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           note: "Initial price set from invoice",
         });
         batch.update(productRef, {
-          costPrice: unitPrice,
+          costPrice: wac.costPrice,
+          costPriceQuantityBasis: wac.costPriceQuantityBasis,
+          costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+          quantityConfidence: wac.quantityConfidence,
           costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
           costPriceSource: "invoice",
           lastInvoicePrice: unitPrice,
@@ -464,7 +604,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       });
 
       if (nearDuplicate) {
-        // Near-duplicate — match AND price wait together (wrong match = wrong product ID)
+        // Near-duplicate â match AND price wait together (wrong match = wrong product ID)
         const existing: number | null =
           typeof nearDuplicate.costPrice === "number" ? nearDuplicate.costPrice : null;
         proposals.push({
@@ -479,7 +619,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           caseSize: cs,
         });
       } else {
-        // Genuinely new product — waits for user confirmation
+        // Genuinely new product â waits for user confirmation
         proposals.push({
           id: `${invoiceId}:newProduct:${normalizeName(line.name)}`,
           type: "newProduct",
@@ -500,7 +640,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     console.log("[proposeInvoiceChanges] auto-committed", { venueId, ops, invoiceId });
   }
 
-  // Area-item linking for all confident namesMatch lines — runs immediately
+  // Area-item linking for all confident namesMatch lines â runs immediately
   const linked = await applyAreaItemLinking(db, venueId, autoProductMap, "proposeInvoiceChanges");
 
   // Supplier links: existing links auto-update; new links become proposals
@@ -510,7 +650,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
       const matched = products.find(p => namesMatch(p.name || "", line.name).isMatch);
       if (!matched) continue;
       const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
-      const unitCost = unitPrice; // already per-unit — OCR prompt normalises before returning
+      const unitCost = unitPrice; // already per-unit â OCR prompt normalises before returning
       const supplierRef = db.doc(
         `venues/${venueId}/products/${matched.id}/suppliers/${cleanSupplierId}`
       );
@@ -589,7 +729,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
         ? "trending"
         : "isolated";
     const matchConfidence: "high" | "moderate" = lineData.matchScore >= 0.95 ? "high" : "moderate";
-    // Lookup preferred supplier name — only when a mismatch is confirmed and we have an ID to query
+    // Lookup preferred supplier name â only when a mismatch is confirmed and we have an ID to query
     let preferredSupplierName: string | null = null;
     if (lineData.supplierMismatch && lineData.primarySupplierId) {
       try {
@@ -632,16 +772,26 @@ export async function commitInvoiceChanges(
   let ops = 0;
   let changed = 0;
   let created = 0;
-  // lineName → productId for lines that get a real product ID for the first time here
+  // lineName â productId for lines that get a real product ID for the first time here
   const newlyResolvedMap: Record<string, string> = {};
 
-  // Read venue country once — only when new products will be created, to set gstPercent correctly.
-  // AU → 10%, everything else (NZ and any future country) → 15%.
+  // Read venue country once â only when new products will be created, to set gstPercent correctly.
+  // AU â 10%, everything else (NZ and any future country) â 15%.
   const hasNewProducts = accepted.some(p => p.type === 'newProduct');
   let venueCountry = 'NZ';
   if (hasNewProducts) {
     const venueSnap = await db.collection('venues').doc(venueId).get();
     venueCountry = (venueSnap.data()?.country as string) || 'NZ';
+  }
+
+  // Fetched once for the whole call â see recomputeWeightedAverageCost's own
+  // comment on why this must not be re-fetched per proposal.
+  let salesReportsData: Array<{ report?: { period?: { start?: string; end?: string } } }> = [];
+  try {
+    const salesReportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
+    salesReportsData = salesReportsSnap.docs.map(d => d.data() as any);
+  } catch (e: any) {
+    console.warn("[commitInvoiceChanges] salesReports fetch failed (safe degrade to estimated_no_sales):", e?.message);
   }
 
   for (const proposal of accepted) {
@@ -661,11 +811,22 @@ export async function commitInvoiceChanges(
           ? proposal.correctedChangePercent
           : proposal.changePercent;
       const caseSizeFields = computeCaseSizeFields(effectivePrice, cs);
+
+      // Fresh read required here (unlike sites 1/2, which reuse `matched` for
+      // free): the proposal may have been generated minutes or days before
+      // being accepted, and the basis could have shifted via another invoice
+      // committed in between. Using a stale propose-time snapshot would blend
+      // against the wrong prior quantity â a real correctness risk now that
+      // this feeds the canonical cost, not just an annotation. See Â§8a.
+      const freshProductSnap = await productRef.get();
+      const freshProductData = freshProductSnap.data() as any;
+      const wac = recomputeWeightedAverageCost(freshProductData, salesReportsData, proposal.qty, effectivePrice);
+
       const histRef = productRef.collection("priceHistory").doc();
       batch.set(histRef, {
         date: admin.firestore.FieldValue.serverTimestamp(),
         oldPrice: proposal.oldPrice,
-        newPrice: effectivePrice,
+        newPrice: wac.costPrice,
         supplierId: cleanSupplierId,
         supplierName: cleanSupplierName,
         invoiceId,
@@ -674,7 +835,10 @@ export async function commitInvoiceChanges(
         source: "invoice",
       });
       batch.update(productRef, {
-        costPrice: effectivePrice,
+        costPrice: wac.costPrice,
+        costPriceQuantityBasis: wac.costPriceQuantityBasis,
+        costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+        quantityConfidence: wac.quantityConfidence,
         costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         costPriceSource: "invoice",
         lastInvoicePrice: effectivePrice,
@@ -686,7 +850,10 @@ export async function commitInvoiceChanges(
       });
       ops += 2;
       changed++;
-      // Site 3: per-supplier invoiceHistory for confirmed price change.
+      // Site 3: per-supplier invoiceHistory for confirmed price change. Records
+      // the RAW invoice-observed price (effectivePrice), not the blended
+      // costPrice â priceHistory is the blended "official cost" trail;
+      // invoiceHistory is the raw per-invoice observation trail. See Â§2/Â§8a.
       // wasPreferredSupplier: supplierMismatch=true means the invoice supplier is NOT the preferred
       // one; if no reasoning was attached (below 25% threshold), assume it IS preferred.
       if (cleanSupplierId) {
@@ -716,12 +883,20 @@ export async function commitInvoiceChanges(
       const cs = proposal.caseSize;
       const caseSizeFields = computeCaseSizeFields(proposal.newPrice, cs);
 
+      // Fresh read shared by all three sub-cases below â none of them read the
+      // product before this (unlike sites 1/2's free `matched`), and this is
+      // now a functional requirement for the weighted-average blend, not just
+      // an annotation. One read here rather than three. See Â§8a.
+      const freshProductSnap4 = await productRef.get();
+      const freshProductData4 = freshProductSnap4.data() as any;
+      const wac4 = recomputeWeightedAverageCost(freshProductData4, salesReportsData, proposal.qty, proposal.newPrice);
+
       if (proposal.existingPrice != null) {
         const pctDiff = Math.abs(
           (proposal.newPrice - proposal.existingPrice) / proposal.existingPrice
         );
         if (pctDiff > 0.01) {
-          // Price change on confirmed near-duplicate — tag source + write priceHistory
+          // Price change on confirmed near-duplicate â tag source + write priceHistory
           const changePercent = Math.round(
             ((proposal.newPrice - proposal.existingPrice) / proposal.existingPrice) * 10000
           ) / 100;
@@ -729,7 +904,7 @@ export async function commitInvoiceChanges(
           batch.set(nearDupHistRef, {
             date: admin.firestore.FieldValue.serverTimestamp(),
             oldPrice: proposal.existingPrice,
-            newPrice: proposal.newPrice,
+            newPrice: wac4.costPrice,
             supplierId: cleanSupplierId,
             supplierName: cleanSupplierName,
             invoiceId,
@@ -739,7 +914,10 @@ export async function commitInvoiceChanges(
             note: "Near-duplicate match confirmed",
           });
           batch.update(productRef, {
-            costPrice: proposal.newPrice,
+            costPrice: wac4.costPrice,
+            costPriceQuantityBasis: wac4.costPriceQuantityBasis,
+            costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+            quantityConfidence: wac4.quantityConfidence,
             costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
             costPriceSource: "invoice",
             lastInvoicePrice: proposal.newPrice,
@@ -750,8 +928,13 @@ export async function commitInvoiceChanges(
           ops += 2;
           changed++;
         } else {
-          // Same price — touch to record that the user confirmed this match; tag source
+          // Same price â quantity basis still needs to grow even though the
+          // price itself doesn't move. See site 1's identical reasoning.
           batch.update(productRef, {
+            costPrice: wac4.costPrice,
+            costPriceQuantityBasis: wac4.costPriceQuantityBasis,
+            costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+            quantityConfidence: wac4.quantityConfidence,
             costPriceSource: "invoice",
             lastInvoicePrice: proposal.newPrice,
             lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -761,12 +944,13 @@ export async function commitInvoiceChanges(
           ops++;
         }
       } else {
-        // First-time price set on confirmed near-duplicate — tag source + write priceHistory
+        // First-time price set on confirmed near-duplicate â tag source + write priceHistory.
+        // Trivial case of the engine (freshProductData4 has no prior price/basis).
         const nearDupHistRef = productRef.collection("priceHistory").doc();
         batch.set(nearDupHistRef, {
           date: admin.firestore.FieldValue.serverTimestamp(),
           oldPrice: null,
-          newPrice: proposal.newPrice,
+          newPrice: wac4.costPrice,
           supplierId: cleanSupplierId,
           supplierName: cleanSupplierName,
           invoiceId,
@@ -776,7 +960,10 @@ export async function commitInvoiceChanges(
           note: "Initial price set from near-duplicate match",
         });
         batch.update(productRef, {
-          costPrice: proposal.newPrice,
+          costPrice: wac4.costPrice,
+          costPriceQuantityBasis: wac4.costPriceQuantityBasis,
+          costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+          quantityConfidence: wac4.quantityConfidence,
           costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
           costPriceSource: "invoice",
           lastInvoicePrice: proposal.newPrice,
@@ -786,7 +973,7 @@ export async function commitInvoiceChanges(
         });
         ops += 2;
       }
-      // Site 4: per-supplier invoiceHistory — ONE call covering all three sub-cases above.
+      // Site 4: per-supplier invoiceHistory â ONE call covering all three sub-cases above.
       // Re-derives direction and changePercent from the proposal so no per-branch duplication.
       if (cleanSupplierId) {
         const existingP = proposal.existingPrice;
@@ -828,7 +1015,7 @@ export async function commitInvoiceChanges(
         }));
         ops++;
       }
-      // Now has a real product ID — queue for area-item linking
+      // Now has a real product ID â queue for area-item linking
       newlyResolvedMap[proposal.lineName] = proposal.candidateProductId;
 
     } else if (proposal.type === "newProduct") {
@@ -838,6 +1025,13 @@ export async function commitInvoiceChanges(
       batch.set(newRef, {
         name: proposal.lineName,
         costPrice: proposal.unitPrice,
+        // Brand new product â priorQty is unambiguously 0, nothing to read.
+        // Establishes the basis for the NEXT invoice's recompute to chain
+        // from. Not physical_count: that tier is reserved for the
+        // cycle-reset trigger (Â§8a, Phase P3b), not an ad-hoc induction.
+        costPriceQuantityBasis: proposal.qty,
+        costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+        quantityConfidence: "estimated_no_sales",
         costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         costPriceSource: "invoice",
         lastInvoicePrice: proposal.unitPrice,
@@ -878,7 +1072,7 @@ export async function commitInvoiceChanges(
         });
         ops++;
       }
-      // priceHistory entry for the initial price — costPriceSource already set on the product doc above
+      // priceHistory entry for the initial price â costPriceSource already set on the product doc above
       if (proposal.unitPrice != null) {
         const newHistRef = newRef.collection("priceHistory").doc();
         batch.set(newHistRef, {
@@ -891,7 +1085,7 @@ export async function commitInvoiceChanges(
           changePercent: null,
           direction: "initial",
           source: "invoice",
-          note: "Initial price set — new product from invoice",
+          note: "Initial price set â new product from invoice",
         });
         ops++;
       }
@@ -914,7 +1108,7 @@ export async function commitInvoiceChanges(
           oldPrice: null,
           changePercent: null,
           direction: "initial",
-          note: "Initial price set — new product from invoice",
+          note: "Initial price set â new product from invoice",
         }));
         ops++;
       }
@@ -934,7 +1128,7 @@ export async function commitInvoiceChanges(
   // Area-item linking for lines that got a real product ID for the first time
   await applyAreaItemLinking(db, venueId, newlyResolvedMap, "commitInvoiceChanges");
 
-  // Supplier link proposals — individual reads, outside batch
+  // Supplier link proposals â individual reads, outside batch
   const supplierLinkProposals = accepted.filter(
     (p): p is ProposedAction & { type: "supplierLink" } => p.type === "supplierLink"
   );
@@ -989,8 +1183,8 @@ export async function commitInvoiceChanges(
             primarySupplierName: productData.supplierName || '',
             supplierCount: 1,
           });
-          // Invoice supplier is the same as the just-backfilled legacy supplier —
-          // update its invoice data and skip the set below to avoid overwriting preferred→alternative
+          // Invoice supplier is the same as the just-backfilled legacy supplier â
+          // update its invoice data and skip the set below to avoid overwriting preferredâalternative
           if (legacySupplierId === proposal.supplierId) {
             await supplierRef.update({
               unitCost: proposal.unitCost,
@@ -998,8 +1192,21 @@ export async function commitInvoiceChanges(
               lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
               lastInvoicePrice: invoicePrice,
             });
+            // Â§8's corrected model: a genuine purchase from ANY supplier must
+            // move the canonical cost, blended by quantity â supplierLink
+            // previously never touched product.costPrice at all. productData
+            // is already loaded above, no new read needed.
+            const wac6a = recomputeWeightedAverageCost(productData, salesReportsData, proposal.qty, proposal.unitCost);
+            await db.doc(`venues/${venueId}/products/${proposal.productId}`).update({
+              costPrice: wac6a.costPrice,
+              costPriceQuantityBasis: wac6a.costPriceQuantityBasis,
+              costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+              quantityConfidence: wac6a.quantityConfidence,
+              costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              costPriceSource: "invoice",
+            });
             // Site 6a: invoiceHistory for legacy-same-supplier path.
-            // wasPreferredSupplier: true — this IS the legacy preferred supplier being updated.
+            // wasPreferredSupplier: true â this IS the legacy preferred supplier being updated.
             await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
               invoiceId,
               productId: proposal.productId,
@@ -1032,14 +1239,26 @@ export async function commitInvoiceChanges(
           addedAt: admin.firestore.FieldValue.serverTimestamp(),
           addedBy: "invoice-import",
         });
-        if (!hasPreferred) {
-          await db.doc(`venues/${venueId}/products/${proposal.productId}`).update({
-            primarySupplierId: proposal.supplierId,
-            primarySupplierName: proposal.supplierName,
-          });
-        }
+        // Â§8's corrected model: a genuine purchase from an alternative supplier
+        // still moves the canonical blended cost. productData already loaded
+        // above (same read used for the legacy-backfill check), no new read.
+        // primarySupplierId is folded into this same update (spread below) â
+        // same document, no batch in this section, so merging avoids a
+        // separate round-trip.
+        const wac6b = recomputeWeightedAverageCost(productData, salesReportsData, proposal.qty, proposal.unitCost);
+        await db.doc(`venues/${venueId}/products/${proposal.productId}`).update({
+          costPrice: wac6b.costPrice,
+          costPriceQuantityBasis: wac6b.costPriceQuantityBasis,
+          costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+          quantityConfidence: wac6b.quantityConfidence,
+          costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          costPriceSource: "invoice",
+          ...(!hasPreferred
+            ? { primarySupplierId: proposal.supplierId, primarySupplierName: proposal.supplierName }
+            : {}),
+        });
       } else {
-        // Existing link — record whether it was already the preferred supplier
+        // Existing link â record whether it was already the preferred supplier
         wasPreferredSupplierForLink = (snap.data() as any)?.isPreferred === true;
         await supplierRef.update({
           unitCost: proposal.unitCost,
@@ -1047,8 +1266,23 @@ export async function commitInvoiceChanges(
           lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
           lastInvoicePrice: invoicePrice,
         });
+        // Â§8's corrected model: this is the one sub-case with no existing
+        // product-level read at all (snap above is the SUPPLIER subdoc, not
+        // the product) â a genuinely new read, unlike 6a/6b which reuse
+        // productData already loaded elsewhere in this function.
+        const productSnap7 = await db.doc(`venues/${venueId}/products/${proposal.productId}`).get();
+        const productData7 = productSnap7.data() as any;
+        const wac7 = recomputeWeightedAverageCost(productData7, salesReportsData, proposal.qty, proposal.unitCost);
+        await db.doc(`venues/${venueId}/products/${proposal.productId}`).update({
+          costPrice: wac7.costPrice,
+          costPriceQuantityBasis: wac7.costPriceQuantityBasis,
+          costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+          quantityConfidence: wac7.quantityConfidence,
+          costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          costPriceSource: "invoice",
+        });
       }
-      // Sites 6b & 7: per-supplier invoiceHistory — one entry covering both the new-link
+      // Sites 6b & 7: per-supplier invoiceHistory â one entry covering both the new-link
       // and existing-link paths (legacy-same-supplier continue path is handled at site 6a above)
       await supplierRef.collection("invoiceHistory").doc().set(buildInvoiceHistoryEntry({
         invoiceId,

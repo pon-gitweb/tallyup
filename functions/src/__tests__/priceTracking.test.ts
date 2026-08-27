@@ -1,9 +1,9 @@
-// Tests for commitInvoiceChanges — source-tagging (Phase P1) and the per-supplier
+// Tests for commitInvoiceChanges â source-tagging (Phase P1) and the per-supplier
 // invoiceHistory ledger (Phase P2 / completeness fix).
 // Proposal types covered: priceChange, nearDuplicateMatch (all three sub-cases),
 // newProduct, supplierLink (new link, existing link, legacy-same-supplier continue).
 
-// ── Firebase-admin mock ───────────────────────────────────────────────────────
+// ââ Firebase-admin mock âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // Capture batch writes and direct doc writes in separate arrays so tests can
 // assert on both code paths (batch for most types, individual awaits for supplierLink).
 const mockBatchSets: Array<{ path: string; data: any }> = [];
@@ -13,13 +13,22 @@ const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
 const mockDocSets: Array<{ path: string; data: any }> = [];
 const mockDocUpdates: Array<{ path: string; data: any }> = [];
 
-// Supplier snapshots: default { exists: false } → new-link path.
+// Supplier snapshots: default { exists: false } â new-link path.
 const mockSupplierGet = jest.fn().mockResolvedValue({ exists: false, data: () => ({}) });
-// Product snapshots: default returns a product with no legacy supplierId.
-const mockProductGet = jest.fn().mockResolvedValue({
-  exists: true,
-  data: () => ({ supplierId: null, primarySupplierId: null, supplierName: null }),
-});
+// Product snapshots: default returns a product with no legacy supplierId and no
+// prior weighted-average basis (undefined costPrice/costPriceQuantityBasis) â
+// this is what makes every pre-P3a test's blend trivially collapse to newPrice.
+// Tests that need a NON-trivial blend override this per-test.
+let mockProductData: any = { supplierId: null, primarySupplierId: null, supplierName: null };
+const mockProductGet = jest.fn(() => Promise.resolve({ exists: true, data: () => mockProductData }));
+
+// Configurable per-test: products list for proposeInvoiceChanges's name-matching,
+// and salesReports for quantityConfidence tagging. Neither existed before Phase
+// P3a's tests â the generic collection mock always returned { docs: [] }, which
+// meant proposeInvoiceChanges could never find a match and salesReports-overlap
+// could never resolve true, for any test written against it.
+let mockProductsListData: any[] = [];
+let mockSalesReportsListData: any[] = [];
 
 function makeDocRef(path: string) {
   return {
@@ -55,18 +64,40 @@ jest.mock('firebase-admin', () => {
   const db = {
     batch: () => batchMock,
     doc: (path: string) => makeDocRef(path),
-    collection: (path: string) => ({
-      limit: () => ({ get: jest.fn().mockResolvedValue({ docs: [] }) }),
-      get: jest.fn().mockResolvedValue({ docs: [] }),
-      doc: (id?: string) => makeDocRef(`${path}/${id ?? '__auto__'}`),
-    }),
+    collection: (path: string) => {
+      if (path.endsWith('/salesReports')) {
+        return {
+          get: jest.fn(() => Promise.resolve({
+            docs: mockSalesReportsListData.map((d) => ({ data: () => d })),
+          })),
+        };
+      }
+      if (path.endsWith('/products')) {
+        return {
+          limit: () => ({
+            get: jest.fn(() => Promise.resolve({
+              docs: mockProductsListData.map((d, i) => ({ id: d.id ?? `prod-${i}`, data: () => d })),
+            })),
+          }),
+          get: jest.fn(() => Promise.resolve({
+            docs: mockProductsListData.map((d, i) => ({ id: d.id ?? `prod-${i}`, data: () => d })),
+          })),
+          doc: (id?: string) => makeDocRef(`${path}/${id ?? '__auto__'}`),
+        };
+      }
+      return {
+        limit: () => ({ get: jest.fn().mockResolvedValue({ docs: [] }) }),
+        get: jest.fn().mockResolvedValue({ docs: [] }),
+        doc: (id?: string) => makeDocRef(`${path}/${id ?? '__auto__'}`),
+      };
+    },
   };
   return { firestore: Object.assign(jest.fn(() => db), { FieldValue }) };
 });
 
-import { commitInvoiceChanges, ProposedAction } from '../priceTracking';
+import { commitInvoiceChanges, proposeInvoiceChanges, ProposedAction } from '../priceTracking';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ââ Helpers âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function clearMocks() {
   mockBatchSets.length = 0;
@@ -74,15 +105,18 @@ function clearMocks() {
   mockBatchCommit.mockClear();
   mockDocSets.length = 0;
   mockDocUpdates.length = 0;
+  mockProductData = { supplierId: null, primarySupplierId: null, supplierName: null };
+  mockProductsListData = [];
+  mockSalesReportsListData = [];
 }
 
 const VENUE_ID = 'venue-1';
 const INVOICE_ID = 'inv-001';
 const CTX = { supplierId: 'sup-1', supplierName: 'Acme', invoiceId: INVOICE_ID };
 
-// ── Suite: priceChange ────────────────────────────────────────────────────────
+// ââ Suite: priceChange ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — priceChange', () => {
+describe('commitInvoiceChanges â priceChange', () => {
   beforeEach(clearMocks);
 
   it('writes priceHistory, tags costPriceSource:invoice, and writes invoiceHistory with full fields', async () => {
@@ -121,11 +155,11 @@ describe('commitInvoiceChanges — priceChange', () => {
     expect(invHist!.data.supplierId).toBe('sup-1');
     expect(invHist!.data.supplierName).toBe('Acme');
     expect(invHist!.data.unitCost).toBe(33);
-    expect(invHist!.data.lineTotal).toBe(198);        // 33 × 6
+    expect(invHist!.data.lineTotal).toBe(198);        // 33 Ã 6
     expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
     expect(invHist!.data.oldPrice).toBe(30);
     expect(invHist!.data.direction).toBe('increase');
-    // No reasoning attached → not a supplier mismatch → wasPreferredSupplier: true
+    // No reasoning attached â not a supplier mismatch â wasPreferredSupplier: true
     expect(invHist!.data.wasPreferredSupplier).toBe(true);
   });
 
@@ -145,7 +179,7 @@ describe('commitInvoiceChanges — priceChange', () => {
       reasoning: {
         isolatedVsTrend: 'isolated',
         similarChangesOnInvoice: 0,
-        supplierMismatch: true,       // ← this supplier is NOT the preferred one
+        supplierMismatch: true,       // â this supplier is NOT the preferred one
         preferredSupplierName: 'OtherSupplier',
         matchConfidence: 'moderate',
         matchScore: 0.8,
@@ -156,13 +190,13 @@ describe('commitInvoiceChanges — priceChange', () => {
 
     const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
     expect(invHist!.data.wasPreferredSupplier).toBe(false);
-    expect(invHist!.data.lineTotal).toBe(216);        // 18 × 12
+    expect(invHist!.data.lineTotal).toBe(216);        // 18 Ã 12
   });
 });
 
-// ── Suite: nearDuplicateMatch — price change ───────────────────────────────────
+// ââ Suite: nearDuplicateMatch â price change âââââââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
+describe('commitInvoiceChanges â nearDuplicateMatch price change', () => {
   beforeEach(clearMocks);
 
   it('writes priceHistory, tags costPriceSource:invoice, and writes invoiceHistory', async () => {
@@ -201,7 +235,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
     expect(invHist!.data.supplierId).toBe('sup-1');
     expect(invHist!.data.supplierName).toBe('Acme');
     expect(invHist!.data.unitCost).toBe(44);
-    expect(invHist!.data.lineTotal).toBe(264);        // 44 × 6
+    expect(invHist!.data.lineTotal).toBe(264);        // 44 Ã 6
     expect(invHist!.data.direction).toBe('increase');
     expect(invHist!.data.oldPrice).toBe(40);
     // nearDuplicate: genuinely unknown without extra read
@@ -209,9 +243,9 @@ describe('commitInvoiceChanges — nearDuplicateMatch price change', () => {
   });
 });
 
-// ── Suite: nearDuplicateMatch — same-price touch ──────────────────────────────
+// ââ Suite: nearDuplicateMatch â same-price touch ââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
+describe('commitInvoiceChanges â nearDuplicateMatch same-price touch', () => {
   beforeEach(clearMocks);
 
   it('no priceHistory, tags costPriceSource:invoice, writes invoiceHistory (no direction)', async () => {
@@ -238,7 +272,7 @@ describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
     expect(invHist).toBeDefined();
     expect(invHist!.data.type).toBe('nearDuplicate');
     expect(invHist!.data.unitCost).toBe(35);
-    expect(invHist!.data.lineTotal).toBe(105);        // 35 × 3
+    expect(invHist!.data.lineTotal).toBe(105);        // 35 Ã 3
     expect(invHist!.data.wasPreferredSupplier).toBeNull();
     // Same-price sub-case omits direction
     expect(invHist!.data.direction).toBeUndefined();
@@ -246,9 +280,9 @@ describe('commitInvoiceChanges — nearDuplicateMatch same-price touch', () => {
   });
 });
 
-// ── Suite: nearDuplicateMatch — first-time price ──────────────────────────────
+// ââ Suite: nearDuplicateMatch â first-time price ââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — nearDuplicateMatch first-time price', () => {
+describe('commitInvoiceChanges â nearDuplicateMatch first-time price', () => {
   beforeEach(clearMocks);
 
   it('writes initial priceHistory, tags costPriceSource:invoice, writes invoiceHistory', async () => {
@@ -280,16 +314,16 @@ describe('commitInvoiceChanges — nearDuplicateMatch first-time price', () => {
     expect(invHist!.data.type).toBe('nearDuplicate');
     expect(invHist!.data.productId).toBe('prod-789');
     expect(invHist!.data.unitCost).toBe(38);
-    expect(invHist!.data.lineTotal).toBe(76);         // 38 × 2
+    expect(invHist!.data.lineTotal).toBe(76);         // 38 Ã 2
     expect(invHist!.data.direction).toBe('initial');
     expect(invHist!.data.oldPrice).toBeNull();
     expect(invHist!.data.wasPreferredSupplier).toBeNull();
   });
 });
 
-// ── Suite: nearDuplicateMatch — single invoiceHistory call guarantee ──────────
+// ââ Suite: nearDuplicateMatch â single invoiceHistory call guarantee ââââââââââ
 
-describe('commitInvoiceChanges — nearDuplicateMatch single invoiceHistory call', () => {
+describe('commitInvoiceChanges â nearDuplicateMatch single invoiceHistory call', () => {
   beforeEach(clearMocks);
 
   it('writes exactly one invoiceHistory entry regardless of sub-case', async () => {
@@ -312,9 +346,9 @@ describe('commitInvoiceChanges — nearDuplicateMatch single invoiceHistory call
   });
 });
 
-// ── Suite: newProduct ─────────────────────────────────────────────────────────
+// ââ Suite: newProduct âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — newProduct', () => {
+describe('commitInvoiceChanges â newProduct', () => {
   beforeEach(clearMocks);
 
   it('writes product doc, priceHistory, and invoiceHistory with wasPreferredSupplier:true', async () => {
@@ -350,22 +384,22 @@ describe('commitInvoiceChanges — newProduct', () => {
     expect(invHist!.data.supplierId).toBe('sup-1');
     expect(invHist!.data.supplierName).toBe('Acme');
     expect(invHist!.data.unitCost).toBe(5.5);
-    expect(invHist!.data.lineTotal).toBe(132);        // 5.5 × 24
+    expect(invHist!.data.lineTotal).toBe(132);        // 5.5 Ã 24
     expect(invHist!.data.direction).toBe('initial');
     expect(invHist!.data.oldPrice).toBeNull();
-    // New product → this supplier is the sole/primary supplier
+    // New product â this supplier is the sole/primary supplier
     expect(invHist!.data.wasPreferredSupplier).toBe(true);
   });
 });
 
-// ── Suite: supplierLink — new link ────────────────────────────────────────────
+// ââ Suite: supplierLink â new link ââââââââââââââââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — supplierLink new link', () => {
+describe('commitInvoiceChanges â supplierLink new link', () => {
   beforeEach(clearMocks);
 
   it('creates supplier doc and writes invoiceHistory with wasPreferredSupplier:true (no prior preferred)', async () => {
-    // mockSupplierGet defaults { exists: false } → new-link path
-    // mockProductGet defaults { supplierId: null, primarySupplierId: null } → hasPreferred = false
+    // mockSupplierGet defaults { exists: false } â new-link path
+    // mockProductGet defaults { supplierId: null, primarySupplierId: null } â hasPreferred = false
     const proposal: ProposedAction = {
       id: `${INVOICE_ID}:supplierLink:prod-existing:sup-1`,
       type: 'supplierLink',
@@ -395,16 +429,16 @@ describe('commitInvoiceChanges — supplierLink new link', () => {
     expect(invHist!.data.supplierId).toBe('sup-1');
     expect(invHist!.data.supplierName).toBe('Acme');
     expect(invHist!.data.unitCost).toBe(12);
-    expect(invHist!.data.lineTotal).toBe(48);         // 12 × 4
+    expect(invHist!.data.lineTotal).toBe(48);         // 12 Ã 4
     expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
-    // No prior preferred supplier → this one becomes preferred
+    // No prior preferred supplier â this one becomes preferred
     expect(invHist!.data.wasPreferredSupplier).toBe(true);
   });
 });
 
-// ── Suite: supplierLink — existing link update ────────────────────────────────
+// ââ Suite: supplierLink â existing link update ââââââââââââââââââââââââââââââââ
 
-describe('commitInvoiceChanges — supplierLink existing link update', () => {
+describe('commitInvoiceChanges â supplierLink existing link update', () => {
   beforeEach(clearMocks);
 
   it('updates supplier doc and writes invoiceHistory reflecting existing isPreferred flag', async () => {
@@ -436,29 +470,29 @@ describe('commitInvoiceChanges — supplierLink existing link update', () => {
     expect(invHist!.data.type).toBe('supplierLink');
     expect(invHist!.data.unitCost).toBe(15);
     expect(invHist!.data.caseSize).toBe(6);
-    expect(invHist!.data.lineTotal).toBe(30);         // 15 × 2
+    expect(invHist!.data.lineTotal).toBe(30);         // 15 Ã 2
     expect(invHist!.data.invoiceId).toBe(INVOICE_ID);
     expect(invHist!.data.wasPreferredSupplier).toBe(true);  // was already preferred
   });
 });
 
-// ── Suite: supplierLink — legacy-same-supplier continue path ──────────────────
+// ââ Suite: supplierLink â legacy-same-supplier continue path ââââââââââââââââââ
 
-describe('commitInvoiceChanges — supplierLink legacy-same-supplier continue path', () => {
+describe('commitInvoiceChanges â supplierLink legacy-same-supplier continue path', () => {
   beforeEach(clearMocks);
 
   it('updates supplier, writes invoiceHistory with wasPreferredSupplier:true, then continues', async () => {
     // snap.exists = false (new-link branch) but the product has a legacy supplierId
-    // that matches the proposal supplier → the continue path fires.
+    // that matches the proposal supplier â the continue path fires.
     // mockSupplierGet handles both supplierRef.get() and legacySubRef.get():
-    //   call 1 → snap.exists = false (enters !snap.exists block)
-    //   call 2 → legacySubSnap.exists = false (triggers legacySubRef.set)
+    //   call 1 â snap.exists = false (enters !snap.exists block)
+    //   call 2 â legacySubSnap.exists = false (triggers legacySubRef.set)
     // (default mock already returns { exists: false } for all supplier calls)
     mockProductGet.mockResolvedValueOnce({
       exists: true,
       data: () => ({
         supplierId: 'sup-1',         // legacySupplierId = 'sup-1'
-        primarySupplierId: null,     // hasPrimarySet = false → enters legacy block
+        primarySupplierId: null,     // hasPrimarySet = false â enters legacy block
         supplierName: 'Acme',
       }),
     });
@@ -468,7 +502,7 @@ describe('commitInvoiceChanges — supplierLink legacy-same-supplier continue pa
       type: 'supplierLink',
       productId: 'prod-legacy',
       productName: 'Legacy Product',
-      supplierId: 'sup-1',           // matches legacySupplierId → continue path
+      supplierId: 'sup-1',           // matches legacySupplierId â continue path
       supplierName: 'Acme',
       unitCost: 20,
       caseSize: null,
@@ -487,7 +521,7 @@ describe('commitInvoiceChanges — supplierLink legacy-same-supplier continue pa
     expect(invHist!.data.productId).toBe('prod-legacy');
     expect(invHist!.data.supplierId).toBe('sup-1');
     expect(invHist!.data.unitCost).toBe(20);
-    expect(invHist!.data.lineTotal).toBe(60);         // 20 × 3
+    expect(invHist!.data.lineTotal).toBe(60);         // 20 Ã 3
     // This IS the legacy preferred supplier being updated
     expect(invHist!.data.wasPreferredSupplier).toBe(true);
 
@@ -511,5 +545,341 @@ describe('commitInvoiceChanges — supplierLink legacy-same-supplier continue pa
              && s.data.addedBy === 'migration'
     );
     expect(migrationSet).toBeDefined();
+
+    // Phase P3a â this sub-case NEVER touched product.costPrice before. The
+    // legacy product had no prior costPrice/costPriceQuantityBasis at all, so
+    // the blend trivially collapses to the new invoice's own price/qty.
+    // Two separate .update() calls target this same product path here (the
+    // legacy backfill's primarySupplierId update, then this one) â filter
+    // specifically for the one carrying costPrice, not just the first match.
+    const productUpdate = mockDocUpdates.find(
+      (u) => u.path === 'venues/venue-1/products/prod-legacy' && u.data.costPrice !== undefined
+    );
+    expect(productUpdate).toBeDefined();
+    expect(productUpdate!.data.costPrice).toBe(20);
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(3);
+    expect(productUpdate!.data.quantityConfidence).toBe('estimated_no_sales');
+  });
+});
+
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// Phase P3a â periodic weighted-average costing (see
+// price-provenance-supplier-history-scope.md Â§8/Â§8a). Everything below tests
+// the ACTUAL blend math through the real commitInvoiceChanges/
+// proposeInvoiceChanges functions â not the standalone reproduction script
+// used during development. Every pre-existing test above passes its blend
+// trivially (mock product has no prior costPrice, so priorQty collapses to 0),
+// which is correct but does not prove the non-trivial blend path works at all.
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+// ââ Suite: priceChange â genuine non-trivial weighted-average blend ââââââââââ
+
+describe('commitInvoiceChanges â priceChange weighted-average blend (non-trivial)', () => {
+  beforeEach(clearMocks);
+
+  it('blends 100 units @ $10.00 (prior) with 24 units @ $12.50 (new) to ~$10.48', async () => {
+    mockProductData = {
+      costPrice: 10,
+      costPriceQuantityBasis: 100,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+      primarySupplierId: 'sup-1',
+      primarySupplierName: 'Acme',
+    };
+
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-wac1`,
+      type: 'priceChange',
+      productId: 'prod-wac1',
+      productName: 'Aged Rum 700ml',
+      lineName: 'Aged Rum',
+      oldPrice: 10,
+      newPrice: 12.5,
+      changePercent: 25,
+      direction: 'increase',
+      qty: 24,
+      caseSize: null,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-wac1'));
+    expect(productUpdate).toBeDefined();
+    // (100*10 + 24*12.5) / 124 = 1300/124 = 10.483870... â rounded to 4dp
+    expect(productUpdate!.data.costPrice).toBeCloseTo(10.4839, 4);
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(124);
+
+    // priceHistory records the BLENDED value, not the raw invoice price â
+    // priceHistory is the "official cost basis" trail (Â§2), invoiceHistory
+    // (checked below) is the raw per-invoice observation trail.
+    const priceHist = mockBatchSets.find((s) => s.path.includes('/priceHistory/'));
+    expect(priceHist!.data.newPrice).toBeCloseTo(10.4839, 4);
+
+    // invoiceHistory records the RAW invoice-observed price (12.50), not the blend.
+    const invHist = mockBatchSets.find((s) => s.path.includes('/invoiceHistory/'));
+    expect(invHist!.data.unitCost).toBe(12.5);
+  });
+
+  it('a tiny purchase against a huge existing holding barely moves the average', async () => {
+    mockProductData = {
+      costPrice: 10,
+      costPriceQuantityBasis: 1000,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    };
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-wac2`,
+      type: 'priceChange',
+      productId: 'prod-wac2',
+      productName: 'Bulk Item',
+      lineName: 'Bulk Item',
+      oldPrice: 10,
+      newPrice: 100,
+      changePercent: 900,
+      direction: 'increase',
+      qty: 1,
+      caseSize: null,
+    };
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-wac2'));
+    // (1000*10 + 1*100) / 1001 = 10100/1001 â 10.0899
+    expect(productUpdate!.data.costPrice).toBeCloseTo(10.0899, 3);
+    expect(productUpdate!.data.costPrice).toBeLessThan(10.1);
+  });
+});
+
+// ââ Suite: regression test for the null-priorPrice bug found and fixed during
+// development â priorPrice being null must NOT be treated as $0, which would
+// wrongly drag the blended average toward zero for unpriced prior stock. ââââ
+
+describe('commitInvoiceChanges â priceChange null priorPrice regression', () => {
+  beforeEach(clearMocks);
+
+  it('does not drag the average toward $0 when prior costPrice is null but a quantity basis exists', async () => {
+    // This specific combination (a quantity basis with NO price) shouldn't
+    // occur from normal use of this system, but defends against exactly the
+    // bug that was found and fixed: treating null price as $0 would have
+    // given (50*0 + 10*20)/60 = $3.33 here instead of the correct $20.
+    mockProductData = {
+      costPrice: null,
+      costPriceQuantityBasis: 50,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    };
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-nullreg`,
+      type: 'priceChange',
+      productId: 'prod-nullreg',
+      productName: 'Regression Test Item',
+      lineName: 'Regression Test Item',
+      oldPrice: 0,
+      newPrice: 20,
+      changePercent: 0,
+      direction: 'increase',
+      qty: 10,
+      caseSize: null,
+    };
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-nullreg'));
+    expect(productUpdate!.data.costPrice).toBe(20);
+    // Quantity basis correctly ignores the unpriced prior 50 units, not 60.
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(10);
+  });
+});
+
+// ââ Suite: same price still grows the quantity basis (nearDuplicateMatch) ââââ
+
+describe('commitInvoiceChanges â nearDuplicateMatch same-price still grows quantity basis', () => {
+  beforeEach(clearMocks);
+
+  it('keeps the blended price effectively unchanged but grows the basis when a matching price arrives', async () => {
+    mockProductData = {
+      costPrice: 8,
+      costPriceQuantityBasis: 200,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    };
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:nearDuplicateMatch:prod-samegrow`,
+      type: 'nearDuplicateMatch',
+      candidateProductId: 'prod-samegrow',
+      candidateProductName: 'Stable Price Item',
+      lineName: 'Stable Price Item',
+      existingPrice: 8,
+      newPrice: 8, // within the 1% same-price threshold
+      qty: 50,
+      caseSize: null,
+    };
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-samegrow'));
+    expect(productUpdate).toBeDefined();
+    // (200*8 + 50*8) / 250 = 8 exactly â price unchanged
+    expect(productUpdate!.data.costPrice).toBe(8);
+    // But the basis grew from 200 to 250 â this is the point of this test.
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(250);
+  });
+});
+
+// ââ Suite: quantityConfidence tagging from sales-report overlap âââââââââââââ
+
+describe('commitInvoiceChanges â quantityConfidence tagging', () => {
+  beforeEach(clearMocks);
+
+  it('tags estimated_with_sales when a sales report overlaps the window since the last basis update', async () => {
+    mockProductData = {
+      costPrice: 10,
+      costPriceQuantityBasis: 100,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    };
+    mockSalesReportsListData = [
+      { report: { period: { start: '2026-08-05', end: '2026-08-20' } } },
+    ];
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-withsales`,
+      type: 'priceChange',
+      productId: 'prod-withsales',
+      productName: 'Item With Sales Data',
+      lineName: 'Item With Sales Data',
+      oldPrice: 10,
+      newPrice: 11,
+      changePercent: 10,
+      direction: 'increase',
+      qty: 12,
+      caseSize: null,
+    };
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-withsales'));
+    expect(productUpdate!.data.quantityConfidence).toBe('estimated_with_sales');
+  });
+
+  it('tags estimated_no_sales when no sales report overlaps the window', async () => {
+    mockProductData = {
+      costPrice: 10,
+      costPriceQuantityBasis: 100,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    };
+    mockSalesReportsListData = [
+      { report: { period: { start: '2026-06-01', end: '2026-06-30' } } }, // well before the window
+    ];
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:priceChange:prod-nosales`,
+      type: 'priceChange',
+      productId: 'prod-nosales',
+      productName: 'Item Without Sales Data',
+      lineName: 'Item Without Sales Data',
+      oldPrice: 10,
+      newPrice: 11,
+      changePercent: 10,
+      direction: 'increase',
+      qty: 12,
+      caseSize: null,
+    };
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-nosales'));
+    expect(productUpdate!.data.quantityConfidence).toBe('estimated_no_sales');
+  });
+});
+
+// ââ Suite: supplierLink now blends into product.costPrice â the core scope
+// expansion this whole phase was about. Previously this never touched
+// costPrice at all, regardless of preferred-supplier status. ââââââââââââââââ
+
+describe('commitInvoiceChanges â supplierLink blends into costPrice even for an alternative supplier', () => {
+  beforeEach(clearMocks);
+
+  it('a genuinely alternative (non-preferred) supplier purchase still moves the blended cost', async () => {
+    // sup-1 is already preferred; this proposal is from sup-2, an alternative.
+    mockProductData = {
+      costPrice: 15,
+      costPriceQuantityBasis: 40,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+      primarySupplierId: 'sup-1',
+      primarySupplierName: 'Acme',
+    };
+    mockSupplierGet.mockResolvedValueOnce({ exists: false, data: () => ({}) });
+
+    const proposal: ProposedAction = {
+      id: `${INVOICE_ID}:supplierLink:prod-altsup:sup-2`,
+      type: 'supplierLink',
+      productId: 'prod-altsup',
+      productName: 'Multi-Supplier Item',
+      supplierId: 'sup-2',
+      supplierName: 'Backup Supplier',
+      unitCost: 18,
+      caseSize: null,
+      wouldBecomePreferred: false,
+      qty: 10,
+    };
+
+    await commitInvoiceChanges(VENUE_ID, [proposal], CTX);
+
+    const productUpdate = mockDocUpdates.find(
+      (u) => u.path === 'venues/venue-1/products/prod-altsup' && u.data.costPrice !== undefined
+    );
+    expect(productUpdate).toBeDefined();
+    // (40*15 + 10*18) / 50 = (600+180)/50 = 15.6 â this is the number that
+    // NEVER would have been computed before Phase P3a; supplierLink silently
+    // recorded the purchase but left costPrice untouched entirely.
+    expect(productUpdate!.data.costPrice).toBeCloseTo(15.6, 4);
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(50);
+    // primarySupplierId must NOT change â sup-1 is still preferred, this was
+    // an alternative-supplier purchase, not a preference change.
+    expect(productUpdate!.data.primarySupplierId).toBeUndefined();
+  });
+});
+
+// ââ Suite: proposeInvoiceChanges â sites 1 & 2, previously entirely untested
+// in this file (only commitInvoiceChanges was imported/tested before). âââââââ
+
+describe('proposeInvoiceChanges â samePriceTouch grows quantity basis', () => {
+  beforeEach(clearMocks);
+
+  it('same price arriving still grows the quantity basis via the automatic (non-proposal) path', async () => {
+    mockProductsListData = [{
+      id: 'prod-propose1',
+      name: 'Aged Rum 700ml',
+      costPrice: 10,
+      costPriceQuantityBasis: 100,
+      costPriceBasisAt: { toDate: () => new Date('2026-08-01T00:00:00Z') },
+    }];
+
+    const result = await proposeInvoiceChanges({
+      venueId: VENUE_ID,
+      lines: [{ name: 'Aged Rum 700ml', qty: 12, unitPrice: 10 }], // same price
+      supplierId: 'sup-1',
+      supplierName: 'Acme',
+      invoiceId: INVOICE_ID,
+    });
+
+    // Same price â automatic path, no proposal generated for this line.
+    expect(result.proposals.find((p) => p.type === 'priceChange')).toBeUndefined();
+
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-propose1'));
+    expect(productUpdate).toBeDefined();
+    expect(productUpdate!.data.costPrice).toBe(10);
+    // (100*10 + 12*10)/112 = 10 exactly, but the basis must still grow.
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(112);
+  });
+});
+
+describe('proposeInvoiceChanges â firstTime establishes the initial quantity basis', () => {
+  beforeEach(clearMocks);
+
+  it('a brand-first price on an existing-but-unpriced product establishes the basis for future recomputes', async () => {
+    mockProductsListData = [{
+      id: 'prod-propose2',
+      name: 'Never Priced Item',
+      // No costPrice at all yet â this is the "first-time" automatic path.
+    }];
+
+    await proposeInvoiceChanges({
+      venueId: VENUE_ID,
+      lines: [{ name: 'Never Priced Item', qty: 8, unitPrice: 22 }],
+      supplierId: 'sup-1',
+      supplierName: 'Acme',
+      invoiceId: INVOICE_ID,
+    });
+
+    const productUpdate = mockBatchUpdates.find((u) => u.path.includes('prod-propose2'));
+    expect(productUpdate).toBeDefined();
+    expect(productUpdate!.data.costPrice).toBe(22);
+    expect(productUpdate!.data.costPriceQuantityBasis).toBe(8);
+    expect(productUpdate!.data.quantityConfidence).toBe('estimated_no_sales');
   });
 });
