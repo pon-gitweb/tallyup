@@ -4,6 +4,7 @@ import { db } from '../firebase'
 import { resolveProduct } from '../services/products/resolveProduct'
 import type { ProdEntry } from '../services/products/resolveProduct'
 import styles from './StockPage.module.css'
+import { exportCsvBlob, fmtQuantityConfidence } from '../utils/stockCsvExport'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,13 +39,6 @@ type SortConfig = { key: SortKey; dir: 'asc' | 'desc' }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Plain-English label for the quantityConfidence field — used in exports only. */
-function fmtQuantityConfidence(qc?: string): string {
-  if (qc === 'physical_count') return 'Confirmed'
-  if (qc === 'estimated_with_sales') return 'Estimated (with sales data)'
-  return 'Estimated (no sales data)'
-}
-
 function fmtCurrency(n: number | null) {
   if (n == null) return '—'
   return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -64,32 +58,6 @@ function applySort<T extends Record<string, any>>(rows: T[], cfg: SortConfig): T
     const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
     return cfg.dir === 'asc' ? cmp : -cmp
   })
-}
-
-function exportCsvBlob(
-  deptGroups: Map<string, { deptName: string; rows: Row[] }>,
-  unplaced: UnplacedRow[],
-) {
-  const headers = ['Department', 'Product', 'Category', 'Supplier', 'On Hand', 'Unit Cost', 'Line Value', 'Quantity Basis']
-  const placed = [...deptGroups.entries()].flatMap(([, g]) =>
-    g.rows.map(r => [
-      g.deptName, r.name, r.category || '', r.supplierName || '',
-      fmtQty(r.onHand),
-      r.costPrice != null ? r.costPrice.toFixed(2) : '',
-      r.lineValue != null ? r.lineValue.toFixed(2) : '',
-      fmtQuantityConfidence(r.quantityConfidence),
-    ])
-  )
-  const unpl = unplaced.map(r => [
-    'Unplaced', r.name, r.category || '', r.supplierName || '',
-    fmtQty(r.onHand),
-    r.costPrice != null ? r.costPrice.toFixed(2) : '',
-    r.lineValue != null ? r.lineValue.toFixed(2) : '',
-    r.quantityConfidence ?? '',
-  ])
-  return [headers, ...placed, ...unpl]
-    .map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
