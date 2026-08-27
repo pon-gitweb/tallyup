@@ -23,6 +23,7 @@ import { searchGlobalCatalogFuzzy } from '../services/globalCatalog'
 import type { CatalogHit } from '../services/globalCatalog'
 import { mergeProducts } from '../services/mergeProducts'
 import type { MergeProductsResult } from '../services/mergeProducts'
+import { quantityConfidenceCaption } from '../utils/quantityConfidenceLabel'
 
 type Product = {
   id: string
@@ -40,6 +41,8 @@ type Product = {
   active?: boolean           // false when merged away; undefined/true means active
   linkedRecipeId: string | null
   linkedRecipeName: string | null
+  quantityConfidence: string | null
+  costPriceBasisAt: any
 }
 
 type MatchCandidate = {
@@ -1272,6 +1275,8 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               active: data.active,  // false when merged away; undefined/true means active
               linkedRecipeId: data.linkedRecipeId ?? null,
               linkedRecipeName: data.linkedRecipeName ?? null,
+              quantityConfidence: data.quantityConfidence ?? null,
+              costPriceBasisAt: data.costPriceBasisAt ?? null,
             }
           })
         )
@@ -1792,11 +1797,17 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     const value = displayValue(product, field)
     const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
     const isLinked  = field === 'costPrice' && !!product.linkedRecipeId
+    const isLowConfidence = field === 'costPrice' && !isEstimate && product.quantityConfidence !== 'physical_count'
     return (
       <div
         className={`${styles.cellText} ${!value ? styles.cellTextEmpty : ''}`}
-        style={isEstimate ? { color: '#c47b2b' } : undefined}
-        title={isEstimate ? 'Estimated from catalogue, not yet confirmed by invoice' : isLinked ? `Recipe-derived: ${product.linkedRecipeName}` : undefined}
+        style={isEstimate || isLowConfidence ? { color: '#c47b2b' } : undefined}
+        title={
+          isEstimate ? 'Estimated from catalogue, not yet confirmed by invoice' :
+          isLowConfidence ? quantityConfidenceCaption(product.quantityConfidence, product.costPriceBasisAt) ?? undefined :
+          isLinked ? `Recipe-derived: ${product.linkedRecipeName}` :
+          undefined
+        }
         onClick={() => startEdit(product, field)}
       >
         {value || '—'}

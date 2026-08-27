@@ -23,6 +23,7 @@ import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
+import { quantityConfidenceCaption } from '../../utils/quantityConfidenceLabel';
 import * as svc from '../../services/products';
 import { listSuppliers, createSupplier, Supplier } from '../../services/suppliers';
 import {
@@ -142,6 +143,10 @@ export default function EditProductScreen() {
           ? seed.expiryDate.toDate().toISOString().slice(0, 10)
           : String(seed.expiryDate).slice(0, 10))
       : '',
+
+    // quantity confidence — read-only display fields, not edited in this screen
+    quantityConfidence: seed?.quantityConfidence ?? null,
+    costPriceBasisAt: seed?.costPriceBasisAt ?? null,
   }));
 
   const [saving, setSaving] = useState(false);
@@ -616,6 +621,11 @@ export default function EditProductScreen() {
                 keyboardType="decimal-pad"
                 style={styles.input}
               />
+              {form.quantityConfidence !== 'physical_count' && (
+                <Text style={[styles.hintDim, { color: colours.textSecondary, marginTop: 3 }]}>
+                  {quantityConfidenceCaption(form.quantityConfidence, form.costPriceBasisAt)}
+                </Text>
+              )}
             </Field>
 
             <Field label="GST % *" style={{ width: 110 }}>
