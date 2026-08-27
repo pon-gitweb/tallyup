@@ -4,7 +4,7 @@ import { db } from '../firebase'
 import { resolveProduct } from '../services/products/resolveProduct'
 import type { ProdEntry } from '../services/products/resolveProduct'
 import styles from './StockPage.module.css'
-import { exportCsvBlob, fmtQuantityConfidence } from '../utils/stockCsvExport'
+import { exportCsvBlob } from '../utils/stockCsvExport'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

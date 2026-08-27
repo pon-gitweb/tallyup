@@ -38,7 +38,7 @@ export type ProdMaps = {
  */
 export function buildProductMaps(prodSnap: QuerySnapshot<DocumentData>): ProdMaps {
   const prodById: Record<string, ProdEntry> = {};
-  const prodByName: Record<string, { category: string; costPrice?: number }> = {};
+  const prodByName: Record<string, { category: string; costPrice?: number; quantityConfidence?: ProdEntry['quantityConfidence'] }> = {};
 
   prodSnap.forEach(d => {
     const p = d.data() as any;
