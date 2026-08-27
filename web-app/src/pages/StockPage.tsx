@@ -38,6 +38,13 @@ type SortConfig = { key: SortKey; dir: 'asc' | 'desc' }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Plain-English label for the quantityConfidence field — used in exports only. */
+function fmtQuantityConfidence(qc?: string): string {
+  if (qc === 'physical_count') return 'Confirmed'
+  if (qc === 'estimated_with_sales') return 'Estimated (with sales data)'
+  return 'Estimated (no sales data)'
+}
+
 function fmtCurrency(n: number | null) {
   if (n == null) return '—'
   return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -70,7 +77,7 @@ function exportCsvBlob(
       fmtQty(r.onHand),
       r.costPrice != null ? r.costPrice.toFixed(2) : '',
       r.lineValue != null ? r.lineValue.toFixed(2) : '',
-      r.quantityConfidence ?? '',
+      fmtQuantityConfidence(r.quantityConfidence),
     ])
   )
   const unpl = unplaced.map(r => [

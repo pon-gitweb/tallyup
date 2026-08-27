@@ -15,6 +15,7 @@ import { useNetworkState } from '../../hooks/useNetworkState';
 import { db } from '../../services/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { buildProductMaps, resolveProduct } from '../../services/products/resolveProduct';
+import { fmtQuantityConfidence } from '../../utils/fmtQuantityConfidence';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -264,7 +265,7 @@ export default function StockHoldingScreen() {
             <td class="right">${r.unit ?? '–'}</td>
             <td class="right">${r.costPrice != null ? '$' + r.costPrice.toFixed(2) : '–'}</td>
             <td class="right">${r.value != null ? fmtVal(r.value) : '–'}</td>
-            <td class="right">${r.quantityConfidence ?? '–'}</td>
+            <td class="right">${fmtQuantityConfidence(r.quantityConfidence)}</td>
           </tr>`;
         }
         html += `<tr class="subtotal">
@@ -315,7 +316,7 @@ export default function StockHoldingScreen() {
             r.unit ?? '',
             r.costPrice != null ? r.costPrice.toFixed(2) : '',
             r.value != null ? r.value.toFixed(2) : '',
-            r.quantityConfidence ?? '',
+            fmtQuantityConfidence(r.quantityConfidence),
           ].join(',') + '\n';
         }
       }
