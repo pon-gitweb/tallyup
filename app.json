@@ -107,6 +107,10 @@
     },
     "runtimeVersion": {
       "policy": "fingerprint"
-    }
+    },
+    "platforms": [
+      "android",
+      "ios"
+    ]
   }
 }
