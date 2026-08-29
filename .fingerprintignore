@@ -6,3 +6,5 @@
 # local and EAS builds. See: https://github.com/expo/expo/issues/34005
 ios/Pods/**/*
 ios/build/**/*
+ios/.xcode.env.local
+ios/**/project.xcworkspace/**/*
