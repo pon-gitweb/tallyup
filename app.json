@@ -105,6 +105,8 @@
       "url": "https://u.expo.dev/f51fbba0-356b-46ef-9ef5-2017ee9ad59f",
       "checkAutomatically": "ON_LOAD"
     },
-    "runtimeVersion": "1.0.0"
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    }
   }
 }
