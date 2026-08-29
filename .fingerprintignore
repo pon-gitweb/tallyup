@@ -1,0 +1,8 @@
+# CocoaPods and generated build artifacts are regenerated fresh on every
+# machine and every build — they are not part of what actually determines
+# native runtime compatibility. Excluding them so their inherent
+# non-determinism (CocoaPods installs aren't byte-identical across
+# machines/time) doesn't produce spurious fingerprint mismatches between
+# local and EAS builds. See: https://github.com/expo/expo/issues/34005
+ios/Pods/**/*
+ios/build/**/*
