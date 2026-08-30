@@ -52,6 +52,20 @@ export type ProductResolution = {
 const EMPTY_RESOLUTION: ProductResolution = { resolvedIdById: {}, resolvedIdByName: {} };
 
 /**
+ * Supplier id / name keyed by product document id (includes all inactive /
+ * merged products so that a lookup via _resolvedProductId — which is already
+ * walked to the survivor — finds the survivor's current supplier info).
+ *
+ * Built from the venue products QuerySnapshot that writeDepartmentSnapshot
+ * already fetches — no extra Firestore read required.
+ */
+export type SupplierResolution = {
+  supplierInfoByProductId: Record<string, { supplierId: string | null; supplierName: string | null }>;
+};
+
+const EMPTY_SUPPLIER_RESOLUTION: SupplierResolution = { supplierInfoByProductId: {} };
+
+/**
  * Pure computation: builds per-item snapshot figures from already-fetched data.
  * Wrapper responsibility: Firestore I/O only. This fn owns the math.
  *
@@ -65,6 +79,7 @@ export function computeSnapshotItemFigures(
   allInvoiceLines: SnapshotLineRecord[][],
   salesLines: SnapshotSalesLine[],
   productResolution: ProductResolution = EMPTY_RESOLUTION,
+  supplierResolution: SupplierResolution = EMPTY_SUPPLIER_RESOLUTION,
 ): {
   snapshotItems: any[];
   hasBaseline: boolean;
@@ -100,12 +115,22 @@ export function computeSnapshotItemFigures(
     const totalVarianceQty = actualClosing - (openingCount ?? 0);
     const totalVarianceDollars = costPrice != null ? totalVarianceQty * costPrice : null;
 
+    // Supplier info stamped from the resolved product — uses the already-fetched
+    // productsSnap data passed in via supplierResolution (no extra Firestore read).
+    // _resolvedProductId is the survivor id after walking the mergedInto chain,
+    // so this always reflects the canonical supplier at write time.
+    const _supplierInfo = _resolvedProductId
+      ? (supplierResolution.supplierInfoByProductId[_resolvedProductId] ?? null)
+      : null;
+
     return {
       productId: item._id,
       name: item.name || item._id,
       areaId: item._areaId,
       areaName: item._areaName,
       categoryName: item.category ?? item.categorySuggested ?? null,
+      supplierId: _supplierInfo?.supplierId ?? null,
+      supplierName: _supplierInfo?.supplierName ?? null,
 
       openingCount,
       receivedQty: 0,
@@ -301,6 +326,23 @@ export async function writeDepartmentSnapshot(
       console.warn('[snapshotWriter] product resolution build failed (safe degrade):', e?.message);
     }
 
+    // Build supplier lookup from the already-fetched productsSnap — no extra read.
+    // Keyed by every product doc id (active and inactive); the resolved id lookup
+    // in computeSnapshotItemFigures (_resolvedProductId) lands on the survivor,
+    // whose entry here carries the authoritative supplierId + supplierName.
+    const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
+    try {
+      productsSnap.forEach(d => {
+        const p = d.data() as any;
+        supplierResolution.supplierInfoByProductId[d.id] = {
+          supplierId: typeof p.supplierId === 'string' && p.supplierId ? p.supplierId : null,
+          supplierName: typeof p.supplierName === 'string' && p.supplierName ? p.supplierName : null,
+        };
+      });
+    } catch (e: any) {
+      console.warn('[snapshotWriter] supplier resolution build failed (safe degrade):', e?.message);
+    }
+
     // Read department name + previous cycle date
     const deptRef = doc(db, 'venues', venueId, 'departments', departmentId);
     const deptSnap = await getDoc(deptRef);
@@ -444,7 +486,7 @@ export async function writeDepartmentSnapshot(
 
     // ── Pure computation ──────────────────────────────────────────────────────
     const { snapshotItems, hasBaseline, hasPrices, totalPricedItems, hasInvoices, hasSales, likelyMissingInvoices } =
-      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution);
+      computeSnapshotItemFigures(rawItems, prevItemMap, cycleNumber, allInvoiceLines, salesLines, productResolution, supplierResolution);
 
     // STEP C — PO reconciliation
     const poDiscrepancies: any[] = [];
@@ -487,6 +529,7 @@ export async function writeDepartmentSnapshot(
                 orderedQty,
                 receivedQty: match.receivedQty,
                 supplierName: orderData.supplierName || null,
+                supplierId: orderData.supplierId || null,
               });
             }
           });

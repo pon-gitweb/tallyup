@@ -1,5 +1,5 @@
 import { computeSnapshotItemFigures } from '../snapshotWriter';
-import type { ProductResolution } from '../snapshotWriter';
+import type { ProductResolution, SupplierResolution } from '../snapshotWriter';
 
 // snapshotWriter.ts imports firebase SDK at module level; mock it so tests
 // run without an initialised Firebase app.
@@ -350,5 +350,83 @@ describe('computeSnapshotItemFigures — ProductResolution (mergedInto chain)', 
     const lines = [[{ productId: 'survivor-id', qty: 4, unitCost: 10 }]];
     const { snapshotItems } = computeSnapshotItemFigures([item], new Map(), 1, lines, [], multiHopPr);
     expect(snapshotItems[0].receivedQty).toBe(4);
+  });
+});
+
+// ── Suite: SupplierResolution — supplierId / supplierName stamping ─────────────
+//
+// Part A of the supplier-spend fix: computeSnapshotItemFigures now accepts a
+// SupplierResolution parameter and stamps supplierId / supplierName from the
+// resolved product's catalogue entry onto each snapshot item.
+//
+// Write site 1 of 2 (snapshot items): verified here via the pure function.
+// Write site 2 of 2 (findings.poDiscrepancies): supplierId added alongside the
+// existing supplierName in writeDepartmentSnapshot's I/O path (simple field
+// addition on orderData.supplierId, which is already in scope).
+
+describe('computeSnapshotItemFigures — SupplierResolution (supplierId stamping)', () => {
+  const pr: ProductResolution = {
+    resolvedIdById: { 'prod-1': 'prod-1' },
+    resolvedIdByName: {},
+  };
+
+  const sr: SupplierResolution = {
+    supplierInfoByProductId: {
+      'prod-1': { supplierId: 'sup-abc', supplierName: 'Acme Beverages' },
+    },
+  };
+
+  it('stamps supplierId and supplierName from SupplierResolution onto snapshot item', () => {
+    const item = makeItem({ productId: 'prod-1', _id: 'prod-1' });
+    const { snapshotItems } = computeSnapshotItemFigures(
+      [item], new Map(), 1, [], [], pr, sr,
+    );
+
+    expect(snapshotItems[0].supplierId).toBe('sup-abc');
+    expect(snapshotItems[0].supplierName).toBe('Acme Beverages');
+  });
+
+  it('falls back to null supplierId/supplierName when SupplierResolution is empty (safe degrade)', () => {
+    const item = makeItem({ productId: 'prod-1', _id: 'prod-1' });
+    const { snapshotItems } = computeSnapshotItemFigures(
+      [item], new Map(), 1, [], [],
+    );
+
+    expect(snapshotItems[0].supplierId).toBeNull();
+    expect(snapshotItems[0].supplierName).toBeNull();
+  });
+
+  it('stamps null when productId is absent (item not linked to a product)', () => {
+    const item = makeItem({ productId: undefined, _id: 'area-item-x' });
+    const { snapshotItems } = computeSnapshotItemFigures(
+      [item], new Map(), 1, [], [], pr, sr,
+    );
+
+    expect(snapshotItems[0].supplierId).toBeNull();
+    expect(snapshotItems[0].supplierName).toBeNull();
+  });
+
+  it('resolves through a mergedInto chain: inactive product id → survivor supplier info', () => {
+    // The item's productId points to the inactive product; ProductResolution
+    // walks it to the survivor; SupplierResolution carries the survivor's info.
+    const chainPr: ProductResolution = {
+      resolvedIdById: { 'old-prod': 'new-prod' },
+      resolvedIdByName: {},
+    };
+    const chainSr: SupplierResolution = {
+      supplierInfoByProductId: {
+        'old-prod': { supplierId: 'sup-old', supplierName: 'Old Supplier' },
+        'new-prod': { supplierId: 'sup-new', supplierName: 'New Supplier' },
+      },
+    };
+    const item = makeItem({ productId: 'old-prod', _id: 'area-item-y' });
+    const { snapshotItems } = computeSnapshotItemFigures(
+      [item], new Map(), 1, [], [], chainPr, chainSr,
+    );
+
+    // _resolvedProductId = 'new-prod' (walked via resolvedIdById)
+    // → supplier info comes from new-prod, not old-prod
+    expect(snapshotItems[0].supplierId).toBe('sup-new');
+    expect(snapshotItems[0].supplierName).toBe('New Supplier');
   });
 });

@@ -8,6 +8,7 @@ import { db } from '../firebase'
 import { theme } from '../theme'
 import { buildProductMaps, resolveProduct } from '../services/products/resolveProduct'
 import { computeVelocity, type VelocityItem } from '../services/products/velocityAnalysis'
+import { computeSupplierSpend, type SpendItem } from '../services/products/supplierAnalysis'
 import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
@@ -1161,7 +1162,7 @@ function AnalysisTab({ venueId }: { venueId: string }) {
         const { prodById } = buildProductMaps(prodsSnap)
 
         // Collect all snapshot items across all depts and cycles
-        const allItems: Array<VelocityItem & { costPrice: number | null; displayCostPrice: number | null; completedAt: Date | null; deptId: string }> = []
+        const allItems: Array<VelocityItem & SpendItem & { costPrice: number | null; displayCostPrice: number | null; completedAt: Date | null; deptId: string }> = []
 
         await Promise.all(deptsSnap.docs.map(async deptDoc => {
           const snapsSnap = await getDocs(
@@ -1174,6 +1175,7 @@ function AnalysisTab({ venueId }: { venueId: string }) {
               allItems.push({
                 name: item.name || '',
                 productId: item.productId || null,
+                supplierId: item.supplierId || null,
                 supplierName: item.supplierName || null,
                 actualClosing: item.actualClosing ?? 0,
                 costPrice: item.costPrice ?? null,
@@ -1186,28 +1188,11 @@ function AnalysisTab({ venueId }: { venueId: string }) {
           })
         }))
 
-        // Supplier spend aggregation
-        const supplierMap = new Map<string, { total: number; count: number; costs: number[] }>()
-        for (const it of allItems) {
-          // Phase W2: use display-preferred cost price — previously excluded invoice_verified items entirely
-          const effectiveCostPrice = it.displayCostPrice ?? it.costPrice
-          if (!it.supplierName || !effectiveCostPrice) continue
-          const key = it.supplierName
-          const existing = supplierMap.get(key) || { total: 0, count: 0, costs: [] }
-          existing.total += it.actualClosing * effectiveCostPrice
-          existing.count++
-          existing.costs.push(effectiveCostPrice)
-          supplierMap.set(key, existing)
-        }
-        const supplierRows = Array.from(supplierMap.entries())
-          .map(([supplier, v]) => ({
-            supplier,
-            total: v.total,
-            count: v.count,
-            avgCost: v.costs.reduce((s, c) => s + c, 0) / v.costs.length,
-          }))
-          .sort((a, b) => b.total - a.total)
-          .slice(0, 8)
+        // Supplier spend aggregation — groups by supplierId when present (post-fix
+        // snapshot items), falling back to supplierName for pre-fix (name-only) items.
+        // A supplier with both old and new items produces two separate rows rather than
+        // one falsely merged row — do not guess the link that was never captured.
+        const supplierRows = computeSupplierSpend(allItems).sort((a, b) => b.total - a.total).slice(0, 8)
         setSupplierData(supplierRows)
 
         // Product velocity — groups by resolved product id so a rename mid-history
