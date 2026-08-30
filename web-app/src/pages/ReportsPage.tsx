@@ -7,6 +7,7 @@ import {
 import { db } from '../firebase'
 import { theme } from '../theme'
 import { buildProductMaps, resolveProduct } from '../services/products/resolveProduct'
+import { computeVelocity, type VelocityItem } from '../services/products/velocityAnalysis'
 import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
@@ -1153,10 +1154,14 @@ function AnalysisTab({ venueId }: { venueId: string }) {
     setLoading(true)
     ;(async () => {
       try {
-        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'))
+        const [deptsSnap, prodsSnap] = await Promise.all([
+          getDocs(collection(db, 'venues', venueId, 'departments')),
+          getDocs(collection(db, 'venues', venueId, 'products')),
+        ])
+        const { prodById } = buildProductMaps(prodsSnap)
 
         // Collect all snapshot items across all depts and cycles
-        const allItems: Array<{ name: string; supplierName: string | null; actualClosing: number; costPrice: number | null; displayCostPrice: number | null; cycleNumber: number; completedAt: Date | null; deptId: string }> = []
+        const allItems: Array<VelocityItem & { costPrice: number | null; displayCostPrice: number | null; completedAt: Date | null; deptId: string }> = []
 
         await Promise.all(deptsSnap.docs.map(async deptDoc => {
           const snapsSnap = await getDocs(
@@ -1168,6 +1173,7 @@ function AnalysisTab({ venueId }: { venueId: string }) {
             ;(sd.items || []).forEach((item: any) => {
               allItems.push({
                 name: item.name || '',
+                productId: item.productId || null,
                 supplierName: item.supplierName || null,
                 actualClosing: item.actualClosing ?? 0,
                 costPrice: item.costPrice ?? null,
@@ -1204,42 +1210,9 @@ function AnalysisTab({ venueId }: { venueId: string }) {
           .slice(0, 8)
         setSupplierData(supplierRows)
 
-        // Product velocity
-        const productSnapshots = new Map<string, Array<{ qty: number; cycleNumber: number; completedAt: Date | null; supplier: string | null }>>()
-        for (const it of allItems) {
-          if (!it.name) continue
-          const existing = productSnapshots.get(it.name) || []
-          existing.push({ qty: it.actualClosing, cycleNumber: it.cycleNumber, completedAt: it.completedAt, supplier: it.supplierName })
-          productSnapshots.set(it.name, existing)
-        }
-
-        const velocityRows: Array<{ name: string; supplier: string; unitsPerWeek: number; trend: 'rising' | 'stable' | 'falling'; confidence: string }> = []
-        productSnapshots.forEach((snaps, name) => {
-          if (snaps.length < 2) return
-          const sorted = snaps.sort((a, b) => a.cycleNumber - b.cycleNumber)
-          // Estimate consumption per cycle
-          const diffs: number[] = []
-          for (let i = 1; i < sorted.length; i++) {
-            const consumed = sorted[i - 1].qty - sorted[i].qty
-            diffs.push(consumed)
-          }
-          const avgConsumed = diffs.reduce((s, d) => s + d, 0) / diffs.length
-          const unitsPerWeek = avgConsumed / 2 // approximate: assume 2 weeks between stocktakes
-          const trend: 'rising' | 'stable' | 'falling' =
-            diffs.length >= 2
-              ? diffs[diffs.length - 1] > diffs[0] * 1.2 ? 'rising'
-                : diffs[diffs.length - 1] < diffs[0] * 0.8 ? 'falling'
-                : 'stable'
-              : 'stable'
-          const confidence = sorted.length >= 5 ? 'High' : sorted.length >= 3 ? 'Medium' : 'Low'
-          velocityRows.push({
-            name,
-            supplier: sorted[sorted.length - 1].supplier || '—',
-            unitsPerWeek: Math.max(0, unitsPerWeek),
-            trend,
-            confidence,
-          })
-        })
+        // Product velocity — groups by resolved product id so a rename mid-history
+        // produces one continuous series, not two silently disconnected ones.
+        const velocityRows = computeVelocity(allItems, prodById)
         setVelocityData(velocityRows.sort((a, b) => b.unitsPerWeek - a.unitsPerWeek).slice(0, 20))
       } catch (e) {
         console.error('[AnalysisTab]', e)
