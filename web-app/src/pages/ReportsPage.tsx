@@ -6,6 +6,7 @@ import {
 } from 'recharts'
 import { db } from '../firebase'
 import { theme } from '../theme'
+import { buildProductMaps, resolveProduct } from '../services/products/resolveProduct'
 import {
   CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
@@ -28,6 +29,8 @@ type VarianceRow = {
   // Phase W2 — display-tier additions
   displayVarianceDollars: number | null   // display-preferred; used in chart, sort, table, CSV
   costPriceTier: 'stamped' | 'invoice_verified' | 'none'
+  /** Current name from the live products list, only set when it differs from the stamped name. */
+  currentName: string | null
 }
 
 type CycleRow = {
@@ -155,10 +158,12 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
     setLoading(true)
     setError(false)
     try {
-      const [deptsSnap, flagsSnap] = await Promise.all([
+      const [deptsSnap, flagsSnap, prodsSnap] = await Promise.all([
         getDocs(collection(db, 'venues', venueId, 'departments')),
         getDocs(collection(db, 'venues', venueId, 'priceChangeFlags')),
+        getDocs(collection(db, 'venues', venueId, 'products')),
       ])
+      const { prodById } = buildProductMaps(prodsSnap)
 
       const summaries: DeptSummary[] = []
       const varRows: VarianceRow[] = []
@@ -216,9 +221,17 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
           for (const item of (latestData.items || []) as any[]) {
             const varianceUnits: number = item.unexplainedVarianceQty ?? item.totalVarianceQty ?? 0
             if (varianceUnits === 0) continue
+            const stampedName = item.name || '—'
+            // Resolve the stamped productId through the merge chain to find the current live product.
+            // currentName is only set when the live name differs from the stamped name — null means
+            // "nothing to annotate" (names match, productId absent, or product deleted).
+            const resolvedId = typeof item.productId === 'string' && item.productId ? item.productId : null
+            const resolved = resolvedId ? resolveProduct(resolvedId, prodById) : null
+            const resolvedName = resolved?.entry.name ?? null
+            const currentName = resolvedName && resolvedName !== stampedName ? resolvedName : null
             varRows.push({
               productId: item.productId || item.name,
-              name: item.name || '—',
+              name: stampedName,
               deptName,
               areaName: item.areaName || '—',
               expectedQty: item.openingCount ?? null,
@@ -229,6 +242,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
               displayVarianceDollars: (item.displayUnexplainedVarianceDollars ?? item.displayTotalVarianceDollars)
                 ?? (item.unexplainedVarianceDollars ?? item.totalVarianceDollars) ?? null,
               costPriceTier: item.costPriceTier ?? 'none',
+              currentName,
             })
           }
 
@@ -673,7 +687,14 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                   ) : (
                     filteredVariance.map((r, i) => (
                       <tr key={`${r.productId}-${i}`} className={styles.dataRow}>
-                        <td className={styles.td}>{r.name}</td>
+                        <td className={styles.td}>
+                          {r.name}
+                          {r.currentName != null && (
+                            <span style={{ fontSize: 12, color: theme.slateMid, marginLeft: 4 }}>
+                              (now {r.currentName})
+                            </span>
+                          )}
+                        </td>
                         <td className={styles.td}>{r.deptName}</td>
                         <td className={styles.td}>{r.areaName}</td>
                         <td className={styles.tdNum}>{r.expectedQty != null ? r.expectedQty.toFixed(2) : '—'}</td>
