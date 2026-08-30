@@ -2,6 +2,7 @@
   "expo": {
     "name": "Hosti-Stock",
     "slug": "tallyup",
+    "owner": "poni",
     "version": "1.0.11",
     "orientation": "portrait",
     "scheme": "tallyup",
