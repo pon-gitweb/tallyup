@@ -299,6 +299,9 @@ export async function writeDepartmentSnapshot(
     // Build product resolution maps for mergedInto-aware matching in STEP A/A2/PO.
     // Fails safe: any error leaves both maps empty → every match degrades to today's behavior.
     const productResolution: ProductResolution = { resolvedIdById: {}, resolvedIdByName: {} };
+    // Declared before the try block so both productResolution and supplierResolution
+    // are built in the same pass — productsSnap stays in scope for both.
+    const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
     try {
       const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'));
       // ProdEntry shape matches resolveProduct()'s expectations — same type used by
@@ -313,6 +316,12 @@ export async function writeDepartmentSnapshot(
           active: typeof p.active === 'boolean' ? p.active : undefined,
           mergedInto: p.mergedInto ?? null,
         };
+        // Supplier info stamped in the same pass — no extra Firestore read required.
+        // Firestore product schema fields: primarySupplierId / primarySupplierName.
+        supplierResolution.supplierInfoByProductId[d.id] = {
+          supplierId: typeof p.primarySupplierId === 'string' && p.primarySupplierId ? p.primarySupplierId : null,
+          supplierName: typeof p.primarySupplierName === 'string' && p.primarySupplierName ? p.primarySupplierName : null,
+        };
       });
       productsSnap.forEach(d => {
         const resolved = resolveProduct(d.id, prodById);
@@ -323,24 +332,7 @@ export async function writeDepartmentSnapshot(
         }
       });
     } catch (e: any) {
-      console.warn('[snapshotWriter] product resolution build failed (safe degrade):', e?.message);
-    }
-
-    // Build supplier lookup from the already-fetched productsSnap — no extra read.
-    // Keyed by every product doc id (active and inactive); the resolved id lookup
-    // in computeSnapshotItemFigures (_resolvedProductId) lands on the survivor,
-    // whose entry here carries the authoritative supplierId + supplierName.
-    const supplierResolution: SupplierResolution = { supplierInfoByProductId: {} };
-    try {
-      productsSnap.forEach(d => {
-        const p = d.data() as any;
-        supplierResolution.supplierInfoByProductId[d.id] = {
-          supplierId: typeof p.supplierId === 'string' && p.supplierId ? p.supplierId : null,
-          supplierName: typeof p.supplierName === 'string' && p.supplierName ? p.supplierName : null,
-        };
-      });
-    } catch (e: any) {
-      console.warn('[snapshotWriter] supplier resolution build failed (safe degrade):', e?.message);
+      console.warn('[snapshotWriter] product/supplier resolution build failed (safe degrade):', e?.message);
     }
 
     // Read department name + previous cycle date

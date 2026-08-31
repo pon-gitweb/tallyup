@@ -1,10 +1,22 @@
-import { computeSnapshotItemFigures } from '../snapshotWriter';
+import { computeSnapshotItemFigures, writeDepartmentSnapshot } from '../snapshotWriter';
 import type { ProductResolution, SupplierResolution } from '../snapshotWriter';
 
 // snapshotWriter.ts imports firebase SDK at module level; mock it so tests
 // run without an initialised Firebase app.
 jest.mock('../../firebase', () => ({ db: {} }));
-jest.mock('firebase/firestore', () => ({}));
+jest.mock('firebase/firestore', () => ({
+  collection: jest.fn(),
+  getDocs: jest.fn(),
+  doc: jest.fn(),
+  getDoc: jest.fn(),
+  setDoc: jest.fn(),
+  query: jest.fn(),
+  where: jest.fn(),
+  orderBy: jest.fn(),
+  limit: jest.fn(),
+  serverTimestamp: jest.fn(() => 'SERVER_TIMESTAMP'),
+  Timestamp: { fromDate: jest.fn((d: Date) => d) },
+}));
 jest.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: null }) }));
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -428,5 +440,106 @@ describe('computeSnapshotItemFigures — SupplierResolution (supplierId stamping
     // → supplier info comes from new-prod, not old-prod
     expect(snapshotItems[0].supplierId).toBe('sup-new');
     expect(snapshotItems[0].supplierName).toBe('New Supplier');
+  });
+});
+
+// ── Suite: writeDepartmentSnapshot integration — primarySupplierId/primarySupplierName ──
+//
+// The unit tests above verify computeSnapshotItemFigures in isolation using a
+// SupplierResolution built by the caller.  The blind spot they leave: whether
+// writeDepartmentSnapshot itself reads the correct Firestore field names
+// (primarySupplierId / primarySupplierName) when building that SupplierResolution.
+//
+// This suite exercises writeDepartmentSnapshot end-to-end against a minimal fake
+// Firestore, asserting that a product document with primarySupplierId/primarySupplierName
+// set results in a snapshot item that has the matching supplierId/supplierName.
+
+describe('writeDepartmentSnapshot — primarySupplierId/primarySupplierName stamped to snapshot items', () => {
+  // Access the jest.fn() instances wired up by jest.mock above.
+  // jest.requireMock returns the exact same mock object, type-cast for convenience.
+  const ff = jest.requireMock('firebase/firestore') as {
+    getDocs: jest.Mock;
+    getDoc: jest.Mock;
+    setDoc: jest.Mock;
+    collection: jest.Mock;
+    doc: jest.Mock;
+    query: jest.Mock;
+    where: jest.Mock;
+    orderBy: jest.Mock;
+    limit: jest.Mock;
+  };
+
+  // Minimal fake QuerySnapshot — supports multiple forEach passes.
+  function fakeQSnap(docs: Array<{ id: string; dataObj: Record<string, any> }>) {
+    const fakeDocs = docs.map(({ id, dataObj }) => ({ id, data: () => dataObj }));
+    return {
+      docs: fakeDocs,
+      empty: fakeDocs.length === 0,
+      size: fakeDocs.length,
+      forEach: (fn: (d: any) => void) => fakeDocs.forEach(fn),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    // Stub shape-only helpers (return values don't matter — just need to not throw)
+    ff.collection.mockReturnValue({ _ref: 'coll' });
+    ff.doc.mockReturnValue({ _ref: 'doc' });
+    ff.query.mockReturnValue({ _ref: 'query' });
+    ff.where.mockReturnValue({ _ref: 'where' });
+    ff.orderBy.mockReturnValue({ _ref: 'orderBy' });
+    ff.limit.mockReturnValue({ _ref: 'limit' });
+
+    // getDocs call order inside writeDepartmentSnapshot:
+    //   1. products collection  → one product with primarySupplierId/primarySupplierName
+    //   2. areas collection     → one area (no startedAt → cycleStart stays null,
+    //                             so invoice/sales/PO blocks are all skipped)
+    //   3. items in area-1      → one item linked to prod-abc
+    //   4. all departments      → just the current dept (no extra snapshot getDocs)
+    ff.getDocs
+      .mockResolvedValueOnce(fakeQSnap([{
+        id: 'prod-abc',
+        dataObj: {
+          name: 'Test Beer',
+          active: true,
+          mergedInto: null,
+          primarySupplierId: 'sup-xyz',
+          primarySupplierName: 'Acme Beverages',
+        },
+      }]))
+      .mockResolvedValueOnce(fakeQSnap([{
+        id: 'area-1',
+        dataObj: { name: 'Main Bar' },  // no startedAt/completedAt
+      }]))
+      .mockResolvedValueOnce(fakeQSnap([{
+        id: 'item-1',
+        dataObj: { name: 'Test Beer', productId: 'prod-abc', lastCount: 5 },
+      }]))
+      .mockResolvedValueOnce(fakeQSnap([{
+        id: 'd1',
+        dataObj: { name: 'Bar Dept' },
+      }]));
+
+    // getDoc call order:
+    //   1. department document
+    //   2. previous cycle snapshot (cycle-0) — doesn't exist; cycleNumber=1 triggers the fetch
+    ff.getDoc
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ name: 'Bar Dept' }) })
+      .mockResolvedValueOnce({ exists: () => false, data: () => null });
+
+    ff.setDoc.mockResolvedValue(undefined);
+  });
+
+  it('stamps supplierId/supplierName from product doc primarySupplierId/primarySupplierName', async () => {
+    await writeDepartmentSnapshot('v1', 'd1', 1);
+
+    // setDoc is called twice: first for the dept snapshot, then for latestSnapshot.
+    expect(ff.setDoc).toHaveBeenCalledTimes(2);
+    const [, snapshotData] = ff.setDoc.mock.calls[0];
+
+    expect(snapshotData.items).toHaveLength(1);
+    expect(snapshotData.items[0].supplierId).toBe('sup-xyz');
+    expect(snapshotData.items[0].supplierName).toBe('Acme Beverages');
   });
 });
