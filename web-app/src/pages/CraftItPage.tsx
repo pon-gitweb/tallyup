@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { computeIngredientCost } from '../services/units'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -122,6 +122,9 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isNewRecipe, setIsNewRecipe] = useState(false)
+  // Independent of editingId/isNewRecipe — minimizing must never unmount RecipeEditor.
+  const [isEditorMinimized, setIsEditorMinimized] = useState(false)
+  const [editorName, setEditorName] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -207,10 +210,14 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
 
   const confirmedWithGp = recipes.filter((r) => r.status === 'confirmed' && r.gpPercent != null).length
 
+  // Stable reference so RecipeEditor's useEffect dep array doesn't re-fire on every render.
+  const handleEditorNameChange = useCallback((n: string) => setEditorName(n), [])
+
   function handleNewRecipe() {
     setEditingId(null)
     setIsNewRecipe(true)
     setExpandedId(null)
+    setIsEditorMinimized(false)
   }
 
   function exportCsv() {
@@ -237,8 +244,7 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
   const emptyMsg = EMPTY_MESSAGES[filter]
 
   return (
-    <div className={(editingId || isNewRecipe) ? styles.pageWithEditor : styles.page}>
-      <div>
+    <div className={styles.page}>
       <h1 className={styles.heading}>CraftIt</h1>
       <p className={styles.subhead}>Recipe library with GP analysis — build and cost recipes on desktop or mobile.</p>
 
@@ -356,10 +362,12 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
                       <tr className={styles.dataRow} onClick={() => {
                           if (editingId === recipe.id) {
                             setEditingId(null)
+                            setIsEditorMinimized(false)
                           } else {
                             setEditingId(recipe.id)
                             setIsNewRecipe(false)
                             setExpandedId(null)
+                            setIsEditorMinimized(false)
                           }
                         }}>
                         <td className={styles.td} style={{ fontWeight: 600 }}>{recipe.name}</td>
@@ -451,16 +459,43 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
           </p>
         </>
       )}
-      </div>
       {(editingId !== null || isNewRecipe) && (
-        <div className={styles.editorPanel}>
-          <RecipeEditor
-            venueId={venueId}
-            recipeId={editingId}
-            onClose={() => { setEditingId(null); setIsNewRecipe(false) }}
-            onSaved={(id) => { setEditingId(id); setIsNewRecipe(false) }}
-          />
-        </div>
+        <>
+          {/* Overlay: always mounted so RecipeEditor keeps its state; hidden via CSS when minimized */}
+          <div
+            className={styles.editorOverlay}
+            style={isEditorMinimized ? { display: 'none' } : undefined}
+          >
+            <div
+              className={styles.editorBackdrop}
+              onClick={() => setIsEditorMinimized(true)}
+              aria-hidden="true"
+            />
+            <div className={styles.editorPanel}>
+              <RecipeEditor
+                venueId={venueId}
+                recipeId={editingId}
+                onClose={() => { setEditingId(null); setIsNewRecipe(false); setIsEditorMinimized(false) }}
+                onSaved={(id) => { setEditingId(id); setIsNewRecipe(false) }}
+                onMinimize={() => setIsEditorMinimized(true)}
+                onNameChange={handleEditorNameChange}
+              />
+            </div>
+          </div>
+          {/* Minimized floating tab — RecipeEditor stays mounted above, just hidden */}
+          {isEditorMinimized && (
+            <button
+              type="button"
+              className={styles.editorMinimizedTab}
+              onClick={() => setIsEditorMinimized(false)}
+            >
+              <span>↑</span>
+              <span className={styles.editorMinimizedTabLabel}>
+                {editorName.trim() || 'Editing recipe…'}
+              </span>
+            </button>
+          )}
+        </>
       )}
     </div>
   )
@@ -468,11 +503,13 @@ export default function CraftItPage({ venueId }: { venueId: string }) {
 
 // ─── RecipeEditor ─────────────────────────────────────────────────────────────
 
-function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
+function RecipeEditor({ venueId, recipeId, onClose, onSaved, onMinimize, onNameChange }: {
   venueId: string
   recipeId: string | null
   onClose: () => void
   onSaved: (id: string) => void
+  onMinimize: () => void
+  onNameChange?: (name: string) => void
 }) {
   const [name, setName] = useState('')
   const [category, setCategory] = useState<'food' | 'beverage' | null>(null)
@@ -488,6 +525,12 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
+
+  // Notify parent of the current recipe name so the minimized tab can display it.
+  // onNameChange is wrapped in useCallback([]) in the parent, giving a stable reference.
+  useEffect(() => {
+    onNameChange?.(name)
+  }, [name, onNameChange])
 
   // Load all products for autocomplete
   useEffect(() => {
@@ -688,7 +731,8 @@ function RecipeEditor({ venueId, recipeId, onClose, onSaved }: {
 
   return (
     <div className={styles.editorPanelInner}>
-      <button type="button" className={styles.closeEditorBtn} onClick={onClose}>×</button>
+      <button type="button" className={styles.minimizeEditorBtn} onClick={onMinimize} title="Minimise">−</button>
+      <button type="button" className={styles.closeEditorBtn} onClick={onClose} title="Close (discard)">×</button>
 
       {/* Name */}
       <input
