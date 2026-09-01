@@ -22,6 +22,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   getFirestore,
   getDocs,
@@ -343,7 +344,7 @@ export default function AcceptOrderButton({
         animationType="slide"
         onRequestClose={() => { if (!acceptBusy) setAcceptReviewOpen(false); }}
       >
-        <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
           <View style={S.reviewHeader}>
             <TouchableOpacity
               onPress={() => { if (!acceptBusy) setAcceptReviewOpen(false); }}
@@ -452,7 +453,7 @@ export default function AcceptOrderButton({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
     </>
   );
