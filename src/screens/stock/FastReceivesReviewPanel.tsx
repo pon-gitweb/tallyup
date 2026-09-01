@@ -21,6 +21,14 @@ type FastRec = {
   status?: 'pending' | 'attached' | 'reconciled';
   createdAt?: any;
   payload?: any;
+  /** Set by the commit-invoice-decisions Cloud Function after the user completes
+   * the OCR-review step. Presence indicates the item has been reviewed but not
+   * yet accepted (status remains 'pending' until AcceptOrderButton is used). */
+  inductionDecisions?: {
+    acceptedProposalIds?: string[];
+    skippedProposalIds?: string[];
+    resolvedAt?: any;
+  };
 };
 
 export default function FastReceivesReviewPanel({ onClose }: { onClose: () => void }) {
@@ -303,6 +311,14 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
                     Source: {it.source || '—'} · Status: {it.status || 'pending'}
                   </Text>
 
+                  {/* Reviewed badge — shown when the OCR-review step has been
+                      completed but the item is not yet accepted into an order. */}
+                  {isPending && !!it.inductionDecisions && (
+                    <View style={S.reviewedBadge}>
+                      <Text style={S.reviewedBadgeText}>✓ Reviewed — not yet accepted</Text>
+                    </View>
+                  )}
+
                   <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                     <TouchableOpacity
                       onPress={() => openDetails(it)}
@@ -541,5 +557,21 @@ const S = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  // Amber pill shown when the OCR-review step is done but item not yet accepted
+  reviewedBadge: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+  },
+  reviewedBadgeText: {
+    color: '#92400e',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });
