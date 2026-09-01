@@ -39,11 +39,14 @@ import { _overlapQty } from '../../services/orders/receive';
 import { quickAddProduct } from '../../services/products/quickAddProduct';
 import { createDraftOrderWithLines } from '../../services/orders/create';
 import { attachPendingToOrder } from '../../services/fastReceive/attachPendingToOrder';
+import VenueProductSearchModal from '../stocktake/VenueProductSearchModal';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ResolvedLine = { productId: string; name: string; qty: number; unitCost: number };
 type UnmatchedLine = { name: string; qty: number; unitPrice: number; idx: number };
+/** Discriminated union for per-line unmatched resolution choices. */
+type Resolution = 'add' | 'skip' | { type: 'match'; productId: string; productName: string };
 
 /** Minimal subset of a fast-receive record that this flow requires. */
 export type AcceptOrderItem = {
@@ -94,7 +97,9 @@ export default function AcceptOrderButton({
   const [acceptReviewOpen, setAcceptReviewOpen] = useState(false);
   const [acceptMatched, setAcceptMatched] = useState<ResolvedLine[]>([]);
   const [acceptUnmatched, setAcceptUnmatched] = useState<UnmatchedLine[]>([]);
-  const [acceptResolutions, setAcceptResolutions] = useState<Record<number, 'add' | 'skip'>>({});
+  const [acceptResolutions, setAcceptResolutions] = useState<Record<number, Resolution>>({});
+  // Which unmatched line index has the product-picker open (null = closed).
+  const [productPickerIdx, setProductPickerIdx] = useState<number | null>(null);
 
   const isDisabled = disabled || acceptBusy;
 
@@ -292,6 +297,14 @@ export default function AcceptOrderButton({
         }
       } else if (resolution === 'skip') {
         skippedNames.push(u.name);
+      } else if (typeof resolution === 'object' && resolution.type === 'match') {
+        // Use the existing product directly — no new product created, not skipped.
+        finalLines.push({
+          productId: resolution.productId,
+          name: u.name,
+          qty: u.qty,
+          unitCost: u.unitPrice,
+        });
       }
     }
 
@@ -409,6 +422,18 @@ export default function AcceptOrderButton({
                         </Text>
                       </TouchableOpacity>
                     </View>
+                    {/* Search existing product — opens VenueProductSearchModal */}
+                    <TouchableOpacity
+                      onPress={() => setProductPickerIdx(u.idx)}
+                      disabled={acceptBusy}
+                      style={[S.resolveBtn, S.searchExistingBtn, { opacity: acceptBusy ? 0.6 : 1 }]}
+                    >
+                      <Text style={S.searchExistingBtnText}>
+                        {typeof resolution === 'object' && resolution?.type === 'match'
+                          ? `✓ Linked: ${resolution.productName} — tap to change`
+                          : '🔍 Search existing product…'}
+                      </Text>
+                    </TouchableOpacity>
                     {resolution === 'skip' && (
                       <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 6 }}>
                         This item will be excluded from the order (not silently dropped — noted here).
@@ -453,6 +478,21 @@ export default function AcceptOrderButton({
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Product picker for "Search existing product" resolution */}
+          <VenueProductSearchModal
+            visible={productPickerIdx !== null}
+            onClose={() => setProductPickerIdx(null)}
+            venueId={venueId}
+            onSelect={product => {
+              if (productPickerIdx === null) return;
+              setAcceptResolutions(prev => ({
+                ...prev,
+                [productPickerIdx]: { type: 'match', productId: product.id, productName: product.name },
+              }));
+              setProductPickerIdx(null);
+            }}
+          />
         </SafeAreaView>
       </Modal>
     </>
@@ -512,4 +552,16 @@ const S = StyleSheet.create({
     justifyContent: 'center',
   },
   resolveBtnText: { color: '#fff', fontWeight: '800' },
+  // "Search existing product" button — outlined style, distinct from add/skip
+  searchExistingBtn: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F9FAFB',
+  },
+  searchExistingBtnText: {
+    color: '#374151',
+    fontWeight: '600',
+    fontSize: 13,
+  },
 });
