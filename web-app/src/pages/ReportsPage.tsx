@@ -148,7 +148,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
   })
   const [varianceFilter, setVarianceFilter] = useState<'all' | 'shortages' | 'excesses'>('all')
 
-  type ReportTab = 'summary' | 'cycle-detail' | 'analysis'
+  type ReportTab = 'summary' | 'cycle-detail' | 'analysis' | 'invoice-history'
   const [activeTab, setActiveTab] = useState<ReportTab>('summary')
 
   useEffect(() => {
@@ -485,14 +485,20 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
 
       {/* ── TAB BAR ── */}
       <div className={styles.tabBar}>
-        {(['summary', 'cycle-detail', 'analysis'] as ReportTab[]).map(tab => (
+        {(['summary', 'cycle-detail', 'analysis', 'invoice-history'] as ReportTab[]).map(tab => (
           <button
             key={tab}
             type="button"
             className={`${styles.tab} ${activeTab === tab ? styles.tabActive : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'summary' ? 'Summary' : tab === 'cycle-detail' ? 'Cycle Detail' : 'Analysis'}
+            {tab === 'summary'
+              ? 'Summary'
+              : tab === 'cycle-detail'
+              ? 'Cycle Detail'
+              : tab === 'analysis'
+              ? 'Analysis'
+              : 'Invoice History'}
           </button>
         ))}
         <button type="button" className={styles.printBtn} onClick={() => window.print()}>
@@ -877,6 +883,14 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       {activeTab === 'analysis' && (
         <div className={styles.tabSection}>
           <AnalysisTab venueId={venueId} />
+        </div>
+      )}
+      {activeTab === 'invoice-history' && (
+        <div className={styles.tabSection}>
+          <HistoricalInvoiceTab
+            venueId={venueId}
+            onReviewConflicts={() => setActiveTab('summary')}
+          />
         </div>
       )}
     </div>
@@ -1331,5 +1345,380 @@ function AnalysisTab({ venueId }: { venueId: string }) {
         )}
       </div>
     </div>
+  )
+}
+
+// ─── HistoricalInvoiceTab ─────────────────────────────────────────────────────
+
+/** One row in the unified historical-invoice table. */
+export type HistoricalRow =
+  | {
+      kind: 'conflict'
+      flagId: string
+      productId: string
+      productName: string
+      supplierName: string | null
+      /** Current (protected) cost price on the product doc. */
+      currentPrice: number | null
+      /** Invoice price that was NOT applied because costPrice already existed. */
+      invoicePrice: number | null
+      changePercent: number | null
+      direction: 'increase' | 'decrease' | null
+      /** Original invoice date string (YYYY-MM-DD or ISO). */
+      invoiceDate: string | null
+      /** When the flag was written to Firestore. */
+      flaggedAt: Date | null
+      status: string
+    }
+  | {
+      kind: 'first_price' | 'new_product'
+      productId: string
+      productName: string
+      supplierName: string | null
+      costPrice: number | null
+      /** Original invoice date, fetched from product's priceHistory subcollection. */
+      invoiceDate: string | null
+      /** When the product's costPrice was last updated (proxy for "when written"). */
+      backfilledAt: Date | null
+    }
+
+/**
+ * Pure helper — maps a HistoricalRow to its human-readable scenario label.
+ * Tested independently; no Firebase dependency.
+ */
+export function scenarioLabel(row: HistoricalRow): string {
+  switch (row.kind) {
+    case 'conflict':
+      return 'Price protected — conflict queued for review'
+    case 'first_price':
+      return 'Initial price set from historical invoice'
+    case 'new_product':
+      return 'New product created from historical invoice'
+  }
+}
+
+/**
+ * Scenario badge colour token — returned as a CSS class suffix so tests can
+ * assert on it without touching the DOM.
+ */
+export function scenarioBadgeVariant(row: HistoricalRow): 'conflict' | 'firstPrice' | 'newProduct' {
+  switch (row.kind) {
+    case 'conflict':   return 'conflict'
+    case 'first_price': return 'firstPrice'
+    case 'new_product': return 'newProduct'
+  }
+}
+
+function fmtInvoiceDate(s: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  return d.toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function HistoricalInvoiceTab({
+  venueId,
+  onReviewConflicts,
+}: {
+  venueId: string
+  onReviewConflicts: () => void
+}) {
+  const [rows, setRows] = useState<HistoricalRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueId])
+
+  async function load() {
+    setLoading(true)
+    setError(false)
+    try {
+      // ── Case 1 conflicts — flat query, includes all the fields we need ───────
+      const conflictSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'priceChangeFlags'),
+          where('flagReason', '==', 'historical_invoice_conflict'),
+          orderBy('flaggedAt', 'desc'),
+          limit(200),
+        ),
+      )
+      const conflictRows: HistoricalRow[] = conflictSnap.docs.map((d) => {
+        const data = d.data() as any
+        return {
+          kind: 'conflict',
+          flagId: d.id,
+          productId: data.productId ?? '',
+          productName: data.productName || '—',
+          supplierName: data.supplierName ?? null,
+          currentPrice: data.oldPrice ?? null,
+          invoicePrice: data.newPrice ?? null,
+          changePercent: data.changePercent ?? null,
+          direction: data.direction ?? null,
+          invoiceDate: data.proposedHistoricalInvoiceDate ?? null,
+          flaggedAt: data.flaggedAt?.toDate?.() ?? null,
+          status: data.status || 'pending',
+        }
+      })
+
+      // ── Cases 2 & 3 — products with costPriceSource:'historical-invoice' ────
+      const prodsSnap = await getDocs(
+        query(
+          collection(db, 'venues', venueId, 'products'),
+          where('costPriceSource', '==', 'historical-invoice'),
+          limit(500),
+        ),
+      )
+
+      // Fetch original invoiceDate from each product's priceHistory (best-effort, parallel)
+      const productRows: HistoricalRow[] = await Promise.all(
+        prodsSnap.docs.map(async (d) => {
+          const data = d.data() as any
+          const isNewProduct = data.inductionSource === 'invoice-price-tracking'
+
+          let invoiceDate: string | null = null
+          try {
+            const phSnap = await getDocs(
+              query(
+                collection(db, 'venues', venueId, 'products', d.id, 'priceHistory'),
+                where('isHistoricalBackfill', '==', true),
+                limit(1),
+              ),
+            )
+            if (!phSnap.empty) {
+              invoiceDate = phSnap.docs[0].data().invoiceDate ?? null
+            }
+          } catch {}
+
+          return {
+            kind: isNewProduct ? 'new_product' : 'first_price',
+            productId: d.id,
+            productName: data.name || '—',
+            supplierName: data.supplierName ?? data.primarySupplierName ?? null,
+            costPrice: typeof data.costPrice === 'number' && data.costPrice > 0 ? data.costPrice : null,
+            invoiceDate,
+            backfilledAt: data.costPriceUpdatedAt?.toDate?.() ?? null,
+          } satisfies HistoricalRow
+        }),
+      )
+
+      // Unified list — conflicts first (pending before acknowledged), then products
+      const allRows: HistoricalRow[] = [
+        ...conflictRows.sort((a, b) => {
+          if (a.kind !== 'conflict' || b.kind !== 'conflict') return 0
+          if (a.status === 'pending' && b.status !== 'pending') return -1
+          if (b.status === 'pending' && a.status !== 'pending') return 1
+          return (b.flaggedAt?.getTime() ?? 0) - (a.flaggedAt?.getTime() ?? 0)
+        }),
+        ...productRows.sort((a, b) => {
+          if (a.kind === 'conflict' || b.kind === 'conflict') return 0
+          return (
+            (b.backfilledAt?.getTime() ?? 0) - (a.backfilledAt?.getTime() ?? 0)
+          )
+        }),
+      ]
+
+      setRows(allRows)
+    } catch (e) {
+      console.error('[HistoricalInvoiceTab]', e)
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return <p className={styles.emptyState}>Loading historical invoice records…</p>
+  }
+  if (error) {
+    return (
+      <p className={styles.emptyState} style={{ color: '#dc2626' }}>
+        Could not load historical invoice records.
+      </p>
+    )
+  }
+  if (rows.length === 0) {
+    return (
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeading}>Historical Invoice Outcomes</h2>
+        <p className={styles.sectionSubhead}>
+          Products touched by historical invoices (older than 3 months) appear here.
+        </p>
+        <p className={styles.emptyState}>
+          No historical invoice records found. They appear automatically when invoices
+          dated more than 3 months ago are processed.
+        </p>
+      </section>
+    )
+  }
+
+  const conflictCount = rows.filter((r) => r.kind === 'conflict' && r.status === 'pending').length
+
+  return (
+    <section className={styles.section}>
+      <h2 className={styles.sectionHeading}>Historical Invoice Outcomes</h2>
+      <p className={styles.sectionSubhead}>
+        Per-product results from invoices older than 3 months. Prices shown are unit costs
+        (ex-GST). Three distinct outcomes are possible depending on whether the product
+        existed and already had a recorded cost price.
+      </p>
+
+      {conflictCount > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            background: '#fef3c7',
+            border: '1px solid #fbbf24',
+            borderRadius: 8,
+            padding: '10px 16px',
+            marginBottom: 20,
+            fontSize: 13,
+            color: '#92400e',
+            fontWeight: 600,
+          }}
+        >
+          <span>⚠ {conflictCount} pending price conflict{conflictCount !== 1 ? 's' : ''} need review</span>
+          <button
+            type="button"
+            onClick={onReviewConflicts}
+            style={{
+              marginLeft: 'auto',
+              background: '#92400e',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '5px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'Inter, system-ui, sans-serif',
+            }}
+          >
+            Review in Price Changes →
+          </button>
+        </div>
+      )}
+
+      <div className={styles.tableWrap}>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Outcome</th>
+              <th>Supplier</th>
+              <th>Invoice price</th>
+              <th>Current price</th>
+              <th>Invoice date</th>
+              <th>Written</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const label = scenarioLabel(row)
+              const variant = scenarioBadgeVariant(row)
+              const badgeStyle: React.CSSProperties =
+                variant === 'conflict'
+                  ? { background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }
+                  : variant === 'firstPrice'
+                  ? { background: '#eff6ff', color: '#1e40af', border: '1px solid #93c5fd' }
+                  : { background: '#f0fdf4', color: '#166534', border: '1px solid #86efac' }
+
+              if (row.kind === 'conflict') {
+                const pct = row.changePercent
+                const isUp = row.direction === 'increase'
+                return (
+                  <tr
+                    key={`conflict-${row.flagId}`}
+                    className={styles.dataRow}
+                  >
+                    <td className={styles.td}>{row.productName}</td>
+                    <td className={styles.td}>
+                      <span
+                        className={styles.badge}
+                        style={{ ...badgeStyle, whiteSpace: 'nowrap' }}
+                      >
+                        {label}
+                      </span>
+                    </td>
+                    <td className={styles.td}>{row.supplierName ?? '—'}</td>
+                    <td className={styles.tdNum}>
+                      {fmtMoney(row.invoicePrice)}
+                      {pct != null && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            marginLeft: 4,
+                            color: isUp ? '#dc2626' : '#16a34a',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {isUp ? '▲' : '▼'} {Math.abs(pct).toFixed(1)}%
+                        </span>
+                      )}
+                    </td>
+                    <td className={styles.tdNum}>{fmtMoney(row.currentPrice)}</td>
+                    <td className={styles.td}>{fmtInvoiceDate(row.invoiceDate)}</td>
+                    <td className={styles.td}>{fmtDate(row.flaggedAt)}</td>
+                    <td className={styles.td}>
+                      <span
+                        className={`${styles.badge} ${row.status === 'pending' ? styles.badgePending : styles.badgeAck}`}
+                        style={{ marginRight: 8 }}
+                      >
+                        {row.status}
+                      </span>
+                      {row.status === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={onReviewConflicts}
+                          style={{
+                            background: 'none',
+                            border: '1px solid #d97706',
+                            borderRadius: 5,
+                            padding: '2px 8px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: '#92400e',
+                            cursor: 'pointer',
+                            fontFamily: 'Inter, system-ui, sans-serif',
+                          }}
+                        >
+                          Review →
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              }
+
+              // Cases 2 & 3
+              return (
+                <tr key={`prod-${row.productId}-${i}`} className={styles.dataRow}>
+                  <td className={styles.td}>{row.productName}</td>
+                  <td className={styles.td}>
+                    <span
+                      className={styles.badge}
+                      style={{ ...badgeStyle, whiteSpace: 'nowrap' }}
+                    >
+                      {label}
+                    </span>
+                  </td>
+                  <td className={styles.td}>{row.supplierName ?? '—'}</td>
+                  <td className={styles.tdNum}>{fmtMoney(row.costPrice)}</td>
+                  <td className={styles.tdNum}>{fmtMoney(row.costPrice)}</td>
+                  <td className={styles.td}>{fmtInvoiceDate(row.invoiceDate)}</td>
+                  <td className={styles.td}>{fmtDate(row.backfilledAt)}</td>
+                  <td className={styles.td}>—</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
