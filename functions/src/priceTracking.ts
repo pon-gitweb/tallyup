@@ -18,6 +18,12 @@ export interface PriceTrackingOptions {
   invoiceDocId?: string;
 }
 
+export interface HistoricalPriceTrackingOptions extends PriceTrackingOptions {
+  /** The invoice's actual date string (YYYY-MM-DD or ISO). Stamped on every
+   *  invoiceHistory entry and included in the priceChangeFlags conflict record. */
+  invoiceDate?: string | null;
+}
+
 function normalizeName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -756,6 +762,365 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     };
   }));
   return { autoApplied: { linked }, proposals: proposalsWithReasoning, autoProductMap, excludedLines: summarizeExcludedLines(nonProductLines) };
+}
+
+// ---------------------------------------------------------------------------
+// Historical invoice processing — three-way per-line branch
+// ---------------------------------------------------------------------------
+
+/**
+ * Handles price tracking for invoices older than 3 months (historical / old / very_old).
+ * Called instead of proposeInvoiceChanges when ageCategory is historical — fresh
+ * invoices (current / late) continue to use proposeInvoiceChanges unchanged.
+ *
+ * Per priced line, exactly one of three cases applies:
+ *   Case 1 — Matched product, costPrice already set (any source):
+ *             Write invoiceHistory only (tagged isHistoricalBackfill / price_protected).
+ *             Never touch costPrice. Also write a priceChangeFlags conflict entry when
+ *             the prices actually differ (> 1%), so managers can review the discrepancy.
+ *   Case 2 — Matched product, no costPrice set:
+ *             Set price using the normal weighted-average mechanism, tagged
+ *             costPriceSource:'historical-invoice'. Write invoiceHistory
+ *             (price_set_first_time). Never write priceChangeFlags.
+ *   Case 3 — No matching product:
+ *             Create the product using the same schema as commitInvoiceChanges's
+ *             newProduct handler, tagged costPriceSource:'historical-invoice' and
+ *             historicalScenario:'product_created'. Never write priceChangeFlags.
+ */
+export async function processHistoricalInvoiceLines(opts: HistoricalPriceTrackingOptions): Promise<{
+  autoApplied: { linked: number };
+  proposals: ProposedAction[];
+  autoProductMap: Record<string, string>;
+  excludedLines: ExcludedLineSummary[];
+}> {
+  const {
+    venueId,
+    lines,
+    supplierId = '',
+    supplierName = '',
+    invoiceId = `inv_${Date.now()}`,
+    invoiceDocId,
+    invoiceDate = null,
+  } = opts;
+  const cleanSupplierId = supplierId && supplierId.trim() ? supplierId.trim() : null;
+  const cleanSupplierName = supplierName && supplierName.trim() ? supplierName.trim() : null;
+  const db = admin.firestore();
+
+  // Classify lines — non-product lines (freight, deposits, etc.) excluded
+  const productLines: InvoiceLine[] = [];
+  const nonProductLines: InvoiceLine[] = [];
+  for (const l of lines) {
+    if (classifyLine(l) === 'product') productLines.push(l);
+    else nonProductLines.push(l);
+  }
+
+  const priced = productLines.filter(l =>
+    typeof l.unitPrice === 'number' &&
+    (l.unitPrice as number) > 0 &&
+    (l.unitPrice as number) < 10000
+  );
+  if (!priced.length) {
+    return { autoApplied: { linked: 0 }, proposals: [], autoProductMap: {}, excludedLines: summarizeExcludedLines(nonProductLines) };
+  }
+
+  const productsSnap = await db.collection(`venues/${venueId}/products`).limit(500).get();
+  const products = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+  // salesReports fetched once for WAC blending in Case 2
+  let salesReportsData: Array<{ report?: { period?: { start?: string; end?: string } } }> = [];
+  try {
+    const salesReportsSnap = await db.collection(`venues/${venueId}/salesReports`).get();
+    salesReportsData = salesReportsSnap.docs.map(d => d.data() as any);
+  } catch (e: any) {
+    console.warn('[processHistoricalInvoiceLines] salesReports fetch failed (safe degrade):', e?.message);
+  }
+
+  // Venue country for GST on newly created products (Case 3)
+  let venueCountry = 'NZ';
+  try {
+    const venueSnap = await db.collection('venues').doc(venueId).get();
+    venueCountry = (venueSnap.data()?.country as string) || 'NZ';
+  } catch {}
+
+  const batch = db.batch();
+  let ops = 0;
+  const autoProductMap: Record<string, string> = {};
+
+  for (const line of priced) {
+    if (ops >= 400) break;
+    const unitPrice = line.unitPrice as number;
+    const cs = typeof line.caseSize === 'number' && line.caseSize > 0 ? line.caseSize : null;
+
+    // Confident name-match — same threshold as proposeInvoiceChanges
+    const matched = products.find(p => namesMatch(p.name || '', line.name).isMatch);
+
+    if (matched) {
+      autoProductMap[line.name] = matched.id;
+      const existingPrice: number | null =
+        typeof matched.costPrice === 'number' && matched.costPrice > 0 ? matched.costPrice : null;
+      const productRef = db.doc(`venues/${venueId}/products/${matched.id}`);
+      const wasPreferred =
+        typeof matched.primarySupplierId === 'string' &&
+        matched.primarySupplierId.length > 0 &&
+        matched.primarySupplierId === cleanSupplierId;
+
+      if (existingPrice !== null) {
+        // ── Case 1: matched product with existing costPrice — protect it ─────────
+        // costPrice is intentionally never written in this branch.
+
+        // Always write an invoiceHistory entry so the price is historically logged
+        if (cleanSupplierId) {
+          const changePercent = Math.round(((unitPrice - existingPrice) / existingPrice) * 10000) / 100;
+          const direction: 'increase' | 'decrease' = unitPrice > existingPrice ? 'increase' : 'decrease';
+          const suppRef = productRef.collection('suppliers').doc(cleanSupplierId);
+          const invHistRef = suppRef.collection('invoiceHistory').doc();
+          batch.set(invHistRef, {
+            ...buildInvoiceHistoryEntry({
+              invoiceId,
+              productId: matched.id,
+              productName: matched.name || line.name,
+              supplierId: cleanSupplierId,
+              supplierName: cleanSupplierName,
+              unitCost: unitPrice,
+              qty: line.qty,
+              caseSize: cs,
+              type: 'priceChange',
+              wasPreferredSupplier: wasPreferred,
+              oldPrice: existingPrice,
+              changePercent,
+              direction,
+              note: 'Historical invoice — costPrice protected, not applied',
+            }),
+            isHistoricalBackfill: true,
+            invoiceDate: invoiceDate ?? null,
+            historicalScenario: 'price_protected',
+          });
+          ops++;
+        }
+
+        // priceChangeFlags conflict entry — only when prices actually differ (> 1%),
+        // so the review screen isn't flooded with no-op historical same-price records.
+        const pctDiff = Math.abs((unitPrice - existingPrice) / existingPrice);
+        if (pctDiff > 0.01) {
+          const changePercent = Math.round(((unitPrice - existingPrice) / existingPrice) * 10000) / 100;
+          const flagRef = db.collection(`venues/${venueId}/priceChangeFlags`).doc();
+          batch.set(flagRef, {
+            // Core schema identical to flagPriceChangeToManager — reuses existing review screen
+            productId: matched.id,
+            productName: matched.name || line.name,
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
+            invoiceId,
+            invoiceDocId: invoiceDocId ?? null,
+            // oldPrice = current protected price; newPrice = what the historical invoice shows
+            oldPrice: existingPrice,
+            newPrice: unitPrice,
+            changePercent,
+            direction: unitPrice > existingPrice ? 'increase' : 'decrease',
+            // Historical-specific context fields
+            currentPriceSetAt: matched.costPriceUpdatedAt ?? null,
+            currentPriceSource: matched.costPriceSource ?? null,
+            proposedHistoricalInvoiceDate: invoiceDate ?? null,
+            qty: line.qty,
+            caseSize: cs,
+            flagReason: 'historical_invoice_conflict',
+            flaggedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: 'pending',
+            acknowledgedBy: null,
+            acknowledgedAt: null,
+            impactOnGP: null,
+            note: null,
+          });
+          ops++;
+        }
+
+      } else {
+        // ── Case 2: matched product, no costPrice set — set price normally ───────
+        // Same WAC mechanism as fresh invoice first-time price, tagged 'historical-invoice'.
+        // Never writes priceChangeFlags.
+
+        const wac = recomputeWeightedAverageCost(matched, salesReportsData, line.qty, unitPrice);
+        const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
+
+        // priceHistory entry with historical source tag
+        const initHistRef = productRef.collection('priceHistory').doc();
+        batch.set(initHistRef, {
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          oldPrice: null,
+          newPrice: unitPrice,
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
+          invoiceId,
+          changePercent: null,
+          direction: 'initial',
+          source: 'historical-invoice',
+          note: 'Initial price set from historical invoice',
+          isHistoricalBackfill: true,
+          invoiceDate: invoiceDate ?? null,
+        });
+
+        // Product update — costPriceSource tagged 'historical-invoice', not 'invoice'
+        batch.update(productRef, {
+          costPrice: wac.costPrice,
+          costPriceQuantityBasis: wac.costPriceQuantityBasis,
+          costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+          quantityConfidence: wac.quantityConfidence,
+          costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          costPriceSource: 'historical-invoice',
+          lastInvoicePrice: unitPrice,
+          lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...caseSizeFields,
+        });
+        ops += 2;
+
+        // invoiceHistory with historical tags
+        if (cleanSupplierId) {
+          const suppRef = productRef.collection('suppliers').doc(cleanSupplierId);
+          const invHistRef = suppRef.collection('invoiceHistory').doc();
+          batch.set(invHistRef, {
+            ...buildInvoiceHistoryEntry({
+              invoiceId,
+              productId: matched.id,
+              productName: matched.name || line.name,
+              supplierId: cleanSupplierId,
+              supplierName: cleanSupplierName,
+              unitCost: unitPrice,
+              qty: line.qty,
+              caseSize: cs,
+              type: 'firstTime',
+              wasPreferredSupplier: wasPreferred,
+              oldPrice: null,
+              changePercent: null,
+              direction: 'initial',
+              note: 'Initial price set from historical invoice',
+            }),
+            isHistoricalBackfill: true,
+            invoiceDate: invoiceDate ?? null,
+            historicalScenario: 'price_set_first_time',
+          });
+          ops++;
+        }
+      }
+
+    } else {
+      // ── Case 3: no matching product — create it with historical tags ──────────
+      // Uses the same product doc schema as commitInvoiceChanges's newProduct handler.
+      // Never writes priceChangeFlags.
+
+      const caseSizeFields = computeCaseSizeFields(unitPrice, cs);
+      const newRef = db.collection(`venues/${venueId}/products`).doc();
+
+      batch.set(newRef, {
+        name: line.name.trim(),
+        costPrice: unitPrice,
+        costPriceQuantityBasis: line.qty,
+        costPriceBasisAt: admin.firestore.FieldValue.serverTimestamp(),
+        quantityConfidence: 'estimated_no_sales',
+        costPriceUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        costPriceSource: 'historical-invoice',
+        lastInvoicePrice: unitPrice,
+        lastInvoicePriceAt: admin.firestore.FieldValue.serverTimestamp(),
+        supplierId: cleanSupplierId,
+        supplierName: cleanSupplierName,
+        ...(cleanSupplierId
+          ? { primarySupplierId: cleanSupplierId, primarySupplierName: cleanSupplierName }
+          : {}),
+        inductionSource: 'invoice-price-tracking',
+        inductionStatus: 'pending',
+        priceChanged: false,
+        gstPercent: venueCountry === 'AU' ? 10 : 15,
+        ...caseSizeFields,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      ops++;
+
+      // Supplier subdoc — same shape as commitInvoiceChanges newProduct handler
+      if (cleanSupplierId) {
+        const newSubRef = db.doc(`venues/${venueId}/products/${newRef.id}/suppliers/${cleanSupplierId}`);
+        batch.set(newSubRef, {
+          supplierId: cleanSupplierId,
+          supplierName: cleanSupplierName,
+          unitCost: unitPrice,
+          caseSize: cs,
+          caseCost: cs != null ? unitPrice * cs : null,
+          isPreferred: true,
+          relationship: 'preferred',
+          agreedPrice: unitPrice,
+          agreedPriceSource: 'historical-invoice',
+          lastInvoiceAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastInvoicePrice: unitPrice,
+          addedAt: admin.firestore.FieldValue.serverTimestamp(),
+          addedBy: 'invoice-import',
+        });
+        ops++;
+      }
+
+      // priceHistory entry with historical source tag
+      const newHistRef = newRef.collection('priceHistory').doc();
+      batch.set(newHistRef, {
+        date: admin.firestore.FieldValue.serverTimestamp(),
+        oldPrice: null,
+        newPrice: unitPrice,
+        supplierId: cleanSupplierId,
+        supplierName: cleanSupplierName,
+        invoiceId,
+        changePercent: null,
+        direction: 'initial',
+        source: 'historical-invoice',
+        note: 'Initial price set — new product from historical invoice',
+        isHistoricalBackfill: true,
+        invoiceDate: invoiceDate ?? null,
+      });
+      ops++;
+
+      // invoiceHistory with historical tags
+      if (cleanSupplierId) {
+        const suppRef = newRef.collection('suppliers').doc(cleanSupplierId);
+        const invHistRef = suppRef.collection('invoiceHistory').doc();
+        batch.set(invHistRef, {
+          ...buildInvoiceHistoryEntry({
+            invoiceId,
+            productId: newRef.id,
+            productName: line.name.trim(),
+            supplierId: cleanSupplierId,
+            supplierName: cleanSupplierName,
+            unitCost: unitPrice,
+            qty: line.qty,
+            caseSize: cs,
+            type: 'newProduct',
+            wasPreferredSupplier: true, // always preferred — it becomes the first/only supplier
+            oldPrice: null,
+            changePercent: null,
+            direction: 'initial',
+            note: 'New product from historical invoice',
+          }),
+          isHistoricalBackfill: true,
+          invoiceDate: invoiceDate ?? null,
+          historicalScenario: 'product_created',
+        });
+        ops++;
+      }
+
+      autoProductMap[line.name] = newRef.id;
+      console.log(`[processHistoricalInvoiceLines] new product created: "${line.name}"`);
+    }
+  }
+
+  if (ops > 0) {
+    await batch.commit();
+    console.log('[processHistoricalInvoiceLines] committed', { venueId, ops, invoiceId });
+  }
+
+  const linked = await applyAreaItemLinking(db, venueId, autoProductMap, 'processHistoricalInvoiceLines');
+
+  return {
+    autoApplied: { linked },
+    proposals: [],  // Historical processing is auto-applied — no proposals queued for review
+    autoProductMap,
+    excludedLines: summarizeExcludedLines(nonProductLines),
+  };
 }
 
 export async function commitInvoiceChanges(

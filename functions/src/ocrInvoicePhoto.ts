@@ -1,6 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { proposeInvoiceChanges, ProposedAction } from "./priceTracking";
+import { proposeInvoiceChanges, processHistoricalInvoiceLines, ProposedAction } from "./priceTracking";
 import { classifyLine, summarizeExcludedLines, ExcludedLineSummary, mergeExcludedLines } from './classifyLine';
 import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
@@ -1058,19 +1058,33 @@ async function processTaxInvoice(
     }).catch(() => {});
   }
 
-  // Propose price changes — auto-writes (touches + initial prices) committed immediately;
-  // price changes and new products surfaced as proposals for user review
+  // Price tracking — route to the correct handler based on invoice age.
+  //   Historical (> 3 months): three-way per-line branch that never over-writes an
+  //   existing costPrice, but can set an initial price or create a missing product.
+  //   Fresh (current / late): standard proposal flow, unchanged.
   const invoiceId = payload.invoiceNumber || `ocr_${Date.now()}`;
+  const isHistoricalInvoice =
+    ageCategory === "historical" || ageCategory === "old" || ageCategory === "very_old";
   let productMap: Record<string, string> = {};
   try {
-    const priceResult = await proposeInvoiceChanges({
-      venueId,
-      lines,
-      supplierId: resolvedSupplierId,
-      supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
-      invoiceId,
-      invoiceDocId,
-    });
+    const priceResult = isHistoricalInvoice
+      ? await processHistoricalInvoiceLines({
+          venueId,
+          lines,
+          supplierId: resolvedSupplierId,
+          supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
+          invoiceId,
+          invoiceDocId,
+          invoiceDate: payload.invoiceDate ?? null,
+        })
+      : await proposeInvoiceChanges({
+          venueId,
+          lines,
+          supplierId: resolvedSupplierId,
+          supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
+          invoiceId,
+          invoiceDocId,
+        });
     productMap = priceResult.autoProductMap || {};
     payload.proposals = payload.proposals.concat(priceResult.proposals);
     payload.hasPriceChanges = priceResult.proposals.some((p: ProposedAction) => p.type === 'priceChange');
