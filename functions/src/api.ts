@@ -3800,12 +3800,19 @@ app.post("/suitee", async (req, res) => {
     }
 
     // Price change history (still N+1 for priceHistory subcollection, now parallelised)
+    // Historical-backfill entries (isHistoricalBackfill === true) are intercepted before
+    // the 90-day filter and collected separately — they must never appear as live recent
+    // changes because their priceHistory `date` field is the time of processing, not the
+    // invoice date, so they would otherwise surface as if a price moved today.
     const priceChangeLines: string[] = [];
     try {
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       if (priceChangedSnap && !priceChangedSnap.empty) {
         const supplierIncreases: Record<string, number> = {};
         const recentChanges: { productName: string; oldPrice: number; newPrice: number; changePercent: number; direction: string; supplierName: string; date: Date | null }[] = [];
+        // Entries excluded from the 90-day section because they came from a historical
+        // invoice — kept available for Suitee's context with clear date attribution.
+        const historicalBackfillEntries: { productName: string; invoiceDate: string | null; recordedAt: Date | null; newPrice: number; oldPrice: number | null; scenario: string | null; supplierName: string }[] = [];
 
         const priceHistories = await Promise.all(
           priceChangedSnap.docs.map(async prodDoc => {
@@ -3821,6 +3828,24 @@ app.post("/suitee", async (req, res) => {
           if (!r) continue;
           for (const h of r.histSnap.docs) {
             const hd = h.data() as any;
+
+            // Historical-backfill entries are intercepted here — before the date filter —
+            // because their `date` is serverTimestamp() (time of processing), not the
+            // invoice's real date, so they would otherwise always pass the 90-day filter
+            // and be presented to Suitee as a live price event that happened today.
+            if (hd.isHistoricalBackfill === true) {
+              historicalBackfillEntries.push({
+                productName: r.prodDoc.data().name || r.prodDoc.id,
+                invoiceDate: hd.invoiceDate ?? null,
+                recordedAt: hd.date?.toDate ? hd.date.toDate() : null,
+                newPrice: hd.newPrice ?? 0,
+                oldPrice: hd.oldPrice ?? null,
+                scenario: hd.historicalScenario ?? null,
+                supplierName: hd.supplierName || "Unknown",
+              });
+              continue; // skip the 90-day live-change path entirely
+            }
+
             const hDate: Date | null = hd.date?.toDate ? hd.date.toDate() : null;
             if (hDate && hDate >= ninetyDaysAgo) {
               recentChanges.push({
@@ -3845,6 +3870,28 @@ app.post("/suitee", async (req, res) => {
             priceChangeLines.push(`  - ${c.productName}: $${c.oldPrice.toFixed(2)} → $${c.newPrice.toFixed(2)} (${sign}${c.changePercent.toFixed(1)}%) from ${c.supplierName} on ${dateStr}`);
           });
           if (topSupplier) priceChangeLines.push(`  Supplier with most increases: ${topSupplier[0]} (${topSupplier[1]} increases)`);
+        }
+
+        // Historical-backfill section — only emitted when there are entries to show.
+        // Clearly labelled with both the invoice's original date and when it was processed
+        // so Suitee can answer questions about them without implying they are live events.
+        if (historicalBackfillEntries.length > 0) {
+          priceChangeLines.push(`HISTORICAL INVOICES RECENTLY PROCESSED: ${historicalBackfillEntries.length} product(s) updated from invoices older than 3 months`);
+          historicalBackfillEntries.slice(0, 8).forEach(e => {
+            const invoiceDateStr = e.invoiceDate ?? "unknown date";
+            const recordedStr = e.recordedAt ? e.recordedAt.toISOString().slice(0, 10) : "—";
+            const scenarioNote =
+              e.scenario === "price_protected"    ? "price not changed (existing price protected)" :
+              e.scenario === "price_set_first_time" ? "initial price set" :
+              e.scenario === "product_created"    ? "new product created" :
+              "recorded";
+            const priceStr = e.oldPrice != null
+              ? `$${e.oldPrice.toFixed(2)} → $${e.newPrice.toFixed(2)}`
+              : `$${e.newPrice.toFixed(2)}`;
+            priceChangeLines.push(
+              `  - ${e.productName}: ${priceStr} from ${e.supplierName} — invoice date ${invoiceDateStr}, processed ${recordedStr} (${scenarioNote})`
+            );
+          });
         }
       }
     } catch (e: any) {
