@@ -61,7 +61,7 @@ INVOICES
 - Scan an invoice photo — reads supplier name, products, PO number, and prices
 - Upload a PDF or CSV invoice
 - Duplicate invoice detection
-- Historical invoice handling — invoices older than 90 days are captured for reference without affecting current stock
+- Historical invoice handling — an old invoice never overwrites a price that's already recorded (the difference gets queued for a manager to review instead), but it will set a first price for a product that's never had one, or add a product that doesn't exist yet
 - Purchase order auto-matching (links scanned invoice to an open order)
 
 TEAM
