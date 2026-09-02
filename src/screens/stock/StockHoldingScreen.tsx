@@ -1,10 +1,10 @@
 // @ts-nocheck
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, ActivityIndicator, SafeAreaView,
+  StyleSheet, ActivityIndicator, SafeAreaView, RefreshControl,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -80,7 +80,11 @@ export default function StockHoldingScreen() {
   const { isOnline } = useNetworkState();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  // Guards against overlapping fetches — e.g. rapid focus/unfocus, or
+  // useFocusEffect firing on top of an in-progress venueId-triggered load.
+  const loadingRef = useRef(false);
   const [allRows, setAllRows] = useState<HoldingRow[]>([]);
   const [groups, setGroups] = useState<CategoryGroup[]>([]);
   const [sortAZ, setSortAZ] = useState(false);
@@ -102,19 +106,39 @@ export default function StockHoldingScreen() {
     return () => clearTimeout(t);
   }, [loading]);
 
+  // First load / venue-change: full loading screen (nothing to show yet).
   useEffect(() => {
     if (!venueId) { setLoading(false); return; }
     load();
   }, [venueId]);
+
+  // Re-fetch silently on every screen focus — covers navigate-away-and-back.
+  // Silent means the existing content stays visible; only the RefreshControl
+  // spinner appears.  The in-flight guard (loadingRef) ensures this never
+  // overlaps with the venueId-triggered load on first mount.
+  useFocusEffect(
+    useCallback(() => {
+      if (!venueId) return;
+      load(true);
+    }, [venueId]),
+  );
 
   useEffect(() => {
     const g = buildGroups(allRows, sortAZ);
     setGroups(g);
   }, [allRows, sortAZ]);
 
-  async function load() {
-    setLoading(true);
-    setError(false);
+  // silent=false: full loading screen (first load, venue change)
+  // silent=true:  RefreshControl spinner only — used by useFocusEffect and pull-to-refresh
+  async function load(silent = false) {
+    if (loadingRef.current) return; // already in flight — skip to prevent duplicates
+    loadingRef.current = true;
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+      setError(false);
+    }
     try {
       // Venue name for export headers
       const venueSnap = await getDoc(doc(db, 'venues', venueId));
@@ -220,9 +244,13 @@ export default function StockHoldingScreen() {
       setGrandValue(rows.some(r => r.value != null) ? totalVal : null);
     } catch (e: any) {
       console.error('[StockHolding] load error', e?.message);
-      setError(true);
+      if (!silent) setError(true);
+      // Silent refresh failures are swallowed — stale data stays on screen
+      // rather than replacing it with an error view.
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      loadingRef.current = false;
     }
   }
 
@@ -451,7 +479,17 @@ export default function StockHoldingScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={s.scroll}>
+      <ScrollView
+        contentContainerStyle={s.scroll}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => load(true)}
+            tintColor={c.primary}
+            colors={[c.primary]}
+          />
+        }
+      >
         {groups.map(g => (
           <View key={g.category} style={s.group}>
             {/* Category header */}
