@@ -33,6 +33,7 @@ type Product = {
   size: string | null        // physical size string e.g. '700ml', '20L' — used by recipe costing
   packSize: number | null
   costPrice: number | null
+  sellPrice: number | null
   supplierName: string | null
   parLevel: number | null
   gstPercent: number | null
@@ -64,7 +65,7 @@ type CatalogueMatch = {
   proposedGstPercent: number
 }
 
-type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'supplierName' | 'parLevel'
+type EditableField = 'name' | 'category' | 'unit' | 'size' | 'packSize' | 'costPrice' | 'sellPrice' | 'supplierName' | 'parLevel'
 
 // Fixed unit categories — must stay in sync with UNIT_CATEGORIES in
 // StockTakeAreaInventoryScreen.tsx (mobile).
@@ -97,6 +98,7 @@ const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'size',         label: 'Size' },
   { field: 'packSize',     label: 'Pack Size' },
   { field: 'costPrice',    label: 'Cost Price' },
+  { field: 'sellPrice',    label: 'Sell Price' },
   { field: 'supplierName', label: 'Supplier' },
   { field: 'parLevel',     label: 'PAR' },
 ]
@@ -154,6 +156,7 @@ function displayValue(p: Product, field: EditableField): string {
     case 'size':         return p.size ?? ''
     case 'packSize':     return p.packSize != null ? String(p.packSize) : ''
     case 'costPrice':    return p.costPrice != null ? p.costPrice.toFixed(2) : ''
+    case 'sellPrice':    return p.sellPrice != null ? p.sellPrice.toFixed(2) : ''
     case 'supplierName': return p.supplierName && p.supplierName !== 'Unassigned' ? p.supplierName : ''
     case 'parLevel':     return p.parLevel != null ? String(p.parLevel) : ''
   }
@@ -188,6 +191,11 @@ function buildUpdatePayload(field: EditableField, raw: string): Record<string, u
           : {}),
         updatedAt: serverTimestamp(),
       }
+    }
+    case 'sellPrice': {
+      const n = trimmed === '' ? null : Number(trimmed)
+      const sellPrice = n != null && Number.isFinite(n) && n >= 0 ? n : null
+      return { sellPrice, updatedAt: serverTimestamp() }
     }
     case 'supplierName':
       // "Unassigned" is the mobile app's convention for "no supplier set".
@@ -1788,7 +1796,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
             inputRefs.current[`${product.id}:${field}`] = el
           }}
           className={styles.cellInput}
-          type={field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
+          type={field === 'costPrice' || field === 'sellPrice' || field === 'parLevel' ? 'number' : 'text'}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}
@@ -1796,6 +1804,32 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         />
       )
     }
+    // Sell price: show $X.XX with inline GP% — or a nudge when cost price is missing
+    if (field === 'sellPrice') {
+      if (product.sellPrice == null) {
+        return (
+          <div
+            className={`${styles.cellText} ${styles.cellTextEmpty}`}
+            onClick={() => startEdit(product, field)}
+          >
+            —
+          </div>
+        )
+      }
+      const gpPct = product.costPrice != null
+        ? Math.round(((product.sellPrice - product.costPrice) / product.sellPrice) * 100)
+        : null
+      return (
+        <div className={styles.cellText} onClick={() => startEdit(product, field)}>
+          ${product.sellPrice.toFixed(2)}
+          {gpPct != null
+            ? <span style={{ color: '#065f46', marginLeft: 4, fontSize: 11, fontWeight: 600 }}>({gpPct}%)</span>
+            : <span style={{ color: '#c47b2b', marginLeft: 4, fontSize: 10 }}>add cost price for GP%</span>
+          }
+        </div>
+      )
+    }
+
     const value = displayValue(product, field)
     const isEstimate = field === 'costPrice' && product.costPriceSource === 'catalogue_estimate'
     const isLinked  = field === 'costPrice' && !!product.linkedRecipeId
