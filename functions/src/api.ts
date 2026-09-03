@@ -3491,7 +3491,10 @@ app.post("/suitee", async (req, res) => {
       wastageSnap,
       recipesSnap,
     ] = await Promise.all([
-      db.collection(`venues/${venueId}/products`).limit(200).get().catch(() => null),
+      // No limit — full catalogue so product count and name index are accurate.
+      // Firestore streams the full collection; typical hospitality venues have <3 000
+      // products which is well within a single RPC's practical size ceiling.
+      db.collection(`venues/${venueId}/products`).get().catch(() => null),
       db.collection(`venues/${venueId}/suppliers`).get().catch(() => null),
       db.collection(`venues/${venueId}/departments`).get().catch(() => null),
       // Orders with orderBy so most recent are returned (was unordered — bug fix)
@@ -3576,6 +3579,122 @@ app.post("/suitee", async (req, res) => {
         productSupplierLines.push(`${p.name}: ${parts.join(' | ')}${cheaperNote}`);
       }
     } catch {}
+
+    // ── Part A: compact product name index (full catalogue, no cap) ───────────
+    // Lets Suitee recognise product names even when a product hasn't appeared
+    // elsewhere in the context (no recent variance, price change, or order).
+    // Format: "Name ($price)" or "Name" — 8 per line to keep tokens manageable.
+    const PRODUCT_INDEX_CHUNK_SIZE = 8;
+    const productIndexLines: string[] = [];
+    if (products.length > 0) {
+      for (let i = 0; i < products.length; i += PRODUCT_INDEX_CHUNK_SIZE) {
+        const chunk = products.slice(i, i + PRODUCT_INDEX_CHUNK_SIZE);
+        const entries = chunk.map(p =>
+          p.costPrice != null ? `${p.name} ($${p.costPrice.toFixed(2)})` : p.name
+        );
+        productIndexLines.push(`  ${entries.join(', ')}`);
+      }
+    }
+
+    // ── Part B: latest-per-supplier prices for multi-supplier products ────────
+    // Identifies products with invoice history from more than one supplier and
+    // injects the most recent price per supplier so Suitee can answer "who's
+    // cheapest for X?" accurately.  Scoped to multi-supplier products only —
+    // single-supplier products have nothing to compare and are skipped entirely.
+    const MULTI_SUPPLIER_CAP = 50;          // hard ceiling — logged when hit
+    const MULTI_SUPPLIER_CANDIDATE_POOL = 150; // products examined (highest-value first)
+    const multiSupplierLines: string[] = [];
+    try {
+      // Examine the top-N products by cost price as candidates.
+      // This is the same population the existing supplier-intelligence block uses,
+      // just with a larger pool to find more multi-supplier products.
+      const candidatePool = [...products]
+        .filter(p => p.costPrice != null)
+        .sort((a, b) => (b.costPrice || 0) - (a.costPrice || 0))
+        .slice(0, MULTI_SUPPLIER_CANDIDATE_POOL);
+
+      // Fetch /suppliers subcollection for each candidate (parallel)
+      const candidateSupplierSnaps = await Promise.all(
+        candidatePool.map(async p => {
+          try {
+            const snap = await db
+              .collection(`venues/${venueId}/products/${p.id}/suppliers`)
+              .get();
+            return { p, supplierDocs: snap.docs };
+          } catch { return null; }
+        })
+      );
+
+      // Keep only those with 2+ supplier entries, capped
+      const multiSupplierCandidates = candidateSupplierSnaps
+        .filter((r): r is NonNullable<typeof r> => r != null && r.supplierDocs.length > 1)
+        .slice(0, MULTI_SUPPLIER_CAP);
+
+      if (candidateSupplierSnaps.filter(r => r != null && r.supplierDocs.length > 1).length >= MULTI_SUPPLIER_CAP) {
+        console.log('[api/suitee] multi-supplier cap reached — consider raising MULTI_SUPPLIER_CAP', {
+          venueId, cap: MULTI_SUPPLIER_CAP, candidatePoolSize: MULTI_SUPPLIER_CANDIDATE_POOL,
+        });
+      }
+
+      // For each multi-supplier product, fetch the latest invoiceHistory entry per
+      // supplier — gives the most recent observed price without loading full history.
+      const multiSupplierDetails = await Promise.all(
+        multiSupplierCandidates.map(async ({ p, supplierDocs }) => {
+          const supplierLatest = await Promise.all(
+            supplierDocs.map(async suppDoc => {
+              try {
+                const histSnap = await db
+                  .collection(`venues/${venueId}/products/${p.id}/suppliers/${suppDoc.id}/invoiceHistory`)
+                  .orderBy('date', 'desc')
+                  .limit(1)
+                  .get();
+                if (histSnap.empty) return null;
+                const hd = histSnap.docs[0].data() as any;
+                const sd = suppDoc.data() as any;
+                return {
+                  supplierName: hd.supplierName || sd.supplierName || suppDoc.id,
+                  unitCost: typeof hd.unitCost === 'number' ? hd.unitCost : null,
+                  isPreferred: sd.isPreferred === true,
+                  invoiceDate: hd.date?.toDate?.()?.toISOString?.()?.slice(0, 10) ?? null,
+                };
+              } catch { return null; }
+            })
+          );
+
+          // Only inject if at least 2 suppliers have actual price data
+          const withPrices = supplierLatest.filter(
+            (s): s is NonNullable<typeof s> => s != null && s.unitCost != null
+          );
+          return withPrices.length > 1 ? { product: p, suppliers: withPrices } : null;
+        })
+      );
+
+      const withHistory = multiSupplierDetails.filter(
+        (d): d is NonNullable<typeof d> => d != null
+      );
+
+      if (withHistory.length > 0) {
+        multiSupplierLines.push(
+          `MULTI-SUPPLIER PRICE COMPARISON (${withHistory.length} product${withHistory.length !== 1 ? 's' : ''} with invoice prices from 2+ suppliers — cheapest first):`
+        );
+        for (const { product: p, suppliers } of withHistory) {
+          // Sort cheapest first so the comparison is immediately scannable
+          const sorted = [...suppliers].sort(
+            (a, b) => (a.unitCost ?? 9999) - (b.unitCost ?? 9999)
+          );
+          multiSupplierLines.push(`  ${p.name}:`);
+          for (const s of sorted) {
+            const tag = s.isPreferred ? ' (preferred)' : '';
+            const dateStr = s.invoiceDate ? ` on ${s.invoiceDate}` : '';
+            multiSupplierLines.push(
+              `    - ${s.supplierName}${tag}: $${s.unitCost!.toFixed(2)}/unit${dateStr}`
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log('[api/suitee] multi-supplier price fetch error', e?.message);
+    }
 
     // STEP 2: Single parallel per-department traversal — replaces the previous 3 sequential
     // passes over departments (variance, snapshots, velocity). Each department now fetches
@@ -4012,8 +4131,22 @@ app.post("/suitee", async (req, res) => {
       "TREND ITEMS (short 2+ consecutive cycles):",
       trendItems.length ? trendItems.map(t => `  - ${t.name} (${t.deptName})`).join("\n") : "  None detected yet",
       "",
-      `PRODUCTS IN SYSTEM: ${products.length}`,
+      `PRODUCTS IN SYSTEM: ${products.length} (full catalogue — true count, not capped)`,
     ];
+
+    // Full product name index — injected after the header so Suitee can resolve
+    // product names from user questions even when a product appears nowhere else
+    // in the context (no recent variance, price change, order, etc.).
+    if (productIndexLines.length > 0) {
+      lines.push(`PRODUCT CATALOGUE (names and current prices — ${products.length} products):`);
+      lines.push(...productIndexLines);
+    }
+
+    // Multi-supplier price comparison — only present when at least one product
+    // has invoice history from 2+ suppliers.
+    if (multiSupplierLines.length > 0) {
+      lines.push("", ...multiSupplierLines);
+    }
 
     if (supplierContactLines.length > 0) {
       lines.push("", "SUPPLIERS ON FILE (name | email | phone | account | lead time):");
