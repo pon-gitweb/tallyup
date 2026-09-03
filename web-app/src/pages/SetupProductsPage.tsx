@@ -1311,7 +1311,9 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   const visibleRows = useMemo(() => {
     const needle = search.trim().toLowerCase()
-    let rows = products
+    // Exclude merged-away products — same condition as findDuplicatePairs uses.
+    // active === false means merged-away; undefined/absent means active (documented default).
+    let rows = products.filter(p => p.active !== false)
     if (needle) {
       rows = rows.filter(
         (p) =>
