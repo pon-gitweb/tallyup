@@ -1275,6 +1275,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               size: data.size ?? null,
               packSize: data.packSize ?? null,
               costPrice: data.costPrice ?? null,
+              sellPrice: data.sellPrice ?? null,
               supplierName: data.supplierName ?? null,
               parLevel: data.parLevel ?? null,
               gstPercent: data.gstPercent ?? null,
