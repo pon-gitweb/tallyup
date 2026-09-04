@@ -227,6 +227,7 @@ export type ProposedAction =
       direction: "increase" | "decrease";
       qty: number;
       caseSize: number | null;
+      sellPrice?: number | null;  // product's current sell price — used to compute impactOnGP
       possibleCaseMismatch?: boolean;
       caseMismatchGuess?: number | null;
       correctedUnitPrice?: number | null;
@@ -251,6 +252,7 @@ export type ProposedAction =
       newPrice: number;
       qty: number;
       caseSize: number | null;
+      sellPrice?: number | null;  // product's current sell price — used to compute impactOnGP
     }
   | {
       id: string;
@@ -493,6 +495,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             direction,
             qty: line.qty,
             caseSize: cs,
+            sellPrice: typeof matched.sellPrice === "number" ? matched.sellPrice : null,
             ...caseMismatchFields,
           });
         } else {
@@ -623,6 +626,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           newPrice: unitPrice,
           qty: line.qty,
           caseSize: cs,
+          sellPrice: typeof nearDuplicate.sellPrice === "number" ? nearDuplicate.sellPrice : null,
         });
       } else {
         // Genuinely new product â waits for user confirmation

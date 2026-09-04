@@ -18,6 +18,7 @@ type PriceFlag = {
   invoiceId: string;
   flaggedAt: any;
   status: string;
+  impactOnGP: { before: number; after: number } | null;
 };
 
 export default function PriceChangeFlagsScreen({ navigation }: any) {
@@ -144,6 +145,15 @@ export default function PriceChangeFlagsScreen({ navigation }: any) {
           </Text>
         </View>
 
+        {item.impactOnGP != null && (
+          <Text style={[styles.margin, {
+            color: c.slateMid || '#6b7280',
+            fontFamily: theme.fontBody,
+          }]}>
+            Margin: {item.impactOnGP.before}% → {item.impactOnGP.after}%
+          </Text>
+        )}
+
         <Text style={[styles.date, {
           color: c.slateMid || '#6b7280',
           fontFamily: theme.fontBody,
@@ -240,6 +250,7 @@ const styles = StyleSheet.create({
   arrow: { fontSize: 14 },
   newPrice: { fontSize: 18 },
   percent: { fontSize: 14 },
+  margin: { fontSize: 12, marginBottom: 4 },
   date: { fontSize: 12, marginBottom: 14 },
   actions: { flexDirection: 'row', gap: 10 },
   acknowledgeBtn: {

@@ -52,8 +52,10 @@ type PriceChangeRow = {
   supplierName: string | null
   oldPrice: number | null
   newPrice: number | null
+  changePercent: number | null
   detectedAt: Date | null
   status: string
+  impactOnGP: { before: number; after: number } | null
 }
 
 type DeptSummary = {
@@ -274,8 +276,10 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
           supplierName: data.supplierName ?? null,
           oldPrice: data.oldPrice ?? null,
           newPrice: data.newPrice ?? null,
+          changePercent: data.changePercent ?? null,
           detectedAt: data.detectedAt?.toDate?.() ?? null,
           status: data.status || 'pending',
+          impactOnGP: data.impactOnGP ?? null,
         }
       })
 
@@ -823,16 +827,22 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       <th>Old price</th>
                       <th>New price</th>
                       <th>Change %</th>
+                      <th>Margin</th>
                       <th>Detected</th>
                       <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {priceRows.map((r) => {
+                      // Prefer the stored changePercent (present on invoice-flagged rows);
+                      // fall back to an inline calculation for contract-extraction rows which
+                      // don't go through flagPriceChangeToManager and have no changePercent.
                       const changePct =
-                        r.oldPrice != null && r.newPrice != null && r.oldPrice > 0
-                          ? ((r.newPrice - r.oldPrice) / r.oldPrice) * 100
-                          : null
+                        r.changePercent != null
+                          ? r.changePercent
+                          : r.oldPrice != null && r.newPrice != null && r.oldPrice > 0
+                            ? ((r.newPrice - r.oldPrice) / r.oldPrice) * 100
+                            : null
                       const isDecrease = changePct != null && changePct < 0
                       return (
                         <tr key={r.id} className={styles.dataRow}>
@@ -855,6 +865,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                             {changePct == null
                               ? '—'
                               : (changePct > 0 ? '+' : '') + changePct.toFixed(1) + '%'}
+                          </td>
+                          <td className={styles.tdNum}>
+                            {r.impactOnGP != null
+                              ? `${r.impactOnGP.before}% → ${r.impactOnGP.after}%`
+                              : '—'}
                           </td>
                           <td className={styles.td}>{fmtDate(r.detectedAt)}</td>
                           <td className={styles.td}>

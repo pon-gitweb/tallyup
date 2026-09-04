@@ -5877,6 +5877,20 @@ function parseCsvText(text: string): ParsedCsv {
 // ── Price change flags for manager review ─────────────────────────────────────
 // Writes a significant price change (>= 5%) to venues/{venueId}/priceChangeFlags
 // for manager review (acknowledge/dismiss via PriceChangeFlagsScreen).
+// Pure helper — exported for unit testing, not for external callers.
+// Formula mirrors the Products table GP%: Math.round(((sellPrice - cost) / sellPrice) * 100).
+// Returns null when sellPrice is absent or zero — never guesses.
+export function computeImpactOnGP(
+  sellPrice: number | null,
+  oldPrice: number,
+  newPrice: number,
+): { before: number; after: number } | null {
+  if (sellPrice == null || sellPrice <= 0) return null;
+  const before = Math.round(((sellPrice - oldPrice) / sellPrice) * 100);
+  const after  = Math.round(((sellPrice - newPrice) / sellPrice) * 100);
+  return { before, after };
+}
+
 async function flagPriceChangeToManager(
   db: FirebaseFirestore.Firestore,
   venueId: string,
@@ -5886,8 +5900,10 @@ async function flagPriceChangeToManager(
   newPrice: number,
   changePercent: number,
   supplierName: string,
-  invoiceId: string
+  invoiceId: string,
+  sellPrice: number | null,
 ): Promise<void> {
+  const impactOnGP = computeImpactOnGP(sellPrice, oldPrice, newPrice);
   await db.collection(`venues/${venueId}/priceChangeFlags`).add({
     productId,
     productName,
@@ -5901,7 +5917,7 @@ async function flagPriceChangeToManager(
     status: "pending",
     acknowledgedBy: null,
     acknowledgedAt: null,
-    impactOnGP: null,
+    impactOnGP,
     note: null,
   });
 }
@@ -6231,6 +6247,7 @@ app.post("/commit-invoice-decisions", async (req, res) => {
               proposal.productId, proposal.productName,
               proposal.oldPrice, proposal.newPrice, proposal.changePercent,
               resolvedSupplierName || '', invoiceId,
+              proposal.sellPrice,
             );
           }
         } else if (proposal.type === 'nearDuplicateMatch' && proposal.existingPrice != null) {
@@ -6243,6 +6260,7 @@ app.post("/commit-invoice-decisions", async (req, res) => {
               proposal.candidateProductId, proposal.candidateProductName,
               proposal.existingPrice, proposal.newPrice, changePercent,
               resolvedSupplierName || '', invoiceId,
+              proposal.sellPrice,
             );
           }
         }
