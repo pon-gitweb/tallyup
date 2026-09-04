@@ -34,6 +34,7 @@ type Product = {
   packSize: number | null
   costPrice: number | null
   sellPrice: number | null
+  sellPriceServeSizeMl: number | null   // null = whole-unit pricing; set = price is per this many mL
   supplierName: string | null
   parLevel: number | null
   gstPercent: number | null
@@ -90,6 +91,22 @@ const SIZE_PRESETS_BY_UNIT: Record<string, string[]> = {
 // Fallback list — all presets across all categories, deduplicated.  Used when unit is unset
 // or doesn't match a known category (grandfathered old data).
 const ALL_SIZE_PRESETS = [...new Set(Object.values(SIZE_PRESETS_BY_UNIT).flat())]
+
+/**
+ * Parses a product size string to a numeric mL value.
+ * Handles ml/mL/ML and l/L (case-insensitive), including decimals like "1.125L".
+ * Returns null for empty, null, non-volume units (g, kg, etc.), or any string
+ * that doesn't cleanly match — never guesses.
+ */
+function parseSizeMl(size: string | null | undefined): number | null {
+  if (!size) return null
+  const match = size.trim().match(/^(\d+(?:\.\d+)?)\s*(ml|l)$/i)
+  if (!match) return null
+  const value = parseFloat(match[1])
+  const unit = match[2].toLowerCase()
+  if (!Number.isFinite(value) || value <= 0) return null
+  return unit === 'l' ? value * 1000 : value
+}
 
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
@@ -1220,6 +1237,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
 
   const [editingCell, setEditingCell] = useState<{ id: string; field: EditableField } | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [editServeSize, setEditServeSize] = useState('')  // secondary input for sellPrice serve-size (mL)
   const [pinnedNewId, setPinnedNewId] = useState<string | null>(null)
   const skipNextBlur = useRef(false)
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -1276,6 +1294,7 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
               packSize: data.packSize ?? null,
               costPrice: data.costPrice ?? null,
               sellPrice: data.sellPrice ?? null,
+              sellPriceServeSizeMl: data.sellPriceServeSizeMl ?? null,
               supplierName: data.supplierName ?? null,
               parLevel: data.parLevel ?? null,
               gstPercent: data.gstPercent ?? null,
@@ -1361,7 +1380,15 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   async function commitEdit(id: string, field: EditableField, rawValue: string) {
     try {
       const payload = buildUpdatePayload(field, rawValue)
-      if (field === 'costPrice') {
+      if (field === 'sellPrice') {
+        // sellPrice edits: also save the optional serve-size (mL) in the same write.
+        const sn = editServeSize.trim() === '' ? null : Number(editServeSize.trim())
+        const serveSize = sn != null && Number.isFinite(sn) && sn > 0 ? sn : null
+        await updateDoc(doc(db, 'venues', venueId, 'products', id), {
+          ...payload,                  // { sellPrice, updatedAt }
+          sellPriceServeSizeMl: serveSize,
+        })
+      } else if (field === 'costPrice') {
         // costPrice edits: also write a priceHistory entry so manual changes are auditable
         const n = rawValue.trim() === '' ? null : Number(rawValue.trim())
         const newPrice = n != null && Number.isFinite(n) ? n : null
@@ -1400,6 +1427,10 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   function startEdit(product: Product, field: EditableField) {
     setEditingCell({ id: product.id, field })
     setEditValue(displayValue(product, field))
+    // Pre-fill the secondary serve-size input for sellPrice edits.
+    if (field === 'sellPrice') {
+      setEditServeSize(product.sellPriceServeSizeMl != null ? String(product.sellPriceServeSizeMl) : '')
+    }
   }
 
   function handleBlur() {
@@ -1791,13 +1822,52 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           </div>
         )
       }
+      if (field === 'sellPrice') {
+        // Primary price input + optional secondary serve-size input.
+        // onMouseDown on the serve-size row suppresses the primary input's blur
+        // so the user can click between the two inputs without triggering a commit.
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <input
+              ref={(el) => { inputRefs.current[`${product.id}:${field}`] = el }}
+              className={styles.cellInput}
+              type="number"
+              placeholder="sell price"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handleBlur}
+              onKeyDown={handleCellKeyDown}
+            />
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '0 6px 3px', color: '#6b7280' }}
+              onMouseDown={() => { skipNextBlur.current = true }}
+            >
+              <span style={{ fontSize: 11 }}>per</span>
+              <input
+                style={{ width: 56, fontSize: 11, padding: '1px 4px', border: '1px solid #d1d5db', borderRadius: 3, background: '#fff', outline: 'none' }}
+                type="number"
+                placeholder="ml"
+                value={editServeSize}
+                onChange={(e) => setEditServeSize(e.target.value)}
+                onBlur={handleBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { e.preventDefault(); skipNextBlur.current = true; setEditingCell(null) }
+                  if (e.key === 'Enter')  { e.preventDefault(); skipNextBlur.current = true; commitEdit(product.id, field, editValue); setEditingCell(null) }
+                  if (e.key === 'Tab')    { e.preventDefault(); skipNextBlur.current = true; commitEdit(product.id, field, editValue); setEditingCell(null) }
+                }}
+              />
+              <span style={{ fontSize: 11 }}>ml</span>
+            </div>
+          </div>
+        )
+      }
       return (
         <input
           ref={(el) => {
             inputRefs.current[`${product.id}:${field}`] = el
           }}
           className={styles.cellInput}
-          type={field === 'costPrice' || field === 'sellPrice' || field === 'parLevel' ? 'number' : 'text'}
+          type={field === 'costPrice' || field === 'parLevel' ? 'number' : 'text'}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleBlur}
@@ -1805,7 +1875,9 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
         />
       )
     }
-    // Sell price: show $X.XX with inline GP% — or a nudge when cost price is missing
+    // Sell price: show $X.XX (Y%) in whole-unit mode, or $X.XX/570ml (Y%) in rate mode.
+    // Rate mode requires both sellPriceServeSizeMl and a parseable size string.
+    // If the size string can't be parsed, fall back to whole-unit display — never show a wrong GP%.
     if (field === 'sellPrice') {
       if (product.sellPrice == null) {
         return (
@@ -1817,15 +1889,36 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
           </div>
         )
       }
-      const gpPct = product.costPrice != null
-        ? Math.round(((product.sellPrice - product.costPrice) / product.sellPrice) * 100)
-        : null
+
+      const serveSizeMl = product.sellPriceServeSizeMl
+      const totalSizeMl = serveSizeMl != null ? parseSizeMl(product.size) : null
+      const isRateMode  = serveSizeMl != null && totalSizeMl != null && serveSizeMl > 0
+
+      let gpPct: number | null = null
+      if (isRateMode && product.costPrice != null) {
+        const totalServes  = totalSizeMl! / serveSizeMl!
+        const costPerServe = product.costPrice / totalServes
+        gpPct = Math.round(((product.sellPrice - costPerServe) / product.sellPrice) * 100)
+      } else if (!isRateMode && product.costPrice != null) {
+        // Whole-unit GP% — same formula as before, unchanged
+        gpPct = Math.round(((product.sellPrice - product.costPrice) / product.sellPrice) * 100)
+      }
+
+      const priceStr = isRateMode
+        ? `$${product.sellPrice.toFixed(2)}/${serveSizeMl}ml`
+        : `$${product.sellPrice.toFixed(2)}`
+      const hasCostPrice = isRateMode
+        ? (product.costPrice != null)      // need cost price for rate-based GP%
+        : (product.costPrice != null)      // need cost price for whole-unit GP%
+
       return (
         <div className={styles.cellText} onClick={() => startEdit(product, field)}>
-          ${product.sellPrice.toFixed(2)}
+          {priceStr}
           {gpPct != null
             ? <span style={{ color: '#065f46', marginLeft: 4, fontSize: 11, fontWeight: 600 }}>({gpPct}%)</span>
-            : <span style={{ color: '#c47b2b', marginLeft: 4, fontSize: 10 }}>add cost price for GP%</span>
+            : !hasCostPrice
+              ? <span style={{ color: '#c47b2b', marginLeft: 4, fontSize: 10 }}>add cost price for GP%</span>
+              : null
           }
         </div>
       )
