@@ -108,6 +108,26 @@ function parseSizeMl(size: string | null | undefined): number | null {
   return unit === 'l' ? value * 1000 : value
 }
 
+/**
+ * Computes GP% with a GST-adjusted sell price.
+ * sellPrice is inc-GST (menu price); costPrice is ex-GST (invoice price).
+ * Returns null when any input is null/absent — never guesses a GST rate.
+ * Formula: Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
+ *   where sellPriceExGst = sellPrice / (1 + gstPercent / 100)
+ * Mirrored identically in functions/src/priceTracking.ts.
+ */
+export function computeGpPercent(
+  sellPrice: number | null,
+  costPrice: number | null,
+  gstPercent: number | null,
+): number | null {
+  if (sellPrice == null || costPrice == null || gstPercent == null) return null
+  if (sellPrice <= 0) return null
+  const sellPriceExGst = sellPrice / (1 + gstPercent / 100)
+  if (sellPriceExGst <= 0) return null
+  return Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
+}
+
 const COLUMNS: { field: EditableField; label: string }[] = [
   { field: 'name',         label: 'Name' },
   { field: 'category',     label: 'Category' },
@@ -1898,26 +1918,31 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
       if (isRateMode && product.costPrice != null) {
         const totalServes  = totalSizeMl! / serveSizeMl!
         const costPerServe = product.costPrice / totalServes
-        gpPct = Math.round(((product.sellPrice - costPerServe) / product.sellPrice) * 100)
-      } else if (!isRateMode && product.costPrice != null) {
-        // Whole-unit GP% — same formula as before, unchanged
-        gpPct = Math.round(((product.sellPrice - product.costPrice) / product.sellPrice) * 100)
+        // Rate-based: cost per serve compared against GST-adjusted sell price
+        gpPct = computeGpPercent(product.sellPrice, costPerServe, product.gstPercent)
+      } else if (!isRateMode) {
+        // Whole-unit: GST-adjusted sell price vs full unit cost
+        gpPct = computeGpPercent(product.sellPrice, product.costPrice, product.gstPercent)
       }
 
       const priceStr = isRateMode
         ? `$${product.sellPrice.toFixed(2)}/${serveSizeMl}ml`
         : `$${product.sellPrice.toFixed(2)}`
-      const hasCostPrice = isRateMode
-        ? (product.costPrice != null)      // need cost price for rate-based GP%
-        : (product.costPrice != null)      // need cost price for whole-unit GP%
+
+      // Explain exactly what's missing when GP% can't be shown — ordered by most fundamental gap first.
+      const nudge = (() => {
+        if (product.costPrice == null) return 'add cost price for GP%'
+        if (product.gstPercent == null) return 'add GST info for GP%'
+        return null
+      })()
 
       return (
         <div className={styles.cellText} onClick={() => startEdit(product, field)}>
           {priceStr}
           {gpPct != null
             ? <span style={{ color: '#065f46', marginLeft: 4, fontSize: 11, fontWeight: 600 }}>({gpPct}%)</span>
-            : !hasCostPrice
-              ? <span style={{ color: '#c47b2b', marginLeft: 4, fontSize: 10 }}>add cost price for GP%</span>
+            : nudge != null
+              ? <span style={{ color: '#c47b2b', marginLeft: 4, fontSize: 10 }}>{nudge}</span>
               : null
           }
         </div>

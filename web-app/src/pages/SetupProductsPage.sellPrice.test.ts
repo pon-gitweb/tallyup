@@ -1,14 +1,12 @@
 /**
- * Tests for the sellPrice + inline GP% feature added to SetupProductsPage.
+ * Tests for the sellPrice + inline GP% feature in SetupProductsPage.
  *
- * Strategy: mirror the pure-function logic as standalone helpers — no React
- * or Firebase dependency needed.  Same pattern as the active-filter tests.
+ * Updated for GST-adjusted GP% formula — sellPrice is inc-GST (menu price),
+ * costPrice is ex-GST (invoice price). computeGpPercent now requires gstPercent.
  *
- * Coverage:
- *   A. GP% calculation — correct formula, rounding, edge cases
- *   B. Display labels — correct strings for each scenario
- *   C. buildUpdatePayload for sellPrice — numeric, null, negative guard
- *   D. displayValue for sellPrice — raw decimal string
+ * All GP% expected values are hand-verified with the new formula:
+ *   sellPriceExGst = sellPrice / (1 + gstPercent / 100)
+ *   GP% = Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
  */
 
 import { describe, it, expect } from 'vitest'
@@ -20,19 +18,26 @@ type ProductStub = {
   name: string
   costPrice: number | null
   sellPrice: number | null
+  gstPercent: number | null
 }
 
 // ── Helpers mirroring the production logic ────────────────────────────────────
 
 /**
- * GP% formula — mirrors CraftIt's exact formula, reused here.
- * rrp = sellPrice, cogs = costPrice.
- * Returns null when either value is missing.
+ * GP% formula — mirrors computeGpPercent in SetupProductsPage.tsx.
+ * sellPrice is inc-GST; costPrice is ex-GST.
+ * Returns null when any value is missing — never guesses a GST rate.
  */
-function computeGpPercent(sellPrice: number | null, costPrice: number | null): number | null {
-  if (sellPrice == null || costPrice == null) return null
-  if (sellPrice === 0) return null          // avoid divide-by-zero
-  return Math.round(((sellPrice - costPrice) / sellPrice) * 100)
+function computeGpPercent(
+  sellPrice: number | null,
+  costPrice: number | null,
+  gstPercent: number | null,
+): number | null {
+  if (sellPrice == null || costPrice == null || gstPercent == null) return null
+  if (sellPrice <= 0) return null
+  const sellPriceExGst = sellPrice / (1 + gstPercent / 100)
+  if (sellPriceExGst <= 0) return null
+  return Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
 }
 
 /**
@@ -41,9 +46,12 @@ function computeGpPercent(sellPrice: number | null, costPrice: number | null): n
  */
 function sellPriceCellText(p: ProductStub): string {
   if (p.sellPrice == null) return '—'
-  const gpPct = computeGpPercent(p.sellPrice, p.costPrice)
+  const gpPct = computeGpPercent(p.sellPrice, p.costPrice, p.gstPercent)
   if (gpPct != null) return `$${p.sellPrice.toFixed(2)} (${gpPct}%)`
-  return `$${p.sellPrice.toFixed(2)} (add cost price for GP%)`
+  // Nudge: cost price gap is more fundamental than GST gap
+  if (p.costPrice == null) return `$${p.sellPrice.toFixed(2)} (add cost price for GP%)`
+  if (p.gstPercent == null) return `$${p.sellPrice.toFixed(2)} (add GST info for GP%)`
+  return `$${p.sellPrice.toFixed(2)}`
 }
 
 /**
@@ -66,72 +74,95 @@ function buildSellPricePayload(raw: string): { sellPrice: number | null } {
 
 // ── Suite A: GP% calculation ──────────────────────────────────────────────────
 
-describe('SetupProductsPage — sellPrice GP% calculation', () => {
-  it('computes GP% correctly with both values present', () => {
-    // $3.50 sell, $1.12 cost → ((3.50 - 1.12) / 3.50) * 100 = 68%
-    expect(computeGpPercent(3.50, 1.12)).toBe(68)
+describe('SetupProductsPage — sellPrice GP% calculation (GST-adjusted)', () => {
+  // Hand-verify: $3.50 inc-GST sell, $1.12 ex-GST cost, 15% NZ GST
+  //   sellExGst = 3.50 / 1.15 = 3.04347…
+  //   GP% = Math.round(((3.04347 - 1.12) / 3.04347) * 100) = Math.round(63.19…) = 63
+  it('computes GST-adjusted GP% correctly: $3.50 sell (inc), $1.12 cost (ex), 15% GST → 63%', () => {
+    expect(computeGpPercent(3.50, 1.12, 15)).toBe(63)
   })
 
-  it('rounds to nearest integer', () => {
-    // ((10 - 3) / 10) * 100 = 70.0 — exact
-    expect(computeGpPercent(10, 3)).toBe(70)
-    // ((7 - 3.33) / 7) * 100 ≈ 52.43 → 52
-    expect(computeGpPercent(7, 3.33)).toBe(52)
+  it('rounds to nearest integer — $10 sell (inc), $3 cost (ex), 15% GST', () => {
+    // sellExGst = 10 / 1.15 = 8.6957…
+    // GP% = Math.round(((8.6957 - 3) / 8.6957) * 100) = Math.round(65.50…) = 66
+    expect(computeGpPercent(10, 3, 15)).toBe(66)
+  })
+
+  it('10% AU GST produces a correctly different result', () => {
+    // sellExGst = 10 / 1.10 = 9.0909…
+    // GP% = Math.round(((9.0909 - 3) / 9.0909) * 100) = Math.round(67.0…) = 67
+    expect(computeGpPercent(10, 3, 10)).toBe(67)
+    expect(computeGpPercent(10, 3, 10)).not.toBe(computeGpPercent(10, 3, 15))
   })
 
   it('returns null when sellPrice is null', () => {
-    expect(computeGpPercent(null, 5.00)).toBeNull()
+    expect(computeGpPercent(null, 5.00, 15)).toBeNull()
   })
 
   it('returns null when costPrice is null', () => {
-    expect(computeGpPercent(10.00, null)).toBeNull()
+    expect(computeGpPercent(10.00, null, 15)).toBeNull()
   })
 
-  it('returns null when both values are null', () => {
-    expect(computeGpPercent(null, null)).toBeNull()
+  it('returns null when gstPercent is null — honest-gap rule, same as missing cost price', () => {
+    expect(computeGpPercent(10.00, 5.00, null)).toBeNull()
+  })
+
+  it('returns null when all values are null', () => {
+    expect(computeGpPercent(null, null, null)).toBeNull()
   })
 
   it('returns null when sellPrice is zero (avoids divide-by-zero)', () => {
-    expect(computeGpPercent(0, 0)).toBeNull()
+    expect(computeGpPercent(0, 0, 15)).toBeNull()
   })
 
-  it('handles 100% GP% when cost price is 0', () => {
-    // e.g. gifted product with zero cost
-    expect(computeGpPercent(10.00, 0)).toBe(100)
+  it('handles 100% GP% when cost price is 0 (gifted product)', () => {
+    // sellExGst = 10/1.15 = 8.6957…; (8.6957 - 0)/8.6957 = 100%
+    expect(computeGpPercent(10.00, 0, 15)).toBe(100)
   })
 
-  it('handles negative GP% when cost is above sell price', () => {
-    // Selling below cost
-    expect(computeGpPercent(5.00, 8.00)).toBe(-60)
+  it('handles negative GP% when cost is above the GST-adjusted sell price', () => {
+    // sellExGst = 5/1.15 = 4.3478…; (4.3478 - 8) / 4.3478 = -84.0…
+    expect(computeGpPercent(5.00, 8.00, 15)).toBe(-84)
   })
 })
 
 // ── Suite B: display label ────────────────────────────────────────────────────
 
 describe('SetupProductsPage — sellPrice cell display labels', () => {
-  it('shows $X.XX (Y%) when both sell and cost price are present', () => {
-    const p: ProductStub = { id: 'p1', name: 'Gin 700ml', costPrice: 28.00, sellPrice: 42.00 }
-    // ((42 - 28) / 42) * 100 ≈ 33%
-    expect(sellPriceCellText(p)).toBe('$42.00 (33%)')
+  it('shows $X.XX (Y%) when sell price, cost price, and GST are all present', () => {
+    // Gin 700ml: $42 inc-GST sell, $28 ex-GST cost, 15% GST
+    // sellExGst = 42/1.15 = 36.5217…; GP% = Math.round((8.5217/36.5217)*100) = Math.round(23.33…) = 23
+    const p: ProductStub = { id: 'p1', name: 'Gin 700ml', costPrice: 28.00, sellPrice: 42.00, gstPercent: 15 }
+    expect(sellPriceCellText(p)).toBe('$42.00 (23%)')
   })
 
-  it('shows nudge message when sell price is present but cost price is missing', () => {
-    const p: ProductStub = { id: 'p2', name: 'Mystery Spirit', costPrice: null, sellPrice: 3.50 }
+  it('shows "add cost price for GP%" when cost price is missing', () => {
+    const p: ProductStub = { id: 'p2', name: 'Mystery Spirit', costPrice: null, sellPrice: 3.50, gstPercent: 15 }
     expect(sellPriceCellText(p)).toBe('$3.50 (add cost price for GP%)')
   })
 
+  it('shows "add GST info for GP%" when GST% is missing (new honest-gap messaging)', () => {
+    const p: ProductStub = { id: 'p3', name: 'Spirit', costPrice: 15.00, sellPrice: 28.00, gstPercent: null }
+    expect(sellPriceCellText(p)).toBe('$28.00 (add GST info for GP%)')
+  })
+
+  it('shows "add cost price for GP%" (not "add GST info") when both cost and GST are missing — cost is the more fundamental gap', () => {
+    const p: ProductStub = { id: 'p4', name: 'Unknown', costPrice: null, sellPrice: 10.00, gstPercent: null }
+    expect(sellPriceCellText(p)).toBe('$10.00 (add cost price for GP%)')
+  })
+
   it('shows — when no sell price is set', () => {
-    const p: ProductStub = { id: 'p3', name: 'Sauvignon Blanc', costPrice: 15.00, sellPrice: null }
+    const p: ProductStub = { id: 'p5', name: 'Sauvignon Blanc', costPrice: 15.00, sellPrice: null, gstPercent: 15 }
     expect(sellPriceCellText(p)).toBe('—')
   })
 
   it('shows — when both sell and cost price are missing', () => {
-    const p: ProductStub = { id: 'p4', name: 'Uncosted Product', costPrice: null, sellPrice: null }
+    const p: ProductStub = { id: 'p6', name: 'Uncosted Product', costPrice: null, sellPrice: null, gstPercent: null }
     expect(sellPriceCellText(p)).toBe('—')
   })
 
   it('formats price to exactly two decimal places', () => {
-    const p: ProductStub = { id: 'p5', name: 'Beer Pint', costPrice: null, sellPrice: 8 }
+    const p: ProductStub = { id: 'p7', name: 'Beer Pint', costPrice: null, sellPrice: 8, gstPercent: null }
     expect(sellPriceCellText(p)).toContain('$8.00')
   })
 })
@@ -160,7 +191,6 @@ describe('SetupProductsPage — buildUpdatePayload for sellPrice', () => {
   })
 
   it('stores 0 as a valid sell price', () => {
-    // Zero is a valid sell price (gifted/complimentary)
     expect(buildSellPricePayload('0')).toEqual({ sellPrice: 0 })
   })
 })
@@ -169,12 +199,12 @@ describe('SetupProductsPage — buildUpdatePayload for sellPrice', () => {
 
 describe('SetupProductsPage — displayValue for sellPrice', () => {
   it('returns the price as a two-decimal string when set', () => {
-    const p: ProductStub = { id: 'p1', name: 'Gin', costPrice: null, sellPrice: 18.5 }
+    const p: ProductStub = { id: 'p1', name: 'Gin', costPrice: null, sellPrice: 18.5, gstPercent: 15 }
     expect(displayValueSellPrice(p)).toBe('18.50')
   })
 
   it('returns empty string when sell price is null (no pre-fill)', () => {
-    const p: ProductStub = { id: 'p2', name: 'Gin', costPrice: null, sellPrice: null }
+    const p: ProductStub = { id: 'p2', name: 'Gin', costPrice: null, sellPrice: null, gstPercent: null }
     expect(displayValueSellPrice(p)).toBe('')
   })
 })

@@ -4,7 +4,7 @@ import * as nodemailer from "nodemailer";
 import express = require("express");
 import cors = require("cors");
 import Stripe from "stripe";
-import { proposeInvoiceChanges, commitInvoiceChanges } from "./priceTracking";
+import { proposeInvoiceChanges, commitInvoiceChanges, computeGpPercent } from "./priceTracking";
 import { contributeToGlobalCatalogItem } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier, commitSupplierResolution } from './supplierResolution';
@@ -5878,16 +5878,18 @@ function parseCsvText(text: string): ParsedCsv {
 // Writes a significant price change (>= 5%) to venues/{venueId}/priceChangeFlags
 // for manager review (acknowledge/dismiss via PriceChangeFlagsScreen).
 // Pure helper — exported for unit testing, not for external callers.
-// Formula mirrors the Products table GP%: Math.round(((sellPrice - cost) / sellPrice) * 100).
-// Returns null when sellPrice is absent or zero — never guesses.
+// Uses computeGpPercent (from priceTracking.ts) with the GST-adjusted sell price
+// so before/after values are comparable to the Products table margin display.
+// Returns null when sellPrice, gstPercent, or either price is absent.
 export function computeImpactOnGP(
   sellPrice: number | null,
   oldPrice: number,
   newPrice: number,
+  gstPercent: number | null,
 ): { before: number; after: number } | null {
-  if (sellPrice == null || sellPrice <= 0) return null;
-  const before = Math.round(((sellPrice - oldPrice) / sellPrice) * 100);
-  const after  = Math.round(((sellPrice - newPrice) / sellPrice) * 100);
+  const before = computeGpPercent(sellPrice, oldPrice, gstPercent);
+  const after  = computeGpPercent(sellPrice, newPrice, gstPercent);
+  if (before == null || after == null) return null;
   return { before, after };
 }
 
@@ -5902,8 +5904,9 @@ async function flagPriceChangeToManager(
   supplierName: string,
   invoiceId: string,
   sellPrice: number | null,
+  gstPercent: number | null,
 ): Promise<void> {
-  const impactOnGP = computeImpactOnGP(sellPrice, oldPrice, newPrice);
+  const impactOnGP = computeImpactOnGP(sellPrice, oldPrice, newPrice, gstPercent);
   await db.collection(`venues/${venueId}/priceChangeFlags`).add({
     productId,
     productName,
@@ -6247,7 +6250,8 @@ app.post("/commit-invoice-decisions", async (req, res) => {
               proposal.productId, proposal.productName,
               proposal.oldPrice, proposal.newPrice, proposal.changePercent,
               resolvedSupplierName || '', invoiceId,
-              proposal.sellPrice,
+              proposal.sellPrice ?? null,
+              proposal.gstPercent ?? null,
             );
           }
         } else if (proposal.type === 'nearDuplicateMatch' && proposal.existingPrice != null) {
@@ -6260,7 +6264,8 @@ app.post("/commit-invoice-decisions", async (req, res) => {
               proposal.candidateProductId, proposal.candidateProductName,
               proposal.existingPrice, proposal.newPrice, changePercent,
               resolvedSupplierName || '', invoiceId,
-              proposal.sellPrice,
+              proposal.sellPrice ?? null,
+              proposal.gstPercent ?? null,
             );
           }
         }

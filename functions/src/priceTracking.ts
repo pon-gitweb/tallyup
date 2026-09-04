@@ -24,6 +24,26 @@ export interface HistoricalPriceTrackingOptions extends PriceTrackingOptions {
   invoiceDate?: string | null;
 }
 
+/**
+ * Computes GP% with a GST-adjusted sell price.
+ * sellPrice is inc-GST (menu price); costPrice is ex-GST (invoice price).
+ * Returns null when any input is null/absent — never guesses a GST rate.
+ * Formula: Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100)
+ *   where sellPriceExGst = sellPrice / (1 + gstPercent / 100)
+ * Mirrored identically in web-app/src/pages/SetupProductsPage.tsx.
+ */
+export function computeGpPercent(
+  sellPrice: number | null,
+  costPrice: number | null,
+  gstPercent: number | null,
+): number | null {
+  if (sellPrice == null || costPrice == null || gstPercent == null) return null;
+  if (sellPrice <= 0) return null;
+  const sellPriceExGst = sellPrice / (1 + gstPercent / 100);
+  if (sellPriceExGst <= 0) return null;
+  return Math.round(((sellPriceExGst - costPrice) / sellPriceExGst) * 100);
+}
+
 function normalizeName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -228,6 +248,7 @@ export type ProposedAction =
       qty: number;
       caseSize: number | null;
       sellPrice?: number | null;  // product's current sell price — used to compute impactOnGP
+      gstPercent?: number | null; // product's GST rate — used for GST-adjusted GP%
       possibleCaseMismatch?: boolean;
       caseMismatchGuess?: number | null;
       correctedUnitPrice?: number | null;
@@ -253,6 +274,7 @@ export type ProposedAction =
       qty: number;
       caseSize: number | null;
       sellPrice?: number | null;  // product's current sell price — used to compute impactOnGP
+      gstPercent?: number | null; // product's GST rate — used for GST-adjusted GP%
     }
   | {
       id: string;
@@ -496,6 +518,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             qty: line.qty,
             caseSize: cs,
             sellPrice: typeof matched.sellPrice === "number" ? matched.sellPrice : null,
+            gstPercent: typeof matched.gstPercent === "number" ? matched.gstPercent : null,
             ...caseMismatchFields,
           });
         } else {
@@ -627,6 +650,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
           qty: line.qty,
           caseSize: cs,
           sellPrice: typeof nearDuplicate.sellPrice === "number" ? nearDuplicate.sellPrice : null,
+          gstPercent: typeof nearDuplicate.gstPercent === "number" ? nearDuplicate.gstPercent : null,
         });
       } else {
         // Genuinely new product â waits for user confirmation
