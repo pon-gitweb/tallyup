@@ -11,6 +11,7 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
+import { resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe } from './suiteeTools';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -3520,6 +3521,8 @@ app.post("/suitee", async (req, res) => {
           id: d.id,
           name: data.name || d.id,
           costPrice: typeof data.costPrice === "number" ? data.costPrice : null,
+          sellPrice: typeof data.sellPrice === "number" ? data.sellPrice : null,
+          gstPercent: typeof data.gstPercent === "number" ? data.gstPercent : null,
           parLevel: typeof data.parLevel === "number" ? data.parLevel : null,
           lastCountAt: data.lastCountAt?.toDate?.()?.toISOString() || null,
         };
@@ -4642,7 +4645,7 @@ ${HOSTI_BUSINESS_REDIRECT}
 ${context}`;
 
     // Build multi-turn messages (history + current question)
-    const messages: { role: string; content: string }[] = [];
+    const messages: Array<{ role: string; content: string | any[] }> = [];
     if (Array.isArray(history)) {
       for (const msg of history) {
         if (msg.role === "user" || msg.role === "assistant") {
@@ -4655,27 +4658,52 @@ ${context}`;
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
 
-    const claudeResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 800,
-        temperature: 0.3,
-        system: systemPrompt,
-        messages,
-      }),
+    // Build recipe list for the GP tool from the already-fetched recipesSnap.
+    const recipesForTool: SuiteeRecipe[] = (recipesSnap?.docs ?? []).flatMap((r: any) => {
+      const d = r.data() as any;
+      if (typeof d.name !== "string") return [];
+      return [{
+        name: d.name,
+        rrp: typeof d.rrp === "number" ? d.rrp : null,
+        cogs: typeof d.cogs === "number" ? d.cogs : null,
+      }];
     });
-    if (!claudeResp.ok) {
-      const err = await claudeResp.text().catch(() => "");
-      throw new Error("Claude API error: " + err);
-    }
-    const claudeData = await claudeResp.json() as any;
-    const answer = claudeData?.content?.[0]?.text || "I'm having trouble accessing your data right now. Please try again.";
+
+    // callClaude wraps the raw Anthropic fetch — consistent with all other API calls in this file.
+    // The Anthropic SDK is not a dependency; raw fetch is the established pattern here.
+    const callClaude = async (msgs: Array<{ role: string; content: string | any[] }>): Promise<{ content: any[] }> => {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 800,
+          temperature: 0.3,
+          system: systemPrompt,
+          messages: msgs,
+          tools: [GP_ANALYSIS_TOOL],
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => "");
+        throw new Error("Claude API error: " + err);
+      }
+      return resp.json() as Promise<{ content: any[] }>;
+    };
+
+    const answer = await runToolLoop(
+      callClaude,
+      messages,
+      (_toolName: string, input: any) => resolveGpAnalysis(
+        typeof input?.keyword === "string" ? input.keyword : "",
+        products,
+        recipesForTool,
+      ),
+    );
 
     const suiteeMeter = await trackAiCall(venueId, 'suitee');
     console.log("[api/suitee] OK", { uid, venueId, questionLength: question.length });
