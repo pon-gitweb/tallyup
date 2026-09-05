@@ -220,6 +220,17 @@ SUGGESTED ORDERS:
 - Low confidence = fewer stocktakes completed, treat suggestions as a starting point
 - High confidence = 6+ stocktakes, suggestions are based on reliable velocity patterns
 - Long press a product's count field to see its stockout prediction
+
+GP MARGIN ALERTS (manager/owner only):
+- When a supplier invoice causes an ingredient price to jump 5% or more, Hosti automatically checks every recipe that uses that ingredient and works out how much the cost-per-serve has shifted
+- If the shift is big enough to matter, a dismissable banner appears at the top of the Products page on the web dashboard showing which recipe was affected, how much the ingredient cost changed, and what the recipe's gross-profit margin was before and after
+- The banner stays until you dismiss it — dismissing on any device clears it for everyone (it is stored in Firestore, not the browser)
+- You control how sensitive these alerts are from Account → Settings → Notifications on the web dashboard:
+  - "All changes – nothing missed" catches even tiny shifts ($0.05+ cost change per serve)
+  - "Notable changes (recommended)" surfaces shifts that are likely to move margin meaningfully ($0.20+ per serve, the default when nothing is set)
+  - "Major changes only" triggers only when cost-per-serve moves by $1.00 or more
+  - "Off" disables GP margin alerts entirely
+- Staff users do not see these banners — owner and manager only
 `,
 
   planned: `
