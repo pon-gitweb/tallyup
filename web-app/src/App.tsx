@@ -247,7 +247,7 @@ function App() {
         <CreateVenuePage onOpenVenue={openVenue} />
       )}
       {page === 'hostihealth'  && activeVenue && <HostiHealthPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
-      {page === 'products'     && activeVenue && <SetupProductsPage venueId={activeVenue.id} />}
+      {page === 'products'     && activeVenue && <SetupProductsPage venueId={activeVenue.id} canManage={canManage} />}
       {page === 'suppliers'    && activeVenue && <SuppliersPage venueId={activeVenue.id} />}
       {page === 'reports'      && activeVenue && <ReportsPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}
       {page === 'orders'       && activeVenue && <OrdersPage venueId={activeVenue.id} />}

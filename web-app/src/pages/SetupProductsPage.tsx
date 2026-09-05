@@ -1245,7 +1245,23 @@ function RecipeLinkModal({
   )
 }
 
-export default function SetupProductsPage({ venueId }: { venueId: string }) {
+// ─── GP Alert type ────────────────────────────────────────────────────────────
+
+type GpAlert = {
+  id: string
+  recipeId: string
+  recipeName: string
+  ingredientProductId: string
+  ingredientProductName: string
+  oldCostPrice: number
+  newCostPrice: number
+  changePercent: number
+  oldGpPct: number | null
+  newGpPct: number | null
+  dismissed: boolean
+}
+
+export default function SetupProductsPage({ venueId, canManage = false }: { venueId: string; canManage?: boolean }) {
   const [venueCategories, setVenueCategories] = useState<string[]>(DEFAULT_CATEGORIES)
   const [venueCountry, setVenueCountry] = useState<string | null>(null)
   const [suppliers, setSuppliers] = useState<VenueSupplier[]>([])
@@ -1276,6 +1292,54 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
   const [csvError, setCsvError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // ── GP alert state (owner/manager only) ───────────────────────────────────
+  const [gpAlerts, setGpAlerts] = useState<GpAlert[]>([])
+  const [dismissingAlertId, setDismissingAlertId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!canManage) { setGpAlerts([]); return }
+    const unsub = onSnapshot(
+      query(
+        collection(db, 'venues', venueId, 'gpAlerts'),
+        where('dismissed', '==', false),
+      ),
+      (snap) => {
+        setGpAlerts(snap.docs.map((d) => {
+          const data = d.data() as any
+          return {
+            id: d.id,
+            recipeId: data.recipeId ?? '',
+            recipeName: data.recipeName ?? d.id,
+            ingredientProductId: data.ingredientProductId ?? '',
+            ingredientProductName: data.ingredientProductName ?? '',
+            oldCostPrice: typeof data.oldCostPrice === 'number' ? data.oldCostPrice : 0,
+            newCostPrice: typeof data.newCostPrice === 'number' ? data.newCostPrice : 0,
+            changePercent: typeof data.changePercent === 'number' ? data.changePercent : 0,
+            oldGpPct: typeof data.oldGpPct === 'number' ? data.oldGpPct : null,
+            newGpPct: typeof data.newGpPct === 'number' ? data.newGpPct : null,
+            dismissed: data.dismissed === true,
+          }
+        }))
+      },
+      () => setGpAlerts([]),
+    )
+    return unsub
+  }, [venueId, canManage])
+
+  async function dismissGpAlert(alertId: string) {
+    if (dismissingAlertId) return
+    setDismissingAlertId(alertId)
+    try {
+      await updateDoc(doc(db, 'venues', venueId, 'gpAlerts', alertId), {
+        dismissed: true,
+        dismissedBy: auth.currentUser?.uid ?? null,
+        dismissedAt: serverTimestamp(),
+      })
+      // onSnapshot removes it from gpAlerts automatically on success
+    } catch {}
+    setDismissingAlertId(null)
+  }
 
   useEffect(() => {
     getDoc(doc(db, 'venues', venueId)).then((snap) => {
@@ -2045,6 +2109,59 @@ export default function SetupProductsPage({ venueId }: { venueId: string }) {
     <div>
       <h1 className={styles.heading}>Products</h1>
       <p className={styles.subhead}>Add and edit products with a real keyboard.</p>
+
+      {/* ── GP alert banners — owner/manager only, backed by Firestore ────────── */}
+      {canManage && gpAlerts.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+          {gpAlerts.map((alert) => (
+            <div
+              key={alert.id}
+              style={{
+                background: '#fef2f2',
+                border: '1.5px solid #f87171',
+                borderRadius: 12,
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12,
+              }}
+            >
+              <span style={{ fontSize: 18, marginTop: 1 }}>📉</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 700, color: '#991b1b' }}>
+                  {alert.recipeName} margin affected
+                </p>
+                <p style={{ margin: 0, fontSize: 12, color: '#991b1b', opacity: 0.85 }}>
+                  {alert.ingredientProductName} cost changed
+                  {alert.changePercent > 0 ? ` +${Math.round(alert.changePercent)}%` : ` ${Math.round(alert.changePercent)}%`}
+                  {alert.oldGpPct != null && alert.newGpPct != null
+                    ? ` — recipe margin ${alert.oldGpPct}% → ${alert.newGpPct}%`
+                    : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => dismissGpAlert(alert.id)}
+                disabled={dismissingAlertId === alert.id}
+                style={{
+                  flexShrink: 0,
+                  background: 'none',
+                  border: '1.5px solid #f87171',
+                  borderRadius: 6,
+                  padding: '3px 10px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#991b1b',
+                  cursor: 'pointer',
+                  opacity: dismissingAlertId === alert.id ? 0.5 : 1,
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {incompleteCount > 0 && (
         <div style={{
