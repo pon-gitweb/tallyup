@@ -15,6 +15,7 @@ import {
   resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe,
   SUPPLIER_TREND_TOOL, aggregateSupplierTrend, PriceChangeRecord,
   WORST_GP_RECIPES_TOOL, aggregateWorstGpRecipes,
+  SUPPLIER_COMPLIANCE_TOOL, aggregateSupplierCompliance, InvoiceHistoryRecord,
 } from './suiteeTools';
 
 const app = express();
@@ -4691,7 +4692,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4734,6 +4735,36 @@ ${context}`;
           ? Math.round(input.topN)
           : 5;
         return aggregateWorstGpRecipes(recipesForTool, topN);
+      }
+      if (toolName === 'get_supplier_compliance') {
+        const days = (typeof input?.days === 'number' && input.days > 0)
+          ? Math.round(input.days)
+          : 90;
+        const cutoff = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+        );
+        // Collection-group query across venues/{venueId}/products/{id}/suppliers/{id}/invoiceHistory.
+        // Requires the COLLECTION_GROUP index on invoiceHistory.date (in firestore.indexes.json).
+        // Venue-scoped by filtering client-side against the product IDs already fetched for this venue.
+        const venueProductIds = new Set((productsSnap?.docs ?? []).map((d: any) => d.id));
+        const histSnap = await db.collectionGroup('invoiceHistory')
+          .where('date', '>=', cutoff)
+          .get();
+        const records: InvoiceHistoryRecord[] = histSnap.docs
+          .filter((d: any) => venueProductIds.has(d.data().productId))
+          .map((d: any) => {
+            const data = d.data();
+            return {
+              productId:            typeof data.productId            === 'string'  ? data.productId            : '',
+              productName:          typeof data.productName          === 'string'  ? data.productName          : '',
+              unitCost:             typeof data.unitCost             === 'number'  ? data.unitCost             : 0,
+              qty:                  typeof data.qty                  === 'number'  ? data.qty                  : 1,
+              wasPreferredSupplier: typeof data.wasPreferredSupplier === 'boolean' ? data.wasPreferredSupplier : null,
+              dateMs:               data.date?.toMillis?.()         ?? 0,
+            };
+          })
+          .filter(r => r.productId !== '');
+        return aggregateSupplierCompliance(records, 5, days);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

@@ -405,6 +405,148 @@ export function aggregateWorstGpRecipes(
   };
 }
 
+// ── Stage 3: get_supplier_compliance ─────────────────────────────────────────
+
+/**
+ * One invoiceHistory entry as fetched by the caller and passed to aggregation.
+ * Includes a dateMs field so the aggregation can find the most-recent preferred
+ * price without needing Firestore Timestamps in the pure function.
+ */
+export interface InvoiceHistoryRecord {
+  productId: string;
+  productName: string;
+  unitCost: number;
+  qty: number;
+  wasPreferredSupplier: boolean | null;
+  dateMs: number;
+}
+
+export interface SupplierComplianceEntry {
+  productName: string;
+  totalPurchases: number;
+  nonPreferredPurchases: number;
+  /** Dollar amount above preferred price; null when no preferred-price baseline exists in the window. */
+  estimatedExtraCost: number | null;
+}
+
+export interface SupplierComplianceResult {
+  hasData: boolean;
+  products: SupplierComplianceEntry[];
+  windowDays: number;
+}
+
+/**
+ * Stage 3 tool — surface products where purchases were made from non-preferred
+ * suppliers, ranked by estimated extra cost.
+ */
+export const SUPPLIER_COMPLIANCE_TOOL = {
+  name: 'get_supplier_compliance',
+  description:
+    'Returns products where purchases were made from non-preferred suppliers in the ' +
+    'look-back window, ranked by estimatedExtraCost descending (most costly drift first). ' +
+    'For each product: totalPurchases (all invoice events in window), nonPreferredPurchases ' +
+    '(from a non-preferred supplier), and estimatedExtraCost — the dollar difference vs the ' +
+    'preferred supplier\'s most-recent price in the same window, null when no preferred-price ' +
+    'baseline exists for comparison. Products with 100% preferred-supplier compliance excluded. ' +
+    'Returns hasData:false when no non-preferred purchases exist in the window.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'number',
+        description: 'Look-back window in days. Defaults to 90 if omitted.',
+      },
+    },
+    required: [],
+  },
+} as const;
+
+/**
+ * Groups invoiceHistory records by product, counts preferred vs non-preferred
+ * purchases, and computes the dollar impact of non-preferred buying.
+ *
+ * Extra-cost calculation:
+ *   - Find the most-recent preferred-supplier unitCost for the product (by dateMs).
+ *   - For each non-preferred entry where unitCost > that benchmark:
+ *       add (unitCost − benchmark) × qty to estimatedExtraCost.
+ *   - If no preferred entry exists in the window: estimatedExtraCost = null
+ *     (honest gap — not fabricated as 0 or as the full spend).
+ *
+ * Sorting: entries with a real dollar figure sort before null entries (descending).
+ *
+ * @param records    invoiceHistory entries fetched by the caller, already filtered
+ *                   to this venue and the time window.
+ * @param topN       Maximum entries to return (default 5).
+ * @param windowDays Echoed back into the result.
+ */
+export function aggregateSupplierCompliance(
+  records: InvoiceHistoryRecord[],
+  topN = 5,
+  windowDays = 90,
+): SupplierComplianceResult {
+  // Group records by productId.
+  const byProduct = new Map<string, { productName: string; recs: InvoiceHistoryRecord[] }>();
+  for (const r of records) {
+    if (!r.productId) continue;
+    if (!byProduct.has(r.productId)) {
+      byProduct.set(r.productId, { productName: r.productName, recs: [] });
+    }
+    byProduct.get(r.productId)!.recs.push(r);
+  }
+
+  const entries: SupplierComplianceEntry[] = [];
+
+  for (const { productName, recs } of byProduct.values()) {
+    const nonPreferredRecs = recs.filter(r => r.wasPreferredSupplier === false);
+    if (nonPreferredRecs.length === 0) continue; // 100% compliant — exclude
+
+    // Most-recent preferred-supplier entry (sorted by dateMs ascending, last = newest).
+    const preferredRecs = recs
+      .filter(r => r.wasPreferredSupplier === true)
+      .sort((a, b) => a.dateMs - b.dateMs);
+    const preferredBenchmark = preferredRecs.length > 0
+      ? preferredRecs[preferredRecs.length - 1].unitCost
+      : null;
+
+    let estimatedExtraCost: number | null = null;
+    if (preferredBenchmark !== null) {
+      let extra = 0;
+      for (const r of nonPreferredRecs) {
+        const diff = r.unitCost - preferredBenchmark;
+        if (diff > 0) extra += diff * r.qty;
+      }
+      estimatedExtraCost = Math.round(extra * 100) / 100;
+    }
+
+    entries.push({
+      productName,
+      totalPurchases: recs.length,
+      nonPreferredPurchases: nonPreferredRecs.length,
+      estimatedExtraCost,
+    });
+  }
+
+  if (entries.length === 0) {
+    return { hasData: false, products: [], windowDays };
+  }
+
+  // Sort by estimatedExtraCost descending; null entries trail all real figures.
+  entries.sort((a, b) => {
+    if (a.estimatedExtraCost !== null && b.estimatedExtraCost !== null) {
+      return b.estimatedExtraCost - a.estimatedExtraCost;
+    }
+    if (a.estimatedExtraCost !== null) return -1;
+    if (b.estimatedExtraCost !== null) return 1;
+    return 0;
+  });
+
+  return {
+    hasData: true,
+    products: entries.slice(0, topN),
+    windowDays,
+  };
+}
+
 // ── runToolLoop ───────────────────────────────────────────────────────────────
 
 /** Callable passed in by the caller — wraps the actual Anthropic API fetch. */
