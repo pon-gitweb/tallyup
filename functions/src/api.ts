@@ -16,6 +16,7 @@ import {
   SUPPLIER_TREND_TOOL, aggregateSupplierTrend, PriceChangeRecord,
   WORST_GP_RECIPES_TOOL, aggregateWorstGpRecipes,
   SUPPLIER_COMPLIANCE_TOOL, aggregateSupplierCompliance, InvoiceHistoryRecord,
+  BATCH_RATIO_TOOL, aggregateBatchRatioConsistency, BatchRecipe, BatchRecipeItem,
 } from './suiteeTools';
 
 const app = express();
@@ -4692,7 +4693,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4765,6 +4766,32 @@ ${context}`;
           })
           .filter(r => r.productId !== '');
         return aggregateSupplierCompliance(records, 5, days);
+      }
+      if (toolName === 'get_batch_ratio_consistency') {
+        // Build productId → velocities map from the productCycles Map (keyed by product name).
+        // productCycles is populated during stocktake processing above and is accessible via closure.
+        const velByProductId = new Map<string, number[]>();
+        productCycles.forEach((entry) => {
+          if (entry.productId && !velByProductId.has(entry.productId)) {
+            velByProductId.set(entry.productId, entry.velocities);
+          }
+        });
+        // Build BatchRecipe[] from the already-fetched recipesSnap (confirmed recipes only,
+        // as the query already filters status==='confirmed').
+        const batchRecipes: BatchRecipe[] = (recipesSnap?.docs ?? []).flatMap((doc: any) => {
+          const d = doc.data() as any;
+          if (typeof d.name !== 'string') return [];
+          const items: BatchRecipeItem[] = (Array.isArray(d.items) ? d.items : []).map((ing: any) => ({
+            productId:   typeof ing.productId   === 'string' ? ing.productId   : null,
+            productName: typeof ing.productName === 'string' ? ing.productName : '',
+            qty:         typeof ing.qty         === 'number' ? ing.qty         : 0,
+            unit:        typeof ing.unit        === 'string' ? ing.unit        : '',
+            packSizeMl:  typeof ing.packSizeMl  === 'number' ? ing.packSizeMl  : null,
+            packSizeG:   typeof ing.packSizeG   === 'number' ? ing.packSizeG   : null,
+          }));
+          return [{ id: doc.id, name: d.name, items }];
+        });
+        return aggregateBatchRatioConsistency(batchRecipes, velByProductId);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

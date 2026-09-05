@@ -547,6 +547,193 @@ export function aggregateSupplierCompliance(
   };
 }
 
+// ── Helpers for batch ratio consistency ──────────────────────────────────────
+
+/** Median of a sorted-ascending numeric array. */
+function medianSorted(sorted: number[]): number {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  const mid = Math.floor(n / 2);
+  return n % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Converts a stock depletion velocity (stock units / week) to an implied
+ * serves-per-week figure, using the recipe ingredient's spec qty and unit.
+ *
+ * Mirrors the unit-conversion logic already proven in api.ts ~lines 4423–4435
+ * (the pour-variance section). Same logic, same cases — referenced not
+ * reimplemented.
+ */
+function impliedServes(
+  avgVelocity: number,
+  qty: number,
+  unit: string,
+  packSizeMl: number | null | undefined,
+  packSizeG: number | null | undefined,
+): number | null {
+  if (qty <= 0) return null;
+  const u = unit.toLowerCase().trim();
+  if (u === 'ml' || u === 'l') {
+    if (!packSizeMl || packSizeMl <= 0) return null;
+    const specMl = u === 'l' ? qty * 1000 : qty;
+    return specMl > 0 ? (avgVelocity * packSizeMl) / specMl : null;
+  }
+  if (u === 'g' || u === 'kg') {
+    if (!packSizeG || packSizeG <= 0) return null;
+    const specG = u === 'kg' ? qty * 1000 : qty;
+    return specG > 0 ? (avgVelocity * packSizeG) / specG : null;
+  }
+  if (['each', 'ea', 'unit', 'count', ''].includes(u)) {
+    return avgVelocity / qty;
+  }
+  return null; // unknown unit — skip rather than guess
+}
+
+// ── Stage 4: get_batch_ratio_consistency ─────────────────────────────────────
+
+export interface BatchRecipeItem {
+  productId: string | null;
+  productName: string;
+  qty: number;
+  unit: string;
+  packSizeMl?: number | null;
+  packSizeG?: number | null;
+}
+
+export interface BatchRecipe {
+  id: string;
+  name: string;
+  items: BatchRecipeItem[];
+}
+
+export interface BatchIngredientResult {
+  productName: string;
+  /** % deviation from the recipe's median implied-serves-per-week; negative = consuming less than expected. */
+  variancePercent: number;
+}
+
+export interface BatchRatioEntry {
+  recipeName: string;
+  ingredients: BatchIngredientResult[];
+  /** true when every ingredient is within 20% of the recipe's median implied rate. */
+  ratioConsistent: boolean;
+}
+
+export interface BatchRatioResult {
+  hasData: boolean;
+  recipes: BatchRatioEntry[];
+}
+
+/**
+ * Stage 4 tool — flag recipes where ingredients are depleting out of proportion
+ * with their recipe spec ratios, which can indicate wastage, substitution, or
+ * a recipe not being followed — but cannot distinguish between these causes.
+ */
+export const BATCH_RATIO_TOOL = {
+  name: 'get_batch_ratio_consistency',
+  description:
+    'For each CraftIt recipe with 2+ stock-tracked ingredients, compares each ' +
+    "ingredient's actual depletion rate against the recipe's proportional spec. " +
+    'Each ingredient gets a variancePercent showing how far its implied consumption ' +
+    'rate deviates from the recipe\'s median. Recipes where any ingredient exceeds ' +
+    '20% deviation are flagged ratioConsistent: false. ' +
+    'IMPORTANT LIMITATION: this identifies divergence worth investigating, not a ' +
+    'diagnosis. It cannot distinguish "recipe not followed" from "ingredient used ' +
+    'elsewhere" or "one item wasted independently of the batch." Always present ' +
+    'findings as something worth looking into, never as a confirmed conclusion. ' +
+    'Returns hasData:false when no stocktake velocity data is available.',
+  input_schema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+} as const;
+
+/**
+ * Computes batch ratio consistency across a set of recipes.
+ *
+ * For each recipe with ≥2 velocity-trackable ingredients:
+ *   1. Compute avg velocity per ingredient (non-zero velocities only).
+ *   2. Convert to "implied serves / week" using the same unit-conversion logic
+ *      as the pour-variance section of the Suitee route (~lines 4423–4435).
+ *   3. Find the median implied-serves/week across scoreable ingredients.
+ *   4. Express each ingredient's deviation from that median as a %.
+ *   5. ratioConsistent = no ingredient exceeds ±20%.
+ *
+ * Coverage gaps reduce output, not correctness:
+ *   - Ingredient missing productId → skipped
+ *   - ml/g ingredient missing packSize → skipped (can't convert velocity to recipe units)
+ *   - Recipe with < 2 scoreable ingredients → excluded
+ *   - All velocities zero or empty → hasData: false
+ *
+ * Sorted by each recipe's max |variancePercent| descending (most divergent first).
+ *
+ * @param recipes               Recipe documents mapped to BatchRecipe shape.
+ * @param velocitiesByProductId productId → velocities[] map from the route handler's
+ *                              productCycles closure; non-zero velocities are averaged.
+ * @param topN                  Maximum entries to return (default 5).
+ * @param threshold             Deviation % that triggers ratioConsistent: false (default 20).
+ */
+export function aggregateBatchRatioConsistency(
+  recipes: BatchRecipe[],
+  velocitiesByProductId: Map<string, number[]>,
+  topN = 5,
+  threshold = 20,
+): BatchRatioResult {
+  const entries: Array<BatchRatioEntry & { maxAbsVar: number }> = [];
+
+  for (const recipe of recipes) {
+    const scoreable: Array<{ productName: string; implied: number }> = [];
+
+    for (const item of recipe.items) {
+      if (!item.productId || item.qty <= 0) continue;
+
+      const vels = velocitiesByProductId.get(item.productId);
+      if (!vels) continue;
+      const nonZero = vels.filter(v => v !== 0); // matches existing pour-variance pattern
+      if (nonZero.length === 0) continue;
+
+      const avgVel = nonZero.reduce((a, b) => a + b, 0) / nonZero.length;
+      const implied = impliedServes(avgVel, item.qty, item.unit, item.packSizeMl, item.packSizeG);
+      if (implied == null || implied <= 0) continue;
+
+      scoreable.push({ productName: item.productName, implied });
+    }
+
+    if (scoreable.length < 2) continue; // not enough data points to detect ratio drift
+
+    const sortedImplied = [...scoreable.map(s => s.implied)].sort((a, b) => a - b);
+    const med = medianSorted(sortedImplied);
+    if (med <= 0) continue; // guard against division by zero
+
+    const ingredients: BatchIngredientResult[] = scoreable.map(s => ({
+      productName: s.productName,
+      variancePercent: Math.round(((s.implied - med) / med * 100) * 100) / 100,
+    }));
+
+    const maxAbsVar = Math.max(...ingredients.map(i => Math.abs(i.variancePercent)));
+
+    entries.push({
+      recipeName: recipe.name,
+      ingredients,
+      ratioConsistent: maxAbsVar <= threshold, // "exceeds threshold" = strictly >
+      maxAbsVar,
+    });
+  }
+
+  if (entries.length === 0) return { hasData: false, recipes: [] };
+
+  entries.sort((a, b) => b.maxAbsVar - a.maxAbsVar);
+
+  return {
+    hasData: true,
+    recipes: entries.slice(0, topN).map(({ recipeName, ingredients, ratioConsistent }) => ({
+      recipeName, ingredients, ratioConsistent,
+    })),
+  };
+}
+
 // ── runToolLoop ───────────────────────────────────────────────────────────────
 
 /** Callable passed in by the caller — wraps the actual Anthropic API fetch. */
