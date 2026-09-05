@@ -253,7 +253,7 @@ function App() {
       {page === 'orders'       && activeVenue && <OrdersPage venueId={activeVenue.id} />}
       {page === 'craftit'      && activeVenue && <CraftItPage venueId={activeVenue.id} />}
       {page === 'suitee'       && activeVenue && <SuiteePage venueId={activeVenue.id} user={user} />}
-      {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} />}
+      {page === 'account'      && activeVenue && <SettingsPage venueId={activeVenue.id} user={user} canManage={canManage} />}
       {page === 'team'         && activeVenue && <TeamPage venueId={activeVenue.id} user={user} />}
       {page === 'import'       && activeVenue && <ImportPage venueId={activeVenue.id} />}
       {page === 'invoices'     && activeVenue && <InvoicesPage venueId={activeVenue.id} onNavigate={(p) => setPage(p as Page)} />}

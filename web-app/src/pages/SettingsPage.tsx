@@ -6,11 +6,14 @@ import styles from './SettingsPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type GpAlertSensitivity = 'small' | 'moderate' | 'significant' | 'off'
+
 type VenueData = {
   name: string
   country: string | null
   timezone: string | null
   ownerUid: string | null
+  gpAlertSensitivity: GpAlertSensitivity | null
 }
 
 type LabourSettings = {
@@ -21,7 +24,7 @@ type LabourSettings = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SettingsPage({ venueId, user }: { venueId: string; user: User }) {
+export default function SettingsPage({ venueId, user, canManage = false }: { venueId: string; user: User; canManage?: boolean }) {
   const [venue, setVenue] = useState<VenueData | null>(null)
   const [_labour, setLabour] = useState<LabourSettings | null>(null)
   const [loading, setLoading] = useState(true)
@@ -39,6 +42,10 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
 
   // Country edit state
   const [editingCountry, setEditingCountry] = useState(false)
+
+  // GP alert sensitivity state
+  const [gpAlertSensitivitySaving, setGpAlertSensitivitySaving] = useState(false)
+  const [gpAlertSensitivitySaved, setGpAlertSensitivitySaved] = useState(false)
 
   // Labour settings — one-shot read
   useEffect(() => {
@@ -71,6 +78,9 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
             country: d.country ?? null,
             timezone: d.timezone ?? null,
             ownerUid: d.ownerUid ?? null,
+            gpAlertSensitivity: (['small', 'moderate', 'significant', 'off'] as const).includes(d.gpAlertSensitivity)
+              ? d.gpAlertSensitivity as GpAlertSensitivity
+              : null,
           })
         }
         setLoading(false)
@@ -81,6 +91,17 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
   }, [venueId])
 
   const isOwner = venue?.ownerUid === user.uid
+
+  async function saveGpAlertSensitivity(value: GpAlertSensitivity) {
+    if (gpAlertSensitivitySaving) return
+    setGpAlertSensitivitySaving(true)
+    try {
+      await updateDoc(doc(db, 'venues', venueId), { gpAlertSensitivity: value })
+      setGpAlertSensitivitySaved(true)
+      setTimeout(() => setGpAlertSensitivitySaved(false), 1500)
+    } catch {}
+    setGpAlertSensitivitySaving(false)
+  }
 
   async function saveName() {
     if (!nameInput.trim() || nameSaving) return
@@ -194,6 +215,35 @@ export default function SettingsPage({ venueId, user }: { venueId: string; user:
             <span className={styles.fieldValue}>{venue?.timezone || '—'}</span>
           </div>
         </div>
+
+        {/* Notifications — owner/manager only */}
+        {canManage && (
+          <div className={styles.card}>
+            <h2 className={styles.cardHeading}>Notifications</h2>
+
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>
+                Price change alerts
+                {gpAlertSensitivitySaved && <span className={styles.savedBadge}>✓ Saved</span>}
+              </span>
+              <div className={styles.editRow}>
+                <select
+                  className={styles.editInput}
+                  style={{ maxWidth: 260 }}
+                  value={venue?.gpAlertSensitivity ?? 'moderate'}
+                  disabled={gpAlertSensitivitySaving}
+                  onChange={e => saveGpAlertSensitivity(e.target.value as GpAlertSensitivity)}
+                >
+                  <option value="small">All changes – nothing missed</option>
+                  <option value="moderate">Notable changes (recommended)</option>
+                  <option value="significant">Major changes only</option>
+                  <option value="off">Off</option>
+                </select>
+                {gpAlertSensitivitySaving && <span className={styles.savingNote}>Saving…</span>}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Labour Settings */}
         <div className={styles.card}>
