@@ -320,6 +320,91 @@ export function aggregateSupplierTrend(
   };
 }
 
+// ── Stage 2: get_worst_gp_recipes ────────────────────────────────────────────
+
+export interface WorstGpRecipeEntry {
+  recipeName: string;
+  gpPercent: number;
+  rrp: number;
+  cogs: number;
+}
+
+export interface WorstGpRecipeResult {
+  hasData: boolean;
+  recipes: WorstGpRecipeEntry[];
+  /** How many recipes were skipped because rrp or cogs was absent. */
+  excludedCount: number;
+}
+
+/**
+ * Stage 2 tool — rank CraftIt recipes by worst GP%, ascending (lowest first).
+ */
+export const WORST_GP_RECIPES_TOOL = {
+  name: 'get_worst_gp_recipes',
+  description:
+    'Returns the worst-performing CraftIt recipes by gross-profit percentage, ' +
+    'sorted ascending (lowest GP% first, so the worst recipe is at index 0). ' +
+    'Only recipes with both rrp and cogs recorded are ranked — those missing ' +
+    'either field are excluded and counted in excludedCount, not scored as 0%. ' +
+    'Returns hasData:false when no recipes are rankable. ' +
+    'Use this when the user asks which recipes have the worst or lowest margins.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      topN: {
+        type: 'number',
+        description: 'Maximum number of recipes to return. Defaults to 5 if omitted.',
+      },
+    },
+    required: [],
+  },
+} as const;
+
+/**
+ * Ranks recipes by GP% ascending (worst first), excluding those without
+ * calculable GP% entirely rather than treating them as 0%.
+ *
+ * A recipe with missing rrp or cogs isn't confirmed to have a bad margin —
+ * it simply has no margin on record. Scoring it as 0% would misrepresent it.
+ *
+ * @param recipes  The venue's recipe list, already fetched by the caller.
+ * @param topN     Maximum entries to return (default 5).
+ */
+export function aggregateWorstGpRecipes(
+  recipes: SuiteeRecipe[],
+  topN = 5,
+): WorstGpRecipeResult {
+  let excludedCount = 0;
+  const scored: WorstGpRecipeEntry[] = [];
+
+  for (const r of recipes) {
+    if (r.rrp == null || r.cogs == null) {
+      excludedCount++;
+      continue;
+    }
+    // computeRecipeGpPct returns null when rrp <= 0 — exclude those too.
+    const gp = computeRecipeGpPct(r.rrp, r.cogs);
+    if (gp === null) {
+      excludedCount++;
+      continue;
+    }
+    scored.push({ recipeName: r.name, gpPercent: gp, rrp: r.rrp, cogs: r.cogs });
+  }
+
+  if (scored.length === 0) {
+    return { hasData: false, recipes: [], excludedCount };
+  }
+
+  // Sort ascending — lowest GP% (worst margin) first.
+  scored.sort((a, b) => a.gpPercent - b.gpPercent);
+
+  return {
+    hasData: true,
+    recipes: scored.slice(0, topN),
+    excludedCount,
+  };
+}
+
 // ── runToolLoop ───────────────────────────────────────────────────────────────
 
 /** Callable passed in by the caller — wraps the actual Anthropic API fetch. */

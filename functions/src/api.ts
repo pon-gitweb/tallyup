@@ -14,6 +14,7 @@ import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './name
 import {
   resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe,
   SUPPLIER_TREND_TOOL, aggregateSupplierTrend, PriceChangeRecord,
+  WORST_GP_RECIPES_TOOL, aggregateWorstGpRecipes,
 } from './suiteeTools';
 
 const app = express();
@@ -4688,7 +4689,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4725,6 +4726,12 @@ ${context}`;
           };
         });
         return aggregateSupplierTrend(records, 5, days);
+      }
+      if (toolName === 'get_worst_gp_recipes') {
+        const topN = (typeof input?.topN === 'number' && input.topN > 0)
+          ? Math.round(input.topN)
+          : 5;
+        return aggregateWorstGpRecipes(recipesForTool, topN);
       }
       return { error: `Unknown tool: ${toolName}` };
     };
