@@ -16,6 +16,9 @@ export interface PriceTrackingOptions {
   supplierName?: string;
   invoiceId?: string;
   invoiceDocId?: string;
+  /** The invoice's own date string (YYYY-MM-DD or ISO). Used by the
+   *  stale-invoice protection gate to compare against costPriceBasisAt. */
+  invoiceDate?: string | null;
 }
 
 export interface HistoricalPriceTrackingOptions extends PriceTrackingOptions {
@@ -70,6 +73,110 @@ function computeCaseSizeFields(
     caseSize: cs,
     unitCost: perUnitPrice,
     caseCost: perUnitPrice != null ? perUnitPrice * cs : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stale-invoice protection gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when a late/current invoice should be held for manager review
+ * rather than automatically applied to costPrice. Gate fires only when BOTH
+ * conditions hold:
+ *   (a) The invoice's own date is strictly older than the product's current
+ *       costPriceBasisAt — a more-recent price is already recorded.
+ *   (b) The change is significant (|changePercent| >= 5%) OR the current price
+ *       was manually set — manual prices carry more provenance weight.
+ *
+ * Returns false (never gate) when:
+ *   - invoiceDateStr is null / absent / unparseable — no date, no comparison possible.
+ *   - costPriceBasisDate is null — product has no prior recorded basis; this is the
+ *     first invoice ever for it, always allow.
+ *   - The invoice is newer than the basis — it should naturally overwrite the older price.
+ *   - The change is small (<5%) AND the current price is invoice-derived — staleness
+ *     alone is not enough to block a minor drift correction.
+ *
+ * Threshold 5% matches the existing flagPriceChangeToManager significance bar.
+ */
+export function shouldGateStaleInvoice(
+  invoiceDateStr: string | null | undefined,
+  costPriceBasisDate: Date | null,
+  changePercent: number,
+  costPriceSource: string | null | undefined,
+): boolean {
+  if (!invoiceDateStr) return false;
+  const invoiceDateObj = new Date(invoiceDateStr);
+  if (isNaN(invoiceDateObj.getTime())) return false;
+  if (costPriceBasisDate == null) return false; // first-ever price — never block
+  const isStale = invoiceDateObj < costPriceBasisDate;
+  if (!isStale) return false;
+  const isLargeChange = Math.abs(changePercent) >= 5;
+  const isAgainstManualPrice = costPriceSource === "manual";
+  return isLargeChange || isAgainstManualPrice;
+}
+
+/** Shape of a stale-invoice priceChangeFlags document (sans the server-side flaggedAt). */
+export interface StaleFlagDoc {
+  productId: string;
+  productName: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  invoiceId: string;
+  invoiceDocId: string | null;
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  direction: "increase" | "decrease";
+  /** Passed through untouched — Firestore Timestamp or null from the product doc. */
+  currentPriceSetAt: unknown;
+  currentPriceSource: string | null;
+  proposedHistoricalInvoiceDate: string | null;
+  qty: number;
+  caseSize: number | null;
+  /** Distinguishes stale-invoice conflicts from historical_invoice_conflict (Case 1). */
+  flagReason: "stale_invoice_conflict";
+  status: "pending";
+  acknowledgedBy: null;
+  acknowledgedAt: null;
+  impactOnGP: null;
+  note: null;
+  // flaggedAt is NOT included — caller appends admin.firestore.FieldValue.serverTimestamp(),
+  // matching the exact pattern of processHistoricalInvoiceLines Case 1.
+}
+
+/**
+ * Builds the priceChangeFlags document payload for a stale-invoice conflict.
+ * Schema is deliberately identical to processHistoricalInvoiceLines Case 1
+ * (flagReason: 'historical_invoice_conflict') except for the flagReason itself —
+ * this allows the existing manager review screen to render both kinds without change.
+ * flaggedAt is omitted here; the caller appends serverTimestamp() at write time.
+ */
+export function buildStaleFlagDoc(opts: {
+  productId: string;
+  productName: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  invoiceId: string;
+  invoiceDocId: string | null;
+  oldPrice: number;
+  newPrice: number;
+  changePercent: number;
+  direction: "increase" | "decrease";
+  currentPriceSetAt: unknown;
+  currentPriceSource: string | null;
+  proposedHistoricalInvoiceDate: string | null;
+  qty: number;
+  caseSize: number | null;
+}): StaleFlagDoc {
+  return {
+    ...opts,
+    flagReason: "stale_invoice_conflict",
+    status: "pending",
+    acknowledgedBy: null,
+    acknowledgedAt: null,
+    impactOnGP: null,
+    note: null,
   };
 }
 
@@ -497,6 +604,69 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
             matched.primarySupplierId.length > 0 &&
             cleanSupplierId !== null &&
             matched.primarySupplierId !== cleanSupplierId;
+          // ── Stale-invoice protection gate ────────────────────────────────────
+          // Compares this invoice's own date against the product's costPriceBasisAt
+          // (the timestamp of the most-recent confirmed price), not the venue's
+          // stocktake cycle — the product-specific date is always more accurate.
+          // If the invoice is stale AND the change is significant (or against a
+          // manually-set price), hold it for review instead of auto-applying.
+          const costPriceBasisAtTs = matched.costPriceBasisAt as FirebaseFirestore.Timestamp | null ?? null;
+          const costPriceBasisDate: Date | null = costPriceBasisAtTs?.toDate ? costPriceBasisAtTs.toDate() : null;
+          if (shouldGateStaleInvoice(opts.invoiceDate ?? null, costPriceBasisDate, changePercent, matched.costPriceSource ?? null)) {
+            // Write invoiceHistory so the price is historically logged
+            if (cleanSupplierId) {
+              const suppRef = productRef.collection("suppliers").doc(cleanSupplierId);
+              const invHistRef = suppRef.collection("invoiceHistory").doc();
+              batch.set(invHistRef, {
+                ...buildInvoiceHistoryEntry({
+                  invoiceId,
+                  productId: matched.id,
+                  productName: matched.name || line.name,
+                  supplierId: cleanSupplierId,
+                  supplierName: cleanSupplierName,
+                  unitCost: unitPrice,
+                  qty: line.qty,
+                  caseSize: cs,
+                  type: "priceChange",
+                  wasPreferredSupplier: typeof matched.primarySupplierId === "string"
+                    && matched.primarySupplierId.length > 0
+                    && matched.primarySupplierId === cleanSupplierId,
+                  oldPrice: existing,
+                  changePercent,
+                  direction,
+                  note: "Stale invoice — costPrice protected, queued for review",
+                }),
+                staleInvoiceDate: opts.invoiceDate ?? null,
+                staleScenario: "price_protected",
+              });
+              ops++;
+            }
+            // Write priceChangeFlags — same schema as Case 1 (historical_invoice_conflict)
+            const staleFlagRef = db.collection(`venues/${venueId}/priceChangeFlags`).doc();
+            batch.set(staleFlagRef, {
+              ...buildStaleFlagDoc({
+                productId: matched.id,
+                productName: matched.name || line.name,
+                supplierId: cleanSupplierId,
+                supplierName: cleanSupplierName,
+                invoiceId,
+                invoiceDocId: opts.invoiceDocId ?? null,
+                oldPrice: existing,
+                newPrice: unitPrice,
+                changePercent,
+                direction,
+                currentPriceSetAt: matched.costPriceUpdatedAt ?? null,
+                currentPriceSource: matched.costPriceSource ?? null,
+                proposedHistoricalInvoiceDate: opts.invoiceDate ?? null,
+                qty: line.qty,
+                caseSize: cs,
+              }),
+              flaggedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            ops++;
+            continue; // skip the normal priceChange proposal — do not auto-apply
+          }
+
           invoiceLineData.push({
             direction,
             changePercent,

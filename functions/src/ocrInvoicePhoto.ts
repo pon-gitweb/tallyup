@@ -1084,6 +1084,7 @@ async function processTaxInvoice(
           supplierName: resolvedSupplierName || data?.supplierName || payload.supplierName || "",
           invoiceId,
           invoiceDocId,
+          invoiceDate: payload.invoiceDate ?? null,
         });
     productMap = priceResult.autoProductMap || {};
     payload.proposals = payload.proposals.concat(priceResult.proposals);
