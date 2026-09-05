@@ -11,7 +11,10 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
-import { resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe } from './suiteeTools';
+import {
+  resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe,
+  SUPPLIER_TREND_TOOL, aggregateSupplierTrend, PriceChangeRecord,
+} from './suiteeTools';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -4685,7 +4688,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4695,15 +4698,38 @@ ${context}`;
       return resp.json() as Promise<{ content: any[] }>;
     };
 
-    const answer = await runToolLoop(
-      callClaude,
-      messages,
-      (_toolName: string, input: any) => resolveGpAnalysis(
-        typeof input?.keyword === "string" ? input.keyword : "",
-        products,
-        recipesForTool,
-      ),
-    );
+    // Multi-tool resolver — async so get_supplier_price_trend can query Firestore.
+    const resolveTool = async (toolName: string, input: any): Promise<any> => {
+      if (toolName === 'get_gp_analysis') {
+        return resolveGpAnalysis(
+          typeof input?.keyword === 'string' ? input.keyword : '',
+          products,
+          recipesForTool,
+        );
+      }
+      if (toolName === 'get_supplier_price_trend') {
+        const days = (typeof input?.days === 'number' && input.days > 0)
+          ? Math.round(input.days)
+          : 90;
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const flagsSnap = await db
+          .collection(`venues/${venueId}/priceChangeFlags`)
+          .where('flaggedAt', '>=', admin.firestore.Timestamp.fromDate(cutoff))
+          .get();
+        const records: PriceChangeRecord[] = flagsSnap.docs.map((d: any) => {
+          const data = d.data();
+          return {
+            supplierId: typeof data.supplierId === 'string' ? data.supplierId : null,
+            supplierName: typeof data.supplierName === 'string' ? data.supplierName : null,
+            changePercent: typeof data.changePercent === 'number' ? data.changePercent : 0,
+          };
+        });
+        return aggregateSupplierTrend(records, 5, days);
+      }
+      return { error: `Unknown tool: ${toolName}` };
+    };
+
+    const answer = await runToolLoop(callClaude, messages, resolveTool);
 
     const suiteeMeter = await trackAiCall(venueId, 'suitee');
     console.log("[api/suitee] OK", { uid, venueId, questionLength: question.length });
