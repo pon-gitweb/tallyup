@@ -4595,6 +4595,8 @@ Note: A fifth KPI — Waste Control — will be added once POS sales data is con
 - 40–59: Needs attention — meaningful leakage occurring
 - 0–39: At risk — significant operational gaps
 
+Cross-venue comparison isn't available yet — this is planned as more venues join Hosti. If asked how a score compares to other venues, say this plainly rather than estimating a percentile or inventing a comparison. You can still explain what the score means using the band rubric above — that's a concrete, useful answer even without peer data.
+
 ## Abductive insights — what the data suggests
 When the data shows a pattern, Hosti Health generates an insight about the most likely cause. For example:
 - Concentrated variance in one product → most likely systematic overpouring, wastage, or theft
