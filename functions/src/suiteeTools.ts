@@ -547,6 +547,137 @@ export function aggregateSupplierCompliance(
   };
 }
 
+// ── Stage 6: get_gp_trend ─────────────────────────────────────────────────────
+
+/** One row from the venues/{venueId}/gpAlerts collection, already mapped to ms. */
+export interface GpAlertRecord {
+  recipeName: string;
+  recipeId: string;
+  ingredientName: string;
+  oldGpPct: number | null;
+  newGpPct: number | null;
+  /** Firestore createdAt converted to milliseconds (for sorting and date formatting). */
+  createdAtMs: number;
+}
+
+/** One discrete GP-impacting event in the trend output. */
+export interface GpTrendEvent {
+  /** ISO date string (YYYY-MM-DD, UTC) derived from createdAt. */
+  date: string;
+  oldGpPct: number | null;
+  newGpPct: number | null;
+  ingredientName: string;
+}
+
+export interface GpTrendResult {
+  found: boolean;
+  recipeName: string | null;
+  events: GpTrendEvent[];
+  hasData: boolean;
+}
+
+/**
+ * Stage 6 tool — surface the discrete ingredient-price events that moved a
+ * recipe's GP%, within the requested time window.
+ *
+ * Tool description explicitly states the gap: alert history only captures
+ * changes that crossed the venue's material-change threshold — gradual drift
+ * is invisible.
+ */
+export const GP_TREND_TOOL = {
+  name: 'get_gp_trend',
+  description:
+    'Returns the sequence of ingredient-price events that moved a named recipe\'s ' +
+    'GP% within the requested window (default 90 days). Each event shows the ' +
+    'triggering ingredient, the before/after GP%, and the date. ' +
+    'IMPORTANT LIMITATION: this shows when material changes happened, not a smooth ' +
+    'trend line. Alerts are only written when a price change clears the venue\'s ' +
+    'materiality threshold — a recipe that drifted gradually below that threshold ' +
+    'over many small moves may show zero alerts even though its GP did decline, and ' +
+    'this tool has no way to see that. Always note this limitation when presenting ' +
+    'results, especially a "no alerts" answer.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      keyword: {
+        type: 'string',
+        description: 'Recipe name or keyword (fuzzy-matched against gpAlert history)',
+      },
+      days: {
+        type: 'number',
+        description: 'Lookback window in days (default 90)',
+      },
+    },
+    required: ['keyword'],
+  },
+} as const;
+
+/**
+ * Matches `keyword` against the recipe names present in the supplied alert records
+ * and returns their events in chronological order.
+ *
+ * Uses the same tokenize+overlap matching as get_gp_analysis (same imports, same
+ * call pattern) — no second matcher.
+ *
+ * hasData: false is returned both when no recipe matches the keyword AND when the
+ * keyword matches but there are zero events — the distinction is signalled by
+ * `found` so Claude can phrase the answer appropriately ("I don't recognise that
+ * recipe" vs "this recipe had no material GP events in the window").
+ *
+ * @param keyword  Raw user-supplied keyword; trimmed internally.
+ * @param records  gpAlert rows for the time window (already fetched by the resolver).
+ */
+export function aggregateGpTrend(
+  keyword: string,
+  records: GpAlertRecord[],
+): GpTrendResult {
+  const noMatch: GpTrendResult = { found: false, recipeName: null, events: [], hasData: false };
+  if (!keyword || !keyword.trim() || records.length === 0) return noMatch;
+
+  const kwClean = keyword.trim();
+  const kwTokens = tokenizeForMatching(kwClean);
+
+  // Collect distinct recipe names from the alert records and find the best match.
+  const seen = new Set<string>();
+  const recipeNames: string[] = [];
+  for (const r of records) {
+    if (!seen.has(r.recipeName)) { seen.add(r.recipeName); recipeNames.push(r.recipeName); }
+  }
+
+  let bestName: string | null = null;
+  let bestScore = 0;
+  for (const name of recipeNames) {
+    const score = overlapCoefficient(kwClean, name);
+    const nTokens = tokenizeForMatching(name);
+    if (isReliableMatch(kwTokens, nTokens, score) && score > bestScore) {
+      bestScore = score;
+      bestName = name;
+    }
+  }
+
+  if (!bestName) return noMatch;
+
+  // Filter to the matched recipe's records, sorted chronologically.
+  const matched = records
+    .filter(r => r.recipeName === bestName)
+    .sort((a, b) => a.createdAtMs - b.createdAtMs);
+
+  if (matched.length === 0) {
+    // found: true but zero events — recipe appeared in alert history but nothing
+    // survived the filter (shouldn't occur in practice since we matched from records).
+    return { found: true, recipeName: bestName, events: [], hasData: false };
+  }
+
+  const events: GpTrendEvent[] = matched.map(r => ({
+    date: new Date(r.createdAtMs).toISOString().split('T')[0],
+    oldGpPct: r.oldGpPct,
+    newGpPct: r.newGpPct,
+    ingredientName: r.ingredientName,
+  }));
+
+  return { found: true, recipeName: bestName, events, hasData: true };
+}
+
 // ── Helpers for batch ratio consistency ──────────────────────────────────────
 
 /** Median of a sorted-ascending numeric array. */

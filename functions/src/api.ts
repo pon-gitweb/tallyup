@@ -17,6 +17,7 @@ import {
   WORST_GP_RECIPES_TOOL, aggregateWorstGpRecipes,
   SUPPLIER_COMPLIANCE_TOOL, aggregateSupplierCompliance, InvoiceHistoryRecord,
   BATCH_RATIO_TOOL, aggregateBatchRatioConsistency, BatchRecipe, BatchRecipeItem,
+  GP_TREND_TOOL, aggregateGpTrend, GpAlertRecord,
 } from './suiteeTools';
 
 const app = express();
@@ -4693,7 +4694,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4792,6 +4793,29 @@ ${context}`;
           return [{ id: doc.id, name: d.name, items }];
         });
         return aggregateBatchRatioConsistency(batchRecipes, velByProductId);
+      }
+      if (toolName === 'get_gp_trend') {
+        const keyword = typeof input?.keyword === 'string' ? input.keyword : '';
+        const days = (typeof input?.days === 'number' && input.days > 0) ? Math.round(input.days) : 90;
+        const cutoff = admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+        );
+        // COLLECTION-scoped range query on createdAt — auto-indexed by Firestore; no manual index needed.
+        const alertsSnap = await db.collection(`venues/${venueId}/gpAlerts`)
+          .where('createdAt', '>=', cutoff)
+          .get();
+        const records: GpAlertRecord[] = alertsSnap.docs.map((d: any) => {
+          const data = d.data();
+          return {
+            recipeName:    typeof data.recipeName            === 'string' ? data.recipeName            : '',
+            recipeId:      typeof data.recipeId              === 'string' ? data.recipeId              : '',
+            ingredientName:typeof data.ingredientProductName === 'string' ? data.ingredientProductName : '',
+            oldGpPct:      typeof data.oldGpPct              === 'number' ? data.oldGpPct              : null,
+            newGpPct:      typeof data.newGpPct              === 'number' ? data.newGpPct              : null,
+            createdAtMs:   data.createdAt?.toMillis?.() ?? 0,
+          };
+        }).filter(r => r.recipeName !== '' && r.createdAtMs > 0);
+        return aggregateGpTrend(keyword, records);
       }
       return { error: `Unknown tool: ${toolName}` };
     };
