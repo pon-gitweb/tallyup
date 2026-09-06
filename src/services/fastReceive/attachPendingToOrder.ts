@@ -48,8 +48,8 @@ export async function attachPendingToOrder(args: {
   };
 
   const result = parsed.invoice.source === 'csv'
-    ? await finalizeReceiveFromCsv({ venueId, orderId, parsed })
-    : await finalizeReceiveFromPdf({ venueId, orderId, parsed });
+    ? await finalizeReceiveFromCsv({ venueId, orderId, parsed, receivingOrigin: 'invoice-first' } as any)
+    : await finalizeReceiveFromPdf({ venueId, orderId, parsed, receivingOrigin: 'invoice-first' } as any);
 
   if (!result?.ok) {
     return { ok: false, error: result?.error || 'finalize receive failed' };

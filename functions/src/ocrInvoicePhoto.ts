@@ -1023,6 +1023,7 @@ async function processTaxInvoice(
       lineCount: invoiceLines.length,
       venueId,
       source: "ocr-photo",
+      receivingOrigin: "packing-slip",
       ageCategory,
       matchedOrderId: payload.matchedOrderId || null,
       pricesExGST: true,

@@ -56,6 +56,7 @@ async function updateStockAndCreateInvoice(
   orderId: string,
   uid: string | null,
   invoiceLines: Array<{name: string; qty: number}>,
+  receivingOrigin: string,
 ): Promise<{ warnings: string[]; unmatchedLines: Array<{name: string; qty: number}> }> {
   const warnings: string[] = [];
 
@@ -207,6 +208,7 @@ async function updateStockAndCreateInvoice(
       date: now,
       status: 'posted',
       source: 'order-receive',
+      receivingOrigin,
       totalAmount,
       totals: { subtotal: totalAmount },
       venueId,
@@ -242,8 +244,8 @@ async function updateStockAndCreateInvoice(
   return { warnings, unmatchedLines };
 }
 
-async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual'|'photo', args: { venueId:string; orderId:string; parsed: Parsed }) {
-  const { venueId, orderId, parsed } = args;
+async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual'|'photo', args: { venueId:string; orderId:string; parsed: Parsed; receivingOrigin?: string }) {
+  const { venueId, orderId, parsed, receivingOrigin = 'planned' } = args;
   const db = getFirestore(getApp());
   const currentUser = getAuth()?.currentUser || null;
   const uid = currentUser?.uid || null;
@@ -351,6 +353,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual'|'photo', args: { ve
         supplierId: null,
         supplierName: null,
         source: parsed?.invoice?.source || 'unknown',
+        receivingOrigin,
         storagePath: parsed?.invoice?.storagePath || null,
         poNumber: parsed?.invoice?.poNumber || null,
         invoiceDate: parsed?.invoice?.invoiceDate || null,
@@ -390,7 +393,7 @@ async function finalizeReceiveCore(kind:'csv'|'pdf'|'manual'|'photo', args: { ve
   const saved = await saveReconciliation(venueId, orderId, reconciled);
 
   // 3) Update stock counts + create invoice document
-  const { warnings: stockWarnings, unmatchedLines } = await updateStockAndCreateInvoice(db, venueId, orderId, uid, parsed?.lines || []);
+  const { warnings: stockWarnings, unmatchedLines } = await updateStockAndCreateInvoice(db, venueId, orderId, uid, parsed?.lines || [], receivingOrigin);
 
   // 4) Mark invoiced (fully received + invoice created)
   await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
