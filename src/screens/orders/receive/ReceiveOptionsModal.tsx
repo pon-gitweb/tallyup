@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useColours } from '../../../context/ThemeContext';
 
 export default function ReceiveOptionsModal({
@@ -43,7 +43,16 @@ export default function ReceiveOptionsModal({
           <Item label="Upload invoice CSV" onPress={() => { onClose(); onCsvSelected?.(); }} />
           <Item label="Confirm manually"  onPress={() => { onClose(); onManualSelected?.(); }} />
           <Item label="Upload PDF"        onPress={() => { onClose(); onPdfSelected?.(); }} />
-          <Item label="Scan / OCR (stub)" onPress={() => { onClose(); console.log('[Receive] OCR stub'); }} />
+          <Item
+            label="Scan / OCR"
+            onPress={() => {
+              onClose();
+              Alert.alert(
+                'Scan / OCR not yet available',
+                "Scan/OCR receiving isn't available yet. Use PDF/CSV upload or Manual Receive for now.",
+              );
+            }}
+          />
 
           <TouchableOpacity onPress={onClose} style={styles.close}>
             <Text style={styles.closeText}>Close</Text>

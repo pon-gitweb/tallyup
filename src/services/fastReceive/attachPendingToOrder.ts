@@ -63,6 +63,16 @@ export async function attachPendingToOrder(args: {
     // keep storagePath, payload, parsedPo as-is
   });
 
+  // Advance the order to 'received' — the goods physically arrived and the full
+  // finalize pipeline completed successfully.  Without this write the order
+  // would sit in STATUS_GROUPS.submitted ("awaiting arrival") permanently.
+  // Set both status and displayStatus as a pair, matching every other status
+  // transition in this codebase (see AcceptOrderButton's 'submitted' write).
+  await updateDoc(doc(db, 'venues', venueId, 'orders', orderId), {
+    status: 'received',
+    displayStatus: 'received',
+  });
+
   return { ok: true, reconciled: !!result?.ok };
 }
 

@@ -42,8 +42,8 @@ export default function InvoicesScreen() {
     },
     {
       icon: '🔁',
-      label: 'Invoice reconciliations',
-      sub: 'Match deliveries to invoices',
+      label: 'Match deliveries to invoices',
+      sub: 'For deliveries received without an invoice yet',
       onPress: () => nav.navigate('PendingDeliveries'),
     },
     {

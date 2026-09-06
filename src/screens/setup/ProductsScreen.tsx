@@ -742,7 +742,9 @@ export default function ProductsScreen() {
   }, [rows]);
 
   const filtered = useMemo(() => {
-    let base = rows;
+    // Exclude inactive products (active: false).  active !== false is deliberate:
+    // treats absent field as active, matching the convention used on web.
+    let base = rows.filter((p: any) => p.active !== false);
     if (showOnlyUnassigned) {
       const idSet = new Set(unassignedIds);
       base = base.filter((p: any) => idSet.has(p.id));
