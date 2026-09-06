@@ -58,6 +58,23 @@ function namesMatch(a: string, b: string): { isMatch: boolean; score: number } {
   return { isMatch: isReliableMatch(ta, tb, score), score };
 }
 
+/** Checks a product's primary name first, then any accumulated mergedAliases.
+ * Returns the first match found (with its score) so alias-only lines can be
+ * resolved to the survivor product after a merge.
+ */
+function namesMatchIncludingAliases(
+  product: { name?: string; mergedAliases?: string[] },
+  lineName: string,
+): { isMatch: boolean; score: number } {
+  const primary = namesMatch(product.name || "", lineName);
+  if (primary.isMatch) return primary;
+  for (const alias of product.mergedAliases ?? []) {
+    const r = namesMatch(alias, lineName);
+    if (r.isMatch) return r;
+  }
+  return { isMatch: false, score: 0 };
+}
+
 /** Returns the correct caseSize/unitCost/caseCost fields for a product or supplier-link
  * document update. perUnitPrice is already per-unit â the OCR extraction prompt divides
  * the case total by caseSize before returning unitPrice, so no further division is needed.
@@ -545,7 +562,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
     const unitPrice = line.unitPrice as number;
     let lineMatchScore = 0;
     const matched = products.find(p => {
-      const r = namesMatch(p.name || "", line.name);
+      const r = namesMatchIncludingAliases(p, line.name);
       if (r.isMatch) { lineMatchScore = r.score; return true; }
       return false;
     });
@@ -851,7 +868,7 @@ export async function proposeInvoiceChanges(opts: PriceTrackingOptions): Promise
   if (cleanSupplierId) {
     for (const line of priced) {
       const unitPrice = line.unitPrice as number;
-      const matched = products.find(p => namesMatch(p.name || "", line.name).isMatch);
+      const matched = products.find(p => namesMatchIncludingAliases(p, line.name).isMatch);
       if (!matched) continue;
       const cs = typeof line.caseSize === "number" && line.caseSize > 0 ? line.caseSize : null;
       const unitCost = unitPrice; // already per-unit â OCR prompt normalises before returning
@@ -1050,7 +1067,7 @@ export async function processHistoricalInvoiceLines(opts: HistoricalPriceTrackin
     const cs = typeof line.caseSize === 'number' && line.caseSize > 0 ? line.caseSize : null;
 
     // Confident name-match — same threshold as proposeInvoiceChanges
-    const matched = products.find(p => namesMatch(p.name || '', line.name).isMatch);
+    const matched = products.find(p => namesMatchIncludingAliases(p, line.name).isMatch);
 
     if (matched) {
       autoProductMap[line.name] = matched.id;

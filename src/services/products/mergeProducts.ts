@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { db } from '../firebase';
 import {
-  collection, doc, getDoc, getDocs, setDoc, updateDoc,
+  arrayUnion, collection, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, addDoc, query, where, serverTimestamp,
 } from 'firebase/firestore';
 import { setPreferredProductSupplier } from '../productSuppliers';
@@ -150,6 +150,12 @@ export async function mergeProducts(
       active: false,
       mergedInto: keepId,
       updatedAt: serverTimestamp(),
+    });
+    // Always accumulate the defunct product's name as an alias on the survivor so
+    // invoice-matching can still resolve lines that reference the old name.
+    // arrayUnion means repeated merges accumulate rather than overwrite.
+    await updateDoc(doc(db, 'venues', venueId, 'products', keepId), {
+      mergedAliases: arrayUnion(mergeData.name),
     });
   }
 

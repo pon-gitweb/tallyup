@@ -2,7 +2,7 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { getFirestore, updateDoc, getDocs, collection, doc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { OrdersService } from '../../domain/orders';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput } from 'react-native';
+import { View, Text, SectionList, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput } from 'react-native';
 import { getApp } from 'firebase/app';
 import { useVenueId } from '../../context/VenueProvider';
 import { useToast } from '../../components/common/Toast';
@@ -80,6 +80,35 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
   }, [load]);
 
   const items = useMemo(() => rows, [rows]);
+
+  const sections = useMemo(() => {
+    const grouped = new Map<string, FastRec[]>();
+    for (const it of items) {
+      const key: string =
+        (it as any).supplierName ??
+        (it as any).payload?.invoice?.supplierName ??
+        'Unknown Supplier';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(it);
+    }
+    // Sort items within each group by createdAt descending.
+    // Sort groups by the most-recent item so the busiest supplier surfaces first.
+    const result: Array<{ title: string; data: FastRec[] }> = [];
+    grouped.forEach((data, title) => {
+      data.sort((a, b) => {
+        const ta = a.createdAt?.toDate?.()?.getTime() ?? 0;
+        const tb = b.createdAt?.toDate?.()?.getTime() ?? 0;
+        return tb - ta;
+      });
+      result.push({ title, data });
+    });
+    result.sort((a, b) => {
+      const ta = a.data[0]?.createdAt?.toDate?.()?.getTime() ?? 0;
+      const tb = b.data[0]?.createdAt?.toDate?.()?.getTime() ?? 0;
+      return tb - ta;
+    });
+    return result;
+  }, [items]);
 
   const summary = useMemo(() => {
     const total = items.length;
@@ -293,61 +322,65 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={{ flex: 1 }}>
-        <View style={{ padding: 16, gap: 10 }}>
-          {items.length === 0 ? (
-            <Text style={{ color: '#94A3B8' }}>No pending fast receives.</Text>
-          ) : (
-            items.map(it => {
-              const ts = it.createdAt?.toDate ? it.createdAt.toDate() : null;
-              const dateLabel = ts
-                ? ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString()
-                : 'Unknown date';
-              const isPending = !it.status || it.status === 'pending';
-              return (
-                <View key={it.id} style={S.card}>
-                  <Text style={S.title}>{dateLabel}</Text>
-                  <Text style={S.sub}>
-                    Source: {it.source || '—'} · Status: {it.status || 'pending'}
-                  </Text>
+      <SectionList
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, gap: 10 }}
+        sections={sections}
+        keyExtractor={it => it.id}
+        renderSectionHeader={({ section }) => (
+          <View style={S.sectionHeader}>
+            <Text style={S.sectionHeaderText}>{section.title}</Text>
+          </View>
+        )}
+        renderItem={({ item: it }) => {
+          const ts = it.createdAt?.toDate ? it.createdAt.toDate() : null;
+          const dateLabel = ts
+            ? ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString()
+            : 'Unknown date';
+          const isPending = !it.status || it.status === 'pending';
+          return (
+            <View style={S.card}>
+              <Text style={S.title}>{dateLabel}</Text>
+              <Text style={S.sub}>
+                Source: {it.source || '—'} · Status: {it.status || 'pending'}
+              </Text>
 
-                  {/* Reviewed badge — shown when the OCR-review step has been
-                      completed but the item is not yet accepted into an order. */}
-                  {isPending && !!it.inductionDecisions && (
-                    <View style={S.reviewedBadge}>
-                      <Text style={S.reviewedBadgeText}>✓ Reviewed — not yet accepted</Text>
-                    </View>
-                  )}
-
-                  <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                    <TouchableOpacity
-                      onPress={() => openDetails(it)}
-                      style={{
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        borderRadius: 10,
-                        backgroundColor: '#0ea5e9',
-                        alignSelf: 'flex-start',
-                      }}
-                    >
-                      <Text style={{ color: '#fff', fontWeight: '800' }}>View Details</Text>
-                    </TouchableOpacity>
-
-                    {isPending && (
-                      <AcceptOrderButton
-                        item={it}
-                        venueId={venueId}
-                        onSuccess={async () => { await load(); }}
-                        disabled={!!busyId}
-                      />
-                    )}
-                  </View>
+              {/* Reviewed badge — shown when the OCR-review step has been
+                  completed but the item is not yet accepted into an order. */}
+              {isPending && !!it.inductionDecisions && (
+                <View style={S.reviewedBadge}>
+                  <Text style={S.reviewedBadgeText}>✓ Reviewed — not yet accepted</Text>
                 </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
+              )}
+
+              <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => openDetails(it)}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: '#0ea5e9',
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>View Details</Text>
+                </TouchableOpacity>
+
+                {isPending && (
+                  <AcceptOrderButton
+                    item={it}
+                    venueId={venueId}
+                    onSuccess={async () => { await load(); }}
+                    disabled={!!busyId}
+                  />
+                )}
+              </View>
+            </View>
+          );
+        }}
+        ListEmptyComponent={<Text style={{ color: '#94A3B8' }}>No pending fast receives.</Text>}
+      />
 
       <View
         style={{
@@ -513,6 +546,18 @@ export default function FastReceivesReviewPanel({ onClose }: { onClose: () => vo
 }
 
 const S = StyleSheet.create({
+  sectionHeader: {
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    backgroundColor: '#fff',
+  },
+  sectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   card: {
     backgroundColor: '#F9FAFB',
     borderRadius: 12,

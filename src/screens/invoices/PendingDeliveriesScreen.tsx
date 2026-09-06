@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, SectionList, TouchableOpacity, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getFirestore, collection, query, where, orderBy, onSnapshot, getDocs, limit } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -18,6 +18,25 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
   const { showSuccess, showError, showInfo } = useToast();
   const [deliveries, setDeliveries] = useState<PendingDelivery[]>([]);
   const [loading, setLoading] = useState(true);
+  const sections = useMemo(() => {
+    const grouped = new Map<string, PendingDelivery[]>();
+    for (const d of deliveries) {
+      const key = d.supplierName || 'Unknown supplier';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(d);
+    }
+    // Items within each group arrive already sorted by createdAt desc from onSnapshot.
+    // Sort groups by the most-recent item so the busiest suppliers surface first.
+    const result: Array<{ title: string; data: PendingDelivery[] }> = [];
+    grouped.forEach((data, title) => result.push({ title, data }));
+    result.sort((a, b) => {
+      const ta = (a.data[0] as any)?.createdAt?.toMillis?.() ?? 0;
+      const tb = (b.data[0] as any)?.createdAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+    return result;
+  }, [deliveries]);
+
   const [pickerFor, setPickerFor] = useState<PendingDelivery | null>(null);
   const [invoiceOptions, setInvoiceOptions] = useState<any[]>([]);
   const [matching, setMatching] = useState(false);
@@ -175,11 +194,18 @@ export default function PendingDeliveriesScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.oat || '#f5f3ee' }]} edges={['top', 'left', 'right']}>
-      <FlatList
+      <SectionList
         keyboardShouldPersistTaps="handled"
-        data={deliveries}
+        sections={sections}
         keyExtractor={d => d.id}
         renderItem={renderItem}
+        renderSectionHeader={({ section }) => (
+          <View style={[styles.sectionHeader, { backgroundColor: c.oat || '#f5f3ee' }]}>
+            <Text style={[styles.sectionHeaderText, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontBodySemiBold }]}>
+              {section.title}
+            </Text>
+          </View>
+        )}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <Text style={[styles.heading, { color: c.missionSlate || '#3b3f4a', fontFamily: theme.fontTitle }]}>
@@ -281,6 +307,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   actionBtnOutlineText: { fontSize: 14 },
+  sectionHeader: { paddingHorizontal: 4, paddingTop: 12, paddingBottom: 4 },
+  sectionHeaderText: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
   empty: { alignItems: 'center', padding: 48 },
   emptyIcon: { fontSize: 36, color: '#2d6a4f', marginBottom: 12 },
   emptyText: { fontSize: 15 },
