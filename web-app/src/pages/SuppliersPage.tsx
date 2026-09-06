@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addDoc,
   collection,
-  deleteDoc,
   doc,
   getDocs,
   onSnapshot,
@@ -354,7 +353,12 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
 
   async function handleConfirmDelete(id: string) {
     try {
-      await deleteDoc(doc(db, 'venues', venueId, 'suppliers', id))
+      // Soft-delete: preserves invoiceHistory and priceChangeFlags records that
+      // reference this supplier's ID. listSuppliers already filters active !== false.
+      await updateDoc(doc(db, 'venues', venueId, 'suppliers', id), {
+        active: false,
+        updatedAt: serverTimestamp(),
+      })
     } catch (e) {
       console.error('[SuppliersPage] failed to delete supplier', e)
     } finally {
@@ -578,14 +582,14 @@ export default function SuppliersPage({ venueId }: { venueId: string }) {
 }
 
 // ── SupplierMergeModal ────────────────────────────────────────────────────
-// Two-step modal: dry-run → impact summary → confirm → real merge + hard delete.
-// source  = the supplier being merged away (permanently deleted after merge)
+// Two-step modal: dry-run → impact summary → confirm → real merge + soft-delete.
+// source  = the supplier being merged away (soft-deleted after merge)
 // target  = the supplier that survives (selected by the user)
 //
-// Call sequence matches mobile's SuppliersScreen.tsx exactly:
+// Call sequence:
 //   1. mergeSuppliers(venueId, keepId, mergeId, dryRun=true) — count impact
 //   2. mergeSuppliers(venueId, keepId, mergeId)              — real move
-//   3. deleteDoc(suppliers/<mergeId>)                        — hard delete
+//   3. updateDoc(suppliers/<mergeId>, { active: false })     — soft-delete
 function SupplierMergeModal({
   venueId,
   source,
@@ -636,8 +640,13 @@ function SupplierMergeModal({
     try {
       // Step 1: redirect all product links from source → target
       await mergeSuppliers(venueId, target.id, source.id)
-      // Step 2: hard delete the source supplier (permanent, not soft-deactivate)
-      await deleteDoc(doc(db, 'venues', venueId, 'suppliers', source.id))
+      // Step 2: soft-delete the source supplier — preserves its invoiceHistory and
+      // priceChangeFlags records. listSuppliers filters active !== false so it
+      // immediately disappears from all UI dropdowns without a hard delete.
+      await updateDoc(doc(db, 'venues', venueId, 'suppliers', source.id), {
+        active: false,
+        updatedAt: serverTimestamp(),
+      })
       setDone(true)
     } catch (e: any) {
       setError(String(e?.message || 'Merge failed.'))

@@ -3,7 +3,6 @@ import {
   collection,
   addDoc,
   updateDoc,
-  deleteDoc,
   doc,
   getDocs,
   serverTimestamp,
@@ -87,5 +86,8 @@ export async function updateSupplier(venueId: string, id: string, data: Partial<
 
 export async function deleteSupplierById(venueId: string, id: string) {
   const ref = doc(db, 'venues', venueId, 'suppliers', id);
-  await deleteDoc(ref);
+  // Soft-delete: mark inactive rather than destroying the document.
+  // Preserves existing invoiceHistory and priceChangeFlags records that
+  // reference this supplier's ID — hard-deleting would orphan them silently.
+  await updateDoc(ref, { active: false, updatedAt: serverTimestamp() });
 }
