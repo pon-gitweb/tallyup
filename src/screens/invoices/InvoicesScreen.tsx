@@ -23,6 +23,12 @@ export default function InvoicesScreen() {
 
   const actions = [
     {
+      icon: '📋',
+      label: 'Delivery hub',
+      sub: 'All received invoices — planned, scanned, and unplanned',
+      onPress: () => nav.navigate('DeliveryHub'),
+    },
+    {
       icon: '📷',
       label: 'Scan or upload invoice',
       sub: 'Camera, photo library, or PDF from email',

@@ -77,6 +77,7 @@ import InvoiceSummaryScreen from '../../screens/invoices/InvoiceSummaryScreen';
 import PriceChangeFlagsScreen from '../../screens/invoices/PriceChangeFlagsScreen';
 import CreditNoteFormScreen from '../../screens/invoices/CreditNoteFormScreen';
 import PendingDeliveriesScreen from '../../screens/invoices/PendingDeliveriesScreen';
+import DeliveryHubScreen from '../../screens/invoices/DeliveryHubScreen';
 
 // Adjustments
 import AdjustmentInboxScreen from '../../screens/adjustments/AdjustmentInboxScreen';
@@ -280,6 +281,7 @@ export default function MainStack() {
       <Stack.Screen name="InvoiceSummary" component={InvoiceSummaryScreen} options={{ title: 'Invoice Processed' }} />
       <Stack.Screen name="PriceChangeFlags" component={PriceChangeFlagsScreen} options={{ title: 'Price Changes', headerShown: true }} />
       <Stack.Screen name="PendingDeliveries" component={PendingDeliveriesScreen} options={{ title: 'Pending Deliveries', headerShown: true }} />
+      <Stack.Screen name="DeliveryHub" component={DeliveryHubScreen} options={{ title: 'Delivery Hub', headerShown: true }} />
       <Stack.Screen name="CreditNoteForm" component={CreditNoteFormScreen} options={{ title: 'Record Credit Note', headerShown: true }} />
       <Stack.Screen name="ScaleSettings" component={ScaleSettingsScreen} options={{ title: 'Bluetooth Scale' }} />
       <Stack.Screen name="SetupGuide" component={SetupGuideScreen} options={{ title: 'Setup Guide' }} />
