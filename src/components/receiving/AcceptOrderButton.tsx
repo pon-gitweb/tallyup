@@ -31,6 +31,7 @@ import {
   updateDoc,
   serverTimestamp,
 } from 'firebase/firestore';
+import { listSuppliers } from '../../services/suppliers/listSuppliers';
 import { getAuth } from 'firebase/auth';
 import { getApp } from 'firebase/app';
 import { useVenueCountry } from '../../context/VenueProvider';
@@ -114,14 +115,12 @@ export default function AcceptOrderButton({
         let supplierId: string | null = item?.payload?.invoice?.supplierId || null;
         if (!supplierId && supplierNameHint) {
           try {
-            const suppSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
-            for (const sd of suppSnap.docs) {
-              const sn = ((sd.data() as any)?.name || '').toLowerCase().trim();
-              if (sn && sn === supplierNameHint.toLowerCase().trim()) {
-                supplierId = sd.id;
-                break;
-              }
-            }
+            // listSuppliers already filters out inactive (active: false) suppliers
+            // so a soft-deleted supplier will never be inadvertently matched here.
+            const suppliers = await listSuppliers(venueId);
+            const needle = supplierNameHint.toLowerCase().trim();
+            const match = suppliers.find(s => (s.name || '').toLowerCase().trim() === needle);
+            if (match) supplierId = match.id;
           } catch {}
         }
         // '_invoice_accept' is a stable placeholder: resolveSupplierName handles

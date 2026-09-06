@@ -90,7 +90,11 @@ export default function FestivalContractsPage({ venueId }: { venueId: string }) 
   // Load suppliers
   useEffect(() => {
     getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
-      setSuppliers(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || d.id })))
+      setSuppliers(
+        snap.docs
+          .filter(d => (d.data() as any)?.active !== false) // exclude soft-deleted
+          .map(d => ({ id: d.id, name: (d.data() as any).name || d.id }))
+      )
     }).catch(() => {})
   }, [venueId])
 

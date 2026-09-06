@@ -1,4 +1,5 @@
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { listSuppliers } from '../suppliers/listSuppliers';
 import { getApp } from 'firebase/app';
 import { getVenueSession } from '../completion';
 
@@ -327,10 +328,12 @@ export async function buildSuggestedOrdersInMemory(
   }));
 
   dlog('reading suppliers');
-  const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
+  // listSuppliers already filters out soft-deleted (active: false) suppliers so
+  // a deleted supplier's orders will no longer surface in suggestions.
+  const supplierList = await listSuppliers(venueId);
   const supplierNameById: Record<string, string> = {};
-  suppliersSnap.forEach(d => {
-    supplierNameById[d.id] = s((d.data() as any)?.name, 'Supplier');
+  supplierList.forEach(sup => {
+    supplierNameById[sup.id] = s(sup.name, 'Supplier');
   });
 
   dlog('reading products');

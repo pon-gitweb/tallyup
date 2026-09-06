@@ -104,10 +104,14 @@ async function loadExistingProducts(venueId: string): Promise<Map<string, string
 async function findExistingSupplier(venueId: string, name: string): Promise<string | null> {
   const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'))
   const needle = name.toLowerCase().trim()
-  const match = snap.docs.find(d => {
-    const existing = ((d.data() as any).name || '').toLowerCase().trim()
-    return existing === needle || existing.includes(needle) || needle.includes(existing)
-  })
+  // Only match against active suppliers — soft-deleted ones (active: false) must
+  // not be reactivated by an import that happens to reference their old name.
+  const match = snap.docs
+    .filter(d => (d.data() as any)?.active !== false)
+    .find(d => {
+      const existing = ((d.data() as any).name || '').toLowerCase().trim()
+      return existing === needle || existing.includes(needle) || needle.includes(existing)
+    })
   return match?.id ?? null
 }
 
@@ -730,9 +734,12 @@ export default function ImportPage({ venueId }: { venueId: string }) {
       let supplierId: string | null = null
       if (supplierName !== 'Unassigned') {
         const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'))
-        const existing = suppliersSnap.docs.find(d =>
-          ((d.data() as any).name || '').toLowerCase().trim() === supplierName.toLowerCase()
-        )
+        // Exclude soft-deleted suppliers when matching — absent field means active.
+        const existing = suppliersSnap.docs
+          .filter(d => (d.data() as any)?.active !== false)
+          .find(d =>
+            ((d.data() as any).name || '').toLowerCase().trim() === supplierName.toLowerCase()
+          )
         if (existing) {
           supplierId = existing.id
         } else {
@@ -819,10 +826,12 @@ export default function ImportPage({ venueId }: { venueId: string }) {
     }).catch(() => {})
     getDocs(collection(db, 'venues', venueId, 'suppliers')).then(snap => {
       const map = new Map<string, string>()
-      snap.docs.forEach(d => {
-        const name = ((d.data() as any).name || '').toLowerCase().trim()
-        if (name) map.set(name, d.id)
-      })
+      snap.docs
+        .filter(d => (d.data() as any)?.active !== false) // exclude soft-deleted
+        .forEach(d => {
+          const name = ((d.data() as any).name || '').toLowerCase().trim()
+          if (name) map.set(name, d.id)
+        })
       setDAllSuppliers(map)
     }).catch(() => {})
   }, [venueId])

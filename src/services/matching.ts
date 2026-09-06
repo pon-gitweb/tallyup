@@ -223,7 +223,10 @@ export async function findMatchingSupplier(
   try {
     const db = getFirestore();
     const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
-    const suppliers: MatchedSupplier[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    // Filter out soft-deleted suppliers before matching — absent field means active.
+    const suppliers: MatchedSupplier[] = snap.docs
+      .filter(d => (d.data() as any)?.active !== false)
+      .map(d => ({ id: d.id, ...(d.data() as any) }));
     return matchSupplierInList(suppliers, candidate);
   } catch (error: any) {
     console.error('[matching] findMatchingSupplier failed:', error?.code, error?.message);

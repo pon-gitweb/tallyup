@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { collection, getDocs } from 'firebase/firestore';
+import { listSuppliers } from '../../services/suppliers/listSuppliers';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -71,9 +72,10 @@ export default function RecipeGenerationModal({ visible, onClose, onRecipeGenera
 
     setLoading(true);
     try {
-      const [productsSnap, suppliersSnap] = await Promise.all([
+      const [productsSnap, supplierList] = await Promise.all([
         getDocs(collection(db, 'venues', venueId, 'products')),
-        getDocs(collection(db, 'venues', venueId, 'suppliers')),
+        // listSuppliers already filters out soft-deleted (active: false) suppliers.
+        listSuppliers(venueId),
       ]);
 
       const products: any[] = [];
@@ -89,11 +91,7 @@ export default function RecipeGenerationModal({ visible, onClose, onRecipeGenera
         });
       });
 
-      const suppliers: any[] = [];
-      suppliersSnap.forEach((d) => {
-        const x: any = d.data() || {};
-        suppliers.push({ name: x.name ?? '(unnamed)' });
-      });
+      const suppliers: any[] = supplierList.map(s => ({ name: s.name ?? '(unnamed)' }));
 
       const token = await getAuth().currentUser?.getIdToken();
       const resp = await fetch(`${AI_BASE_URL}/api/generate-recipe`, {

@@ -1355,7 +1355,11 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'venues', venueId, 'suppliers'),
-      (snap) => setSuppliers(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name || '' }))),
+      (snap) => setSuppliers(
+        snap.docs
+          .filter(d => (d.data() as any)?.active !== false) // exclude soft-deleted
+          .map(d => ({ id: d.id, name: (d.data() as any).name || '' }))
+      ),
       () => {}
     )
     return unsub

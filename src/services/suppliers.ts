@@ -31,7 +31,12 @@ export type Supplier = {
 export async function listSuppliers(venueId: string): Promise<Supplier[]> {
   const snap = await getDocs(collection(db, 'venues', venueId, 'suppliers'));
   const out: Supplier[] = [];
-  snap.forEach((d) => out.push({ id: d.id, ...(d.data() as any) }));
+  snap.forEach((d) => {
+    // Soft-deleted suppliers (active: false) must never surface to callers.
+    // Absent field means active — mirrors the product active !== false convention.
+    if ((d.data() as any)?.active === false) return;
+    out.push({ id: d.id, ...(d.data() as any) });
+  });
   out.sort((a, b) =>
     (a.name || '').localeCompare(b.name || '', 'en', { sensitivity: 'base' })
   );

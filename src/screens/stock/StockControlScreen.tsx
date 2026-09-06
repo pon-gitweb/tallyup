@@ -38,7 +38,9 @@ import ProductsScreen from '../setup/ProductsScreen';
 import FastReceivePanel from './FastReceivePanel'; // Scan/Upload flow
 import FastReceivesReviewPanel from './FastReceivesReviewPanel'; // Pending review/attach
 import SalesReportUploadPanel from './SalesReportUploadPanel'; // Sales CSV/PDF import
-import ReconciliationsPanel from './ReconciliationsPanel'; // Invoice reconciliations list
+// ReconciliationsPanel removed (3b): reads from a collection with no write path.
+// Navigation now points directly to ReconciliationsScreen, which reads from the
+// correct actively-written nested reconciliation data.
 import CraftUpPanel from '../recipes/CraftUpPanel'; // Recipes (CraftUp)
 
 type ResolverProduct = {
@@ -77,7 +79,7 @@ export default function StockControlScreen() {
   const [showFastReceive, setShowFastReceive] = useState(false);
   const [showFastReview, setShowFastReview] = useState(false);
   const [showSalesImport, setShowSalesImport] = useState(false);
-  const [showRecon, setShowRecon] = useState(false);
+  // showRecon removed (3b): navigates to ReconciliationsScreen directly now.
   const [showCraftUp, setShowCraftUp] = useState(false); // Recipes (CraftUp)
 
   // Resolver state: products that need setup, and supplier picker
@@ -498,7 +500,7 @@ export default function StockControlScreen() {
           />
           <Item
             title="Invoice Reconciliations"
-            onPress={() => setShowRecon(true)}
+            onPress={() => nav.navigate('Reconciliations' as never)}
           />
 
           {__DEV__ ? (
@@ -599,26 +601,6 @@ export default function StockControlScreen() {
             <View style={{ width: 60 }} />
           </View>
           <SalesReportUploadPanel onClose={() => setShowSalesImport(false)} />
-        </SafeAreaView>
-      </Modal>
-
-      {/* Invoice Reconciliations (modalized) */}
-      <Modal
-        visible={showRecon}
-        animationType="slide"
-        onRequestClose={() => setShowRecon(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowRecon(false)}>
-              <Text style={styles.back}>‹ Back</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Invoice Reconciliations</Text>
-            <View style={{ width: 60 }} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <ReconciliationsPanel />
-          </View>
         </SafeAreaView>
       </Modal>
 
