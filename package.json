@@ -13,7 +13,8 @@
     "catalog:preview": "node scripts/catalog/preview-sample.cjs",
     "catalog:import": "node scripts/catalog/import-to-firestore.cjs",
     "check:no-backups": "bash scripts/deny-backups.sh",
-    "check:no-legacy-orders-imports": "bash scripts/deny-legacy-orders-imports.sh"
+    "check:no-legacy-orders-imports": "bash scripts/deny-legacy-orders-imports.sh",
+    "check:ota": "bash scripts/check-ota-safe.sh"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
