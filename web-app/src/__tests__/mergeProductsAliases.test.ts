@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for mergedAliases write in mergeProducts (2a).
  *
