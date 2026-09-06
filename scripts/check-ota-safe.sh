@@ -65,17 +65,24 @@ fi
 echo "🔍 Checking Android fingerprint drift…"
 echo "   Baseline (last build): $BASELINE_FP"
 
-# Get the latest Android update fingerprint from the production branch
+# Get the latest Android update fingerprint from the production branch.
+# eas branch:list --json returns [{name, updates:[{platform, runtimeVersion,...}]}]
 BRANCH_OUTPUT=$(eas branch:list --json 2>/dev/null || echo "[]")
 CURRENT_FP=$(echo "$BRANCH_OUTPUT" | python3 -c "
 import json, sys
-branches = json.load(sys.stdin)
+try:
+    branches = json.load(sys.stdin)
+except Exception:
+    sys.exit(3)
 prod = next((b for b in branches if b.get('name') == 'production'), None)
 if not prod:
     sys.exit(3)
-# The runtimeVersion on the branch is the most recent OTA update's runtime
-# For android with fingerprint policy, this is the fingerprint hash
-rt = prod.get('runtimeVersion') or prod.get('runtime_version') or ''
+# The updates array contains individual platform updates; find the android one.
+android_updates = [u for u in (prod.get('updates') or []) if u.get('platform') == 'android']
+if not android_updates:
+    sys.exit(3)
+# updates are sorted newest-first; take the first android entry.
+rt = android_updates[0].get('runtimeVersion', '')
 print(rt.strip())
 " 2>/dev/null || echo "")
 
