@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
 import {
-  BarChart, Bar, LabelList, LineChart, Line,
+  BarChart, Bar, LabelList, LineChart, Line, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
@@ -310,7 +310,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       if (row.totalVarianceDollars == null) continue
       const key = String(row.cycleNumber)
       if (!byLabel[key]) byLabel[key] = { cycleNum: row.cycleNumber, date: row.completedAt, variance: 0 }
-      byLabel[key].variance += Math.abs(row.totalVarianceDollars)
+      byLabel[key].variance += row.totalVarianceDollars
     }
     return Object.values(byLabel)
       .sort((a, b) => a.cycleNum - b.cycleNum)
@@ -347,7 +347,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       }),
   [varianceRows])
 
-  const fmtAxis = (v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`
+  const fmtAxis = (v: number) => {
+    const abs = Math.abs(v)
+    const sign = v < 0 ? '-' : ''
+    return abs >= 1000 ? `${sign}$${Math.round(abs / 1000)}k` : `${sign}$${abs}`
+  }
 
   // Sorted + filtered variance rows
   const filteredVariance = useMemo(() => {
@@ -596,9 +600,19 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                   <LineChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
                     <CartesianGrid {...CHART_GRID_PROPS} />
                     <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
-                    <YAxis tickFormatter={fmtAxis} tick={CHART_AXIS_TICK} width={56} axisLine={false} tickLine={false} />
+                    {/* domain clamps to always include zero so the reference line is never off-screen */}
+                    <YAxis tickFormatter={fmtAxis} tick={CHART_AXIS_TICK} width={56} axisLine={false} tickLine={false}
+                      domain={[
+                        (dataMin: number) => Math.min(0, dataMin),
+                        (dataMax: number) => Math.max(0, dataMax),
+                      ]} />
+                    <ReferenceLine y={0} stroke={theme.border} strokeWidth={1} />
                     <Tooltip contentStyle={CHART_TOOLTIP_STYLE}
-                      formatter={((v: number) => [`$${Math.round(v).toLocaleString('en-NZ')}`, 'Variance']) as any}
+                      formatter={((v: number) => {
+                        const abs = Math.abs(v)
+                        const sign = v < 0 ? '-' : ''
+                        return [`${sign}$${Math.round(abs).toLocaleString('en-NZ')}`, 'Net variance']
+                      }) as any}
                       labelFormatter={((label: string) => trendData.find((d) => d.label === label)?.fullLabel ?? label) as any}
                       cursor={{ stroke: theme.border, strokeWidth: 1 }} />
                     <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2.5}
