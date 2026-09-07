@@ -321,10 +321,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       }))
   }, [historyRows])
 
-  const trendLineColor =
-    trendData.length >= 2 && trendData[trendData.length - 1].variance > trendData[trendData.length - 2].variance
-      ? theme.error
-      : theme.success
+  // Trend line uses a single neutral color — directional coloring (red/green based on
+  // whether the signed value went up or down) actively misleads: a problem shrinking
+  // from a $500 shortage to a $100 excess crosses zero and currently renders as "worse."
+  // Direction (▲/▼) is still shown in the data; the line color carries no judgment.
+  const trendLineColor = theme.slateMid
 
   // ── Chart B: top variance drivers ─────────────────────────────────────────
   const topDrivers = useMemo(() =>
@@ -542,12 +543,8 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       <p
                         className={styles.cardVariance}
                         style={{
-                          color:
-                            showVariance < 0
-                              ? theme.error
-                              : showVariance > 0
-                                ? theme.success
-                                : theme.slateMid,
+                          // Neutral for both shortage and excess — direction shown by ▲/▼ and ±sign.
+                          color: theme.slateMid,
                         }}
                       >
                         {showVariance < 0
@@ -634,7 +631,9 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                     <Bar dataKey="value" isAnimationActive={false}
                       shape={(props: any) => {
                         const { x, y, width, height, index } = props
-                        const fill = topDrivers[index]?.shortage ? theme.error : theme.success
+                        // Neutral amber for all bars — shortage/excess direction is a fact shown in
+                        // sign; red/green on bars falsely implies one direction is "good."
+                        const fill = theme.amber
                         return (
                           <rect x={x} y={y} width={width} height={height} fill={fill} rx={4} ry={4}
                             style={{ animation: 'barSlideIn 0.4s ease-out both', animationDelay: `${index * 60}ms`, transformOrigin: 'left center' }} />
@@ -713,22 +712,14 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                         <td className={styles.tdNum}>{r.actualQty != null ? r.actualQty.toFixed(2) : '—'}</td>
                         <td
                           className={styles.tdNum}
-                          style={{ color: r.varianceUnits < 0 ? theme.error : theme.success }}
+                          style={{ color: theme.slateMid }}
                         >
                           {r.varianceUnits > 0 ? '+' : ''}
                           {r.varianceUnits.toFixed(2)}
                         </td>
                         <td
                           className={styles.tdNum}
-                          style={{
-                            color:
-                              (r.displayVarianceDollars ?? r.varianceDollars) == null
-                                ? theme.slateMid
-                                : (r.displayVarianceDollars ?? r.varianceDollars)! < 0
-                                  ? theme.error
-                                  : theme.success,
-                            fontWeight: 600,
-                          }}
+                          style={{ color: theme.slateMid, fontWeight: 600 }}
                         >
                           {(r.displayVarianceDollars ?? r.varianceDollars) == null
                             ? '—'
@@ -784,16 +775,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                         <td className={styles.tdNum}>{fmtMoney(r.totalStockValue)}</td>
                         <td
                           className={styles.tdNum}
-                          style={{
-                            color:
-                              r.totalVarianceDollars == null
-                                ? theme.slateMid
-                                : r.totalVarianceDollars < 0
-                                  ? theme.error
-                                  : r.totalVarianceDollars > 0
-                                    ? theme.success
-                                    : theme.slateMid,
-                          }}
+                          style={{ color: theme.slateMid }}
                         >
                           {fmtMoney(r.totalVarianceDollars)}
                         </td>
@@ -1134,8 +1116,9 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
                   const vUnits = r.totalVarianceQty ?? 0
                   // Display-preferred variance dollars — Phase W2
                   const vDollars = r.displayTotalVarianceDollars ?? r.totalVarianceDollars
-                  const unitColor = vUnits < 0 ? theme.error : vUnits > 0 ? theme.success : theme.slateMid
-                  const dollarColor = vDollars == null ? theme.slateMid : vDollars < 0 ? theme.error : vDollars > 0 ? theme.success : theme.slateMid
+                  // Neutral for both directions — sign and arrow convey direction; color no longer judges it.
+                  const unitColor = theme.slateMid
+                  const dollarColor = theme.slateMid
                   // Display-preferred cost price — Phase W2
                   const displayCostPrice = r.displayCostPrice ?? r.costPrice
                   const compareItem = compareMap.get(r.name)
@@ -1151,7 +1134,7 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
                       </td>
                       <td className={styles.tdNum}>{displayCostPrice != null ? `$${displayCostPrice.toFixed(2)}${r.costPriceTier === 'invoice_verified' ? ' 📄' : ''}` : '—'}</td>
                       {compareMode && compareItems.length > 0 && (
-                        <td className={styles.tdNum} style={{ color: compareItem ? (compareItem.totalVarianceQty < vUnits ? theme.success : compareItem.totalVarianceQty > vUnits ? theme.error : theme.slateMid) : theme.slateMid }}>
+                        <td className={styles.tdNum} style={{ color: theme.slateMid }}>
                           {compareItem ? `${compareItem.totalVarianceQty > 0 ? '+' : ''}${compareItem.totalVarianceQty} → ${vUnits > 0 ? '+' : ''}${vUnits}` : 'Not in compare'}
                         </td>
                       )}
