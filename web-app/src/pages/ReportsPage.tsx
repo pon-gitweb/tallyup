@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
 import {
-  BarChart, Bar, LabelList, LineChart, Line, ReferenceLine,
+  BarChart, Bar, LabelList, ComposedChart, Line, Cell, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { db } from '../firebase'
@@ -10,7 +10,7 @@ import { buildProductMaps, resolveProduct } from '../services/products/resolvePr
 import { computeVelocity, type VelocityItem } from '../services/products/velocityAnalysis'
 import { computeSupplierSpend, type SpendItem } from '../services/products/supplierAnalysis'
 import {
-  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK, CHART_DOT,
+  CHART_TOOLTIP_STYLE, CHART_GRID_PROPS, CHART_AXIS_TICK,
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
 } from '../chartConfig'
 import { ChartEmptyState } from '../components/ChartEmptyState'
@@ -321,10 +321,11 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       }))
   }, [historyRows])
 
-  // Trend line uses a single neutral color — directional coloring (red/green based on
-  // whether the signed value went up or down) actively misleads: a problem shrinking
-  // from a $500 shortage to a $100 excess crosses zero and currently renders as "worse."
-  // Direction (▲/▼) is still shown in the data; the line color carries no judgment.
+  // Trend chart: ComposedChart (Bar + Line).
+  // Each bar is colored by its own sign — positive (net excess) = success, negative
+  // (net shortage) = error, zero = neutral. No comparison to the adjacent bar, so there
+  // is no "crossing-zero" trap that misrepresents a shrinking problem as worsening.
+  // The neutral line overlay shows trajectory through slope and position alone.
   const trendLineColor = theme.slateMid
 
   // ── Chart B: top variance drivers ─────────────────────────────────────────
@@ -350,7 +351,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
   const fmtAxis = (v: number) => {
     const abs = Math.abs(v)
     const sign = v < 0 ? '-' : ''
-    return abs >= 1000 ? `${sign}$${Math.round(abs / 1000)}k` : `${sign}$${abs}`
+    return abs >= 1000 ? `${sign}$${Math.round(abs / 1000)}k` : `${sign}$${Math.round(abs)}`
   }
 
   // Sorted + filtered variance rows
@@ -547,8 +548,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       <p
                         className={styles.cardVariance}
                         style={{
-                          // Neutral for both shortage and excess — direction shown by ▲/▼ and ±sign.
-                          color: theme.slateMid,
+                          color: showVariance < 0 ? theme.error : showVariance > 0 ? theme.success : theme.slateMid,
                         }}
                       >
                         {showVariance < 0
@@ -597,10 +597,10 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                 />
               ) : (
                 <ResponsiveContainer width="100%" height={CHART_HEIGHT_LINE}>
-                  <LineChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
+                  <ComposedChart data={trendData} margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
                     <CartesianGrid {...CHART_GRID_PROPS} />
                     <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
-                    {/* domain clamps to always include zero so the reference line is never off-screen */}
+                    {/* domain clamps to always include zero so position honestly shows direction */}
                     <YAxis tickFormatter={fmtAxis} tick={CHART_AXIS_TICK} width={56} axisLine={false} tickLine={false}
                       domain={[
                         (dataMin: number) => Math.min(0, dataMin),
@@ -615,9 +615,18 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                       }) as any}
                       labelFormatter={((label: string) => trendData.find((d) => d.label === label)?.fullLabel ?? label) as any}
                       cursor={{ stroke: theme.border, strokeWidth: 1 }} />
-                    <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2.5}
-                      dot={CHART_DOT} activeDot={{ ...CHART_ACTIVE_DOT, fill: trendLineColor }} {...CHART_ANIMATION} />
-                  </LineChart>
+                    {/* Bars colored by their own sign — no cross-period comparison */}
+                    <Bar dataKey="variance" maxBarSize={48} radius={3} isAnimationActive={false}>
+                      {trendData.map((entry) => (
+                        <Cell key={entry.label}
+                          fill={entry.variance < 0 ? theme.error : entry.variance > 0 ? theme.success : theme.slateMid}
+                        />
+                      ))}
+                    </Bar>
+                    {/* Neutral line shows trajectory through slope and position, not color */}
+                    <Line type="monotone" dataKey="variance" stroke={trendLineColor} strokeWidth={2}
+                      dot={false} activeDot={{ ...CHART_ACTIVE_DOT, fill: trendLineColor }} {...CHART_ANIMATION} />
+                  </ComposedChart>
                 </ResponsiveContainer>
               )}
             </div>
@@ -645,9 +654,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                     <Bar dataKey="value" isAnimationActive={false}
                       shape={(props: any) => {
                         const { x, y, width, height, index } = props
-                        // Neutral amber for all bars — shortage/excess direction is a fact shown in
-                        // sign; red/green on bars falsely implies one direction is "good."
-                        const fill = theme.amber
+                        const fill = props.shortage ? theme.error : theme.success
                         return (
                           <rect x={x} y={y} width={width} height={height} fill={fill} rx={4} ry={4}
                             style={{ animation: 'barSlideIn 0.4s ease-out both', animationDelay: `${index * 60}ms`, transformOrigin: 'left center' }} />
@@ -726,14 +733,14 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                         <td className={styles.tdNum}>{r.actualQty != null ? r.actualQty.toFixed(2) : '—'}</td>
                         <td
                           className={styles.tdNum}
-                          style={{ color: theme.slateMid }}
+                          style={{ color: r.varianceUnits < 0 ? theme.error : r.varianceUnits > 0 ? theme.success : theme.slateMid }}
                         >
                           {r.varianceUnits > 0 ? '+' : ''}
                           {r.varianceUnits.toFixed(2)}
                         </td>
                         <td
                           className={styles.tdNum}
-                          style={{ color: theme.slateMid, fontWeight: 600 }}
+                          style={{ color: (r.displayVarianceDollars ?? r.varianceDollars) == null ? theme.slateMid : (r.displayVarianceDollars ?? r.varianceDollars)! < 0 ? theme.error : (r.displayVarianceDollars ?? r.varianceDollars)! > 0 ? theme.success : theme.slateMid, fontWeight: 600 }}
                         >
                           {(r.displayVarianceDollars ?? r.varianceDollars) == null
                             ? '—'
@@ -789,7 +796,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                         <td className={styles.tdNum}>{fmtMoney(r.totalStockValue)}</td>
                         <td
                           className={styles.tdNum}
-                          style={{ color: theme.slateMid }}
+                          style={{ color: r.totalVarianceDollars == null ? theme.slateMid : r.totalVarianceDollars < 0 ? theme.error : r.totalVarianceDollars > 0 ? theme.success : theme.slateMid }}
                         >
                           {fmtMoney(r.totalVarianceDollars)}
                         </td>
@@ -1130,9 +1137,8 @@ function CycleDetailTab({ venueId, depts, historyRows }: {
                   const vUnits = r.totalVarianceQty ?? 0
                   // Display-preferred variance dollars — Phase W2
                   const vDollars = r.displayTotalVarianceDollars ?? r.totalVarianceDollars
-                  // Neutral for both directions — sign and arrow convey direction; color no longer judges it.
-                  const unitColor = theme.slateMid
-                  const dollarColor = theme.slateMid
+                  const unitColor = vUnits < 0 ? theme.error : vUnits > 0 ? theme.success : theme.slateMid
+                  const dollarColor = vDollars == null ? theme.slateMid : vDollars < 0 ? theme.error : vDollars > 0 ? theme.success : theme.slateMid
                   // Display-preferred cost price — Phase W2
                   const displayCostPrice = r.displayCostPrice ?? r.costPrice
                   const compareItem = compareMap.get(r.name)
