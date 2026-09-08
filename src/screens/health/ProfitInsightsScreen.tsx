@@ -8,6 +8,7 @@ import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { getHostiHealthStage, HostiHealthData } from '../../services/health/hostiHealth';
+import { captureError } from '../../services/crashReporting';
 
 type KpiPreview = {
   label: string;
@@ -145,8 +146,8 @@ export default function ProfitInsightsScreen() {
             if (alive) setMonthlyScores(null);
           }
         }
-      } catch {
-        // Non-fatal — screen shows nothing extra if this fails
+      } catch (e: any) {
+        captureError(e, 'ProfitInsightsScreen:getHostiHealthStage');
       } finally {
         if (alive) setLoading(false);
       }

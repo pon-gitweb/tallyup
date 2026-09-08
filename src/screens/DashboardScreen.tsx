@@ -22,6 +22,7 @@ import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
 import { getHostiHealthStage, HostiHealthData } from '../services/health/hostiHealth';
+import { captureError } from '../services/crashReporting';
 import { openIzzy } from '../components/IzzyAssistant';
 import { refreshPricesForVenue } from '../services/refreshPricesForDepartment';
 
@@ -382,7 +383,7 @@ export default function DashboardScreen() {
     if (!venueId) return;
     getHostiHealthStage(venueId, stocktakeCount, productCount ?? 0, supplierCount ?? 0, stockValue)
       .then(setHostiHealthData)
-      .catch(() => {});
+      .catch((e) => captureError(e, 'DashboardScreen:getHostiHealthStage'));
   }, [venueId, stocktakeCount, productCount, supplierCount, stockValue]);
 
   const [deptNames, setDeptNames] = React.useState<string[]>([]);
