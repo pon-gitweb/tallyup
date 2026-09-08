@@ -250,7 +250,16 @@ async function calculateFullScore(
   if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
     // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed here.
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
-    stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
+    // Four-zone piecewise curve. Boundaries verified:
+    //   1.5% → 100,  5% → 80,  10% → 40,  30% → 0
+    // Matchbox real case (13.5%): 40 − (13.5 − 10) × 2 = 33
+    stockAccuracy =
+      variancePct <= 1.5  ? 100 :
+      variancePct <= 5.0  ?  100 - (variancePct - 1.5)  / 3.5  * 20 :
+      variancePct <= 10.0 ?   80 - (variancePct - 5.0)  / 5.0  * 40 :
+      variancePct <= 30.0 ?   40 - (variancePct - 10.0) / 20.0 * 40 :
+      0;
+    stockAccuracy = Math.round(stockAccuracy);
   }
   await writeCheckpoint(1, 'after-stockAccuracy');
 

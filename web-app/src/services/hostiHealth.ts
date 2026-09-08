@@ -12,7 +12,7 @@
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { generateAbductiveInsights } from './abductiveInsights';
+import { generateAbductiveInsights, calcVarianceImprovementPct } from './abductiveInsights';
 import type { AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions } from './predictions';
 import type { PredictionSummary } from './predictions';
@@ -65,6 +65,7 @@ export interface HostiHealthStage3 {
   inventoryHealthUsedInvoiceData: boolean;
   targetDaysOfCover: number;
   orderingIntelligenceWeight: number;
+  stockAccuracyImprovementPct: number | null;
   paretoItems: Array<{
     name: string;
     areaName: string | null;
@@ -217,8 +218,18 @@ async function calculateFullScore(
 
   let stockAccuracy: number | null = null;
   if (totalStockValueAgg != null && totalStockValueAgg !== 0 && totalVarianceDollars != null) {
+    // totalVarianceDollars is already a sum of absolute values — no Math.abs() needed.
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
-    stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
+    // Four-zone piecewise curve. Boundaries verified:
+    //   1.5% → 100,  5% → 80,  10% → 40,  30% → 0
+    // Matchbox real case (13.5%): 40 − (13.5 − 10) × 2 = 33
+    stockAccuracy =
+      variancePct <= 1.5  ? 100 :
+      variancePct <= 5.0  ? 100 - (variancePct - 1.5)  / 3.5  * 20 :
+      variancePct <= 10.0 ?  80 - (variancePct - 5.0)  / 5.0  * 40 :
+      variancePct <= 30.0 ?  40 - (variancePct - 10.0) / 20.0 * 40 :
+      0;
+    stockAccuracy = Math.round(stockAccuracy);
   }
 
   // ── Pareto Analysis ───────────────────────────────────────────────────────
@@ -699,6 +710,15 @@ async function calculateFullScore(
     ? Math.max(0, Math.abs(prevVarianceDollars) - Math.abs(totalVarianceDollars))
     : null;
 
+  // ── Stock Accuracy improvement signal ─────────────────────────────────────
+  // Computed here because prevVarianceDollars isn't available up at the
+  // stockAccuracy section. Positive-only: a worsened figure shows no badge.
+  const rawImprovementPct = calcVarianceImprovementPct(totalVarianceDollars, prevVarianceDollars);
+  const stockAccuracyImprovementPct: number | null =
+    rawImprovementPct != null && rawImprovementPct > 0
+      ? Math.round(rawImprovementPct)
+      : null;
+
   // ── Confidence ────────────────────────────────────────────────────────────
   const pricedItemFraction = pricedItemPercentCount > 0
     ? (pricedItemPercentSum / pricedItemPercentCount) / 100
@@ -886,6 +906,7 @@ async function calculateFullScore(
     inventoryHealthUsedInvoiceData,
     targetDaysOfCover,
     orderingIntelligenceWeight,
+    stockAccuracyImprovementPct,
     paretoItems,
     paretoTotalVariance,
     paretoCoverageByTop3,

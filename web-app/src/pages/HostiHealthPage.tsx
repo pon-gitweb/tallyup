@@ -332,6 +332,21 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
                    style={{ color: score != null ? color : '#9ca3af' }}>
                   {score != null ? Math.round(score) : '—'}
                   {score != null && <span style={{ fontSize: 16, color: '#9ca3af', fontWeight: 400 }}>/100</span>}
+                  {score != null
+                    && m.key === 'stockAccuracy'
+                    && current?.stockAccuracyImprovementPct != null
+                    && (
+                      <span style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: theme.success,
+                        marginLeft: 8,
+                        fontFamily: theme.fontBody,
+                      }}>
+                        · ↑ {current.stockAccuracyImprovementPct}% better than last cycle
+                      </span>
+                    )
+                  }
                 </p>
                 <div className={styles.progressBar}>
                   <div

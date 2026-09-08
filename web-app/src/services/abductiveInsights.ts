@@ -3,6 +3,25 @@
  * Hosti Health values. No Firestore reads here; the caller supplies inputs
  * that have already been calculated elsewhere in hostiHealth.ts.
  */
+
+/**
+ * Shared pure function — returns variance improvement as a raw percentage
+ * (positive = better, negative = worse). Returns null when:
+ *   - either argument is missing
+ *   - the previous baseline is negligibly small (|prev| ≤ 20) — avoids
+ *     misleading percentages built on near-zero figures
+ * Callers that want a display figure should round; callers that want the
+ * signal for Bayesian computation use the raw value directly.
+ */
+export function calcVarianceImprovementPct(
+  totalVarianceDollars: number | null,
+  prevVarianceDollars: number | null,
+): number | null {
+  if (totalVarianceDollars == null || prevVarianceDollars == null) return null;
+  if (Math.abs(prevVarianceDollars) <= 20) return null;
+  const improvement = Math.abs(prevVarianceDollars) - Math.abs(totalVarianceDollars);
+  return improvement / Math.abs(prevVarianceDollars) * 100;
+}
 export interface AbductiveInsight {
   id: string;                    // unique, stable identifier for this pattern
   pattern: string;               // one sentence: what the data shows
@@ -135,11 +154,11 @@ export function generateAbductiveInsights(inputs: AbductiveInputs): AbductiveIns
   // ── Pattern 2: Improving variance trend ─────────────────────────────────────
   // Signal: this cycle's variance is lower than last cycle by >20%
   // Most likely: controls are working, counting is getting more accurate
-  if (totalVarianceDollars != null && prevVarianceDollars != null
-      && Math.abs(prevVarianceDollars) > 20) {
-    const improvement = Math.abs(prevVarianceDollars) - Math.abs(totalVarianceDollars);
-    const improvementPct = improvement / Math.abs(prevVarianceDollars) * 100;
-    if (improvementPct > 20) {
+  {
+    const improvementPct = calcVarianceImprovementPct(totalVarianceDollars, prevVarianceDollars);
+    if (improvementPct != null && improvementPct > 20) {
+      // prevVarianceDollars/totalVarianceDollars non-null guaranteed by calcVarianceImprovementPct returning non-null
+      const improvement = Math.abs(prevVarianceDollars!) - Math.abs(totalVarianceDollars!);
       // Prior: ~50% of variance improvements are genuine (vs random fluctuation)
       // Likelihood given genuine improvement: large % drop is consistent
       // Likelihood given random: 30% — random fluctuation can produce 20%+ swings
@@ -158,8 +177,8 @@ export function generateAbductiveInsights(inputs: AbductiveInputs): AbductiveIns
         confidenceLabel: confLabel,
         confidenceRationale: rationale,
         evidencePoints: [
-          `Previous variance: $${Math.abs(prevVarianceDollars).toFixed(0)}`,
-          `This cycle: $${Math.abs(totalVarianceDollars ?? 0).toFixed(0)}`,
+          `Previous variance: $${Math.abs(prevVarianceDollars!).toFixed(0)}`,
+          `This cycle: $${Math.abs(totalVarianceDollars!).toFixed(0)}`,
           `Improvement: $${improvement.toFixed(0)} (${Math.round(improvementPct)}%)`,
         ],
         severity: 'positive',
