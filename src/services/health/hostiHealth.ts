@@ -106,7 +106,8 @@ export async function getHostiHealthStage(
     try {
       const labourSnap = await getDoc(doc(db, 'venues', venueId, 'settings', 'labour'));
       hasHourlyRate = typeof labourSnap.data()?.hourlyRate === 'number';
-    } catch {
+    } catch (e: any) {
+      captureError(e, 'hostiHealth:stage1:labourSettings');
       // Non-fatal — treat as not configured
     }
 
@@ -122,7 +123,8 @@ export async function getHostiHealthStage(
         });
         hasCostPrices = priced / total >= 0.5;
       }
-    } catch {
+    } catch (e: any) {
+      captureError(e, 'hostiHealth:stage1:costPrices');
       // Non-fatal — treat as incomplete
     }
 
@@ -223,7 +225,8 @@ async function calculateFullScore(
       totalVarianceDollars = sumVariance;
       totalStockValueAgg = sumStockValue;
     }
-  } catch {
+  } catch (e: any) {
+    captureError(e, 'hostiHealth:stockAccuracy');
     // Non-fatal — stockAccuracy stays null below
   }
 
@@ -343,7 +346,8 @@ async function calculateFullScore(
       const savedMinutes = Math.max(0, baselineMinutes - sumActiveMinutes);
       labourEfficiency = Math.min(95, (savedMinutes / baselineMinutes) * 100);
     }
-  } catch {
+  } catch (e: any) {
+    captureError(e, 'hostiHealth:labourEfficiency');
     // Non-fatal — labourEfficiency stays null below
   }
 
@@ -437,7 +441,8 @@ async function calculateFullScore(
             inventoryHealthUsedInvoiceData = purchasesValue > 0;
           }
         }
-      } catch {
+      } catch (e: any) {
+        captureError(e, 'hostiHealth:inventoryHealth:invoiceLookup');
         // Non-fatal — fall through to implied purchases below
       }
 
@@ -468,7 +473,7 @@ async function calculateFullScore(
       }
     }
   } catch (e: any) {
-    console.log('[hostiHealth] inventoryHealth calculation error:', e?.message);
+    captureError(e, 'hostiHealth:inventoryHealth');
     // Non-fatal — stays null
   }
 
@@ -533,7 +538,7 @@ async function calculateFullScore(
         }
       }
     } catch (e: any) {
-      console.log('[hostiHealth] orderingIntelligence error:', e?.message);
+      captureError(e, 'hostiHealth:orderingIntelligence');
       // Non-fatal — stays null. Also covers the case where Firestore needs a
       // composite index (source ==, createdAt >=) that hasn't been created yet.
     }
@@ -709,7 +714,7 @@ async function calculateFullScore(
       }
     }
   } catch (e: any) {
-    console.log('[hostiHealth] wasteControl calculation failed (non-fatal):', e?.message);
+    captureError(e, 'hostiHealth:wasteControl');
   }
 
   const kpis = { stockAccuracy, labourEfficiency, inventoryHealth, orderingIntelligence, wasteControl };
@@ -749,7 +754,8 @@ async function calculateFullScore(
         trendDirection = trend > 0 ? 'up' : trend < 0 ? 'down' : 'stable';
       }
     }
-  } catch {
+  } catch (e: any) {
+    captureError(e, 'hostiHealth:trend');
     // Non-fatal — trend stays null
   }
 
@@ -791,7 +797,7 @@ async function calculateFullScore(
       prevVarianceDollars = prevCycleVarianceSum;
     }
   } catch (e: any) {
-    console.log('[hostiHealth] prevVarianceDollars error:', e?.message);
+    captureError(e, 'hostiHealth:prevVarianceDollars');
     // Non-fatal — stays null
   }
 
@@ -879,7 +885,7 @@ async function calculateFullScore(
       };
     }
   } catch (e: any) {
-    console.log('[hostiHealth] constraint analysis error:', e?.message);
+    captureError(e, 'hostiHealth:constraintAnalysis');
     // Non-fatal
   }
 
@@ -902,7 +908,7 @@ async function calculateFullScore(
       operationalStockValue,
     });
   } catch (e: any) {
-    console.log('[hostiHealth] abductive insights error:', e?.message);
+    captureError(e, 'hostiHealth:abductiveInsights');
     abductiveInsights = [];
   }
 
@@ -913,7 +919,7 @@ async function calculateFullScore(
       predictions = await generateStockoutPredictions(venueId, avgCycleDays);
     }
   } catch (e: any) {
-    console.log('[hostiHealth] predictions error:', e?.message);
+    captureError(e, 'hostiHealth:predictions');
     // Non-fatal
   }
 
@@ -964,8 +970,9 @@ async function calculateFullScore(
       operationalStockValue: operationalStockValue ?? null,
       cellarStockValue: cellarStockValue ?? null,
     }, { merge: true });
-  } catch {
-    // Non-fatal — score still returns if write fails
+  } catch (e: any) {
+    captureError(e, 'hostiHealth:monthlySnapshotWrite');
+    // Non-fatal — score still returns even if write fails
   }
 
   return {
