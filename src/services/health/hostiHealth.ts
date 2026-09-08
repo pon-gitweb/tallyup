@@ -8,6 +8,7 @@ import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where 
 import { db } from '../firebase';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
+import { captureError } from '../crashReporting';
 
 export interface HostiHealthStage1 {
   stage: 1;
@@ -285,8 +286,10 @@ async function calculateFullScore(
     paretoCoverageByTop3 = totalAbsVariance > 0
       ? Math.round(paretoItems.reduce((s, i) => s + Math.abs(i.varianceDollars), 0) / totalAbsVariance * 100)
       : 0;
-  } catch {
-    // Non-fatal — paretoItems stays empty below
+  } catch (e: any) {
+    console.error('[hostiHealth] paretoItems query failed:', e?.code, e?.message, e);
+    captureError(e, 'hostiHealth:paretoItems');
+    // Non-fatal — paretoItems stays empty, caller sees an empty list rather than a crash
   }
 
   // ── Labour Efficiency — sum activeCountingMinutes across all areas ───────
