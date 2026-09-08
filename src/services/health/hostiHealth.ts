@@ -8,7 +8,7 @@ import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where 
 import { db } from '../firebase';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
-import { captureError } from '../crashReporting';
+import { captureError, captureMessage } from '../crashReporting';
 
 export interface HostiHealthStage1 {
   stage: 1;
@@ -282,10 +282,13 @@ async function calculateFullScore(
       }
     }
 
-    console.log(
+    // Send unconditionally — the point is seeing these counts even when nothing throws.
+    // Distinct context keeps it separate from genuine error events.
+    captureMessage(
       `[hostiHealth] paretoItems trace: depts=${deptsSnap.docs.length}, withSnapshot=${diagWithSnapshot},` +
       ` itemsSeen=${diagItemsSeen}, skippedNull=${diagSkippedNull}, skippedZero=${diagSkippedZero},` +
       ` qualified=${diagQualified}`,
+      'info',
     );
 
     // Sort by absolute variance descending — biggest impact first
