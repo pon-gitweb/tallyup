@@ -244,6 +244,14 @@ async function calculateFullScore(
       varianceDollars: number; varianceQty: number;
     }> = [];
 
+    // Diagnostic counters — logged after the loop to identify which filter
+    // produces an empty paretoItems result without relying on an exception.
+    let diagWithSnapshot = 0;
+    let diagItemsSeen = 0;
+    let diagSkippedNull = 0;
+    let diagSkippedZero = 0;
+    let diagQualified = 0;
+
     // Reuse the department snapshots already fetched above
     for (const deptDoc of deptsSnap.docs) {
       const latestSnap = (await getDocs(query(
@@ -252,14 +260,18 @@ async function calculateFullScore(
         limit(1),
       ))).docs[0];
       if (!latestSnap) continue;
+      diagWithSnapshot++;
       const snapData = latestSnap.data() as any;
-      for (const item of (snapData.items || [])) {
+      const items: any[] = snapData.items || [];
+      diagItemsSeen += items.length;
+      for (const item of items) {
         // Prefer display-tier dollars (stamped + invoice-verified) so that items with no
         // stamped price but a matched invoice line are visible in the Pareto list.
         // Falls back to totalVarianceDollars for pre-Phase-1 snapshots.
         const displayVarianceDollars = item.displayTotalVarianceDollars ?? item.totalVarianceDollars;
-        if (displayVarianceDollars == null) continue;
-        if (displayVarianceDollars === 0) continue;
+        if (displayVarianceDollars == null) { diagSkippedNull++; continue; }
+        if (displayVarianceDollars === 0)   { diagSkippedZero++; continue; }
+        diagQualified++;
         allVarianceItems.push({
           name: item.name || 'Unknown product',
           areaName: item.areaName || null,
@@ -269,6 +281,12 @@ async function calculateFullScore(
         });
       }
     }
+
+    console.log(
+      `[hostiHealth] paretoItems trace: depts=${deptsSnap.docs.length}, withSnapshot=${diagWithSnapshot},` +
+      ` itemsSeen=${diagItemsSeen}, skippedNull=${diagSkippedNull}, skippedZero=${diagSkippedZero},` +
+      ` qualified=${diagQualified}`,
+    );
 
     // Sort by absolute variance descending — biggest impact first
     allVarianceItems.sort((a, b) => Math.abs(b.varianceDollars) - Math.abs(a.varianceDollars));
