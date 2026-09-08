@@ -796,6 +796,24 @@ async function calculateFullScore(
     console.error('hostiHealth:predictions', e);
   }
 
+  // ── Append-only history for trend charts ─────────────────────────────────
+  // One doc per monthKey — visits within the same month overwrite; a new month
+  // creates a new doc. The page reads the ordered collection to build chart lines.
+  try {
+    const variancePct =
+      totalStockValueAgg != null && totalStockValueAgg > 0 && totalVarianceDollars != null
+        ? Math.round(Math.abs(totalVarianceDollars) / totalStockValueAgg * 10000) / 100
+        : null;
+    await setDoc(doc(db, 'venues', venueId, 'hostiHealthHistory', monthKey), {
+      score,
+      variancePct,
+      stockAccuracy: stockAccuracy ?? null,
+      calculatedAt: Date.now(),
+    });
+  } catch (e: any) {
+    console.error('hostiHealth:historyWrite', e);
+  }
+
   // ── Monthly snapshot write ────────────────────────────────────────────────
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {

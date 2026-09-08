@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
 import {
   ComposedChart, LineChart, Line, Area, BarChart, Bar, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
@@ -22,6 +22,14 @@ type KpiScores = {
   labourEfficiency: number | null
   inventoryHealth: number | null
   orderingIntelligence: number | null
+}
+
+type HistoryPoint = {
+  monthKey: string
+  score: number
+  variancePct: number | null
+  stockAccuracy: number | null
+  calculatedAt: number
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,6 +70,18 @@ function fmtTimestamp(ms: number | null): string {
   return new Date(ms).toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+function fmtMonth(key: string): string {
+  const [year, month] = key.split('-')
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  return `${months[(parseInt(month, 10) || 0) - 1] ?? ''} ${year}`
+}
+
+function fmtMonthShort(key: string): string {
+  const [, month] = key.split('-')
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  return months[(parseInt(month, 10) || 0) - 1] ?? key
+}
+
 function severityBadgeStyle(severity: string): React.CSSProperties {
   switch (severity?.toLowerCase()) {
     case 'high':     return { background: '#fee2e2', color: '#991b1b' }
@@ -98,6 +118,7 @@ const KPI_META: { key: keyof KpiScores; label: string; desc: string }[] = [
 export default function HostiHealthPage({ venueId, onNavigate }: { venueId: string; onNavigate?: (page: string) => void }) {
   const [health, setHealth] = useState<HostiHealthData | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
+  const [history, setHistory] = useState<HistoryPoint[]>([])
   const [unmappedCount, setUnmappedCount] = useState(0)
 
   useEffect(() => {
@@ -137,7 +158,28 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         } catch {}
 
         const data = await getHostiHealthStage(venueId, totalStocktakesCompleted, productsSnap.size, supplierCount, stockValue)
-        if (alive) setHealth(data)
+
+        // Read history after computation so the point just written is included.
+        // Ordered by doc ID (YYYY-MM) which sorts chronologically as a string.
+        const histSnap = await getDocs(query(
+          collection(db, 'venues', venueId, 'hostiHealthHistory'),
+          orderBy('__name__', 'asc'),
+        ))
+        const histPoints: HistoryPoint[] = histSnap.docs.map(d => {
+          const hd = d.data() as any
+          return {
+            monthKey: d.id,
+            score: hd.score ?? 0,
+            variancePct: hd.variancePct ?? null,
+            stockAccuracy: hd.stockAccuracy ?? null,
+            calculatedAt: hd.calculatedAt ?? 0,
+          }
+        })
+
+        if (alive) {
+          setHealth(data)
+          setHistory(histPoints)
+        }
       } catch (e) {
         console.error('HostiHealthPage:load', e)
         if (alive) setHealth(null)
@@ -153,8 +195,12 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
   // Stage 3 is the only stage that shows the full dashboard
   const current: HostiHealthStage3 | null = health?.stage === 3 ? health as HostiHealthStage3 : null
 
-  // Chart A data: score trend — no historical data from live computation; show empty state
-  const trendData: { month: string; fullMonth: string; score: number }[] = []
+  // Chart A: score trend from append-only history collection
+  const trendData = useMemo(() =>
+    history
+      .filter(h => h.score != null)
+      .map(h => ({ month: fmtMonthShort(h.monthKey), fullMonth: fmtMonth(h.monthKey), score: h.score })),
+  [history])
 
   // Chart B: KPI breakdown
   const kpiBarData = useMemo(() =>
@@ -170,8 +216,12 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
     }),
   [current])
 
-  // Chart C: variance rate trend — no historical data from live computation; show empty state
-  const varianceRateData: { month: string; fullMonth: string; rate: number }[] = []
+  // Chart C: variance rate from append-only history collection
+  const varianceRateData = useMemo(() =>
+    history
+      .filter(h => h.variancePct != null)
+      .map(h => ({ month: fmtMonthShort(h.monthKey), fullMonth: fmtMonth(h.monthKey), rate: h.variancePct! })),
+  [history])
 
   if (healthLoading) return <p className={styles.loading}>Loading Hosti Health…</p>
 
