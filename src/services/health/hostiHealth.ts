@@ -5,6 +5,7 @@
  * while confidence builds. Real variance-driven scoring lands in Phase 2.
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
+import { Alert } from 'react-native';
 import { db } from '../firebase';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
@@ -924,6 +925,8 @@ async function calculateFullScore(
   }
 
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
+  // DIAGNOSTIC — remove after investigation
+  Alert.alert('Saving snapshot', `venueId=${venueId}\nmonthKey=${monthKey}\nparetoItems.length=${paretoItems.length}`);
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
       score,
