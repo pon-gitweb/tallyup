@@ -323,6 +323,13 @@ service cloud.firestore {
         allow write: if hasVenueRole(venueId, ['manager', 'owner']);
       }
 
+      match /debug/{docId} {
+        // Deliberately permissive — membership only, no role check.
+        // Controlled contrast with profitRecoverySnapshots write rule.
+        // DIAGNOSTIC — remove after investigation.
+        allow read, write: if isVenueMember(venueId);
+      }
+
       match /invites/{inviteId} {
         // Any venue member can read invites (to check status)
         allow read: if isVenueMember(venueId);
