@@ -174,7 +174,15 @@ async function calculateFullScore(
   venueId: string,
   totalStocktakesCompleted: number,
 ): Promise<HostiHealthStage3> {
+  // DIAGNOSTIC — remove after investigation
+  const writeCheckpoint = async (step: number, label: string) => {
+    try {
+      await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), { step, label, timestamp: Date.now() });
+    } catch (_) {}
+  };
+
   const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+  await writeCheckpoint(0, 'entry');
   let avgCycleDays: number = 0; // lifted to function scope — populated by Inventory Health below, read by Constraint Analysis
   let targetDaysOfCover = 10; // lifted to function scope — populated by Labour Efficiency's labourSnap read, used by Inventory Health and Constraint Analysis
 
@@ -237,6 +245,7 @@ async function calculateFullScore(
     const variancePct = totalVarianceDollars / totalStockValueAgg * 100;
     stockAccuracy = Math.min(95, Math.max(0, 100 - variancePct * 10));
   }
+  await writeCheckpoint(1, 'after-stockAccuracy');
 
   // ── Pareto Analysis — which items drive the most variance ─────────────────
   let paretoItems: HostiHealthStage3['paretoItems'] = [];
@@ -316,6 +325,7 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:paretoItems');
     // Non-fatal — paretoItems stays empty, caller sees an empty list rather than a crash
   }
+  await writeCheckpoint(2, 'after-paretoItems');
 
   // ── Labour Efficiency — sum activeCountingMinutes across all areas ───────
   let hasHourlyRate = false;
@@ -351,6 +361,7 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:labourEfficiency');
     // Non-fatal — labourEfficiency stays null below
   }
+  await writeCheckpoint(3, 'after-labourEfficiency');
 
   // ── Inventory Health — Days of Cover ──────────────────────────────────────
   let inventoryHealth: number | null = null;
@@ -477,6 +488,7 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:inventoryHealth');
     // Non-fatal — stays null
   }
+  await writeCheckpoint(4, 'after-inventoryHealth');
 
   // ── Ordering Intelligence — line-level compliance rate, not binary acceptance ──
   // Orders created via the Suggested Orders screen already carry source:'suggestions'
@@ -926,6 +938,7 @@ async function calculateFullScore(
 
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
   // DIAGNOSTIC — remove after investigation
+  await writeCheckpoint(5, 'before-snapshotWrite');
   Alert.alert('Saving snapshot', `venueId=${venueId}\nmonthKey=${monthKey}\nparetoItems.length=${paretoItems.length}`);
   // DIAGNOSTIC — bulletproof Firestore execution marker, remove after investigation
   try {
