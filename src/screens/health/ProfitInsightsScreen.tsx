@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -123,6 +123,13 @@ export default function ProfitInsightsScreen() {
             stockValue = depts.reduce((sum: number, d: any) => sum + ((d?.summary?.displayTotalStockValue ?? d?.summary?.totalStockValue) ?? 0), 0);
           }
         } catch {}
+
+        // DIAGNOSTIC — remove after investigation
+        try {
+          await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), {
+            step: -2, label: 'screen-before-call', totalStocktakesCompleted, timestamp: Date.now(),
+          });
+        } catch (_) {}
 
         const data = await getHostiHealthStage(
           venueId, totalStocktakesCompleted, productsSnap.size, supplierCount, stockValue,

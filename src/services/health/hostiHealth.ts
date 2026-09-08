@@ -101,6 +101,13 @@ export async function getHostiHealthStage(
   supplierCount: number,
   stockValue: number | null,
 ): Promise<HostiHealthData> {
+  // DIAGNOSTIC — remove after investigation
+  try {
+    await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), {
+      step: -1, label: 'getHostiHealthStage-entry', totalStocktakesCompleted, timestamp: Date.now(),
+    });
+  } catch (_) {}
+
   // Stage 1: fewer than 1 completed stocktake
   if (totalStocktakesCompleted < 1) {
     let hasHourlyRate = false;
