@@ -200,6 +200,12 @@ export default function ProfitInsightsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.oat }}>
+      {/* DIAGNOSTIC — remove after investigation */}
+      <View style={{ backgroundColor: '#dc2626', padding: 8 }}>
+        <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 11, textAlign: 'center' }}>
+          {'if you can read this, today’s update landed • 2026-09-08T05:00Z'}
+        </Text>
+      </View>
       <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 4 }}>
           Hosti Health
