@@ -927,6 +927,16 @@ async function calculateFullScore(
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
   // DIAGNOSTIC — remove after investigation
   Alert.alert('Saving snapshot', `venueId=${venueId}\nmonthKey=${monthKey}\nparetoItems.length=${paretoItems.length}`);
+  // DIAGNOSTIC — bulletproof Firestore execution marker, remove after investigation
+  try {
+    await setDoc(doc(db, 'venues', venueId, 'debug', 'hostiHealthMarker'), {
+      reachedSaveStep: true,
+      venueId,
+      monthKey,
+      paretoItemsLength: paretoItems.length,
+      timestamp: Date.now(),
+    });
+  } catch (_markerErr) { /* intentionally silent — marker failure must not mask real errors */ }
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
       score,
