@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore'
 import {
   ComposedChart, LineChart, Line, Area, BarChart, Bar, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
@@ -11,6 +11,8 @@ import {
   CHART_ACTIVE_DOT, CHART_ANIMATION, CHART_HEIGHT_LINE, CHART_HEIGHT_BAR,
 } from '../chartConfig'
 import { ChartEmptyState } from '../components/ChartEmptyState'
+import { getHostiHealthStage } from '../services/hostiHealth'
+import type { HostiHealthData, HostiHealthStage3 } from '../services/hostiHealth'
 import styles from './HostiHealthPage.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,45 +22,6 @@ type KpiScores = {
   labourEfficiency: number | null
   inventoryHealth: number | null
   orderingIntelligence: number | null
-}
-
-type ParetoItem = {
-  name: string
-  varianceDollars: number
-  contributionPct: number
-  areaName: string | null
-  categoryName: string | null
-}
-
-type TopInsight = {
-  pattern: string
-  mostLikelyExplanation: string
-  confidence: number
-  confidenceLabel: string
-  actionable: string
-  severity: string
-}
-
-type HealthSnapshot = {
-  monthKey: string
-  score: number | null
-  confidence: string | null
-  kpiScores: KpiScores | null
-  estimatedImpact: number | null
-  stockValue: number | null
-  varianceDollars: number | null
-  paretoTop3: ParetoItem[]
-  paretoTotalVariance: number | null
-  topInsight: TopInsight | null
-  constraintType: string | null
-  constraintDescription: string | null
-  constraintFixAction: string | null
-  constraintImpact: string | null
-  daysOfCover: number | null
-  targetDaysOfCover: number | null
-  operationalStockValue: number | null
-  cellarStockValue: number | null
-  calculatedAt: number | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -99,63 +62,6 @@ function fmtTimestamp(ms: number | null): string {
   return new Date(ms).toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-function fmtMonth(key: string): string {
-  const [year, month] = key.split('-')
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-  return `${months[(parseInt(month, 10) || 0) - 1] ?? ''} ${year}`
-}
-
-function fmtMonthShort(key: string): string {
-  const [, month] = key.split('-')
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-  return months[(parseInt(month, 10) || 0) - 1] ?? key
-}
-
-function docToSnapshot(id: string, data: any): HealthSnapshot {
-  const insight = Array.isArray(data.abductiveInsights) && data.abductiveInsights.length > 0
-    ? data.abductiveInsights[0]
-    : null
-  return {
-    monthKey: id,
-    score: data.score ?? null,
-    confidence: data.confidence ?? null,
-    kpiScores: data.kpis ? {
-      stockAccuracy:       data.kpis.stockAccuracy ?? null,
-      labourEfficiency:    data.kpis.labourEfficiency ?? null,
-      inventoryHealth:     data.kpis.inventoryHealth ?? null,
-      orderingIntelligence: data.kpis.orderingIntelligence ?? null,
-    } : null,
-    estimatedImpact:     data.estimatedImpact ?? null,
-    stockValue:          data.stockValue ?? null,
-    varianceDollars:     data.varianceDollars ?? null,
-    paretoTop3:          (Array.isArray(data.paretoItems) ? data.paretoItems : []).slice(0, 3).map((p: any) => ({
-      name:             p.name ?? '—',
-      varianceDollars:  p.varianceDollars ?? 0,
-      contributionPct:  p.contributionPct ?? 0,
-      areaName:         p.areaName ?? null,
-      categoryName:     p.categoryName ?? null,
-    })),
-    paretoTotalVariance:  data.paretoTotalVariance ?? null,
-    topInsight: insight ? {
-      pattern:               insight.pattern ?? '',
-      mostLikelyExplanation: insight.mostLikelyExplanation ?? '',
-      confidence:            insight.confidence ?? 0,
-      confidenceLabel:       insight.confidenceLabel ?? 'Low',
-      actionable:            insight.actionable ?? '',
-      severity:              insight.severity ?? 'low',
-    } : null,
-    constraintType:        data.constraint?.type ?? null,
-    constraintDescription: data.constraint?.description ?? null,
-    constraintFixAction:   data.constraint?.fixAction ?? null,
-    constraintImpact:      data.constraint?.impact ?? null,
-    daysOfCover:           data.daysOfCover ?? null,
-    targetDaysOfCover:     data.targetDaysOfCover ?? null,
-    operationalStockValue: data.operationalStockValue ?? null,
-    cellarStockValue:      data.cellarStockValue ?? null,
-    calculatedAt:          data.calculatedAt?.toMillis?.() ?? null,
-  }
-}
-
 function severityBadgeStyle(severity: string): React.CSSProperties {
   switch (severity?.toLowerCase()) {
     case 'high':     return { background: '#fee2e2', color: '#991b1b' }
@@ -190,8 +96,8 @@ const KPI_META: { key: keyof KpiScores; label: string; desc: string }[] = [
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function HostiHealthPage({ venueId, onNavigate }: { venueId: string; onNavigate?: (page: string) => void }) {
-  const [snapshots, setSnapshots] = useState<HealthSnapshot[]>([])
-  const [loading, setLoading] = useState(true)
+  const [health, setHealth] = useState<HostiHealthData | null>(null)
+  const [healthLoading, setHealthLoading] = useState(true)
   const [unmappedCount, setUnmappedCount] = useState(0)
 
   useEffect(() => {
@@ -204,60 +110,82 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
   }, [venueId])
 
   useEffect(() => {
-    setLoading(true)
-    getDocs(
-      query(
-        collection(db, 'venues', venueId, 'profitRecoverySnapshots'),
-        orderBy('__name__', 'asc'),
-      ),
-    ).then((snap) => {
-      const rows = snap.docs.map((d) => docToSnapshot(d.id, d.data())).reverse() // most recent first
-      setSnapshots(rows)
-    }).catch(() => {
-      setSnapshots([])
-    }).finally(() => setLoading(false))
+    if (!venueId) return
+    let alive = true
+    setHealthLoading(true)
+
+    async function load() {
+      try {
+        const venueSnap = await getDoc(doc(db, 'venues', venueId))
+        const venueData = venueSnap.exists() ? (venueSnap.data() as any) : {}
+        const totalStocktakesCompleted = venueData?.totalStocktakesCompleted || 0
+
+        const productsSnap = await getDocs(collection(db, 'venues', venueId, 'products'))
+
+        const suppliersSnap = await getDocs(collection(db, 'venues', venueId, 'suppliers'))
+        let supplierCount = 0
+        suppliersSnap.forEach(d => { if (!(d.data() as any)?.isHoldingSupplier) supplierCount++ })
+
+        let stockValue: number | null = null
+        try {
+          const latestSnap = await getDoc(doc(db, 'venues', venueId, 'latestSnapshot', 'current'))
+          if (latestSnap.exists()) {
+            const depts = (latestSnap.data() as any)?.departments ?? []
+            stockValue = depts.reduce((sum: number, d: any) =>
+              sum + ((d?.summary?.displayTotalStockValue ?? d?.summary?.totalStockValue) ?? 0), 0)
+          }
+        } catch {}
+
+        const data = await getHostiHealthStage(venueId, totalStocktakesCompleted, productsSnap.size, supplierCount, stockValue)
+        if (alive) setHealth(data)
+      } catch (e) {
+        console.error('HostiHealthPage:load', e)
+        if (alive) setHealth(null)
+      } finally {
+        if (alive) setHealthLoading(false)
+      }
+    }
+
+    load()
+    return () => { alive = false }
   }, [venueId])
 
-  const current = snapshots[0] ?? null
-  const chronological = useMemo(() => [...snapshots].reverse(), [snapshots]) // oldest first for charts
+  // Stage 3 is the only stage that shows the full dashboard
+  const current: HostiHealthStage3 | null = health?.stage === 3 ? health as HostiHealthStage3 : null
 
-  // Chart A: score trend
-  const trendData = useMemo(() =>
-    chronological
-      .filter((s) => s.score != null)
-      .map((s) => ({ month: fmtMonthShort(s.monthKey), fullMonth: fmtMonth(s.monthKey), score: s.score! })),
-  [chronological])
+  // Chart A data: score trend — no historical data from live computation; show empty state
+  const trendData: { month: string; fullMonth: string; score: number }[] = []
 
   // Chart B: KPI breakdown
   const kpiBarData = useMemo(() =>
-    KPI_META.map((m) => ({
-      name: m.label,
-      shortName: m.label.replace(' Intelligence', ' Intel.').replace(' Efficiency', ' Eff.'),
-      value: current?.kpiScores?.[m.key] ?? 0,
-      hasData: (current?.kpiScores?.[m.key] ?? null) != null,
-    })),
+    KPI_META.map((m) => {
+      const raw = current?.kpis?.[m.key as keyof typeof current.kpis]
+      const numVal = typeof raw === 'number' ? raw : null
+      return {
+        name: m.label,
+        shortName: m.label.replace(' Intelligence', ' Intel.').replace(' Efficiency', ' Eff.'),
+        value: numVal ?? 0,
+        hasData: numVal != null,
+      }
+    }),
   [current])
 
-  // Chart C: variance rate trend
-  const varianceRateData = useMemo(() =>
-    chronological
-      .filter((s) => s.varianceDollars != null && s.stockValue != null && s.stockValue > 0)
-      .map((s) => ({
-        month: fmtMonthShort(s.monthKey),
-        fullMonth: fmtMonth(s.monthKey),
-        rate: parseFloat((Math.abs(s.varianceDollars!) / s.stockValue! * 100).toFixed(2)),
-      })),
-  [chronological])
+  // Chart C: variance rate trend — no historical data from live computation; show empty state
+  const varianceRateData: { month: string; fullMonth: string; rate: number }[] = []
 
-  if (loading) return <p className={styles.loading}>Loading Hosti Health…</p>
+  if (healthLoading) return <p className={styles.loading}>Loading Hosti Health…</p>
 
-  if (snapshots.length === 0) {
+  if (!healthLoading && (health === null || health.stage < 3)) {
+    const stage2 = health?.stage === 2 ? health : null
     return (
       <div className={styles.emptyState}>
         <div className={styles.emptyLogo}>H</div>
         <h1 className={styles.emptyTitle}>Hosti Health not yet calculated</h1>
         <p className={styles.emptyBody}>
-          Your score appears after your third stocktake — you're one away. Head to the app whenever you're ready.
+          {stage2
+            ? `Your score is building — ${stage2.completedStocktakes} of 3 stocktakes done. One more and your full dashboard unlocks.`
+            : `Your score appears after your third stocktake. Head to the app whenever you're ready.`
+          }
         </p>
         <p className={styles.emptyNote}>
           It updates automatically each time you complete a stocktake.
@@ -344,7 +272,8 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         {/* KPI 2x2 grid */}
         <div className={styles.kpiGrid}>
           {KPI_META.map((m) => {
-            const score = current?.kpiScores?.[m.key] ?? null
+            const raw = current?.kpis?.[m.key as keyof typeof current.kpis]
+            const score: number | null = typeof raw === 'number' ? raw : null
             const color = kpiColor(score)
             return (
               <div key={m.key} className={styles.kpiCard}>
@@ -375,18 +304,14 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         {/* Chart A: Score trend */}
         <div className={styles.chartCard}>
           <p className={styles.chartTitle}>Score trend</p>
-          {trendData.length < 1 ? (
+          {trendData.length < 2 ? (
             <ChartEmptyState
               icon="📈"
-              title="No score yet"
-              body="Your Hosti Health score appears after your third stocktake. Each count makes it more accurate."
-              height={CHART_HEIGHT_LINE}
-            />
-          ) : trendData.length === 1 ? (
-            <ChartEmptyState
-              icon="📈"
-              title={`${trendData[0].score}/100 — ${trendData[0].fullMonth}`}
-              body="Complete more stocktakes to see your score trend over time."
+              title={trendData.length === 1
+                ? `${trendData[0].score}/100 — ${trendData[0].fullMonth}`
+                : 'Building history'
+              }
+              body="Complete more stocktakes over time to see your score trend."
               height={CHART_HEIGHT_LINE}
             />
           ) : (
@@ -483,9 +408,9 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         <div className={styles.insightCard}>
           <p className={styles.insightTitle}>Focus List</p>
           <p className={styles.insightSubtitle}>Top variance drivers this cycle</p>
-          {current?.paretoTop3?.length ? (
+          {current?.paretoItems?.slice(0, 3)?.length ? (
             <>
-              {current.paretoTop3.map((item, i) => (
+              {current.paretoItems.slice(0, 3).map((item, i) => (
                 <div key={i} className={styles.paretoItem}>
                   <span className={styles.paretoRank}>{i + 1}.</span>
                   <div className={styles.paretoBody}>
@@ -511,20 +436,20 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         {/* Card B: Primary Insight */}
         <div className={styles.insightCard}>
           <p className={styles.insightTitle}>Primary Insight</p>
-          {current?.topInsight ? (
+          {current?.abductiveInsights?.[0] ? (
             <>
-              <span className={styles.badge} style={severityBadgeStyle(current.topInsight.severity)}>
-                {current.topInsight.severity.charAt(0).toUpperCase() + current.topInsight.severity.slice(1)}
+              <span className={styles.badge} style={severityBadgeStyle(current.abductiveInsights[0].severity)}>
+                {current.abductiveInsights[0].severity.charAt(0).toUpperCase() + current.abductiveInsights[0].severity.slice(1)}
               </span>
-              <p className={styles.insightPattern}>{current.topInsight.pattern}</p>
+              <p className={styles.insightPattern}>{current.abductiveInsights[0].pattern}</p>
               <p className={styles.insightExplanation}>
                 <span style={{ color: theme.slateMid }}>Most likely: </span>
-                {current.topInsight.mostLikelyExplanation}
+                {current.abductiveInsights[0].mostLikelyExplanation}
               </p>
-              <span className={styles.badge} style={confidenceBadgeStyle(current.topInsight.confidenceLabel)}>
-                {current.topInsight.confidenceLabel} confidence
+              <span className={styles.badge} style={confidenceBadgeStyle(current.abductiveInsights[0].confidenceLabel)}>
+                {current.abductiveInsights[0].confidenceLabel} confidence
               </span>
-              <p className={styles.insightActionable}>→ {current.topInsight.actionable}</p>
+              <p className={styles.insightActionable}>→ {current.abductiveInsights[0].actionable}</p>
             </>
           ) : (
             <p className={styles.insightEmpty}>Complete 2+ stocktakes to unlock pattern insights.</p>
@@ -534,16 +459,16 @@ export default function HostiHealthPage({ venueId, onNavigate }: { venueId: stri
         {/* Card C: Primary Constraint */}
         <div className={styles.insightCard}>
           <p className={styles.insightTitle}>Primary Constraint</p>
-          {current?.constraintDescription ? (
+          {current?.constraint?.description ? (
             <>
-              {current.constraintImpact && (
-                <span className={styles.badge} style={constraintImpactStyle(current.constraintImpact)}>
-                  {current.constraintImpact.charAt(0).toUpperCase() + current.constraintImpact.slice(1)} impact
+              {current.constraint.impact && (
+                <span className={styles.badge} style={constraintImpactStyle(current.constraint.impact)}>
+                  {current.constraint.impact.charAt(0).toUpperCase() + current.constraint.impact.slice(1)} impact
                 </span>
               )}
-              <p className={styles.constraintDesc}>{current.constraintDescription}</p>
-              {current.constraintFixAction && (
-                <p className={styles.constraintFix}>→ {current.constraintFixAction}</p>
+              <p className={styles.constraintDesc}>{current.constraint.description}</p>
+              {current.constraint.fixAction && (
+                <p className={styles.constraintFix}>→ {current.constraint.fixAction}</p>
               )}
               {current.daysOfCover != null && (
                 <p className={styles.constraintDays}>
