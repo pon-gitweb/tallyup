@@ -97,11 +97,14 @@ function InventoryImportScreen() {
   const [pages, setPages] = useState<CapturedPage[]>([]);
   const [photoStage, setPhotoStage] = useState<'idle' | 'capturing'>('idle');
 
-  // ── Review modal state (STOCKTAKE_PHOTO_IMPORT path) ──────────────────────
+  // ── Review modal state (photo path + PDF/CSV path) ────────────────────────
+  // Shared by both import paths — the review modal works identically for both.
   const [reviewVisible, setReviewVisible] = useState(false);
   const [reviewSnapshotId, setReviewSnapshotId] = useState<string | null>(null);
   const [reviewProposals, setReviewProposals] = useState<any[]>([]);
   const [reviewSupplierCandidate, setReviewSupplierCandidate] = useState<any>(null);
+  // Full product list from PDF/CSV extraction, navigated to after review commits
+  const [reviewPendingResult, setReviewPendingResult] = useState<ExtractionResult | null>(null);
 
   const readBase64 = async (uri: string): Promise<string> =>
     FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -143,6 +146,47 @@ function InventoryImportScreen() {
         }
         await writeProcessed(venueId, 'processedStocktakes', hash, { productCount: result.products.length });
       }
+
+      // If the server detected new products or a new supplier, show the review
+      // modal (same flow as the photo path) so the user can accept/skip each.
+      // After review, the full product list continues to InventoryImportPreview.
+      const hasProposals = ((result as any).proposals?.length ?? 0) > 0;
+      const hasSupplierCandidate = !!( result as any).supplierCandidate;
+      if (hasProposals || hasSupplierCandidate) {
+        setLoadingMsg('Saving scan...');
+        try {
+          const sc = (result as any).supplierCandidate ?? null;
+          const snapResult = await persistFastReceiveSnapshot({
+            venueId,
+            source: 'pdf',
+            storagePath: fileName,
+            payload: {
+              invoice: {
+                source: 'pdf',
+                storagePath: fileName,
+                poNumber: null,
+                supplierId: (result as any).resolvedSupplierId ?? null,
+                supplierName: sc?.name ?? null,
+              },
+              proposals: (result as any).proposals ?? [],
+              supplierCandidate: sc,
+              lines: (result.products || []).map((p: any) => ({ name: p.name, qty: p.parLevel || 1, unitPrice: p.costPrice })),
+            },
+          });
+          if (snapResult.ok && snapResult.id) {
+            setLoading(false);
+            setReviewSnapshotId(snapResult.id);
+            setReviewProposals((result as any).proposals ?? []);
+            setReviewSupplierCandidate(sc);
+            setReviewPendingResult(result);
+            setReviewVisible(true);
+            return;
+          }
+        } catch (snapErr: any) {
+          console.warn('[processFile] snapshot save failed, falling back to preview', snapErr?.message);
+        }
+      }
+
       setLoading(false);
       nav.navigate('InventoryImportPreview', { result, venueId });
     } catch (e: any) {
@@ -300,11 +344,7 @@ function InventoryImportScreen() {
     );
   }
 
-  {/* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
-      Cost optimisation — PDF/CSV available instead.
-      Restore when photo API costs reduce or
-      unlimited plan is active. */}
-  if (false && photoStage === 'capturing') {
+  if (photoStage === 'capturing') {
     return (
       <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 16 }}>
         <View style={{ backgroundColor: themeColours.primaryLight, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
@@ -378,12 +418,22 @@ function InventoryImportScreen() {
         onCommitted={(created, changed) => {
           setReviewVisible(false);
           const total = created + changed;
-          showSuccess(
-            total > 0
-              ? `${total} product${total === 1 ? '' : 's'} ${created > 0 ? 'added' : 'updated'} — you're all set!`
-              : 'No changes made.'
-          );
-          nav.navigate('ProductsList');
+          if (reviewPendingResult) {
+            // PDF/CSV path: continue to the full product list preview so the
+            // user can review and confirm the complete extracted inventory.
+            const pendingResult = reviewPendingResult;
+            setReviewPendingResult(null);
+            if (total > 0) showSuccess(`${total} new product${total === 1 ? '' : 's'} added — review the full list below.`);
+            nav.navigate('InventoryImportPreview', { result: pendingResult, venueId });
+          } else {
+            // Photo path: all done, navigate to products list.
+            showSuccess(
+              total > 0
+                ? `${total} product${total === 1 ? '' : 's'} ${created > 0 ? 'added' : 'updated'} — you're all set!`
+                : 'No changes made.'
+            );
+            nav.navigate('ProductsList');
+          }
         }}
       />
     )}
@@ -400,11 +450,8 @@ function InventoryImportScreen() {
         {[
           { icon: '📊', label: 'Excel or CSV', desc: 'Your existing stocktake spreadsheet', rec: true },
           { icon: '📄', label: 'PDF', desc: 'A printed stocktake form or report', rec: true },
+          { icon: '📷', label: 'Photo', desc: 'Photo of a handwritten or printed sheet', rec: false },
           { icon: '📝', label: 'Word document', desc: 'A stocktake list in Word format', rec: false },
-          /* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
-             Cost optimisation — PDF/CSV available instead.
-             Restore when photo API costs reduce or
-             unlimited plan is active. */
         ].map((item, i) => (
           <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: i < 2 ? 10 : 0 }}>
             <Text style={{ fontSize: 20 }}>{item.icon}</Text>
@@ -426,23 +473,16 @@ function InventoryImportScreen() {
       <Text style={{ fontWeight: '900', color: themeColours.text, fontSize: 16 }}>Choose your file</Text>
       <View style={{ gap: 10 }}>
         <FileTypeButton icon="📁" label="Upload PDF or CSV" sublabel="PDF, Excel, CSV, Word — Recommended" onPress={onPickDocument} themeColours={themeColours} />
-        {/* STOCKTAKE_PHOTO_IMPORT — temporarily hidden
-            Cost optimisation — PDF/CSV available instead.
-            Restore when photo API costs reduce or
-            unlimited plan is active. */}
-        {false && (
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <FileTypeButton icon="📷" label="Take photo" sublabel="Camera — multi-page" onPress={() => addPhotoPage('camera')} themeColours={themeColours} />
-            <FileTypeButton icon="🖼️" label="Photo library" sublabel="From camera roll" onPress={() => addPhotoPage('library')} themeColours={themeColours} />
-          </View>
-        )}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <FileTypeButton icon="📷" label="Take photo" sublabel="Camera — multi-page" onPress={() => addPhotoPage('camera')} themeColours={themeColours} />
+          <FileTypeButton icon="🖼️" label="Photo library" sublabel="From camera roll" onPress={() => addPhotoPage('library')} themeColours={themeColours} />
+        </View>
         <View style={{ backgroundColor: themeColours.primaryLight, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: themeColours.border }}>
           <Text style={{ fontWeight: '800', color: themeColours.deepBlue, marginBottom: 6, fontSize: 14 }}>
-            📄 For best results upload your stocktake as a PDF or CSV file
+            💡 Tip — fastest import
           </Text>
-          <Text style={{ color: themeColours.deepBlue, fontSize: 13, lineHeight: 18, marginBottom: 12 }}>
-            Digital files are processed faster and more accurately than photos.{'\n\n'}
-            Tip: Export directly from your POS or spreadsheet for instant import.
+          <Text style={{ color: themeColours.deepBlue, fontSize: 13, lineHeight: 18 }}>
+            CSV or PDF exports from your POS or spreadsheet are processed fastest. Photos also work — good lighting and a flat surface give the best results.
           </Text>
         </View>
       </View>

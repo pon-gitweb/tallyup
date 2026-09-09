@@ -11,6 +11,7 @@ import { resolveSupplier, commitSupplierResolution } from './supplierResolution'
 import { IZZY_FEATURES, COUNTING_GUIDANCE, SUITEE_COUNTING_NOTE, FESTIVAL_IZZY_FEATURES, HOSTI_BUSINESS_REDIRECT } from "./izzyContext";
 import { AiCallType, checkAiLimit, trackAiCall, AI_METER_EXTENSION_LOOKUP_KEY, resolveVenuePlan, PLAN_LIMITS } from './services/aiMeter';
 import { tokenizeForMatching, overlapCoefficient, isReliableMatch } from './nameMatching';
+import { detectNewProducts } from './inventoryMatching';
 import {
   resolveGpAnalysis, runToolLoop, GP_ANALYSIS_TOOL, SuiteeRecipe,
   SUPPLIER_TREND_TOOL, aggregateSupplierTrend, PriceChangeRecord,
@@ -862,9 +863,12 @@ app.post("/extract-inventory", async (req, res) => {
         "Return only valid JSON, no preamble.";
     } else {
       systemPrompt =
-        "You are reading a hospitality stocktake sheet. " +
+        "You are reading a hospitality stocktake sheet or inventory list. " +
+        "If a supplier name is clearly identifiable at the document level (e.g. a header, letterhead, or title), include it. " +
         "Extract all product names and quantities. " +
-        "Return as JSON array: [{name, quantity, unit, area}]. " +
+        "Return as a single JSON object: " +
+        '{"supplierName":"<supplier or null>","products":[{"name":"...","quantity":...,"unit":"...","area":"..."}]}. ' +
+        "Use null for supplierName if no supplier is identifiable. " +
         "If area is not clear use 'General'. " +
         "Return only valid JSON, no preamble.";
     }
@@ -1013,14 +1017,31 @@ app.post("/extract-inventory", async (req, res) => {
       console.log("[api/extract-inventory] catalogue OK", { uid, count: products.length });
       res.json({ ok: true, products, lines: [] });
     } else {
-      // Default: stocktake sheet — returns ExtractionResult format matching client type
-      let items: any[] = [];
+      // Default: stocktake sheet — returns ExtractionResult format matching client type,
+      // extended with supplierCandidate and proposals (same shape as ocrInvoicePhoto).
+      let extractedItems: any[] = [];
+      let extractedSupplierName: string | null = null;
       try {
-        const m = rawText.match(/\[[\s\S]*\]/);
-        items = m ? JSON.parse(m[0]) : [];
-      } catch { items = []; }
+        // New format: {"supplierName":"...","products":[...]}
+        const objM = rawText.match(/\{[\s\S]*\}/);
+        if (objM) {
+          const parsed = JSON.parse(objM[0]);
+          if (Array.isArray(parsed.products)) {
+            extractedItems = parsed.products;
+            extractedSupplierName = typeof parsed.supplierName === "string" && parsed.supplierName.trim()
+              ? parsed.supplierName.trim() : null;
+          } else if (Array.isArray(parsed)) {
+            extractedItems = parsed; // old array format fallback
+          }
+        }
+        // Fallback: raw JSON array
+        if (extractedItems.length === 0) {
+          const arrM = rawText.match(/\[[\s\S]*\]/);
+          extractedItems = arrM ? JSON.parse(arrM[0]) : [];
+        }
+      } catch { extractedItems = []; }
 
-      const products = items
+      const products = extractedItems
         .filter((l: any) => l && typeof l.name === "string" && l.name.trim().length > 0)
         .map((l: any) => ({
           name: String(l.name).trim(),
@@ -1038,7 +1059,58 @@ app.post("/extract-inventory", async (req, res) => {
       const hasPricing = products.some((p: any) => p.costPrice != null);
       const hasStructure = products.some((p: any) => (p.area && p.area !== "General") || p.department);
 
-      console.log("[api/extract-inventory] OK", { uid, source: isImage ? "image" : "pdf", count: products.length });
+      // ── Supplier resolution ───────────────────────────────────────────────
+      // Call the same resolveSupplier used by invoice/PO flows — unmatched suppliers
+      // become a supplierCandidate for the user to accept or skip in the review modal.
+      let supplierCandidate: { name: string; phone: string|null; email: string|null; address: string|null; accountNumber: string|null } | null = null;
+      let resolvedSupplierId: string | null = null;
+      let resolvedSupplierName: string | null = null;
+
+      if (extractedSupplierName) {
+        try {
+          const db = admin.firestore();
+          const meta = { name: extractedSupplierName, phone: null, email: null, address: null, accountNumber: null };
+          const resolution = await resolveSupplier(db, venueId, meta);
+          if (resolution.kind === "matched") {
+            resolvedSupplierId = resolution.supplierId;
+            resolvedSupplierName = resolution.canonicalName;
+          } else {
+            supplierCandidate = { name: extractedSupplierName, phone: null, email: null, address: null, accountNumber: null };
+          }
+        } catch (e: any) {
+          console.log("[api/extract-inventory] supplier resolution error (non-fatal)", e?.message);
+        }
+      }
+
+      // ── New-product detection ─────────────────────────────────────────────
+      // Call detectNewProducts from the shared inventoryMatching module — same
+      // function used by ocrInvoicePhoto's processUnpricedLines path. One
+      // implementation behind both endpoints; neither can drift independently.
+      let proposals: any[] = [];
+      if (products.length > 0) {
+        try {
+          const db = admin.firestore();
+          const sourceId = `inv_${Date.now()}`;
+          const { proposals: detected } = await detectNewProducts({
+            db,
+            venueId,
+            productNames: products.map((p: any) => p.name),
+            sourceId,
+            supplierId: resolvedSupplierId,
+            supplierName: resolvedSupplierName || extractedSupplierName,
+          });
+          proposals = detected;
+        } catch (e: any) {
+          console.log("[api/extract-inventory] detectNewProducts error (non-fatal)", e?.message);
+        }
+      }
+
+      console.log("[api/extract-inventory] OK", {
+        uid, source: isImage ? "image" : "pdf",
+        count: products.length,
+        proposals: proposals.length,
+        supplierCandidate: !!supplierCandidate,
+      });
       res.json({
         ok: true,
         products,
@@ -1048,6 +1120,10 @@ app.post("/extract-inventory", async (req, res) => {
         hasStructure,
         summary: `Found ${products.length} product${products.length !== 1 ? "s" : ""}`,
         warnings: [],
+        // ── Proposal fields — same shape as ocrInvoicePhoto ──────────────
+        proposals,
+        supplierCandidate: supplierCandidate ?? null,
+        resolvedSupplierId: resolvedSupplierId ?? null,
       });
     }
 

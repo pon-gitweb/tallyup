@@ -6,6 +6,7 @@ import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
 import { checkAiLimit, trackAiCall } from './services/aiMeter';
+import { productNamesMatch } from './inventoryMatching';
 
 type ParsedLine = {
   name: string;
@@ -586,11 +587,8 @@ async function processUnpricedLines(
       continue;
     }
 
-    const matchedProd = existingProds.find(ep => {
-      const en = normNameInline(ep.name);
-      const cn = normNameInline(line.name);
-      return (en === cn && en.length > 0) || tokenJaccardInline(line.name, ep.name) >= 0.85;
-    });
+    // productNamesMatch imported from inventoryMatching — shared with /extract-inventory
+    const matchedProd = existingProds.find(ep => productNamesMatch(line.name, ep.name));
     if (matchedProd) {
       if (!matchedProd.supplierId && supplierId) {
         await db.doc(`venues/${venueId}/products/${matchedProd.id}`).update({

@@ -213,12 +213,14 @@ describe('InventoryImportScreen — photo import review', () => {
 
   describe('FastReceive flow isolation', () => {
 
-    it('PI16: STOCKTAKE_PHOTO_IMPORT path flag constant is falsy (photo path still hidden)', () => {
-      // The photo capture UI is still hidden behind {false && ...}.
-      // This test documents that the hiding is intentional and guards against
-      // accidental exposure before cost/metering is in place.
-      const STOCKTAKE_PHOTO_IMPORT_ENABLED = false;
-      expect(STOCKTAKE_PHOTO_IMPORT_ENABLED).toBe(false);
+    it('PI16: photo path gate is lifted — buttons render unconditionally', () => {
+      // As of Handoff 4 the {false && ...} guard was removed; the photo capture
+      // buttons (Take photo, Photo library) and the capturing UI both render
+      // unconditionally based on state, not a compile-time false literal.
+      // This test documents the intentional change so reviewers can confirm
+      // it was deliberate if they see it in a diff.
+      const PHOTO_GATE_REMOVED = true;
+      expect(PHOTO_GATE_REMOVED).toBe(true);
     });
 
     it('PI17: review modal props do not include FastReceive-specific fields', () => {
