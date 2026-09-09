@@ -6,7 +6,7 @@ import { contributeToGlobalDirectory } from "./globalSuppliers";
 import { filterInvoiceLines } from "./invoiceFilter";
 import { resolveSupplier as resolveSupplierShared, commitSupplierResolution, SupplierMeta } from './supplierResolution';
 import { checkAiLimit, trackAiCall } from './services/aiMeter';
-import { productNamesMatch } from './inventoryMatching';
+import { productNamesMatch, normProductName } from './inventoryMatching';
 
 type ParsedLine = {
   name: string;
@@ -544,20 +544,14 @@ async function storeHistoricalInvoice(
   return ref.id;
 }
 
-// ── Inline matching helpers (Admin SDK — cannot import client-side matching.ts) ──
+// ── Inline matching helpers ────────────────────────────────────────────────────
+// normNameInline is kept for supplier-name exact comparisons (line ~799 in
+// findPendingDeliveryMatch) which are intentionally out of scope for the shared
+// productNamesMatch. tokenJaccardInline was removed — its only caller
+// (matchPackingSlipLines) now uses productNamesMatch from inventoryMatching.ts.
 
 function normNameInline(s: string): string {
   return (s || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
-}
-
-function tokenJaccardInline(a: string, b: string): number {
-  const ta = new Set(normNameInline(a).split(" ").filter(Boolean));
-  const tb = new Set(normNameInline(b).split(" ").filter(Boolean));
-  if (ta.size === 0 && tb.size === 0) return 1;
-  if (ta.size === 0 || tb.size === 0) return 0;
-  let intersection = 0;
-  ta.forEach(t => { if (tb.has(t)) intersection++; });
-  return intersection / (ta.size + tb.size - intersection);
 }
 
 // ── Unpriced product creation ─────────────────────────────────────────────────
@@ -631,7 +625,7 @@ async function incrementStockFromLines(
   for (const l of lines) {
     if (!l.qty) continue;
     if (l.productId) byProductId.set(l.productId, (byProductId.get(l.productId) || 0) + l.qty);
-    else if (l.name) byName.set(normNameInline(l.name), (byName.get(normNameInline(l.name)) || 0) + l.qty);
+    else if (l.name) byName.set(normProductName(l.name), (byName.get(normProductName(l.name)) || 0) + l.qty);
   }
   if (byProductId.size === 0 && byName.size === 0) return 0;
 
@@ -654,7 +648,7 @@ async function incrementStockFromLines(
         if (linkId && byProductId.has(linkId)) {
           qty = byProductId.get(linkId);
         } else {
-          const itemName = normNameInline(item.name || "");
+          const itemName = normProductName(item.name || "");
           if (itemName && byName.has(itemName)) qty = byName.get(itemName);
         }
         if (qty) {
@@ -712,11 +706,8 @@ async function matchPackingSlipLines(
   let totalProvisionalCost = 0;
 
   for (const line of lines) {
-    const lineNorm = normNameInline(line.name);
-    const matchedProduct = products.find(p => {
-      const pn = normNameInline(p.name || "");
-      return (pn === lineNorm && pn.length > 0) || tokenJaccardInline(line.name, p.name || "") >= 0.85;
-    });
+    // productNamesMatch from inventoryMatching — single authoritative implementation
+    const matchedProduct = products.find(p => productNamesMatch(line.name, p.name || ""));
 
     const unitCost = matchedProduct?.costPrice != null ? Number(matchedProduct.costPrice) : 0;
     const lineTotal = unitCost * line.qty;

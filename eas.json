@@ -78,6 +78,7 @@
       },
       "distribution": "store",
       "environment": "production",
+      "channel": "production",
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_AI_URL": "https://us-central1-tallyup-f1463.cloudfunctions.net/api",
