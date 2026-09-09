@@ -881,7 +881,8 @@ service cloud.firestore {
             'primarySupplierId', 'primarySupplierName', 'supplierCount', 'lowestUnitCost',
             'updatedAt', 'expiryDate', 'category', 'categorySuggested',
             'active', 'barcode', 'barcodeNumber', 'brand', 'description', 'notes',
-            'supplierNameSuggested', 'supplierGlobalId'
+            'supplierNameSuggested', 'supplierGlobalId',
+            'homeDepartmentId', 'homeAreaId'
           ]);
         // Rule B: any venue member can update supplier-link and par fields
         allow update: if isVenueMember(venueId)

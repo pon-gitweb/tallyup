@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import { getFirestore, doc, setDoc, addDoc, collection, serverTimestamp, updateDoc, Timestamp } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, addDoc, collection, getDocs, serverTimestamp, updateDoc, Timestamp } from 'firebase/firestore';
 import { getApp } from 'firebase/app';
 import {
   View,
@@ -147,6 +147,10 @@ export default function EditProductScreen() {
     // quantity confidence — read-only display fields, not edited in this screen
     quantityConfidence: seed?.quantityConfidence ?? null,
     costPriceBasisAt: seed?.costPriceBasisAt ?? null,
+
+    // home area — optional default location suggestion (does not affect counting flow)
+    homeDepartmentId: seed?.homeDepartmentId ?? null,
+    homeAreaId: seed?.homeAreaId ?? null,
   }));
 
   const [saving, setSaving] = useState(false);
@@ -165,6 +169,12 @@ export default function EditProductScreen() {
   const [newSupplierEmail, setNewSupplierEmail] = useState('');
   const [newSupplierPhone, setNewSupplierPhone] = useState('');
   const [savingSupplier, setSavingSupplier] = useState(false);
+
+  // Home area picker state
+  type DeptWithAreas = { id: string; name: string; areas: Array<{ id: string; name: string }> };
+  const [depts, setDepts] = useState<DeptWithAreas[]>([]);
+  const [loadingDepts, setLoadingDepts] = useState(false);
+  const [showHomeAreaModal, setShowHomeAreaModal] = useState(false);
 
   // Multi-supplier section state (FIX 2 + FIX 6)
   const [productSuppliers, setProductSuppliers] = useState<ProductSupplierLink[]>([]);
@@ -241,6 +251,34 @@ export default function EditProductScreen() {
   function dismissSuggestion() {
     setDismissedSuggestionKey(suggestionKey);
   }
+
+  // Load departments + areas when the home area modal opens (lazy, once per session)
+  useEffect(() => {
+    if (!venueId || !showHomeAreaModal || depts.length > 0) return;
+    setLoadingDepts(true);
+    (async () => {
+      try {
+        const db = getFirestore(getApp());
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const loaded: DeptWithAreas[] = [];
+        for (const deptDoc of deptsSnap.docs) {
+          const areasSnap = await getDocs(collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas'));
+          const areas = areasSnap.docs
+            .map(a => ({ id: a.id, name: (a.data() as any)?.name ?? a.id }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          if (areas.length > 0) {
+            loaded.push({ id: deptDoc.id, name: (deptDoc.data() as any)?.name ?? deptDoc.id, areas });
+          }
+        }
+        loaded.sort((a, b) => a.name.localeCompare(b.name));
+        setDepts(loaded);
+      } catch (_) {
+        // Non-fatal — picker will just stay empty
+      } finally {
+        setLoadingDepts(false);
+      }
+    })();
+  }, [venueId, showHomeAreaModal]);
 
   // Load suppliers when the picker is opened
   useEffect(() => {
@@ -424,6 +462,11 @@ export default function EditProductScreen() {
       category: form.category || form.categorySuggested || null,
 
       active: !!form.active,
+
+      // Home area — optional default location (does not affect stocktake counting flow)
+      homeDepartmentId: form.homeDepartmentId ?? null,
+      homeAreaId: form.homeAreaId ?? null,
+
       updatedAt: (serverTimestamp ? serverTimestamp() : new Date()),
       ...(editingId ? {} : { inductionSource: 'manual', inductionStatus: 'complete' }),
 
@@ -710,6 +753,40 @@ export default function EditProductScreen() {
           </View>
         </View>
 
+        {/* ---- Home area (optional default location suggestion) ---- */}
+        <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
+          <Text style={[styles.cardTitle, { color: colours.text }]}>Home Area <Text style={{ fontWeight: '400', fontSize: 12, color: colours.textSecondary }}>(optional)</Text></Text>
+          <Text style={[styles.hintDim, { color: colours.textSecondary, marginBottom: 10 }]}>
+            Where this product lives during a stocktake. Used as a suggestion only — counts still work without it.
+          </Text>
+          {form.homeDepartmentId && form.homeAreaId ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flex: 1, backgroundColor: colours.background, borderRadius: 8, borderWidth: 1, borderColor: colours.border, paddingHorizontal: 12, paddingVertical: 8 }}>
+                <Text style={{ fontSize: 13, color: colours.text, fontWeight: '600' }}>
+                  {depts.find(d => d.id === form.homeDepartmentId)?.name ?? form.homeDepartmentId}
+                  <Text style={{ fontWeight: '400', color: colours.textSecondary }}> · </Text>
+                  {depts.find(d => d.id === form.homeDepartmentId)?.areas.find(a => a.id === form.homeAreaId)?.name ?? form.homeAreaId}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setForm((p: any) => ({ ...p, homeDepartmentId: null, homeAreaId: null }))}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+              >
+                <Text style={{ fontSize: 18, color: colours.textSecondary }}>×</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => setShowHomeAreaModal(true)}
+            style={{ marginTop: form.homeDepartmentId ? 8 : 0, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: colours.border, alignSelf: 'flex-start' }}
+          >
+            <Text style={{ fontSize: 13, color: colours.primary, fontWeight: '700' }}>
+              {form.homeDepartmentId ? 'Change area' : 'Choose area'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ---- Supplier hints (non-binding) ---- */}
         {(form.supplierNameSuggested || form.supplierGlobalId || form.categorySuggested) ? (
           <View style={[styles.card, { backgroundColor: colours.surface, borderColor: colours.border }]}>
@@ -960,6 +1037,95 @@ export default function EditProductScreen() {
               style={{ paddingVertical: 12, alignItems: 'center', marginTop: 4 }}
             >
               <Text style={{ color: colours.textSecondary }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Home area picker modal */}
+      <Modal
+        transparent
+        visible={showHomeAreaModal}
+        animationType="slide"
+        onRequestClose={() => setShowHomeAreaModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colours.surface, maxHeight: '80%' }]}>
+            <Text style={[styles.modalTitle, { color: colours.text }]}>Choose Home Area</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+
+              {/* Skip is the most prominent option — first and visually distinct */}
+              <TouchableOpacity
+                onPress={() => {
+                  setForm((p: any) => ({ ...p, homeDepartmentId: null, homeAreaId: null }));
+                  setShowHomeAreaModal(false);
+                }}
+                style={{
+                  paddingVertical: 14, paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: colours.background,
+                  borderWidth: 2,
+                  borderColor: form.homeDepartmentId == null ? colours.primary : colours.border,
+                  marginBottom: 12,
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                }}
+              >
+                {form.homeDepartmentId == null && (
+                  <Text style={{ color: colours.primary, fontWeight: '800', fontSize: 16 }}>✓</Text>
+                )}
+                <View>
+                  <Text style={{ fontWeight: '700', fontSize: 15, color: colours.text }}>Skip for now</Text>
+                  <Text style={{ fontSize: 12, color: colours.textSecondary, marginTop: 2 }}>
+                    No home area — counts still work fine without one
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {loadingDepts ? (
+                <ActivityIndicator style={{ marginVertical: 16 }} />
+              ) : depts.length === 0 ? (
+                <Text style={{ color: colours.textSecondary, fontSize: 13, paddingVertical: 8, textAlign: 'center' }}>
+                  No departments with areas found
+                </Text>
+              ) : depts.map(dept => (
+                <View key={dept.id} style={{ marginBottom: 8 }}>
+                  <Text style={{ fontWeight: '800', fontSize: 13, color: colours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, paddingVertical: 4, paddingHorizontal: 4 }}>
+                    {dept.name}
+                  </Text>
+                  {dept.areas.map(area => {
+                    const selected = form.homeDepartmentId === dept.id && form.homeAreaId === area.id;
+                    return (
+                      <TouchableOpacity
+                        key={area.id}
+                        onPress={() => {
+                          setForm((p: any) => ({ ...p, homeDepartmentId: dept.id, homeAreaId: area.id }));
+                          setShowHomeAreaModal(false);
+                        }}
+                        style={{
+                          paddingVertical: 11, paddingHorizontal: 14,
+                          borderBottomWidth: StyleSheet.hairlineWidth,
+                          borderBottomColor: colours.border,
+                          flexDirection: 'row', alignItems: 'center', gap: 10,
+                          backgroundColor: selected ? colours.background : 'transparent',
+                          borderRadius: 6,
+                        }}
+                      >
+                        {selected && <Text style={{ color: colours.primary, fontWeight: '800' }}>✓</Text>}
+                        <Text style={{ fontWeight: selected ? '700' : '500', color: colours.text, fontSize: 14 }}>
+                          {area.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() => setShowHomeAreaModal(false)}
+              style={{ paddingVertical: 12, alignItems: 'center', marginTop: 8 }}
+            >
+              <Text style={{ color: colours.textSecondary, fontWeight: '600' }}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
