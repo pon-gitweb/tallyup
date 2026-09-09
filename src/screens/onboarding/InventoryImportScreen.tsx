@@ -6,16 +6,18 @@
  * Claude extracts products, infers structure, returns preview.
  * User confirms → products written to Firestore.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, ScrollView,
+  ActivityIndicator, Alert, Image, Modal, ScrollView,
   Text, TouchableOpacity, View,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useNavigation } from '@react-navigation/native';
+import { getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
+import { getFirestore, collection, getDocs, query, where, limit, doc, updateDoc } from 'firebase/firestore';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { AI_BASE_URL } from '../../config/ai';
@@ -23,6 +25,9 @@ import { withErrorBoundary } from '../../components/ErrorCatcher';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import { stocktakeFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
+import { scanInvoicePhoto } from '../../services/fastReceive/scanInvoicePhoto';
+import { persistFastReceiveSnapshot } from '../../services/invoices/reconciliationStore';
+import { commitInvoiceDecisions } from '../../services/fastReceive/commitInvoiceDecisions';
 
 const EXTRACT_URL = `${AI_BASE_URL}/api/extract-inventory`;
 
@@ -64,6 +69,9 @@ const MAX_PAGES = 40;
 
 type CapturedPage = { uri: string };
 
+// Shared type for the cascading dept→area picker (same pattern as EditProductScreen)
+type DeptWithAreas = { id: string; name: string; areas: Array<{ id: string; name: string }> };
+
 function dedupProducts(pages: ExtractedProduct[][]): { products: ExtractedProduct[]; dupeCount: number } {
   const seen = new Map<string, ExtractedProduct>();
   let dupeCount = 0;
@@ -88,6 +96,12 @@ function InventoryImportScreen() {
   // Multi-page photo state
   const [pages, setPages] = useState<CapturedPage[]>([]);
   const [photoStage, setPhotoStage] = useState<'idle' | 'capturing'>('idle');
+
+  // ── Review modal state (STOCKTAKE_PHOTO_IMPORT path) ──────────────────────
+  const [reviewVisible, setReviewVisible] = useState(false);
+  const [reviewSnapshotId, setReviewSnapshotId] = useState<string | null>(null);
+  const [reviewProposals, setReviewProposals] = useState<any[]>([]);
+  const [reviewSupplierCandidate, setReviewSupplierCandidate] = useState<any>(null);
 
   const readBase64 = async (uri: string): Promise<string> =>
     FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -192,6 +206,49 @@ function InventoryImportScreen() {
     }
   }, [venueId, nav]);
 
+  // ── Photo processing via ocrInvoicePhoto (STOCKTAKE_PHOTO_IMPORT path) ──────
+  // Replaces the old per-page /api/extract-inventory loop. All pages are batched
+  // into one scanInvoicePhoto call, the result is persisted as a fastReceives
+  // snapshot, and the review modal is opened for the user to accept/skip proposals.
+  const processPhotoPages = useCallback(async (capturedPages: CapturedPage[]) => {
+    setLoading(true);
+    setLoadingMsg('Scanning your stocktake sheet...');
+    try {
+      const result = await scanInvoicePhoto({
+        venueId,
+        photoUris: capturedPages.map(p => p.uri),
+        filename: `stocktake-import-${Date.now()}.jpg`,
+      });
+
+      setLoadingMsg('Saving scan...');
+      const snapResult = await persistFastReceiveSnapshot({
+        venueId,
+        source: 'photo',
+        storagePath: result.invoice.storagePath,
+        payload: {
+          invoice: result.invoice,
+          proposals: result.proposals,
+          supplierCandidate: result.supplierCandidate ?? null,
+          lines: result.lines,
+        },
+      });
+      if (!snapResult.ok || !snapResult.id) {
+        throw new Error('Could not save scan — please try again.');
+      }
+
+      setLoading(false);
+      setPages([]);
+      setPhotoStage('idle');
+      setReviewSnapshotId(snapResult.id);
+      setReviewProposals(result.proposals || []);
+      setReviewSupplierCandidate(result.supplierCandidate ?? null);
+      setReviewVisible(true);
+    } catch (e: any) {
+      setLoading(false);
+      showError(e?.message || 'Processing failed — please try again or use a different format.');
+    }
+  }, [venueId]);
+
   const addPhotoPage = useCallback(async (source: 'camera' | 'library') => {
     try {
       let res;
@@ -292,7 +349,7 @@ function InventoryImportScreen() {
         )}
 
         <TouchableOpacity
-          onPress={() => processMultiplePages(pages)}
+          onPress={() => processPhotoPages(pages)}
           disabled={pages.length === 0}
           style={{ backgroundColor: pages.length > 0 ? themeColours.success : themeColours.border, padding: 16, borderRadius: 12, alignItems: 'center' }}
         >
@@ -310,6 +367,26 @@ function InventoryImportScreen() {
 
   return (
     <>
+    {reviewVisible && reviewSnapshotId && (
+      <InventoryReviewModal
+        visible={reviewVisible}
+        venueId={venueId}
+        snapshotId={reviewSnapshotId}
+        proposals={reviewProposals}
+        supplierCandidate={reviewSupplierCandidate}
+        onClose={() => setReviewVisible(false)}
+        onCommitted={(created, changed) => {
+          setReviewVisible(false);
+          const total = created + changed;
+          showSuccess(
+            total > 0
+              ? `${total} product${total === 1 ? '' : 's'} ${created > 0 ? 'added' : 'updated'} — you're all set!`
+              : 'No changes made.'
+          );
+          nav.navigate('ProductsList');
+        }}
+      />
+    )}
     <ScrollView style={{ flex: 1, backgroundColor: themeColours.background }} contentContainerStyle={{ padding: 16, gap: 20 }}>
       <View style={{ backgroundColor: themeColours.primary, borderRadius: 16, padding: 24, gap: 8 }}>
         <Text style={{ fontSize: 26, fontWeight: '900', color: themeColours.primaryText }}>Import your inventory</Text>
@@ -389,6 +466,457 @@ function InventoryImportScreen() {
     </ScrollView>
     {modal}
     </>
+  );
+}
+
+// ── InventoryReviewModal ───────────────────────────────────────────────────────
+// Proposal-review UI for the photo import path. Reuses the same ProposalCard
+// pattern as FastReceiveDetailModal. Shows new-product proposals with a
+// cascading dept→area picker so users can assign a home area at import time.
+// Must not affect the existing FastReceive flow in any way.
+
+type ReviewModalProps = {
+  visible: boolean;
+  venueId: string;
+  snapshotId: string;
+  proposals: any[];
+  supplierCandidate: any | null;
+  onClose: () => void;
+  onCommitted: (created: number, changed: number) => void;
+};
+
+function InventoryReviewModal({
+  visible, venueId, snapshotId, proposals, supplierCandidate, onClose, onCommitted,
+}: ReviewModalProps) {
+  const { showError } = useToast();
+  const [decisions, setDecisions] = useState<Record<string, 'accept' | 'skip'>>({});
+  const [supplierDecision, setSupplierDecision] = useState<'accept' | 'skip' | null>(null);
+  const [homeAreas, setHomeAreas] = useState<Record<string, { deptId: string; areaId: string } | null>>({});
+  const [committing, setCommitting] = useState(false);
+
+  // Cascading dept→area picker
+  const [depts, setDepts] = useState<DeptWithAreas[]>([]);
+  const [loadingDepts, setLoadingDepts] = useState(false);
+  const [homeAreaPickerFor, setHomeAreaPickerFor] = useState<string | null>(null); // proposalId
+  const [homeAreaPickerDept, setHomeAreaPickerDept] = useState<string | null>(null);
+
+  // Reset decisions when modal opens with new data
+  useEffect(() => {
+    if (visible) {
+      setDecisions({});
+      setSupplierDecision(null);
+      setHomeAreas({});
+      setHomeAreaPickerFor(null);
+      setHomeAreaPickerDept(null);
+    }
+  }, [visible, snapshotId]);
+
+  // Lazy-load departments once on first open (same pattern as EditProductScreen)
+  useEffect(() => {
+    if (!visible || !venueId || depts.length > 0 || loadingDepts) return;
+    setLoadingDepts(true);
+    (async () => {
+      try {
+        const db = getFirestore(getApp());
+        const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
+        const loaded: DeptWithAreas[] = [];
+        for (const deptDoc of deptsSnap.docs) {
+          const areasSnap = await getDocs(
+            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
+          );
+          const areas = areasSnap.docs
+            .map(a => ({ id: a.id, name: (a.data() as any)?.name ?? a.id }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          if (areas.length > 0) {
+            loaded.push({ id: deptDoc.id, name: (deptDoc.data() as any)?.name ?? deptDoc.id, areas });
+          }
+        }
+        loaded.sort((a, b) => a.name.localeCompare(b.name));
+        setDepts(loaded);
+      } catch (_) { } finally { setLoadingDepts(false); }
+    })();
+  }, [visible, venueId]);
+
+  const resolvedSupplierId = supplierCandidate ? null : null; // new product import has no pre-resolved supplier
+  const needsSupplierDecision = !!supplierCandidate;
+  const hasItems = proposals.length > 0 || !!supplierCandidate;
+
+  const allDecided = React.useMemo(() => {
+    if (!hasItems) return true;
+    if (needsSupplierDecision && supplierDecision === null) return false;
+    return proposals.every(p => p.id in decisions);
+  }, [hasItems, needsSupplierDecision, supplierDecision, proposals, decisions]);
+
+  const decide = useCallback((proposalId: string, dec: 'accept' | 'skip') => {
+    setDecisions(prev => ({ ...prev, [proposalId]: dec }));
+  }, []);
+
+  const acceptAll = useCallback(() => {
+    const next: Record<string, 'accept' | 'skip'> = {};
+    for (const p of proposals) next[p.id] = 'accept';
+    setDecisions(next);
+  }, [proposals]);
+
+  // Apply home-area assignments to newly created products (best-effort post-commit)
+  const applyHomeAreas = async (acceptedProposals: any[]) => {
+    try {
+      const db = getFirestore(getApp());
+      for (const p of acceptedProposals) {
+        if (p.type !== 'newProduct') continue;
+        const ha = homeAreas[p.id];
+        if (!ha) continue;
+        const snap = await getDocs(
+          query(
+            collection(db, 'venues', venueId, 'products'),
+            where('name', '==', p.lineName),
+            limit(1),
+          )
+        );
+        if (!snap.empty) {
+          await updateDoc(
+            doc(db, 'venues', venueId, 'products', snap.docs[0].id),
+            { homeDepartmentId: ha.deptId, homeAreaId: ha.areaId }
+          );
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+  };
+
+  const handleCommit = useCallback(async () => {
+    try {
+      setCommitting(true);
+      const acceptedIds = proposals.filter(p => decisions[p.id] === 'accept').map(p => p.id);
+      const result = await commitInvoiceDecisions({
+        venueId,
+        snapshotId,
+        acceptedProposalIds: acceptedIds,
+        acceptSupplierCandidate: supplierDecision === 'accept',
+      });
+      const acceptedProposals = proposals.filter(p => decisions[p.id] === 'accept');
+      await applyHomeAreas(acceptedProposals);
+      onCommitted(result.created ?? 0, result.changed ?? 0);
+    } catch (e: any) {
+      showError(e?.message || 'Could not save changes — please try again.');
+    } finally {
+      setCommitting(false);
+    }
+  }, [venueId, snapshotId, proposals, decisions, supplierDecision, homeAreas, onCommitted]);
+
+  const selectedDept = homeAreaPickerFor
+    ? depts.find(d => d.id === homeAreaPickerDept) ?? null
+    : null;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+        {/* Header */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                       padding: 16, borderBottomWidth: 1, borderColor: '#E5E7EB' }}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={{ fontSize: 18, color: '#2563EB' }}>‹ Back</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 18, fontWeight: '800' }}>Review Import</Text>
+          <View style={{ width: 60 }} />
+        </View>
+
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+
+          {/* Intro */}
+          {!hasItems && (
+            <View style={{ backgroundColor: '#f0fdf4', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#86efac' }}>
+              <Text style={{ fontWeight: '800', color: '#166534', marginBottom: 4 }}>All products matched</Text>
+              <Text style={{ color: '#166534', fontSize: 13 }}>
+                Every product on this sheet is already in your catalog. Nothing new to add.
+              </Text>
+            </View>
+          )}
+
+          {/* Supplier candidate */}
+          {!!supplierCandidate && (
+            <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, borderWidth: 1, borderColor: '#fcd34d', padding: 12 }}>
+              <Text style={{ fontWeight: '800', color: '#92400e', marginBottom: 4 }}>New supplier detected</Text>
+              <Text style={{ color: '#92400e', fontWeight: '700', marginBottom: 4 }}>{supplierCandidate.name}</Text>
+              {!!supplierCandidate.phone && (
+                <Text style={{ color: '#92400e', fontSize: 12 }}>Phone: {supplierCandidate.phone}</Text>
+              )}
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                {supplierDecision === null ? (
+                  <>
+                    <TouchableOpacity
+                      onPress={() => setSupplierDecision('accept')}
+                      style={{ backgroundColor: '#16a34a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Add supplier</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setSupplierDecision('skip')}
+                      style={{ backgroundColor: '#6B7280', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Skip</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: supplierDecision === 'accept' ? '#16a34a' : '#6B7280', fontWeight: '700', flex: 1, fontSize: 13 }}>
+                      {supplierDecision === 'accept' ? '✓ Will be added' : '— Skipped'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setSupplierDecision(null)}
+                      style={{ backgroundColor: '#E5E7EB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                    >
+                      <Text style={{ color: '#374151', fontWeight: '700', fontSize: 13 }}>Change</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Proposals */}
+          {proposals.length > 0 && (
+            <View style={{ gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontWeight: '900', fontSize: 15 }}>
+                  {proposals.length} item{proposals.length !== 1 ? 's' : ''} to review
+                </Text>
+                {proposals.some(p => !(p.id in decisions)) && (
+                  <TouchableOpacity onPress={acceptAll}>
+                    <Text style={{ color: '#2563EB', fontWeight: '700', fontSize: 13 }}>Accept all</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {proposals.map(proposal => (
+                <ReviewProposalCard
+                  key={proposal.id}
+                  proposal={proposal}
+                  decision={decisions[proposal.id] ?? null}
+                  homeArea={homeAreas[proposal.id] ?? null}
+                  onDecide={decide}
+                  onPickHomeArea={() => {
+                    setHomeAreaPickerFor(proposal.id);
+                    setHomeAreaPickerDept(null);
+                  }}
+                  onClearHomeArea={() => setHomeAreas(prev => ({ ...prev, [proposal.id]: null }))}
+                />
+              ))}
+            </View>
+          )}
+
+          <View style={{ height: 20 }} />
+        </ScrollView>
+
+        {/* Footer */}
+        <View style={{ padding: 16, borderTopWidth: 1, borderColor: '#E5E7EB', gap: 8 }}>
+          {!allDecided && (
+            <Text style={{ textAlign: 'center', color: '#6B7280', fontSize: 12, marginBottom: 4 }}>
+              Review all items above before confirming
+            </Text>
+          )}
+          <TouchableOpacity
+            onPress={allDecided ? handleCommit : undefined}
+            style={{
+              backgroundColor: allDecided ? '#16a34a' : '#D1FAE5',
+              borderRadius: 12, padding: 16, alignItems: 'center',
+            }}
+          >
+            {committing
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={{ color: allDecided ? '#fff' : '#6B7280', fontWeight: '900', fontSize: 16 }}>
+                  {allDecided ? 'Confirm import' : 'Review all items first'}
+                </Text>
+            }
+          </TouchableOpacity>
+        </View>
+
+        {/* Cascading dept→area picker Modal */}
+        <Modal
+          visible={homeAreaPickerFor !== null}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setHomeAreaPickerFor(null)}
+        >
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+            <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                             padding: 16, borderBottomWidth: 1, borderColor: '#E5E7EB' }}>
+                <Text style={{ fontWeight: '900', fontSize: 16 }}>Choose home area</Text>
+                <TouchableOpacity onPress={() => setHomeAreaPickerFor(null)}>
+                  <Text style={{ color: '#6B7280' }}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+                {/* Skip for now — always first */}
+                <TouchableOpacity
+                  onPress={() => {
+                    setHomeAreas(prev => ({ ...prev, [homeAreaPickerFor!]: null }));
+                    setHomeAreaPickerFor(null);
+                  }}
+                  style={{
+                    borderRadius: 10, padding: 14, borderWidth: 2,
+                    borderColor: homeAreas[homeAreaPickerFor!] === null ? '#2563EB' : '#E5E7EB',
+                    backgroundColor: homeAreas[homeAreaPickerFor!] === null ? '#EFF6FF' : '#fff',
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                  }}
+                >
+                  <Text style={{ fontWeight: '700', color: '#374151' }}>Skip for now</Text>
+                  {homeAreas[homeAreaPickerFor!] === null && (
+                    <Text style={{ color: '#2563EB', fontWeight: '800' }}>✓</Text>
+                  )}
+                </TouchableOpacity>
+
+                {loadingDepts && (
+                  <ActivityIndicator style={{ marginTop: 16 }} />
+                )}
+
+                {/* Dept step — shown first when no dept selected */}
+                {!selectedDept && !loadingDepts && depts.map(dept => (
+                  <TouchableOpacity
+                    key={dept.id}
+                    onPress={() => setHomeAreaPickerDept(dept.id)}
+                    style={{ borderRadius: 10, padding: 14, borderWidth: 1, borderColor: '#E5E7EB',
+                             backgroundColor: '#F9FAFB', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <Text style={{ fontWeight: '700', color: '#374151' }}>{dept.name}</Text>
+                    <Text style={{ color: '#6B7280' }}>›</Text>
+                  </TouchableOpacity>
+                ))}
+
+                {/* Area step — shown after dept selected */}
+                {selectedDept && (
+                  <>
+                    <TouchableOpacity onPress={() => setHomeAreaPickerDept(null)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+                      <Text style={{ color: '#2563EB', fontSize: 15 }}>‹</Text>
+                      <Text style={{ color: '#2563EB', fontWeight: '700' }}>{selectedDept.name}</Text>
+                    </TouchableOpacity>
+                    {selectedDept.areas.map(area => (
+                      <TouchableOpacity
+                        key={area.id}
+                        onPress={() => {
+                          setHomeAreas(prev => ({
+                            ...prev,
+                            [homeAreaPickerFor!]: { deptId: selectedDept.id, areaId: area.id },
+                          }));
+                          setHomeAreaPickerFor(null);
+                          setHomeAreaPickerDept(null);
+                        }}
+                        style={{ borderRadius: 10, padding: 14, borderWidth: 1,
+                                 borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}
+                      >
+                        <Text style={{ color: '#374151' }}>{area.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </Modal>
+  );
+}
+
+// ── ReviewProposalCard ─────────────────────────────────────────────────────────
+// Extends ProposalCard (from FastReceiveDetailModal) with an optional
+// dept→area picker row for newProduct proposals.
+
+function ReviewProposalCard({ proposal, decision, homeArea, onDecide, onPickHomeArea, onClearHomeArea }: {
+  proposal: any;
+  decision: 'accept' | 'skip' | null;
+  homeArea: { deptId: string; areaId: string } | null;
+  onDecide: (id: string, dec: 'accept' | 'skip') => void;
+  onPickHomeArea: () => void;
+  onClearHomeArea: () => void;
+}) {
+  let heading = '';
+  let detail = '';
+
+  if (proposal.type === 'priceChange') {
+    heading = `${proposal.productName}: $${proposal.oldPrice.toFixed(2)} → $${proposal.newPrice.toFixed(2)}`;
+    detail = `${proposal.direction === 'increase' ? '↑' : '↓'} ${Math.abs(proposal.changePercent).toFixed(1)}%`;
+  } else if (proposal.type === 'nearDuplicateMatch') {
+    heading = `'${proposal.lineName}' looks like '${proposal.candidateProductName}'`;
+    detail = proposal.existingPrice != null
+      ? `Price: $${proposal.existingPrice.toFixed(2)} → $${proposal.newPrice.toFixed(2)}`
+      : `First time — $${proposal.newPrice.toFixed(2)}`;
+  } else if (proposal.type === 'newProduct') {
+    heading = `${proposal.lineName} — add as new product?`;
+    detail = proposal.unitPrice == null
+      ? 'No price detected — can be added later'
+      : proposal.caseSize
+        ? `$${proposal.unitPrice.toFixed(2)} / $${(proposal.unitPrice / proposal.caseSize).toFixed(2)} per unit`
+        : `$${proposal.unitPrice.toFixed(2)}`;
+  } else if (proposal.type === 'supplierLink') {
+    heading = `Link supplier to ${proposal.productName}`;
+    detail = `$${proposal.unitCost.toFixed(2)}/unit`;
+  }
+
+  const decided = decision !== null && decision !== undefined;
+  const isNewProduct = proposal.type === 'newProduct';
+
+  return (
+    <View style={{ backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fcd34d', borderRadius: 8, padding: 10, marginTop: 4 }}>
+      <Text style={{ color: '#92400e', fontWeight: '700', fontSize: 13, marginBottom: 2 }}>{heading}</Text>
+      {!!detail && <Text style={{ color: '#92400e', fontSize: 12, marginBottom: 6 }}>{detail}</Text>}
+
+      {/* Home area picker — only for newProduct proposals, once accepted */}
+      {isNewProduct && decision === 'accept' && (
+        <View style={{ marginBottom: 8 }}>
+          {homeArea ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ color: '#374151', fontSize: 12 }}>📍 Area assigned</Text>
+              <TouchableOpacity onPress={onPickHomeArea}>
+                <Text style={{ color: '#2563EB', fontSize: 12, fontWeight: '700' }}>Change</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClearHomeArea}>
+                <Text style={{ color: '#6B7280', fontSize: 12 }}>✕ Clear</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={onPickHomeArea}
+              style={{ borderWidth: 1, borderColor: '#d1d5db', borderRadius: 7, paddingHorizontal: 10, paddingVertical: 6,
+                       backgroundColor: '#fff', alignSelf: 'flex-start' }}
+            >
+              <Text style={{ color: '#374151', fontSize: 12 }}>📍 Assign home area (optional)</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+        {!decided ? (
+          <>
+            <TouchableOpacity
+              style={{ backgroundColor: '#16a34a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 }}
+              onPress={() => onDecide(proposal.id, 'accept')}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ backgroundColor: '#6B7280', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 }}
+              onPress={() => onDecide(proposal.id, 'skip')}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Skip</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={{ color: decision === 'accept' ? '#16a34a' : '#6B7280', fontWeight: '700', flex: 1, fontSize: 13 }}>
+              {decision === 'accept' ? '✓ Accepted' : '— Skipped'}
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#E5E7EB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 }}
+              onPress={() => onDecide(proposal.id, decision === 'accept' ? 'skip' : 'accept')}
+            >
+              <Text style={{ color: '#374151', fontWeight: '700', fontSize: 13 }}>Change</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
   );
 }
 
