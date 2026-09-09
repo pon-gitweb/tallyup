@@ -21,8 +21,6 @@ import { getFirestore, doc, getDoc, onSnapshot, collection, getDocs, query, orde
 import { useVenueId, useVenueType, useVenue } from '../context/VenueProvider';
 import { VenueSwitcher } from '../components/common/VenueSwitcher';
 import { updateDoc } from 'firebase/firestore';
-import { getHostiHealthStage, HostiHealthData } from '../services/health/hostiHealth';
-import { captureError } from '../services/crashReporting';
 import { openIzzy } from '../components/IzzyAssistant';
 import { refreshPricesForVenue } from '../services/refreshPricesForDepartment';
 
@@ -375,16 +373,6 @@ export default function DashboardScreen() {
     );
     return () => { unsubProducts(); unsubSuppliers(); };
   }, [venueId]);
-
-  // ── Hosti Health (Phase 1) — Stage 1 checklist or Stage 2 building-confidence range.
-  // Shows nothing while loading; only renders once resolved.
-  const [hostiHealthData, setHostiHealthData] = React.useState<HostiHealthData | null>(null);
-  React.useEffect(() => {
-    if (!venueId) return;
-    getHostiHealthStage(venueId, stocktakeCount, productCount ?? 0, supplierCount ?? 0, stockValue)
-      .then(setHostiHealthData)
-      .catch((e) => captureError(e, 'DashboardScreen:getHostiHealthStage'));
-  }, [venueId, stocktakeCount, productCount, supplierCount, stockValue]);
 
   const [deptNames, setDeptNames] = React.useState<string[]>([]);
   React.useEffect(() => {
@@ -841,87 +829,6 @@ export default function DashboardScreen() {
               </>
             )}
           </View>
-        )}
-
-        {/* ── Hosti Health — supporting intelligence card ───────────────────── */}
-        {hostiHealthData && (
-          <TouchableOpacity
-            onPress={() => nav.navigate('ProfitInsights')}
-            activeOpacity={0.85}
-            style={{
-              backgroundColor: colours.oat,
-              borderRadius: 14,
-              padding: 16,
-              marginBottom: 12,
-              borderWidth: 1,
-              borderColor: colours.border,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: colours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 2 }}>
-                Venue Intelligence
-              </Text>
-              {hostiHealthData.stage < 3 ? (
-                <Text style={{ fontSize: 15, fontWeight: '700', color: colours.navy }}>
-                  {hostiHealthData.stage === 1
-                    ? 'Building your baseline…'
-                    : `${hostiHealthData.scoreMin}–${hostiHealthData.scoreMax} · one more stocktake`}
-                </Text>
-              ) : (
-                <Text style={{ fontSize: 15, fontWeight: '700', color: colours.navy }}>
-                  Hosti Health · {hostiHealthData.score}/100
-                  {hostiHealthData.label ? ` · ${hostiHealthData.label}` : ''}
-                </Text>
-              )}
-            </View>
-            <Text style={{ fontSize: 18, color: colours.textSecondary }}>→</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── KPI pills — real dot counts once Stage 3 lands, else building ── */}
-        {hostiHealthData && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 12 }}
-            contentContainerStyle={{ gap: 8 }}
-          >
-            {([
-              { label: 'Stock', kpiKey: 'stockAccuracy' },
-              { label: 'Labour', kpiKey: 'labourEfficiency' },
-              { label: 'Inventory', kpiKey: 'inventoryHealth' },
-              { label: 'Orders', kpiKey: 'orderingIntelligence' },
-            ] as const).map(({ label, kpiKey }) => {
-              const kpiScore = hostiHealthData.stage === 3 ? hostiHealthData.kpis[kpiKey] : null;
-              const lit = kpiScore != null ? Math.round(kpiScore / 20) : 0;
-              const dotsStr = '●'.repeat(lit) + '○'.repeat(5 - lit);
-              const subtitle = hostiHealthData.stage !== 3 ? 'Building' : kpiScore != null ? `${Math.round(kpiScore)}` : 'Needs data';
-              return (
-                <TouchableOpacity
-                  key={label}
-                  onPress={() => nav.navigate('ProfitInsights', { scrollToKpi: kpiKey })}
-                  activeOpacity={0.75}
-                  style={{
-                    width: 80,
-                    backgroundColor: colours.oat,
-                    borderRadius: 12,
-                    paddingVertical: 10,
-                    paddingHorizontal: 8,
-                    alignItems: 'center',
-                    borderWidth: 1,
-                    borderColor: colours.border,
-                  }}
-                >
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: colours.navy, marginBottom: 4 }}>{label}</Text>
-                  <Text style={{ fontSize: 13, color: lit > 0 ? colours.deepBlue : colours.border, letterSpacing: 1 }}>{dotsStr}</Text>
-                  <Text style={{ fontSize: 9, color: colours.textSecondary, marginTop: 3 }}>{subtitle}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
         )}
 
         {/* ── Onboarding (no venue set up yet) ─────────────────────────── */}

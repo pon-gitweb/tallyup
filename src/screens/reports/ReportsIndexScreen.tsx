@@ -1173,6 +1173,7 @@ function SecondaryNav({ S, nav, hasPrevCycleData }: { S: any; nav: any; hasPrevC
   return (
     <View style={S.secondaryNav}>
       <Text style={S.secondaryNavLabel}>DETAILED REPORTS</Text>
+      <NavTile S={S} title="💡 Hosti Health" onPress={() => nav.navigate('ProfitInsights')} />
       <NavTile S={S} title="📈 Product Performance" onPress={() => nav.navigate('ProductPerformance')} />
       <NavTile S={S} title="🚚 Supplier Spend" onPress={() => nav.navigate('SupplierSpend')} />
       <NavTile S={S} title="🍹 Recipe Costs (CraftIt)" onPress={() => nav.navigate('CraftUp')} />
