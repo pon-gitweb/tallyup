@@ -5,11 +5,10 @@
  * while confidence builds. Real variance-driven scoring lands in Phase 2.
  */
 import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
-import { Alert } from 'react-native';
 import { db } from '../firebase';
 import { generateAbductiveInsights, AbductiveInsight } from './abductiveInsights';
 import { generateStockoutPredictions, PredictionSummary } from './predictions';
-import { captureError, captureMessage } from '../crashReporting';
+import { captureError } from '../crashReporting';
 
 export interface HostiHealthStage1 {
   stage: 1;
@@ -101,13 +100,6 @@ export async function getHostiHealthStage(
   supplierCount: number,
   stockValue: number | null,
 ): Promise<HostiHealthData> {
-  // DIAGNOSTIC — remove after investigation
-  try {
-    await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), {
-      step: -1, label: 'getHostiHealthStage-entry', totalStocktakesCompleted, timestamp: Date.now(),
-    });
-  } catch (_) {}
-
   // Stage 1: fewer than 1 completed stocktake
   if (totalStocktakesCompleted < 1) {
     let hasHourlyRate = false;
@@ -181,15 +173,7 @@ async function calculateFullScore(
   venueId: string,
   totalStocktakesCompleted: number,
 ): Promise<HostiHealthStage3> {
-  // DIAGNOSTIC — remove after investigation
-  const writeCheckpoint = async (step: number, label: string) => {
-    try {
-      await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), { step, label, timestamp: Date.now() });
-    } catch (_) {}
-  };
-
   const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'));
-  await writeCheckpoint(0, 'entry');
   let avgCycleDays: number = 0; // lifted to function scope — populated by Inventory Health below, read by Constraint Analysis
   let targetDaysOfCover = 10; // lifted to function scope — populated by Labour Efficiency's labourSnap read, used by Inventory Health and Constraint Analysis
 
@@ -261,7 +245,6 @@ async function calculateFullScore(
       0;
     stockAccuracy = Math.round(stockAccuracy);
   }
-  await writeCheckpoint(1, 'after-stockAccuracy');
 
   // ── Pareto Analysis — which items drive the most variance ─────────────────
   let paretoItems: HostiHealthStage3['paretoItems'] = [];
@@ -273,14 +256,6 @@ async function calculateFullScore(
       varianceDollars: number; varianceQty: number;
     }> = [];
 
-    // Diagnostic counters — logged after the loop to identify which filter
-    // produces an empty paretoItems result without relying on an exception.
-    let diagWithSnapshot = 0;
-    let diagItemsSeen = 0;
-    let diagSkippedNull = 0;
-    let diagSkippedZero = 0;
-    let diagQualified = 0;
-
     // Reuse the department snapshots already fetched above
     for (const deptDoc of deptsSnap.docs) {
       const latestSnap = (await getDocs(query(
@@ -289,18 +264,15 @@ async function calculateFullScore(
         limit(1),
       ))).docs[0];
       if (!latestSnap) continue;
-      diagWithSnapshot++;
       const snapData = latestSnap.data() as any;
       const items: any[] = snapData.items || [];
-      diagItemsSeen += items.length;
       for (const item of items) {
         // Prefer display-tier dollars (stamped + invoice-verified) so that items with no
         // stamped price but a matched invoice line are visible in the Pareto list.
         // Falls back to totalVarianceDollars for pre-Phase-1 snapshots.
         const displayVarianceDollars = item.displayTotalVarianceDollars ?? item.totalVarianceDollars;
-        if (displayVarianceDollars == null) { diagSkippedNull++; continue; }
-        if (displayVarianceDollars === 0)   { diagSkippedZero++; continue; }
-        diagQualified++;
+        if (displayVarianceDollars == null) continue;
+        if (displayVarianceDollars === 0)   continue;
         allVarianceItems.push({
           name: item.name || 'Unknown product',
           areaName: item.areaName || null,
@@ -310,15 +282,6 @@ async function calculateFullScore(
         });
       }
     }
-
-    // Send unconditionally — the point is seeing these counts even when nothing throws.
-    // Distinct context keeps it separate from genuine error events.
-    captureMessage(
-      `[hostiHealth] paretoItems trace: depts=${deptsSnap.docs.length}, withSnapshot=${diagWithSnapshot},` +
-      ` itemsSeen=${diagItemsSeen}, skippedNull=${diagSkippedNull}, skippedZero=${diagSkippedZero},` +
-      ` qualified=${diagQualified}`,
-      'info',
-    );
 
     // Sort by absolute variance descending — biggest impact first
     allVarianceItems.sort((a, b) => Math.abs(b.varianceDollars) - Math.abs(a.varianceDollars));
@@ -341,7 +304,6 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:paretoItems');
     // Non-fatal — paretoItems stays empty, caller sees an empty list rather than a crash
   }
-  await writeCheckpoint(2, 'after-paretoItems');
 
   // ── Labour Efficiency — sum activeCountingMinutes across all areas ───────
   let hasHourlyRate = false;
@@ -377,7 +339,6 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:labourEfficiency');
     // Non-fatal — labourEfficiency stays null below
   }
-  await writeCheckpoint(3, 'after-labourEfficiency');
 
   // ── Inventory Health — Days of Cover ──────────────────────────────────────
   let inventoryHealth: number | null = null;
@@ -504,7 +465,6 @@ async function calculateFullScore(
     captureError(e, 'hostiHealth:inventoryHealth');
     // Non-fatal — stays null
   }
-  await writeCheckpoint(4, 'after-inventoryHealth');
 
   // ── Ordering Intelligence — line-level compliance rate, not binary acceptance ──
   // Orders created via the Suggested Orders screen already carry source:'suggestions'
@@ -953,19 +913,6 @@ async function calculateFullScore(
   }
 
   // ── Monthly snapshot write — non-fatal, score still returns if it fails ──
-  // DIAGNOSTIC — remove after investigation
-  await writeCheckpoint(5, 'before-snapshotWrite');
-  Alert.alert('Saving snapshot', `venueId=${venueId}\nmonthKey=${monthKey}\nparetoItems.length=${paretoItems.length}`);
-  // DIAGNOSTIC — bulletproof Firestore execution marker, remove after investigation
-  try {
-    await setDoc(doc(db, 'venues', venueId, 'debug', 'hostiHealthMarker'), {
-      reachedSaveStep: true,
-      venueId,
-      monthKey,
-      paretoItemsLength: paretoItems.length,
-      timestamp: Date.now(),
-    });
-  } catch (_markerErr) { /* intentionally silent — marker failure must not mask real errors */ }
   try {
     await setDoc(doc(db, 'venues', venueId, 'profitRecoverySnapshots', monthKey), {
       score,
