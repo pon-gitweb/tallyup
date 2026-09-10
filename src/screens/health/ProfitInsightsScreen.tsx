@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { SmartLoader, LOADER_MESSAGES } from '../../components/SmartLoader';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours, useTheme } from '../../context/ThemeContext';
@@ -124,13 +124,6 @@ export default function ProfitInsightsScreen() {
           }
         } catch {}
 
-        // DIAGNOSTIC — remove after investigation
-        try {
-          await setDoc(doc(db, 'venues', venueId, 'debug', 'checkpoint'), {
-            step: -2, label: 'screen-before-call', totalStocktakesCompleted, timestamp: Date.now(),
-          });
-        } catch (_) {}
-
         const data = await getHostiHealthStage(
           venueId, totalStocktakesCompleted, productsSnap.size, supplierCount, stockValue,
         );
@@ -200,12 +193,6 @@ export default function ProfitInsightsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.oat }}>
-      {/* DIAGNOSTIC — remove after investigation */}
-      <View style={{ backgroundColor: '#dc2626', padding: 8 }}>
-        <Text style={{ color: '#fff', fontFamily: 'monospace', fontSize: 11, textAlign: 'center' }}>
-          {'if you can read this, today’s update landed • 2026-09-08T05:00Z'}
-        </Text>
-      </View>
       <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={{ fontSize: 22, fontWeight: '800', color: c.navy, fontFamily: theme.fontTitleBold, marginBottom: 4 }}>
           Hosti Health
