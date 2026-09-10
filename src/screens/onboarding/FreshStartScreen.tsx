@@ -31,16 +31,31 @@ export default function FreshStartScreen() {
     if (!venueId || busy) return;
     setBusy(true);
     try {
-      await Promise.all([
-        seedDefaultDepartmentsAndAreas(venueId),
-        seedDefaultVenueSuppliers(venueId),
-      ]);
-      await updateDoc(doc(db, 'venues', venueId), {
-        onboardingRoad: 'fresh',
-        onboardingCompletedAt: serverTimestamp(),
-      });
+      // DIAG: run sequentially with labelled catches so we know exactly which write fails
+      try {
+        await seedDefaultDepartmentsAndAreas(venueId);
+      } catch (e: any) {
+        console.error('[FreshStart] departments-seed failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
+        throw e;
+      }
+      try {
+        await seedDefaultVenueSuppliers(venueId);
+      } catch (e: any) {
+        console.error('[FreshStart] suppliers-seed failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
+        throw e;
+      }
+      try {
+        await updateDoc(doc(db, 'venues', venueId), {
+          onboardingRoad: 'fresh',
+          onboardingCompletedAt: serverTimestamp(),
+        });
+      } catch (e: any) {
+        console.error('[FreshStart] onboarding-update failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
+        throw e;
+      }
       nav.navigate('Dashboard');
     } catch (e: any) {
+      console.error('[FreshStart] setup failed', JSON.stringify({ code: e?.code, message: e?.message, name: e?.name }));
       Alert.alert('Setup failed', e?.message || 'Please try again.');
     } finally {
       setBusy(false);
