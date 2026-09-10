@@ -95,6 +95,9 @@ export function recalculateItem(
   // Pricing-tier evidence is not affected by a quantity correction — carry forward as-is.
   // Legacy (pre-Phase-1) items have no costPriceTier field; derive it from costPrice,
   // mirroring snapshotWriter STEP A3 exactly so the correction tool is consistent.
+  // Note: snapshotWriter deliberately never falls back to current product price for
+  // 'none'-tier items (see snapshotWriter.ts STEP A3 comment, decision 2026-09-10) —
+  // this mirror must not diverge from that.
   const costPriceTier: 'stamped' | 'invoice_verified' | 'none' =
     (item.costPriceTier as 'stamped' | 'invoice_verified' | 'none') ??
     (typeof item.costPrice === 'number' ? 'stamped' : 'none')

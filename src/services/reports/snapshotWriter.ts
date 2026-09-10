@@ -243,6 +243,14 @@ export function computeSnapshotItemFigures(
   // Tier 1 'stamped': item carries its own costPrice (from stocktake entry or product stamp).
   // Tier 2 'invoice_verified': no stamped costPrice but _invoiceUnitCost matched this cycle.
   // 'none': neither. Never falls back to a product's current price.
+  //
+  // This is deliberate, not a gap (revisited 2026-09-10): Stock Holding intentionally
+  // falls back to a product's current price because it reports stock value *today*.
+  // Variance reports the cost of *this cycle's* shrinkage, so substituting today's
+  // price for an unpriced historical item would misstate cycles where price has
+  // since moved. A 'none' item stays genuinely unpriced here rather than estimated.
+  // If this needs revisiting, the discussion and StockHoldingScreen.tsx comparison
+  // are the reference point — don't re-diagnose this as a bug from scratch.
   for (const si of snapshotItems) {
     if (si.costPrice != null) {
       si.costPriceTier = 'stamped';
