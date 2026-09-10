@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColours } from '../../context/ThemeContext';
 import { FEATURES } from '../../config/features';
@@ -1337,6 +1338,24 @@ export default function SettingsScreen() {
           Hosti-Stock v{Constants.expoConfig?.version ?? '—'}
         </Text>
 
+        {/* ─── OTA UPDATE STATE ─── */}
+        {/* Shows what expo-updates' own API reports — definitive device-side proof of whether
+            OTA updates are actually applying. isEmbeddedLaunch=true on a device that should
+            have received OTAs means updates are not landing despite EAS publishing correctly. */}
+        <View style={{ marginHorizontal: 4, marginTop: 8, marginBottom: 4, borderRadius: 10, borderWidth: 1, borderColor: themeColours.border, padding: 12, backgroundColor: themeColours.surface }}>
+          <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>OTA Update State</Text>
+          {[
+            { label: 'isEmbeddedLaunch', value: String(Updates.isEmbeddedLaunch) },
+            { label: 'channel', value: Updates.channel ?? '—' },
+            { label: 'runtimeVersion', value: Updates.runtimeVersion ?? '—' },
+            { label: 'updateId', value: Updates.updateId ?? 'none (embedded build)' },
+          ].map(({ label, value }) => (
+            <View key={label} style={{ flexDirection: 'row', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', minWidth: 130 }}>{label}</Text>
+              <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{value}</Text>
+            </View>
+          ))}
+        </View>
 
         {/* ─── DANGER ZONE ─── */}
         <View style={{ marginHorizontal: 4, marginTop: 16, marginBottom: 8, borderRadius: 12, borderWidth: 1.5, borderColor: '#dc2626', padding: 14 }}>
