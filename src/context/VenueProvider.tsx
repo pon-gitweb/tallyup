@@ -442,14 +442,28 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
       const venueSnap = await getDoc(doc(db, 'venues', newVenueId));
       const newType = (venueSnap.data()?.venueType as string) || 'venue';
       const newCountry = (venueSnap.data()?.country as string) || 'NZ';
+      // Snapshot all previous values so we can roll back if the Firestore write fails
+      const prevVenueId = venueId;
+      const prevVenueType = venueType;
+      const prevVenueCountry = venueCountry;
+      // Optimistic update — all three now consistent before the write lands
+      setVenueId(newVenueId);
       setVenueType(newType);
       AsyncStorage.setItem('lastKnownVenueType', newType).catch(() => {});
       setVenueCountry(newCountry);
-      // Then write to Firestore — onSnapshot will confirm/reconcile
-      await updateDoc(doc(db, 'users', user.uid), {
-        activeVenueId: newVenueId,
-        touchedAt: serverTimestamp(),
-      });
+      // Write to Firestore — onSnapshot will confirm/reconcile shortly after.
+      // On failure, roll back all three optimistic values and rethrow.
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          activeVenueId: newVenueId,
+          touchedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        setVenueId(prevVenueId);
+        setVenueType(prevVenueType);
+        setVenueCountry(prevVenueCountry);
+        throw e;
+      }
     },
     refresh: () => setNonce(n => n + 1),
     attachVenueIfMissing: async () => { if (user) await attemptAutoAttach(user); },
