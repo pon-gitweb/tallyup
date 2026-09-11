@@ -76,6 +76,12 @@ SETTINGS
 - Reset stocktake cycle (manager/owner only)
 - Delete account
 
+VENUES AND FESTIVALS
+- Each venue or festival is a separate project with its own independent data — products, stocktakes, orders and suppliers are not shared between projects
+- A project's type (venue vs festival) is set when it's created and cannot be changed afterward
+- To add a festival or another venue, go to More → My Projects → "+ Add new project" and choose the type
+- Switch between existing projects from the same My Projects screen
+
 BARCODE SCANNER
 - Tap 📷 Scan in the stocktake area header to open the barcode camera
 - Point camera at any barcode on a bottle or product
@@ -356,6 +362,7 @@ WHAT IZZY CAN EXPLAIN (festival mode):
 - How transfers work between bars
 - How to read the Ops overview screen
 - The difference between HQ stock and bar stock
+- How to add a separate regular venue alongside this festival: More → My Projects → "+ Add new project" → choose "venue" type. Each project is independent — they do not share stock or data.
 
 WHAT IZZY CANNOT TELL YOU:
 - Live current stock levels (ask Suitee for data questions)
