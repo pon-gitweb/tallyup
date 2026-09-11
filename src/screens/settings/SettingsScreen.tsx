@@ -190,6 +190,14 @@ export default function SettingsScreen() {
     );
   }, [user?.displayName, user?.email, user?.uid, venueName, venueId]);
 
+  // OTA update log — loaded once on mount for diagnostics
+  const [otaLog, setOtaLog] = useState<Updates.UpdatesLogEntry[] | null>(null);
+  useEffect(() => {
+    Updates.readLogEntriesAsync()
+      .then(entries => setOtaLog(entries))
+      .catch(() => setOtaLog([]));
+  }, []);
+
   const [aboutOpen, setAboutOpen] = useState(false);
   const [resettingCycle, setResettingCycle] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -1355,6 +1363,27 @@ export default function SettingsScreen() {
               <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{value}</Text>
             </View>
           ))}
+
+          {/* OTA update log — expo-updates internal event log */}
+          <View style={{ borderTopWidth: 1, borderTopColor: themeColours.border, marginTop: 8, paddingTop: 8 }}>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Update Log</Text>
+            {otaLog === null ? (
+              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>Loading…</Text>
+            ) : otaLog.length === 0 ? (
+              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>No log entries</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 240 }} nestedScrollEnabled>
+                {otaLog.map((entry, i) => (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={{ fontSize: 10, color: themeColours.textSecondary, fontFamily: 'monospace' }}>
+                      {new Date(entry.timestamp).toISOString()}{entry.code ? `  [${entry.code}]` : ''}{entry.level != null ? `  lvl:${entry.level}` : ''}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace' }}>{entry.message}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
         </View>
 
         {/* ─── DANGER ZONE ─── */}
