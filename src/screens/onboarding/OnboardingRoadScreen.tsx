@@ -6,15 +6,28 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { useVenueId } from '../../context/VenueProvider';
+import { useVenueId, useVenueType } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { FEATURES } from '../../config/features';
 
 export default function OnboardingRoadScreen() {
   const nav = useNavigation<any>();
   const venueId = useVenueId();
+  const venueType = useVenueType();
   const colours = useColours();
   const S = makeStyles(colours);
+
+  async function goFestivalSetup() {
+    // Write onboardingRoad so the Dashboard hook card stops showing after
+    // the first visit to the wizard. The wizard itself never writes this field.
+    if (venueId) {
+      updateDoc(doc(db, 'venues', venueId), {
+        onboardingRoad: 'festival',
+        onboardingCompletedAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+    nav.navigate('FestivalEventSetup');
+  }
 
   async function dismiss() {
     if (venueId) {
@@ -34,25 +47,41 @@ export default function OnboardingRoadScreen() {
           Two minutes now saves you hours later. Pick the path that fits where you are today.
         </Text>
 
-        <TouchableOpacity style={[S.card, S.cardFresh]} onPress={() => nav.navigate('OnboardingFreshStart')}>
-          <Text style={S.cardIcon}>🌱</Text>
-          <Text style={S.cardTitle}>Starting fresh</Text>
-          <Text style={S.cardDesc}>
-            New to proper stocktakes, or want a clean slate? We'll load smart starting PAR levels, set up
-            your venue structure, and show you exactly what your first count will reveal.
-          </Text>
-          <Text style={S.cardCta}>Start fresh →</Text>
-        </TouchableOpacity>
+        {venueType === 'festival' ? (
+          // Festival venues skip the standard bar/kitchen seeding entirely — their
+          // departments are created by the Festival Event Setup wizard.
+          <TouchableOpacity style={[S.card, S.cardFresh]} onPress={goFestivalSetup}>
+            <Text style={S.cardIcon}>🎪</Text>
+            <Text style={S.cardTitle}>Set up your festival</Text>
+            <Text style={S.cardDesc}>
+              Configure your event details, bar layout, and storage spaces. Takes about two minutes and
+              gets your stocktake structure ready to go.
+            </Text>
+            <Text style={S.cardCta}>Start setup →</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity style={[S.card, S.cardFresh]} onPress={() => nav.navigate('OnboardingFreshStart')}>
+              <Text style={S.cardIcon}>🌱</Text>
+              <Text style={S.cardTitle}>Starting fresh</Text>
+              <Text style={S.cardDesc}>
+                New to proper stocktakes, or want a clean slate? We'll load smart starting PAR levels, set up
+                your venue structure, and show you exactly what your first count will reveal.
+              </Text>
+              <Text style={S.cardCta}>Start fresh →</Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity style={[S.card, S.cardData]} onPress={() => nav.navigate('OnboardingBringData')}>
-          <Text style={S.cardIcon}>📦</Text>
-          <Text style={S.cardTitle}>Bringing your data</Text>
-          <Text style={S.cardDesc}>
-            Already doing stocktakes and want to carry over your products, counts, and invoices? We'll import
-            what you have and flag what's missing.
-          </Text>
-          <Text style={S.cardCta}>Import my data →</Text>
-        </TouchableOpacity>
+            <TouchableOpacity style={[S.card, S.cardData]} onPress={() => nav.navigate('OnboardingBringData')}>
+              <Text style={S.cardIcon}>📦</Text>
+              <Text style={S.cardTitle}>Bringing your data</Text>
+              <Text style={S.cardDesc}>
+                Already doing stocktakes and want to carry over your products, counts, and invoices? We'll import
+                what you have and flag what's missing.
+              </Text>
+              <Text style={S.cardCta}>Import my data →</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         {!FEATURES.ONBOARDING_HARD_GATE && (
           <TouchableOpacity onPress={dismiss} style={S.skipBtn}>

@@ -849,12 +849,33 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.primary, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }} onPress={() => nav.navigate('OnboardingFreshStart')}>
-                <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Fresh start</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 1, backgroundColor: colours.surface, borderRadius: 999, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colours.border }} onPress={() => nav.navigate('OnboardingBringData')}>
-                <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 13 }}>Bring my data</Text>
-              </TouchableOpacity>
+              {venueType === 'festival' ? (
+                // Festival venues go straight to the event setup wizard — "Bring my data"
+                // (CSV/product import) is not relevant for festival bar structures.
+                <TouchableOpacity
+                  style={{ flex: 1, backgroundColor: colours.primary, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }}
+                  onPress={() => {
+                    if (venueId) {
+                      updateDoc(doc(getFirestore(), 'venues', venueId), {
+                        onboardingRoad: 'festival',
+                        onboardingCompletedAt: serverTimestamp(),
+                      }).catch(() => {});
+                    }
+                    nav.navigate('FestivalEventSetup');
+                  }}
+                >
+                  <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Set up your festival</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <TouchableOpacity style={{ flex: 1, backgroundColor: colours.primary, borderRadius: 999, paddingVertical: 10, alignItems: 'center' }} onPress={() => nav.navigate('OnboardingFreshStart')}>
+                    <Text style={{ color: colours.primaryText, fontWeight: '700', fontSize: 13 }}>Fresh start</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={{ flex: 1, backgroundColor: colours.surface, borderRadius: 999, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colours.border }} onPress={() => nav.navigate('OnboardingBringData')}>
+                    <Text style={{ color: colours.navy, fontWeight: '700', fontSize: 13 }}>Bring my data</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           </View>
         )}
