@@ -495,7 +495,8 @@ export default function SuppliersScreen() {
 
   async function uploadCataloguePdf() {
     if (!venueId) { showInfo('Attach or create a venue first.'); return; }
-    const supplierLabel = (name || '').trim() || 'Uploaded Catalogue';
+    if (!name.trim()) { showInfo('Please enter a supplier name before uploading a catalogue.'); return; }
+    const supplierLabel = name.trim();
     try {
       setCatalogueBusy(true);
       const res = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', '*/*'], copyToCacheDirectory: true });
@@ -520,7 +521,8 @@ export default function SuppliersScreen() {
 
   async function photographCataloguePage() {
     if (!venueId) { showInfo('Attach or create a venue first.'); return; }
-    const supplierLabel = (name || '').trim() || 'Photographed Catalogue';
+    if (!name.trim()) { showInfo('Please enter a supplier name before uploading a catalogue.'); return; }
+    const supplierLabel = name.trim();
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (perm.status !== 'granted') { showInfo('Allow camera access to photograph catalogue pages.'); return; }
