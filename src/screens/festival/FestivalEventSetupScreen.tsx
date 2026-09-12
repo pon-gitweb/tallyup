@@ -212,6 +212,15 @@ export default function FestivalEventSetupScreen() {
   const [priorAttendance, setPriorAttendance] = useState('');
   const [historyNotes,    setHistoryNotes]    = useState('');
 
+  // ── Handoff verification (Phase 4a) ──────────────────────────────────────
+  // Stored on venues/{venueId}/event/details as deliveryVerificationMode.
+  // 'off' (default) = plain-tap behaviour from Phase 3, unchanged.
+  // 'fixed_location' = runner must scan the QR code at the source / destination
+  //   before a collect or arrive action is recorded.
+  // 'live_handshake' = Phase 4b (not yet implemented).
+  const [deliveryVerificationMode, setDeliveryVerificationMode] =
+    useState<'off' | 'fixed_location'>('off');
+
   // ── UI state ─────────────────────────────────────────────────────────────
   const [progress,      setProgress]      = useState<Progress>({ basics: false, bars: false, sourceLocations: false, productPlanning: false, suppliers: false, historicalData: false });
   const [saving,        setSaving]        = useState<string | null>(null);
@@ -253,6 +262,12 @@ export default function FestivalEventSetupScreen() {
       if (d.setupProgress)       setProgress(p => ({ ...p, ...d.setupProgress }));
       if (d.cycleOverride)       setCycleOverride(d.cycleOverride);
       if (d.totalBudget != null) setTotalBudget(String(d.totalBudget));
+      if (d.deliveryVerificationMode === 'fixed_location') {
+        setDeliveryVerificationMode('fixed_location');
+      } else {
+        // Default 'off' when absent — no backfill needed
+        setDeliveryVerificationMode('off');
+      }
       // Load saved supplier configs including returnAllowancePercent
       if (d.supplierConfigs) {
         const cfgMap: Record<string, any> = {};
@@ -442,6 +457,7 @@ export default function FestivalEventSetupScreen() {
         cycleLength: finalCycle,
         cycleOverride: cycleOverride || null,
         totalBudget: parseFloat(totalBudget) || null,
+        deliveryVerificationMode,
         setupProgress: newProgress,
         updatedAt: serverTimestamp(),
       }, { merge: true });
@@ -810,6 +826,26 @@ export default function FestivalEventSetupScreen() {
           <Text style={S.label}>Stock model</Text>
           {STOCK_MODELS.map(sm => (
             <RadioCard key={sm.id} label={sm.label} sub={sm.sub} selected={stockModel === sm.id} onPress={() => setStockModel(sm.id)} />
+          ))}
+
+          {/* ── Delivery verification mode (Phase 4a) ── */}
+          <Text style={S.label}>Delivery verification</Text>
+          <Text style={S.helper}>
+            Controls whether runners must scan a location QR code before a collect or arrive action is recorded.
+            "Off" keeps the plain-tap behaviour. "Fixed location" requires a QR scan at the source and
+            destination; staff without QR codes can still use manual entry.
+          </Text>
+          {([
+            { id: 'off',            label: 'Off',            sub: 'Plain-tap — no QR scan required (default)' },
+            { id: 'fixed_location', label: 'Fixed location', sub: 'Runner must scan QR at source and destination' },
+          ] as const).map(opt => (
+            <RadioCard
+              key={opt.id}
+              label={opt.label}
+              sub={opt.sub}
+              selected={deliveryVerificationMode === opt.id}
+              onPress={() => setDeliveryVerificationMode(opt.id)}
+            />
           ))}
 
           <SaveButton label="Save and continue →" savingKey="basics" saving={saving} onPress={saveBasics} />

@@ -13,6 +13,7 @@ import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
+import FestivalLocationScannerModal from './components/FestivalLocationScannerModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,43 @@ export default function FestivalDeliveryTasksScreen() {
   // confirmedQtys: productId → quantity the receiver is confirming
   const [confirmedQtys, setConfirmedQtys] = useState<Record<string, number>>({});
 
+  // ── Phase 4a — delivery verification ─────────────────────────────────────
+  // verificationMode: read from venues/{venueId}/event/details; defaults 'off'.
+  // 'off'            → plain-tap behaviour from Phase 3, completely unchanged.
+  // 'fixed_location' → scanner gate before collect (at HQ source) and arrived
+  //                    (at bar back-of-house).
+  // 'live_handshake' → Phase 4b (not built here).
+  const [verificationMode, setVerificationMode] = useState<string>('off');
+
+  // Scanner modal state — a single modal instance shared across actions.
+  const [scannerVisible,      setScannerVisible]      = useState(false);
+  const [scannerDeptId,       setScannerDeptId]       = useState('');
+  const [scannerAreaId,       setScannerAreaId]       = useState('');
+  const [scannerDisplayName,  setScannerDisplayName]  = useState('');
+  // pendingAction is set before opening the scanner; onVerified reads it to
+  // decide which write to execute after a successful scan.
+  const [pendingAction, setPendingAction] = useState<{
+    type: 'collect' | 'arrived';
+    reqId: string;
+  } | null>(null);
+
   const uid = auth.currentUser?.uid ?? '';
+
+  // Live listener on event/details for deliveryVerificationMode (Phase 4a)
+  useEffect(() => {
+    if (!FESTIVAL_BETA || !venueId) return;
+    const unsub = onSnapshot(
+      doc(db, 'venues', venueId, 'event', 'details'),
+      snap => {
+        if (!snap.exists()) return;
+        const d = snap.data() as any;
+        // Default to 'off' when the field is absent — no migration needed
+        setVerificationMode(d.deliveryVerificationMode ?? 'off');
+      },
+      () => {}, // silent on permission error
+    );
+    return () => unsub();
+  }, [venueId]);
 
   // Live listener on all non-cancelled requests
   useEffect(() => {
@@ -293,6 +330,65 @@ export default function FestivalDeliveryTasksScreen() {
     }
   }
 
+  // ── Phase 4a scan-gate handlers ───────────────────────────────────────────
+  //
+  // These wrappers sit in front of markCollected / markArrived.
+  // When deliveryVerificationMode is 'fixed_location' AND the request has a
+  // valid location to verify against, they open the scanner first.
+  // The actual Firestore write only runs after onVerified() fires.
+  //
+  // Rider requests bypass scanning entirely:
+  //   • Collection: rider requests have no sourceLocationId (stock comes from
+  //     central store, not a mapped HQ area) — the same guard that skips the
+  //     HQ stock decrement also skips the scan gate.
+  //   • Arrival: rider requests have barId:null (dressing rooms / personal
+  //     delivery points) — there is no bar QR code to scan at a rider handoff.
+  // In both cases the runner proceeds with the plain-tap as in Phase 3.
+  //
+  // doConfirmReceipt is NOT gated by verification — per standing constraint.
+
+  function handleMarkCollected(req: any) {
+    if (verificationMode === 'fixed_location' && req?.sourceLocationId) {
+      // Open scanner expecting the HQ source area QR
+      setScannerDeptId('hq');
+      setScannerAreaId(req.sourceLocationId);
+      setScannerDisplayName(req.sourceLocationName || req.sourceLocationId);
+      setPendingAction({ type: 'collect', reqId: req.id });
+      setScannerVisible(true);
+      return;
+    }
+    // mode 'off', or rider request (no sourceLocationId): plain-tap
+    markCollected(req.id);
+  }
+
+  function handleMarkArrived(req: any) {
+    if (verificationMode === 'fixed_location' && req?.barId) {
+      // Open scanner expecting the bar's back-of-house area QR
+      setScannerDeptId(req.barId);
+      setScannerAreaId('back-of-house');
+      setScannerDisplayName(req.barName || req.barId);
+      setPendingAction({ type: 'arrived', reqId: req.id });
+      setScannerVisible(true);
+      return;
+    }
+    // mode 'off', or rider request (barId:null): plain-tap
+    markArrived(req.id);
+  }
+
+  // Called by FestivalLocationScannerModal when scan matches expected location.
+  // Closes the scanner then runs whichever action was pending.
+  function onScanVerified() {
+    const action = pendingAction;
+    setScannerVisible(false);
+    setPendingAction(null);
+    setScannerDeptId('');
+    setScannerAreaId('');
+    setScannerDisplayName('');
+    if (!action) return;
+    if (action.type === 'collect') markCollected(action.reqId);
+    else if (action.type === 'arrived') markArrived(action.reqId);
+  }
+
   // ── Render helpers ────────────────────────────────────────────────────────
 
   function renderPendingCard(req: any) {
@@ -365,7 +461,7 @@ export default function FestivalDeliveryTasksScreen() {
             isActing && S.btnDisabled,
           ]}
           disabled={!!acting}
-          onPress={() => isCollected ? markArrived(req.id) : markCollected(req.id)}
+          onPress={() => isCollected ? handleMarkArrived(req) : handleMarkCollected(req)}
         >
           {isActing
             ? <ActivityIndicator color={c.surface} size="small" />
@@ -463,6 +559,20 @@ export default function FestivalDeliveryTasksScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
+
+      {/* Phase 4a — location verification scanner */}
+      <FestivalLocationScannerModal
+        visible={scannerVisible}
+        onClose={() => {
+          setScannerVisible(false);
+          setPendingAction(null);
+        }}
+        expectedDepartmentId={scannerDeptId}
+        expectedAreaId={scannerAreaId}
+        locationDisplayName={scannerDisplayName}
+        onVerified={onScanVerified}
+      />
+
       <ScrollView contentContainerStyle={S.scroll}>
 
         {/* Header */}
