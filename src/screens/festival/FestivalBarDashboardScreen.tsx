@@ -396,6 +396,17 @@ export default function FestivalBarDashboardScreen() {
             <>
               <TouchableOpacity
                 style={[S.actionBtn, S.actionBtnSecondary]}
+                onPress={() => nav.navigate('FestivalLocationQR', {
+                  departmentId: barId,
+                  areaId: 'back-of-house',
+                  displayName: barName || bar?.name || 'Bar',
+                })}
+              >
+                <Text style={[S.actionBtnText, S.actionBtnTextSecondary]}>📍  Location QR code</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[S.actionBtn, S.actionBtnSecondary]}
                 onPress={() => nav.navigate('FestivalTransfer', { fromBarId: barId, fromBarName: barName || bar?.name })}
               >
                 <Text style={[S.actionBtnText, S.actionBtnTextSecondary]}>🔄  Suggest transfer</Text>

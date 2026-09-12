@@ -134,6 +134,7 @@ import FestivalOpeningStockScreen from '../../screens/festival/FestivalOpeningSt
 import FestivalHistoricalDataScreen from '../../screens/festival/FestivalHistoricalDataScreen';
 import FestivalCrowdFlowScreen from '../../screens/festival/FestivalCrowdFlowScreen';
 import FestivalPaywallScreen from '../../screens/festival/FestivalPaywallScreen';
+import FestivalLocationQRScreen from '../../screens/festival/FestivalLocationQRScreen';
 
 // Recipes / CraftUp
 import CraftUpListScreen from '../../screens/recipes/CraftUpListScreen';
@@ -347,6 +348,7 @@ export default function MainStack() {
           presentation: 'modal'
         }}
       />
+      <Stack.Screen name="FestivalLocationQR" component={FestivalLocationQRScreen} options={{ title: 'Location QR Code' }} />
       <Stack.Screen name="StocktakeSummary" component={StocktakeSummaryScreen} options={{ title: 'Stocktake Complete', headerLeft: () => null }} />
       <Stack.Screen name="DepartmentSummary" component={DepartmentSummaryScreen} options={{ title: 'Department Complete', headerLeft: () => null }} />
       <Stack.Screen name="StockHolding" component={StockHoldingScreen} options={{ title: 'Stock Holding Report' }} />

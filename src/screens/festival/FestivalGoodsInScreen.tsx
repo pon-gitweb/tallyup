@@ -409,15 +409,26 @@ export default function FestivalGoodsInScreen() {
           <Text style={S.empty}>No storage spaces set up yet.</Text>
         ) : (
           sourceLocations.map(loc => (
-            <TouchableOpacity
-              key={loc.id}
-              style={[S.option, selectedLocation?.id === loc.id && S.optionSelected]}
-              onPress={() => setSelectedLocation(loc)}
-            >
-              <Text style={[S.optionText, selectedLocation?.id === loc.id && S.optionTextSelected]}>
-                {loc.name}
-              </Text>
-            </TouchableOpacity>
+            <View key={loc.id} style={S.locRow}>
+              <TouchableOpacity
+                style={[S.option, S.optionFlex, selectedLocation?.id === loc.id && S.optionSelected]}
+                onPress={() => setSelectedLocation(loc)}
+              >
+                <Text style={[S.optionText, selectedLocation?.id === loc.id && S.optionTextSelected]}>
+                  {loc.name}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={S.qrIconBtn}
+                onPress={() => nav.navigate('FestivalLocationQR', {
+                  departmentId: 'hq',
+                  areaId: loc.id,
+                  displayName: loc.name,
+                })}
+              >
+                <Text style={S.qrIconText}>📍</Text>
+              </TouchableOpacity>
+            </View>
           ))
         )}
 
@@ -591,13 +602,20 @@ function makeStyles(c: any) {
     body: { fontSize: 15, color: c.slateMid, textAlign: 'center' },
     empty: { fontSize: 14, color: c.slateMid, fontStyle: 'italic', marginTop: 8 },
 
+    locRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
     option: {
       backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border,
       paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8,
     },
+    optionFlex: { flex: 1, marginBottom: 0 },
     optionSelected: { borderColor: c.deepBlue, backgroundColor: c.surface },
     optionText: { fontSize: 15, color: c.text, fontWeight: '500' },
     optionTextSelected: { color: c.deepBlue, fontWeight: '700' },
+    qrIconBtn: {
+      width: 44, height: 44, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+      backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
+    },
+    qrIconText: { fontSize: 20 },
 
     lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
     lineName: { fontSize: 14, fontWeight: '600', color: c.navy },
