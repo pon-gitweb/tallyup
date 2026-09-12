@@ -54,7 +54,7 @@ export interface FestivalRequestDoc {
   products?:           FestivalRequestLineItem[];
   urgency?:            'asap' | 'next-round' | 'planning';
   note?:               string | null;
-  status:              'pending' | 'accepted' | 'collected' | 'delivered' | 'cancelled';
+  status:              'pending' | 'accepted' | 'collected' | 'arrived' | 'delivered' | 'cancelled';
   sourceLocationId?:   string | null;
   sourceLocationName?: string | null;
   createdAt?:          Timestamp;
@@ -67,6 +67,15 @@ export interface FestivalRequestDoc {
   collectedAt?:       Timestamp;
   completedAt?:       Timestamp;
   cancelledBy?:       string;        // uid
+
+  // ── Phase 3 — plain arrived step (no scan; scan equivalent is arrivalScannedAt from Phase 1) ──
+  /**
+   * UTC timestamp set when the runner taps "Mark arrived" — indicates physical
+   * presence at the destination without requiring a QR scan. Distinct from
+   * `arrivalScannedAt`/`arrivalScannedBy` (Phase 1) which specifically record
+   * that a QR scan occurred; this field covers the plain-tap path.
+   */
+  arrivedAt?: Timestamp;
 
   // ── existing — ops-screen cancel ─────────────────────────────────────────
   // (cancelledBy already listed above; updatedAt covers the ops write)
