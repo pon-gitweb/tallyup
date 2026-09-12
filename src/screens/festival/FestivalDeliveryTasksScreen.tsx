@@ -14,6 +14,7 @@ import { useColours, useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 import FestivalLocationScannerModal from './components/FestivalLocationScannerModal';
+import FestivalLiveQRModal from './components/FestivalLiveQRModal';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,14 @@ export default function FestivalDeliveryTasksScreen() {
     type: 'collect' | 'arrived';
     reqId: string;
   } | null>(null);
+
+  // Phase 4b — live QR code generator state.
+  // Any venue member can show a live code for their current location.
+  // Bar managers use it on ARRIVED cards; HQ staff use it on PENDING cards.
+  const [liveQRVisible,       setLiveQRVisible]       = useState(false);
+  const [liveQRDeptId,        setLiveQRDeptId]        = useState('');
+  const [liveQRAreaId,        setLiveQRAreaId]        = useState('');
+  const [liveQRDisplayName,   setLiveQRDisplayName]   = useState('');
 
   const uid = auth.currentUser?.uid ?? '';
 
@@ -348,8 +357,13 @@ export default function FestivalDeliveryTasksScreen() {
   // doConfirmReceipt is NOT gated by verification — per standing constraint.
 
   function handleMarkCollected(req: any) {
-    if (verificationMode === 'fixed_location' && req?.sourceLocationId) {
-      // Open scanner expecting the HQ source area QR
+    const needsScan = (verificationMode === 'fixed_location' || verificationMode === 'live_handshake')
+                      && req?.sourceLocationId;
+    if (needsScan) {
+      // Open scanner expecting the HQ source area QR.
+      // fixed_location: runner scans the static sticker at the location.
+      // live_handshake: runner waits for HQ staff to show their live code, then scans.
+      // Both modes accept static and live payload formats — see FestivalLocationScannerModal.
       setScannerDeptId('hq');
       setScannerAreaId(req.sourceLocationId);
       setScannerDisplayName(req.sourceLocationName || req.sourceLocationId);
@@ -357,13 +371,16 @@ export default function FestivalDeliveryTasksScreen() {
       setScannerVisible(true);
       return;
     }
-    // mode 'off', or rider request (no sourceLocationId): plain-tap
+    // mode 'off', or rider request (no sourceLocationId): plain-tap, no scanner
     markCollected(req.id);
   }
 
   function handleMarkArrived(req: any) {
-    if (verificationMode === 'fixed_location' && req?.barId) {
-      // Open scanner expecting the bar's back-of-house area QR
+    const needsScan = (verificationMode === 'fixed_location' || verificationMode === 'live_handshake')
+                      && req?.barId;
+    if (needsScan) {
+      // Open scanner expecting the bar's back-of-house area QR.
+      // live_handshake: bar manager shows their live code; runner scans it.
       setScannerDeptId(req.barId);
       setScannerAreaId('back-of-house');
       setScannerDisplayName(req.barName || req.barId);
@@ -371,7 +388,7 @@ export default function FestivalDeliveryTasksScreen() {
       setScannerVisible(true);
       return;
     }
-    // mode 'off', or rider request (barId:null): plain-tap
+    // mode 'off', or rider request (barId:null): plain-tap, no scanner
     markArrived(req.id);
   }
 
@@ -409,6 +426,24 @@ export default function FestivalDeliveryTasksScreen() {
           </Text>
         ))}
         {!!req.note && <Text style={S.noteText}>"{req.note}"</Text>}
+
+        {/* Phase 4b — live_handshake: HQ staff tap this to show their location
+            code when a runner arrives to collect. The runner scans it.
+            Only shown when a source location is set (rider requests have none). */}
+        {verificationMode === 'live_handshake' && req.sourceLocationId && (
+          <TouchableOpacity
+            style={[S.liveCodeBtn, { borderColor: c.success }]}
+            onPress={() => {
+              setLiveQRDeptId('hq');
+              setLiveQRAreaId(req.sourceLocationId);
+              setLiveQRDisplayName(req.sourceLocationName || req.sourceLocationId);
+              setLiveQRVisible(true);
+            }}
+          >
+            <Text style={[S.liveCodeBtnText, { color: c.success }]}>📲 Show collection code (HQ)</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={[S.acceptBtn, isActing && S.btnDisabled]}
           disabled={!!acting}
@@ -498,6 +533,24 @@ export default function FestivalDeliveryTasksScreen() {
                 • {p.productName} × {p.quantity} {p.unit}
               </Text>
             ))}
+
+            {/* Phase 4b — live_handshake: bar manager shows a live code so the
+                runner can scan and prove co-presence before the arrived tap.
+                Only shown when a barId is set (rider requests have none). */}
+            {verificationMode === 'live_handshake' && req.barId && (
+              <TouchableOpacity
+                style={[S.liveCodeBtn, { borderColor: c.deepBlue }]}
+                onPress={() => {
+                  setLiveQRDeptId(req.barId);
+                  setLiveQRAreaId('back-of-house');
+                  setLiveQRDisplayName(req.barName || req.barId);
+                  setLiveQRVisible(true);
+                }}
+              >
+                <Text style={[S.liveCodeBtnText, { color: c.deepBlue }]}>📲 Show receive code (bar)</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={[S.acceptBtn, S.confirmBtn, isActing && S.btnDisabled]}
               disabled={!!acting}
@@ -560,7 +613,7 @@ export default function FestivalDeliveryTasksScreen() {
     <View style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
 
-      {/* Phase 4a — location verification scanner */}
+      {/* Phase 4a/4b — location verification scanner */}
       <FestivalLocationScannerModal
         visible={scannerVisible}
         onClose={() => {
@@ -571,6 +624,16 @@ export default function FestivalDeliveryTasksScreen() {
         expectedAreaId={scannerAreaId}
         locationDisplayName={scannerDisplayName}
         onVerified={onScanVerified}
+        isLiveHandshake={verificationMode === 'live_handshake'}
+      />
+
+      {/* Phase 4b — live QR code display for location-holder */}
+      <FestivalLiveQRModal
+        visible={liveQRVisible}
+        onClose={() => setLiveQRVisible(false)}
+        departmentId={liveQRDeptId}
+        areaId={liveQRAreaId}
+        locationDisplayName={liveQRDisplayName}
       />
 
       <ScrollView contentContainerStyle={S.scroll}>
@@ -683,6 +746,14 @@ function makeStyles(c: any) {
     confirmBtn:        { backgroundColor: c.success },
     btnDisabled:       { opacity: 0.5 },
     acceptBtnText:     { color: c.surface, fontWeight: '700', fontSize: 14 },
+
+    // ── Phase 4b — live QR code button ──────────────────────────────────────
+    liveCodeBtn: {
+      borderWidth: 1.5, borderRadius: 10,
+      paddingVertical: 10, paddingHorizontal: 14,
+      alignItems: 'center', marginTop: 10,
+    },
+    liveCodeBtnText: { fontSize: 13, fontWeight: '700' },
 
     // ── Confirm receipt form styles ──────────────────────────────────────────
     confirmRow: {

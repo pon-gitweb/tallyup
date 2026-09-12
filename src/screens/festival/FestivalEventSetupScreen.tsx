@@ -219,7 +219,7 @@ export default function FestivalEventSetupScreen() {
   //   before a collect or arrive action is recorded.
   // 'live_handshake' = Phase 4b (not yet implemented).
   const [deliveryVerificationMode, setDeliveryVerificationMode] =
-    useState<'off' | 'fixed_location'>('off');
+    useState<'off' | 'fixed_location' | 'live_handshake'>('off');
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [progress,      setProgress]      = useState<Progress>({ basics: false, bars: false, sourceLocations: false, productPlanning: false, suppliers: false, historicalData: false });
@@ -262,8 +262,8 @@ export default function FestivalEventSetupScreen() {
       if (d.setupProgress)       setProgress(p => ({ ...p, ...d.setupProgress }));
       if (d.cycleOverride)       setCycleOverride(d.cycleOverride);
       if (d.totalBudget != null) setTotalBudget(String(d.totalBudget));
-      if (d.deliveryVerificationMode === 'fixed_location') {
-        setDeliveryVerificationMode('fixed_location');
+      if (d.deliveryVerificationMode === 'fixed_location' || d.deliveryVerificationMode === 'live_handshake') {
+        setDeliveryVerificationMode(d.deliveryVerificationMode);
       } else {
         // Default 'off' when absent — no backfill needed
         setDeliveryVerificationMode('off');
@@ -836,8 +836,9 @@ export default function FestivalEventSetupScreen() {
             destination; staff without QR codes can still use manual entry.
           </Text>
           {([
-            { id: 'off',            label: 'Off',            sub: 'Plain-tap — no QR scan required (default)' },
-            { id: 'fixed_location', label: 'Fixed location', sub: 'Runner must scan QR at source and destination' },
+            { id: 'off',            label: 'Off',             sub: 'Plain-tap — no QR scan required (default)' },
+            { id: 'fixed_location', label: 'Fixed location',  sub: 'Runner scans the static QR code posted at each location' },
+            { id: 'live_handshake', label: 'Live handshake',  sub: 'Person at each location shows a time-limited QR on their phone; runner scans it to prove co-presence' },
           ] as const).map(opt => (
             <RadioCard
               key={opt.id}
