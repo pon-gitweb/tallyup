@@ -16,7 +16,7 @@ import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type LineItem = { productId: string; productName: string; quantity: number; unit: string };
+type LineItem = { productId: string; productName: string; quantity: number; unit: string; sentQty?: number; receivedQty?: number };
 
 const URGENCY_OPTIONS = [
   { id: 'asap',        label: '⚡ ASAP',           sub: 'Running low now' },
