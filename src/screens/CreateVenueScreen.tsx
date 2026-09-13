@@ -6,6 +6,7 @@ import { db } from '../services/firebase';
 import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
+import { useVenue } from '../context/VenueProvider';
 import { useColours, useTheme } from '../context/ThemeContext';
 import { useToast } from '../components/common/Toast';
 
@@ -21,6 +22,7 @@ export default function CreateVenueScreen() {
   const [busyMsg, setBusyMsg] = useState('');
   const [error, setError] = useState<string | null>(null);
   const navigation = useNavigation<any>();
+  const { initVenue } = useVenue();
 
   async function handleCreate() {
     setError(null);
@@ -131,6 +133,13 @@ export default function CreateVenueScreen() {
       ]).catch(() => {});
       // Prime the correct type immediately so the 5s timeout also routes correctly.
       await AsyncStorage.setItem('lastKnownVenueType', projectType).catch(() => {});
+
+      // Optimistic context update: set venueId/venueType/venueCountry in VenueProvider
+      // state immediately so HomeRouter's effect sees the correct venue on mount,
+      // rather than waiting for VenueProvider's onSnapshot listener to catch up.
+      // Without this the HomeRouter sees stale null venueId, routes back to
+      // CreateVenueScreen, and the user can create a duplicate venue.
+      initVenue(vref.id, projectType!, country);
 
       navigation.reset({
         index: 0,

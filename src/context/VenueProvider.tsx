@@ -35,6 +35,7 @@ type VenueCtx = {
   venueIds: string[];
   venueType: string | null;
   venueCountry: string;
+  initVenue: (newVenueId: string, newVenueType: string, newVenueCountry: string) => void;
   switchVenue: (newVenueId: string) => Promise<void>;
   refresh: () => void;
   attachVenueIfMissing: () => Promise<void>;
@@ -49,6 +50,7 @@ type VenueCtx = {
 
 const Ctx = createContext<VenueCtx>({
   loading: true, user: null, venueId: null, activeVenueId: null, venueIds: [], venueType: null, venueCountry: 'NZ',
+  initVenue: () => {},
   switchVenue: async () => {},
   refresh: () => {}, attachVenueIfMissing: async () => {},
   subscription: null, subscriptionOverride: null, isPilot: true, isActive: false, plan: null, hasModule: () => false,
@@ -434,6 +436,17 @@ export function VenueProvider({ children }: { children: React.ReactNode }) {
     venueIds,
     venueType,
     venueCountry,
+    // Optimistic update for initial venue creation: called by CreateVenueScreen after all
+    // Firestore writes succeed but before navigation.reset, so HomeRouter never sees a
+    // stale null venueId and bounces the user back to a blank CreateVenueScreen.
+    // Mirrors the same pattern used internally by switchVenue().
+    initVenue: (newVenueId: string, newVenueType: string, newVenueCountry: string) => {
+      setVenueId(newVenueId);
+      setVenueIds(ids => ids.includes(newVenueId) ? ids : [...ids, newVenueId]);
+      setVenueType(newVenueType);
+      setVenueCountry(newVenueCountry);
+      AsyncStorage.setItem('lastKnownVenueType', newVenueType).catch(() => {});
+    },
     switchVenue: async (newVenueId: string) => {
       if (!user) throw new Error('Not signed in');
       const memberSnap = await getDoc(doc(db, 'venues', newVenueId, 'members', user.uid));
