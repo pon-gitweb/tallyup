@@ -190,7 +190,7 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.keys().hasOnly([
           'venueId','createdAt','email','touchedAt','displayName',
-          'activeVenueId','venueIds'
+          'activeVenueId','venueIds','requiresEmailVerification'
         ]);
       allow update: if request.auth != null
         && request.auth.uid == uid
