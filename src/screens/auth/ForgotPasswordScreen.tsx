@@ -16,19 +16,20 @@ import {
   ScrollView,
 } from 'react-native';
 import { getAuth, sendPasswordResetEmail } from 'firebase/auth';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useColours } from '../../context/ThemeContext';
 import { useToast } from '../../components/common/Toast';
 import { useConfirmModal } from '../../components/common/useConfirmModal';
 
 export default function ForgotPasswordScreen() {
   const nav = useNavigation<any>();
+  const route = useRoute<any>();
   const auth = getAuth();
   const colours = useColours();
   const { showSuccess, showError, showInfo } = useToast();
   const { modal } = useConfirmModal();
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(route?.params?.prefillEmail || '');
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 

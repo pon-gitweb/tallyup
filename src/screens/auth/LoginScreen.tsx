@@ -75,11 +75,12 @@ function LoginScreenInner() {
       const code = e?.code || '';
       if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
         Alert.alert(
-          'Account not found',
-          'No account found with this email. Would you like to create one?',
+          "Couldn't sign you in",
+          "That password didn't work. If you already have an account, reset your password — or create a new one if you're just getting started.",
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Create account', onPress: () => nav.navigate('Register', { prefillEmail: email.trim() }) },
+            { text: 'Reset password', onPress: () => nav.navigate('ForgotPassword', { prefillEmail: email.trim() }) },
           ]
         );
       } else {
