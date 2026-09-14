@@ -562,7 +562,7 @@ function makeStyles(c: ReturnType<typeof useColours>) {
     searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
     searchInput: {
       flex: 1, borderWidth: 1, borderColor: c.border, borderRadius: 10,
-      paddingHorizontal: 12, paddingVertical: 10, backgroundColor: c.surface, color: c.text,
+      paddingHorizontal: 12, paddingVertical: 12, fontSize: 16, backgroundColor: c.surface, color: c.text,
     },
 
     row: {

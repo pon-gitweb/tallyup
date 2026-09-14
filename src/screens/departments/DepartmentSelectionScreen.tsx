@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: 'white', padding: 16, gap: 12 },
   title: { fontSize: 20, fontWeight: '800' },
   searchRow: { flexDirection: 'row', gap: 8 },
-  search: { flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  search: { flex: 1, borderWidth: 1, borderColor: '#D0D3D7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, fontSize: 16 },
   primaryBtn: { backgroundColor: '#0A84FF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
   primaryText: { color: 'white', fontWeight: '700' },
   center: { alignItems: 'center', gap: 8, paddingVertical: 20 },

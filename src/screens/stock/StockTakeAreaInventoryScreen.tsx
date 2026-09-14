@@ -3532,7 +3532,7 @@ const openHistory = throttleAction(async (item: Item) => {
           placeholderTextColor="#94a3b8"
           style={{
             backgroundColor: '#f8fafc', borderRadius: 10, paddingHorizontal: 12,
-            paddingVertical: 9, fontSize: 14, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a',
+            paddingVertical: 12, fontSize: 16, borderWidth: 1, borderColor: '#e2e8f0', color: '#0f172a',
           }}
           clearButtonMode="while-editing"
           returnKeyType="search"
@@ -4262,7 +4262,7 @@ const openHistory = throttleAction(async (item: Item) => {
                     onChangeText={setMoveQ}
                     placeholder="Search areas…"
                     placeholderTextColor="#94a3b8"
-                    style={{ backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15 }}
+                    style={{ backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 }}
                     clearButtonMode="while-editing"
                   />
                 </View>
