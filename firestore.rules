@@ -882,14 +882,23 @@ service cloud.firestore {
             'updatedAt', 'expiryDate', 'category', 'categorySuggested',
             'active', 'barcode', 'barcodeNumber', 'brand', 'description', 'notes',
             'supplierNameSuggested', 'supplierGlobalId',
-            'homeDepartmentId', 'homeAreaId'
+            'homeDepartmentId', 'homeAreaId',
+            // Written by refreshPricesForDepartment Pass 2 (physical-count basis correction).
+            // Needed in both Rule A and Rule B — see Rule B comment for why.
+            'costPriceQuantityBasis', 'quantityConfidence', 'costPriceBasisAt'
           ]);
-        // Rule B: any venue member can update supplier-link and par fields
+        // Rule B: any venue member can update supplier-link and par fields, AND the three
+        // physical-count basis fields written by refreshPricesForDepartment Pass 2.
+        // Pass 2 is triggered by resetAllDepartmentsStockTake (called from
+        // StocktakeSummaryScreen — no manager gate) and startNewDepartmentCycle (called
+        // from StockTakeAreaInventoryScreen on festival-mode completion — no manager gate),
+        // so any venue member can reach these writes in practice.
         allow update: if isVenueMember(venueId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'par', 'parLevel', 'supplierId', 'supplierName', 'supplierUpdatedAt',
             'primarySupplierId', 'primarySupplierName', 'supplierCount', 'lowestUnitCost',
-            'updatedAt', 'expiryDate'
+            'updatedAt', 'expiryDate',
+            'costPriceQuantityBasis', 'quantityConfidence', 'costPriceBasisAt'
           ]);
         match /suppliers/{supplierLinkId} {
           allow read: if isVenueMember(venueId);
