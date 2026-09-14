@@ -60,6 +60,7 @@
     },
     "ios-simulator": {
       "extends": "base",
+      "channel": "production",
       "ios": {
         "simulator": true
       },
