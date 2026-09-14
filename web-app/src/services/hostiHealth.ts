@@ -10,7 +10,7 @@
  *   2. All diagnostic Alert.alert and debug/checkpoint writes removed
  *   3. captureError/captureMessage replaced with console.error/console.info
  */
-import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, limit, setDoc, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { generateAbductiveInsights, calcVarianceImprovementPct } from './abductiveInsights';
 import type { AbductiveInsight } from './abductiveInsights';
@@ -514,67 +514,109 @@ async function calculateFullScore(
   let wasteControlLabel: string | null = null;
 
   try {
-    const posConfigSnap = await getDoc(doc(db, 'venues', venueId, 'posIntegration', 'config'));
-    const posConnected = posConfigSnap.exists() && posConfigSnap.data()?.status === 'connected';
-
+    // Gate: hasSalesData alone — posConnected is no longer required so that
+    // manually-uploaded CSV/PDF reports activate Mode A, not just POS-synced ones.
     let hasSalesData = false;
-    if (posConnected && totalStocktakesCompleted > 0) {
+    if (totalStocktakesCompleted > 0) {
       const salesSnap = await getDocs(query(collection(db, 'venues', venueId, 'salesReports'), limit(1)));
       hasSalesData = !salesSnap.empty;
     }
 
-    if (posConnected && hasSalesData) {
+    if (hasSalesData) {
+      // ── Mode A: Waste Control — use overlappingCycles to match each sales
+      //    report to the SPECIFIC historical snapshot(s) it covers, then compare
+      //    variance against weighted sales quantities for those cycles.
+      //
+      //    Read cost: one getDoc per unique (deptId, cycleNumber) pair across all
+      //    sales reports that have been tagged.  Untagged reports (created before
+      //    Task 2 was deployed, i.e. missing overlappingCycles) are silently skipped
+      //    rather than falling back to the latest snapshot — this avoids the
+      //    incorrect cross-period comparison that motivated this fix.  Venues with
+      //    only untagged reports will fall through to Stock Integrity (Mode B) until
+      //    their next upload re-tags the data.
+
       const salesReportsSnap = await getDocs(collection(db, 'venues', venueId, 'salesReports'));
 
-      const salesByName: Record<string, number> = {};
-      salesReportsSnap.docs.forEach(d => {
-        const data = d.data() as any;
+      // Build: (deptId, cycleNumber) → weighted salesByName accumulator
+      type SalesMap = Record<string, number>;
+      const cyclesSalesMap = new Map<string, Map<number, SalesMap>>();
+      // deptId → Set<cycleNumber> for deduplication when reading snapshots
+      let hasTaggedReport = false;
+
+      for (const reportDoc of salesReportsSnap.docs) {
+        const data = reportDoc.data() as any;
+        const overlappingCycles: Array<{ departmentId: string; cycleNumber: number; weight?: number }> =
+          data.overlappingCycles || [];
+
+        // Skip untagged reports (missing field) and zero-overlap reports
+        if (!data.hasOwnProperty?.('overlappingCycles') && !('overlappingCycles' in data)) continue;
+        if (overlappingCycles.length === 0) continue;
+
+        hasTaggedReport = true;
         const lines = data.lines || data.report?.lines || [];
-        lines.forEach((line: any) => {
-          const name = (line.name || '').toLowerCase().trim();
-          const qty = Number(line.qtySold || 0);
-          if (name && qty > 0) salesByName[name] = (salesByName[name] || 0) + qty;
-        });
-      });
 
-      let totalWasteDollars = 0;
-      let totalStockVal = 0;
-
-      for (const deptDoc of deptsSnap.docs) {
-        const latestSnapDocs = await getDocs(
-          query(
-            collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
-            orderBy('cycleNumber', 'desc'),
-            limit(1)
-          )
-        );
-        if (latestSnapDocs.empty) continue;
-        const snapData = latestSnapDocs.docs[0].data() as any;
-
-        (snapData.items || []).forEach((item: any) => {
-          const name = (item.name || '').toLowerCase().trim();
-          const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
-          const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
-          const soldUnits = salesByName[name] || 0;
-          const stockVal = Math.abs(varianceUnits) * costPrice;
-          totalStockVal += stockVal;
-
-          if (varianceUnits < 0) {
-            const consumed = Math.abs(varianceUnits);
-            const actualWaste = Math.max(0, consumed - soldUnits);
-            totalWasteDollars += actualWaste * costPrice;
+        for (const oc of overlappingCycles) {
+          const weight = typeof oc.weight === 'number' ? oc.weight : 1;
+          if (!cyclesSalesMap.has(oc.departmentId)) {
+            cyclesSalesMap.set(oc.departmentId, new Map());
           }
-        });
+          const deptMap = cyclesSalesMap.get(oc.departmentId)!;
+          if (!deptMap.has(oc.cycleNumber)) {
+            deptMap.set(oc.cycleNumber, {});
+          }
+          const salesByName = deptMap.get(oc.cycleNumber)!;
+
+          lines.forEach((line: any) => {
+            const name = (line.name || '').toLowerCase().trim();
+            const qty = Number(line.qtySold || 0) * weight;
+            if (name && qty > 0) salesByName[name] = (salesByName[name] || 0) + qty;
+          });
+        }
       }
 
-      if (totalStockVal > 0) {
-        const wasteRate = totalWasteDollars / totalStockVal;
-        wasteControl = Math.max(0, Math.round(100 - (wasteRate * 500)));
-        wasteControlMode = 'waste_control';
-        wasteControlLabel = 'Waste Control — calculated from POS sales data';
+      if (hasTaggedReport && cyclesSalesMap.size > 0) {
+        let totalWasteDollars = 0;
+        let totalStockVal = 0;
+
+        for (const [deptId, cycleMap] of cyclesSalesMap.entries()) {
+          for (const [cycleNumber, salesByName] of cycleMap.entries()) {
+            // Read the specific historical snapshot by its known document ID.
+            // This is a targeted getDoc (one read per unique cycle), not a scan.
+            const snapRef = doc(db, 'venues', venueId, 'departments', deptId, 'snapshots', `cycle-${cycleNumber}`);
+            const snapDoc = await getDoc(snapRef);
+            if (!snapDoc.exists()) continue;
+            const snapData = snapDoc.data() as any;
+
+            (snapData.items || []).forEach((item: any) => {
+              const name = (item.name || '').toLowerCase().trim();
+              const varianceUnits = item.totalVarianceQty ?? item.varianceQty ?? 0;
+              const costPrice = (item.displayCostPrice ?? item.costPrice) ?? 0;
+              const soldUnits = salesByName[name] || 0;
+              const stockVal = Math.abs(varianceUnits) * costPrice;
+              totalStockVal += stockVal;
+
+              if (varianceUnits < 0) {
+                const consumed = Math.abs(varianceUnits);
+                const actualWaste = Math.max(0, consumed - soldUnits);
+                totalWasteDollars += actualWaste * costPrice;
+              }
+            });
+          }
+        }
+
+        if (totalStockVal > 0) {
+          const wasteRate = totalWasteDollars / totalStockVal;
+          wasteControl = Math.max(0, Math.round(100 - (wasteRate * 500)));
+          wasteControlMode = 'waste_control';
+          wasteControlLabel = 'Waste Control — calculated from sales data';
+        }
       }
 
-    } else {
+      // If hasSalesData is true but no tagged reports drove a wasteControl value,
+      // fall through to Stock Integrity (Mode B) below.
+      if (wasteControl !== null) {
+        // Mode A produced a score — skip Mode B entirely.
+      } else {
       if (totalStocktakesCompleted >= 3) {
         const productCycleMap: Record<string, { negative: number; total: number; dollarImpact: number }> = {};
 
@@ -624,7 +666,8 @@ async function calculateFullScore(
           wasteControlLabel = 'Stock Integrity — no systematic loss detected';
         }
       }
-    }
+      } // closes if (wasteControl !== null) ... else { (Mode B block)
+    } // closes if (hasSalesData)
   } catch (e: any) {
     console.error('hostiHealth:wasteControl', e);
   }
