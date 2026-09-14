@@ -1,22 +1,33 @@
 // @ts-nocheck
 import React, { useCallback, useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { useToast } from '../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
 import { storeSalesReport } from '../../services/sales/storeSalesReport';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
+import SalesPeriodConfirmStep from '../../components/sales/SalesPeriodConfirmStep';
+
+type PendingUpload = {
+  report: any;
+  suggestedStart: string | null;
+  suggestedEnd: string | null;
+  lineCount: number;
+};
 
 export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
-  const { showError, showSuccess, showInfo } = useToast();
+  const { showError, showSuccess, showInfo, showWarning } = useToast();
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PendingUpload | null>(null);
+
+  // ── Step 1: pick + parse ──────────────────────────────────────────────────
 
   const pickAndProcess = useCallback(async ()=>{
     try{
       const res = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv'], // Beta: CSV only – PDF coming later
+        type: ['text/csv'],
         multiple: false,
         copyToCacheDirectory: true
       });
@@ -30,6 +41,7 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
 
       if (!isCsv) {
         showInfo('Sales PDF imports are not enabled yet on this project. Please export a CSV from your POS instead.');
+        setBusy(false);
         return;
       }
 
@@ -42,28 +54,89 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         filename: a.name || 'sales.csv',
       });
 
+      const lineCount = parsed?.lines?.length ?? 0;
+      if (lineCount === 0) {
+        showInfo('No lines were found in this CSV.');
+        setBusy(false);
+        return;
+      }
+
+      // Hand off to the period-confirm step
+      setPending({
+        report: parsed?.report || parsed,
+        suggestedStart: parsed?.period?.start ?? null,
+        suggestedEnd: parsed?.period?.end ?? null,
+        lineCount,
+      });
+      setBusy(false);
+    }catch(e:any){
+      showError(String(e?.message||e));
+      setBusy(false);
+    }
+  }, [venueId]);
+
+  // ── Step 2: period confirmed — upload ─────────────────────────────────────
+
+  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+    if (!pending || !venueId) return;
+    setBusy(true);
+    try {
       const saved = await storeSalesReport({
         venueId,
-        report: parsed?.report || parsed,
+        report: pending.report,
         source: 'csv',
+        confirmedPeriod: { start: confirmedStart, end: confirmedEnd },
       });
       if (!saved?.ok) throw new Error(saved?.error || 'Could not save sales report');
 
-      // Non-blocking: match sales lines to recipes and write theoretical consumption
-      if (parsed?.lines?.length > 0 && saved?.id) {
-        matchAndPersist(venueId, parsed.lines, saved.id).catch(e => {
+      // Non-blocking: recipe matching
+      if (pending.report?.lines?.length > 0 && saved?.id) {
+        matchAndPersist(venueId, pending.report.lines, saved.id).catch(e => {
           if (__DEV__) console.log('[SalesImport] recipe match failed (non-fatal)', e?.message);
         });
       }
 
       showSuccess('CSV imported and stored. Analytics will use this when a POS API is not connected.');
+
+      if (saved.zeroCycleWarning) {
+        const warn = showWarning ?? showInfo;
+        warn(
+          `This report (${confirmedStart} – ${confirmedEnd}) doesn't line up with any completed stocktake yet — it's saved, but won't factor into comparisons until a cycle covers this period.`,
+        );
+      }
+
+      setPending(null);
       onClose();
-    }catch(e:any){
+    } catch(e: any) {
       showError(String(e?.message||e));
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose]);
+  }, [pending, venueId, onClose]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (pending) {
+    return (
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#fff' }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: '900', marginBottom: 12 }}>
+          Sales Report Import (CSV)
+        </Text>
+        <SalesPeriodConfirmStep
+          suggestedStart={pending.suggestedStart}
+          suggestedEnd={pending.suggestedEnd}
+          summaryLine={`${pending.lineCount} product${pending.lineCount !== 1 ? 's' : ''} parsed.`}
+          onConfirm={handlePeriodConfirm}
+          onCancel={() => { setPending(null); setBusy(false); }}
+          busy={busy}
+        />
+      </ScrollView>
+    );
+  }
 
   return (
     <View style={{ flex:1, padding:16, backgroundColor:'#fff' }}>

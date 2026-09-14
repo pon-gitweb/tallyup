@@ -13,6 +13,7 @@ import { apiBase } from '../../services/apiBase';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import { refreshAIContext } from '../../services/aiContext';
 import { salesFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
+import SalesPeriodConfirmStep from '../../components/sales/SalesPeriodConfirmStep';
 
 const EXPECTED_HEADERS = [
   { col: 'name', desc: 'Product name', required: true },
@@ -26,14 +27,30 @@ const EXPECTED_HEADERS = [
   { col: 'date_end', desc: 'Period end date', required: false },
 ];
 
+type PendingUpload = {
+  /** The parsed/server-returned report data. */
+  report: any;
+  source: 'csv' | 'pdf';
+  /** Suggested period from the parser (may be null if the file lacked date columns). */
+  suggestedStart: string | null;
+  suggestedEnd: string | null;
+  /** Line count for the summary shown in the picker. */
+  lineCount: number;
+  /** Deduplication hash — written after the upload succeeds. */
+  salesHash?: string;
+};
+
 export default function SalesReportUploadPanel({ onClose }: { onClose: () => void }) {
   const venueId = useVenueId();
   const colours = useColours();
-  const { showError, showSuccess, showInfo } = useToast();
+  const { showError, showSuccess, showInfo, showWarning } = useToast();
   const [busy, setBusy] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
+  const [pending, setPending] = useState<PendingUpload | null>(null);
 
-  const upload = useCallback(async () => {
+  // ── Step 1: pick + parse the file ─────────────────────────────────────────
+
+  const pickFile = useCallback(async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/pdf', '*/*'],
@@ -44,51 +61,53 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       setBusy(true);
       const a = res.assets[0];
       const isCsv = (a.mimeType || '').includes('csv') || /\.csv$/i.test(a.name || '');
+
       if (!isCsv) {
-        // PDF path — upload to Storage then call /process-sales-pdf
+        // ── PDF path ──
         if (!venueId) throw new Error('Not ready: no venue selected');
-        try {
-          const auth = getAuth();
-          const idToken = await auth.currentUser?.getIdToken();
-          if (!idToken) throw new Error('Not signed in');
+        const auth = getAuth();
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) throw new Error('Not signed in');
 
-          const base = apiBase();
-          const destPath = `venues/${venueId}/sales/pdf/${Date.now()}-${(a.name || 'sales.pdf').replace(/[^\w.\-]+/g, '_')}`;
-          const base64 = await FileSystem.readAsStringAsync(a.uri, { encoding: FileSystem.EncodingType.Base64 });
+        const base = apiBase();
+        const destPath = `venues/${venueId}/sales/pdf/${Date.now()}-${(a.name || 'sales.pdf').replace(/[^\w.\-]+/g, '_')}`;
+        const base64 = await FileSystem.readAsStringAsync(a.uri, { encoding: FileSystem.EncodingType.Base64 });
 
-          const uploadRes = await fetch(`${base}/upload-file`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-            body: JSON.stringify({ venueId, destPath, dataUrl: `data:application/pdf;base64,${base64}` }),
-          });
-          if (!uploadRes.ok) throw new Error('Upload failed');
-          const { fullPath } = await uploadRes.json();
+        const uploadRes = await fetch(`${base}/upload-file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ venueId, destPath, dataUrl: `data:application/pdf;base64,${base64}` }),
+        });
+        if (!uploadRes.ok) throw new Error('Upload failed');
+        const { fullPath } = await uploadRes.json();
 
-          const processRes = await fetch(`${base}/process-sales-pdf`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-            body: JSON.stringify({ venueId, storagePath: fullPath }),
-          });
-          const result = await processRes.json();
+        const processRes = await fetch(`${base}/process-sales-pdf`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ venueId, storagePath: fullPath }),
+        });
+        const result = await processRes.json();
+        if (!processRes.ok || !result.ok) throw new Error(result.error || 'Processing failed');
 
-          if (!processRes.ok || !result.ok) throw new Error(result.error || 'Processing failed');
-
-          if (result.warnings?.length && !result.lines?.length) {
-            showInfo(result.warnings[0]);
-            return;
-          }
-
-          await storeSalesReport({
-            venueId,
-            report: { source: 'pdf', period: result.period || {}, lines: result.lines || [], warnings: result.warnings || [] },
-            source: 'pdf',
-          });
-          showSuccess(`Sales report imported — ${result.lines?.length ?? 0} products from PDF.`);
-        } catch (e: any) {
-          showError(e?.message || 'Could not process PDF. Try a CSV export from your POS instead.');
+        if (result.warnings?.length && !result.lines?.length) {
+          showInfo(result.warnings[0]);
+          setBusy(false);
+          return;
         }
+
+        // Hand off to the period-confirm step
+        setPending({
+          report: { source: 'pdf', period: result.period || {}, lines: result.lines || [], warnings: result.warnings || [] },
+          source: 'pdf',
+          suggestedStart: result.period?.start ?? null,
+          suggestedEnd: result.period?.end ?? null,
+          lineCount: result.lines?.length ?? 0,
+        });
+        setBusy(false);
         return;
       }
+
+      // ── CSV path ──
       if (!venueId) throw new Error('Not ready: no venue selected');
       if (!a.uri?.startsWith('file')) throw new Error('Expected a local file URI');
 
@@ -99,17 +118,13 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       });
 
       const lineCount = parsed?.lines?.length ?? 0;
-      const matchable = parsed?.lines?.filter(
-        (l: any) => l.name || l.sku || l.barcode
-      ).length ?? 0;
-
       if (lineCount === 0) {
-        // handled below — don't dedup empty reports
         showInfo('No lines were found in this CSV. Make sure your file has the required column headers — tap Expected format to see what is needed.');
+        setBusy(false);
         return;
       }
 
-      // Sales report deduplication check
+      // Deduplication check before showing the picker
       const salesLines = parsed?.lines || [];
       const salesPeriod = parsed?.period;
       const salesHash = salesFingerprint(salesLines, salesPeriod);
@@ -123,37 +138,99 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
         if (!proceed) { setBusy(false); return; }
       }
 
-      const saved = await storeSalesReport({
-        venueId,
+      // Hand off to the period-confirm step
+      setPending({
         report: parsed,
         source: 'csv',
+        suggestedStart: parsed?.period?.start ?? null,
+        suggestedEnd: parsed?.period?.end ?? null,
+        lineCount,
+        salesHash,
+      });
+      setBusy(false);
+    } catch (e: any) {
+      showError(String(e?.message || e));
+      setBusy(false);
+    }
+  }, [venueId]);
+
+  // ── Step 2: user confirmed the period — upload ────────────────────────────
+
+  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+    if (!pending || !venueId) return;
+    setBusy(true);
+    try {
+      const saved = await storeSalesReport({
+        venueId,
+        report: pending.report,
+        source: pending.source,
+        confirmedPeriod: { start: confirmedStart, end: confirmedEnd },
       });
 
       if (!saved?.ok) throw new Error(saved?.error || 'storeSalesReport failed');
 
-      // Write deduplication fingerprint after successful save
-      await writeProcessed(venueId, 'processedSalesReports', salesHash, {
-        lineCount,
-        reportDate: salesPeriod?.start || null,
-      });
+      // Write deduplication fingerprint after successful save (CSV only)
+      if (pending.salesHash) {
+        await writeProcessed(venueId, 'processedSalesReports', pending.salesHash, {
+          lineCount: pending.lineCount,
+          reportDate: confirmedStart,
+        });
+      }
 
-      // Non-blocking: match sales lines to recipes and write theoretical consumption
-      if (parsed?.lines?.length > 0 && saved?.id) {
-        matchAndPersist(venueId, parsed.lines, saved.id).catch(e => {
+      // Non-blocking: recipe matching + AI context refresh
+      if (pending.report?.lines?.length > 0 && saved?.id) {
+        matchAndPersist(venueId, pending.report.lines, saved.id).catch(e => {
           if (__DEV__) console.log('[SalesUpload] recipe match failed (non-fatal)', e?.message);
         });
-        // Non-blocking: refresh AI learning context
         refreshAIContext(venueId).catch(() => {});
       }
 
-      showSuccess(`${lineCount} line${lineCount === 1 ? '' : 's'} imported, ${matchable} matchable to products. Analytics will use this data automatically.`);
+      const matchable = (pending.report?.lines || []).filter(
+        (l: any) => l.name || l.sku || l.barcode
+      ).length;
+
+      showSuccess(`${pending.lineCount} line${pending.lineCount === 1 ? '' : 's'} imported, ${matchable} matchable to products. Analytics will use this data automatically.`);
+
+      if (saved.zeroCycleWarning) {
+        // Use showWarning if available, fall back to showInfo
+        const warn = (showWarning ?? showInfo);
+        warn(
+          `This report (${confirmedStart} – ${confirmedEnd}) doesn't line up with any completed stocktake yet — it's saved, but won't factor into any comparison until a cycle covers this period.`,
+        );
+      }
+
+      setPending(null);
       onClose();
     } catch (e: any) {
       showError(String(e?.message || e));
     } finally {
       setBusy(false);
     }
-  }, [venueId, onClose]);
+  }, [pending, venueId, onClose]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (pending) {
+    return (
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#fff' }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: '900', marginBottom: 8 }}>
+          Sales Reports (CSV Import)
+        </Text>
+        <SalesPeriodConfirmStep
+          suggestedStart={pending.suggestedStart}
+          suggestedEnd={pending.suggestedEnd}
+          summaryLine={`${pending.lineCount} product${pending.lineCount !== 1 ? 's' : ''} parsed from ${pending.source.toUpperCase()}.`}
+          onConfirm={handlePeriodConfirm}
+          onCancel={() => { setPending(null); setBusy(false); }}
+          busy={busy}
+        />
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView
@@ -277,7 +354,7 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
 
       <TouchableOpacity
         disabled={busy}
-        onPress={upload}
+        onPress={pickFile}
         style={{
           padding: 14,
           borderRadius: 12,
