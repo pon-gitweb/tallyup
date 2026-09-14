@@ -142,6 +142,8 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
   const [deptSummaries, setDeptSummaries] = useState<DeptSummary[]>([])
   const [varianceRows, setVarianceRows] = useState<VarianceRow[]>([])
   const [historyRows, setHistoryRows] = useState<CycleRow[]>([])
+  const [historyDeptFilter, setHistoryDeptFilter] = useState('all')
+  const [historyViewMode, setHistoryViewMode] = useState<'by-dept' | 'combined'>('by-dept')
   const [priceRows, setPriceRows] = useState<PriceChangeRow[]>([])
 
   const [varianceSort, setVarianceSort] = useState<SortConfig<VarianceSortKey>>({
@@ -302,6 +304,66 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
       setLoading(false)
     }
   }
+
+  // ── Stocktake History: dept options, filtered rows, combined rows ────────────
+  const historyDeptOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of historyRows) {
+      if (!seen.has(r.deptId)) seen.set(r.deptId, r.deptName)
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [historyRows])
+
+  const filteredHistoryRows = useMemo(() =>
+    historyDeptFilter === 'all'
+      ? historyRows
+      : historyRows.filter(r => r.deptId === historyDeptFilter),
+    [historyRows, historyDeptFilter])
+
+  // Combined view: one row per calendar day (NZ locale date), summing across departments.
+  const combinedHistoryRows = useMemo((): CycleRow[] => {
+    const byDay = new Map<string, CycleRow>()
+    for (const r of filteredHistoryRows) {
+      const dayKey = r.completedAt
+        ? r.completedAt.toLocaleDateString('en-NZ', { year: 'numeric', month: '2-digit', day: '2-digit' })
+        : '__unknown__'
+      const existing = byDay.get(dayKey)
+      if (!existing) {
+        byDay.set(dayKey, {
+          deptId: 'combined',
+          deptName: 'All departments',
+          cycleNumber: r.cycleNumber,
+          completedAt: r.completedAt,
+          itemsCounted: r.itemsCounted,
+          totalStockValue: r.totalStockValue,
+          totalVarianceDollars: r.totalVarianceDollars,
+          durationMinutes: r.durationMinutes,
+        })
+      } else {
+        byDay.set(dayKey, {
+          ...existing,
+          itemsCounted: existing.itemsCounted + r.itemsCounted,
+          totalStockValue:
+            existing.totalStockValue != null || r.totalStockValue != null
+              ? (existing.totalStockValue ?? 0) + (r.totalStockValue ?? 0)
+              : null,
+          totalVarianceDollars:
+            existing.totalVarianceDollars != null || r.totalVarianceDollars != null
+              ? (existing.totalVarianceDollars ?? 0) + (r.totalVarianceDollars ?? 0)
+              : null,
+          durationMinutes:
+            existing.durationMinutes != null || r.durationMinutes != null
+              ? (existing.durationMinutes ?? 0) + (r.durationMinutes ?? 0)
+              : null,
+          // Keep highest cycleNumber in group as the representative value
+          cycleNumber: Math.max(existing.cycleNumber, r.cycleNumber),
+        })
+      }
+    }
+    return [...byDay.values()].sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+  }, [filteredHistoryRows])
+
+  const visibleHistoryRows = historyViewMode === 'combined' ? combinedHistoryRows : filteredHistoryRows
 
   // ── Chart A: variance trend ──────────────────────────────────────────────────
   const trendData = useMemo(() => {
@@ -761,7 +823,42 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
             <h2 className={styles.sectionHeading}>Stocktake History</h2>
             <p className={styles.sectionSubhead}>All completed stocktakes across all departments.</p>
             <div className={styles.sectionToolbar}>
-              <div />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {/* Department filter */}
+                <select
+                  className={styles.deptSelect}
+                  value={historyDeptFilter}
+                  onChange={e => setHistoryDeptFilter(e.target.value)}
+                  style={{ minWidth: 160, fontSize: 13 }}
+                >
+                  <option value="all">All departments</option>
+                  {historyDeptOptions.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+                {/* View mode toggle */}
+                <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid #e5e3de' }}>
+                  {(['by-dept', 'combined'] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setHistoryViewMode(mode)}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: 13,
+                        fontWeight: historyViewMode === mode ? 700 : 400,
+                        background: historyViewMode === mode ? '#1b4f72' : '#fff',
+                        color: historyViewMode === mode ? '#fff' : '#6B7280',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontFamily: 'Inter, system-ui, sans-serif',
+                      }}
+                    >
+                      {mode === 'by-dept' ? 'By department' : 'Combined'}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button type="button" className={styles.exportBtn} onClick={exportHistoryCsv}>
                 Export CSV
               </button>
@@ -771,7 +868,7 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                 <thead>
                   <tr>
                     <th>Date</th>
-                    <th>Department</th>
+                    {historyViewMode === 'by-dept' && <th>Department</th>}
                     <th>Stocktake</th>
                     <th>Items counted</th>
                     <th>Stock value</th>
@@ -780,18 +877,20 @@ export default function ReportsPage({ venueId, onNavigate }: { venueId: string; 
                   </tr>
                 </thead>
                 <tbody>
-                  {historyRows.length === 0 ? (
+                  {visibleHistoryRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className={styles.emptyCell}>
+                      <td colSpan={historyViewMode === 'by-dept' ? 7 : 6} className={styles.emptyCell}>
                         No stocktake history yet.
                       </td>
                     </tr>
                   ) : (
-                    historyRows.map((r, i) => (
+                    visibleHistoryRows.map((r, i) => (
                       <tr key={`${r.deptId}-${r.cycleNumber}-${i}`} className={styles.dataRow}>
                         <td className={styles.td}>{fmtDate(r.completedAt)}</td>
-                        <td className={styles.td}>{r.deptName}</td>
-                        <td className={styles.tdNum}>Stocktake {r.cycleNumber}</td>
+                        {historyViewMode === 'by-dept' && <td className={styles.td}>{r.deptName}</td>}
+                        <td className={styles.tdNum}>
+                          {historyViewMode === 'combined' ? '—' : `Stocktake ${r.cycleNumber}`}
+                        </td>
                         <td className={styles.tdNum}>{r.itemsCounted}</td>
                         <td className={styles.tdNum}>{fmtMoney(r.totalStockValue)}</td>
                         <td
