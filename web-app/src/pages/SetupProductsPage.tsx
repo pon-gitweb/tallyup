@@ -1245,6 +1245,64 @@ function RecipeLinkModal({
   )
 }
 
+// ─── Duplicate-pair usage stats ───────────────────────────────────────────────
+// Cheaper than running dryRun mergeProducts for every pair: one dept/area walk
+// with batched 'in' queries instead of N × (depts + areas) separate walks.
+// At 52 pairs (104 products) this runs ~200 Firestore reads vs ~3600 for
+// individual dryRun calls — the difference is ~2s vs 30s.
+
+type DupProductStats = { areaItems: number; priceHistory: number }
+
+async function fetchDupStats(
+  venueId: string,
+  pairs: Array<[Product, Product]>,
+): Promise<Map<string, DupProductStats>> {
+  const uniqueIds = [...new Set(pairs.flatMap(([a, b]) => [a.id, b.id]))]
+  const stats = new Map<string, DupProductStats>()
+  for (const id of uniqueIds) stats.set(id, { areaItems: 0, priceHistory: 0 })
+
+  // Batch into chunks of 30 — Firestore 'in' max
+  const chunks: string[][] = []
+  for (let i = 0; i < uniqueIds.length; i += 30) chunks.push(uniqueIds.slice(i, i + 30))
+
+  // Walk departments → areas once; run one batched 'in' query per area per chunk
+  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'))
+  for (const deptDoc of deptsSnap.docs) {
+    const areasSnap = await getDocs(
+      collection(db, 'venues', venueId, 'departments', deptDoc.id, 'areas')
+    )
+    await Promise.all(
+      areasSnap.docs.flatMap(areaDoc => {
+        const itemsCol = collection(
+          db, 'venues', venueId, 'departments', deptDoc.id, 'areas', areaDoc.id, 'items'
+        )
+        return chunks.map(chunk =>
+          getDocs(query(itemsCol, where('productId', 'in', chunk))).then(snap => {
+            for (const d of snap.docs) {
+              const pid = (d.data() as Record<string, any>).productId as string
+              const s = stats.get(pid)
+              if (s) s.areaItems++
+            }
+          })
+        )
+      })
+    )
+  }
+
+  // Count priceHistory per product in parallel — one getDocs per product
+  await Promise.all(
+    uniqueIds.map(async pid => {
+      const snap = await getDocs(
+        collection(db, 'venues', venueId, 'products', pid, 'priceHistory')
+      )
+      const s = stats.get(pid)
+      if (s) s.priceHistory = snap.size
+    })
+  )
+
+  return stats
+}
+
 // ─── GP Alert type ────────────────────────────────────────────────────────────
 
 type GpAlert = {
@@ -2075,6 +2133,12 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
     })
   }
   const [showDuplicates, setShowDuplicates] = useState(false)
+  const [dupStats, setDupStats] = useState<Map<string, DupProductStats> | null>(null)
+  const [dupStatsLoading, setDupStatsLoading] = useState(false)
+  // pairKey → 'a' | 'b' — which side of each pair is selected for bulk keep
+  const [dupSelectedPairs, setDupSelectedPairs] = useState<Map<string, 'a' | 'b'>>(new Map())
+  const [bulkResolving, setBulkResolving] = useState(false)
+  const [bulkResult, setBulkResult] = useState<{ succeeded: number; failed: number } | null>(null)
 
   const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[]>([])
   const [showCandidates, setShowCandidates] = useState(false)
@@ -2099,6 +2163,65 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
     } catch (e) {
       console.error('[SetupProductsPage] dismiss candidate failed', e)
     }
+  }
+
+  // Fetch usage stats when the duplicates panel is opened. Runs once per open;
+  // resets if the product list changes length so a re-open after imports/merges
+  // gets fresh data.
+  const dupStatsPairCount = useRef(-1)
+  useEffect(() => {
+    if (!showDuplicates) return
+    // Avoid re-fetching when pairs are merely dismissed (count decreases)
+    // but do re-fetch if new pairs appear after a product import.
+    if (dupStats !== null && dupStatsPairCount.current >= duplicatePairs.length) return
+    if (dupStatsLoading || duplicatePairs.length === 0) return
+    dupStatsPairCount.current = duplicatePairs.length
+    setDupStatsLoading(true)
+    fetchDupStats(venueId, duplicatePairs)
+      .then(s => {
+        setDupStats(s)
+        const sel = new Map<string, 'a' | 'b'>()
+        for (const [a, b] of duplicatePairs) {
+          const pairKey = [a.id, b.id].sort().join(':')
+          const sa = s.get(a.id) ?? { areaItems: 0, priceHistory: 0 }
+          const sb = s.get(b.id) ?? { areaItems: 0, priceHistory: 0 }
+          sel.set(pairKey,
+            (sb.areaItems + sb.priceHistory) > (sa.areaItems + sa.priceHistory) ? 'b' : 'a'
+          )
+        }
+        setDupSelectedPairs(sel)
+      })
+      .catch(e => console.error('[dupStats]', e))
+      .finally(() => setDupStatsLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDuplicates, duplicatePairs.length, venueId])
+
+  async function bulkResolveDuplicates() {
+    if (!canManage || bulkResolving || dupSelectedPairs.size === 0) return
+    setBulkResolving(true)
+    setBulkResult(null)
+    let succeeded = 0
+    let failed = 0
+    for (const [pairKey, side] of dupSelectedPairs) {
+      const pair = duplicatePairs.find(([a, b]) => [a.id, b.id].sort().join(':') === pairKey)
+      if (!pair) { succeeded++; continue } // already resolved by a prior iteration
+      const [a, b] = pair
+      const keepId = side === 'a' ? a.id : b.id
+      const mergeId = side === 'a' ? b.id : a.id
+      try {
+        await mergeProducts(venueId, keepId, mergeId, false)
+        succeeded++
+      } catch (e) {
+        console.error('[bulkResolve] failed pair', pairKey, e)
+        failed++
+      }
+    }
+    setBulkResult({ succeeded, failed })
+    setBulkResolving(false)
+    setDupSelectedPairs(new Map())
+    // Clear cached stats so re-opening the panel after further changes re-fetches
+    setDupStats(null)
+    dupStatsPairCount.current = -1
   }
 
   const dismissedArray = useMemo(() => [...dismissedPairs], [dismissedPairs])
@@ -2271,52 +2394,170 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
           marginBottom: 20,
           overflow: 'hidden',
         }}>
+          {/* ── Panel header ── */}
           <div style={{
-            padding: '12px 16px',
+            padding: '10px 16px',
             borderBottom: '1px solid #e5e3de',
             background: '#fef2f2',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
           }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#991b1b' }}>
-              Possible duplicates — review and dismiss or keep both
-            </span>
-            <button
-              onClick={() => setShowDuplicates(false)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#991b1b' }}
-            >
-              ×
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* Select-all checkbox */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, color: '#991b1b', fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  checked={dupSelectedPairs.size === duplicatePairs.length && duplicatePairs.length > 0}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      // Select all: default to 'a' for any pair not yet scored, keep existing selections
+                      const sel = new Map<string, 'a' | 'b'>()
+                      for (const [a, b] of duplicatePairs) {
+                        const pairKey = [a.id, b.id].sort().join(':')
+                        sel.set(pairKey, dupSelectedPairs.get(pairKey) ?? 'a')
+                      }
+                      setDupSelectedPairs(sel)
+                    } else {
+                      setDupSelectedPairs(new Map())
+                    }
+                  }}
+                />
+                Possible duplicates — review and resolve
+              </label>
+              {dupStatsLoading && (
+                <span style={{ fontSize: 11, color: '#991b1b', opacity: 0.7 }}>Loading usage data…</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* Bulk resolve button */}
+              {canManage && (
+                <button
+                  type="button"
+                  disabled={dupSelectedPairs.size === 0 || bulkResolving}
+                  onClick={bulkResolveDuplicates}
+                  style={{
+                    background: dupSelectedPairs.size > 0 && !bulkResolving ? '#991b1b' : '#e5e3de',
+                    color: dupSelectedPairs.size > 0 && !bulkResolving ? '#fff' : '#9CA3AF',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '6px 14px',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: dupSelectedPairs.size > 0 && !bulkResolving ? 'pointer' : 'not-allowed',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {bulkResolving
+                    ? 'Resolving…'
+                    : dupSelectedPairs.size === 0
+                      ? 'Resolve selected'
+                      : `Resolve ${dupSelectedPairs.size} selected`}
+                </button>
+              )}
+              <button
+                onClick={() => { setShowDuplicates(false); setBulkResult(null) }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#991b1b' }}
+              >
+                ×
+              </button>
+            </div>
+            {/* Bulk result message */}
+            {bulkResult && (
+              <div style={{ width: '100%', fontSize: 12, color: bulkResult.failed > 0 ? '#92400e' : '#166534', fontWeight: 600, paddingTop: 2 }}>
+                {bulkResult.succeeded > 0 && `✓ ${bulkResult.succeeded} pair${bulkResult.succeeded !== 1 ? 's' : ''} resolved. `}
+                {bulkResult.failed > 0 && `⚠ ${bulkResult.failed} failed — check console for details.`}
+              </div>
+            )}
           </div>
+
+          {/* ── Per-pair rows ── */}
           {duplicatePairs.map(([a, b]) => {
             const pairKey = [a.id, b.id].sort().join(':')
+            const selected = dupSelectedPairs.get(pairKey)
+            const isChecked = selected !== undefined
+            const sa = dupStats?.get(a.id)
+            const sb = dupStats?.get(b.id)
             return (
               <div key={pairKey} style={{
                 padding: '12px 16px',
                 borderBottom: '1px solid #f0ede6',
                 display: 'grid',
-                gridTemplateColumns: '1fr 40px 1fr auto',
+                gridTemplateColumns: '24px 1fr 40px 1fr auto',
                 gap: 12,
                 alignItems: 'center',
               }}>
-                <div>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
-                    {a.name}
-                  </p>
+                {/* Checkbox col */}
+                <input
+                  type="checkbox"
+                  style={{ width: 16, height: 16, cursor: 'pointer', justifySelf: 'center' }}
+                  checked={isChecked}
+                  onChange={e => {
+                    const next = new Map(dupSelectedPairs)
+                    if (e.target.checked) next.set(pairKey, selected ?? 'a')
+                    else next.delete(pairKey)
+                    setDupSelectedPairs(next)
+                  }}
+                />
+
+                {/* Product A card */}
+                <div
+                  onClick={() => {
+                    if (!isChecked) return
+                    setDupSelectedPairs(new Map(dupSelectedPairs).set(pairKey, 'a'))
+                  }}
+                  style={{
+                    borderRadius: 8,
+                    border: isChecked && selected === 'a' ? '2px solid #2563eb' : '2px solid transparent',
+                    background: isChecked && selected === 'a' ? '#eff6ff' : 'transparent',
+                    padding: '6px 8px',
+                    cursor: isChecked ? 'pointer' : 'default',
+                    transition: 'border-color 0.12s, background 0.12s',
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>{a.name}</p>
                   <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>
                     {[a.supplierName, a.unit, a.costPrice != null ? `$${a.costPrice}` : null].filter(Boolean).join(' · ') || 'No details'}
                   </p>
+                  {sa && (
+                    <p style={{ margin: '3px 0 0', fontSize: 11, color: '#4B5563' }}>
+                      {sa.areaItems} area item{sa.areaItems !== 1 ? 's' : ''} · {sa.priceHistory} price record{sa.priceHistory !== 1 ? 's' : ''}
+                    </p>
+                  )}
                 </div>
+
                 <div style={{ textAlign: 'center', fontSize: 11, color: '#6B7280' }}>vs</div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>
-                    {b.name}
-                  </p>
+
+                {/* Product B card */}
+                <div
+                  onClick={() => {
+                    if (!isChecked) return
+                    setDupSelectedPairs(new Map(dupSelectedPairs).set(pairKey, 'b'))
+                  }}
+                  style={{
+                    borderRadius: 8,
+                    border: isChecked && selected === 'b' ? '2px solid #2563eb' : '2px solid transparent',
+                    background: isChecked && selected === 'b' ? '#eff6ff' : 'transparent',
+                    padding: '6px 8px',
+                    cursor: isChecked ? 'pointer' : 'default',
+                    transition: 'border-color 0.12s, background 0.12s',
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#0B132B' }}>{b.name}</p>
                   <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6B7280' }}>
                     {[b.supplierName, b.unit, b.costPrice != null ? `$${b.costPrice}` : null].filter(Boolean).join(' · ') || 'No details'}
                   </p>
+                  {sb && (
+                    <p style={{ margin: '3px 0 0', fontSize: 11, color: '#4B5563' }}>
+                      {sb.areaItems} area item{sb.areaItems !== 1 ? 's' : ''} · {sb.priceHistory} price record{sb.priceHistory !== 1 ? 's' : ''}
+                    </p>
+                  )}
                 </div>
+
+                {/* Action buttons (unchanged) */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                   <button
                     type="button"
