@@ -38,6 +38,24 @@
   border-color: #1b4f72;
 }
 
+.filterSelect {
+  height: 38px;
+  padding: 0 10px;
+  border: 1.5px solid #e5e3de;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #0B132B;
+  background: #ffffff;
+  font-family: Inter, system-ui, sans-serif;
+  min-width: 150px;
+  box-sizing: border-box;
+}
+
+.filterSelect:focus {
+  border-color: #1b4f72;
+  outline: none;
+}
+
 .addButton {
   padding: 9px 16px;
   font-size: 14px;

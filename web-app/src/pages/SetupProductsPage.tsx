@@ -1326,6 +1326,8 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [sortField, setSortField] = useState<EditableField | 'status'>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -1483,11 +1485,34 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
     }
   }
 
+  // Distinct supplier / category values from the active product list.
+  const supplierOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of products) {
+      if (p.active !== false && p.supplierName && p.supplierName !== 'Unassigned') s.add(p.supplierName)
+    }
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [products])
+
+  const categoryOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of products) {
+      if (p.active !== false && p.category) s.add(p.category)
+    }
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [products])
+
   const visibleRows = useMemo(() => {
     const needle = search.trim().toLowerCase()
     // Exclude merged-away products — same condition as findDuplicatePairs uses.
     // active === false means merged-away; undefined/absent means active (documented default).
     let rows = products.filter(p => p.active !== false)
+    if (supplierFilter !== 'all') {
+      rows = rows.filter(p => (p.supplierName ?? '') === supplierFilter)
+    }
+    if (categoryFilter !== 'all') {
+      rows = rows.filter(p => (p.category ?? '') === categoryFilter)
+    }
     if (needle) {
       rows = rows.filter(
         (p) =>
@@ -1521,7 +1546,7 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
       }
     }
     return sorted
-  }, [products, search, sortField, sortDir, pinnedNewId])
+  }, [products, search, supplierFilter, categoryFilter, sortField, sortDir, pinnedNewId])
 
   async function commitEdit(id: string, field: EditableField, rawValue: string) {
     try {
@@ -2823,6 +2848,22 @@ export default function SetupProductsPage({ venueId, canManage = false }: { venu
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <select
+          className={styles.filterSelect}
+          value={supplierFilter}
+          onChange={e => setSupplierFilter(e.target.value)}
+        >
+          <option value="all">All suppliers</option>
+          {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select
+          className={styles.filterSelect}
+          value={categoryFilter}
+          onChange={e => setCategoryFilter(e.target.value)}
+        >
+          <option value="all">All categories</option>
+          {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
         <button type="button" className={styles.exportButton} onClick={handleExportCsv}>
           Export CSV
         </button>

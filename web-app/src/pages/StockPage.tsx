@@ -69,6 +69,8 @@ export default function StockPage({ venueId }: { venueId: string }) {
   const [loading, setLoading] = useState(true)
   const [textFilter, setTextFilter] = useState('')
   const [deptFilter, setDeptFilter] = useState('all')
+  const [supplierFilter, setSupplierFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [sort, setSort] = useState<SortConfig>({ key: 'name', dir: 'asc' })
 
   useEffect(() => {
@@ -200,23 +202,43 @@ export default function StockPage({ venueId }: { venueId: string }) {
 
   const needle = textFilter.trim().toLowerCase()
 
+  // Distinct supplier and category values from the loaded rows (placed + unplaced).
+  const supplierOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of rows) { if (r.supplierName) s.add(r.supplierName) }
+    for (const r of unplaced) { if (r.supplierName) s.add(r.supplierName) }
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [rows, unplaced])
+
+  const categoryOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of rows) { if (r.category) s.add(r.category) }
+    for (const r of unplaced) { if (r.category) s.add(r.category) }
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [rows, unplaced])
+
   const filteredRows = useMemo(() => rows.filter(r => {
     if (deptFilter !== 'all' && r.deptId !== deptFilter) return false
+    if (supplierFilter !== 'all' && (r.supplierName ?? '') !== supplierFilter) return false
+    if (categoryFilter !== 'all' && (r.category ?? '') !== categoryFilter) return false
     if (needle && !r.name.toLowerCase().includes(needle) &&
         !(r.category || '').toLowerCase().includes(needle) &&
         !(r.supplierName || '').toLowerCase().includes(needle)) return false
     return true
-  }), [rows, deptFilter, needle])
+  }), [rows, deptFilter, supplierFilter, categoryFilter, needle])
 
   const filteredUnplaced = useMemo(() => {
     if (deptFilter !== 'all') return []
-    if (!needle) return unplaced
-    return unplaced.filter(r =>
-      r.name.toLowerCase().includes(needle) ||
-      (r.category || '').toLowerCase().includes(needle) ||
-      (r.supplierName || '').toLowerCase().includes(needle),
-    )
-  }, [unplaced, deptFilter, needle])
+    if (!needle && supplierFilter === 'all' && categoryFilter === 'all') return unplaced
+    return unplaced.filter(r => {
+      if (supplierFilter !== 'all' && (r.supplierName ?? '') !== supplierFilter) return false
+      if (categoryFilter !== 'all' && (r.category ?? '') !== categoryFilter) return false
+      if (needle && !r.name.toLowerCase().includes(needle) &&
+          !(r.category || '').toLowerCase().includes(needle) &&
+          !(r.supplierName || '').toLowerCase().includes(needle)) return false
+      return true
+    })
+  }, [unplaced, deptFilter, supplierFilter, categoryFilter, needle])
 
   const deptGroups = useMemo(() => {
     const map = new Map<string, { deptName: string; rows: Row[] }>()
@@ -302,6 +324,22 @@ export default function StockPage({ venueId }: { venueId: string }) {
           >
             <option value="all">All departments</option>
             {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <select
+            className={styles.filterSelect}
+            value={supplierFilter}
+            onChange={e => setSupplierFilter(e.target.value)}
+          >
+            <option value="all">All suppliers</option>
+            {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select
+            className={styles.filterSelect}
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+          >
+            <option value="all">All categories</option>
+            {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <button className={styles.exportBtn} onClick={handleExport}>Export CSV</button>
