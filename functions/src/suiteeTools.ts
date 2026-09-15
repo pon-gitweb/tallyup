@@ -865,6 +865,226 @@ export function aggregateBatchRatioConsistency(
   };
 }
 
+// ── Stage 7: get_menu_engineering ────────────────────────────────────────────
+
+/**
+ * A recipe passed to aggregateMenuEngineering.
+ * Extends SuiteeRecipe with `id` so we can join against salesReportRecipeMatches.
+ */
+export interface MenuEngineeringRecipe {
+  id:   string;
+  name: string;
+  rrp:  number | null;
+  cogs: number | null;
+}
+
+/** Pre-aggregated sales data for one recipe, provided by the resolver. */
+export interface RecipeSalesData {
+  /** Count of distinct qualifying (non-superseded, at least one overlapping cycle) reports. */
+  reportCount:  number;
+  /** Total qty sold across all qualifying reports. */
+  qtySoldTotal: number;
+}
+
+export type MenuEngineeringQuadrant = 'star' | 'plowhorse' | 'puzzle' | 'dog';
+
+export interface MenuEngineeringEntry {
+  recipeId:    string;
+  recipeName:  string;
+  gpPercent:   number;
+  qtySoldTotal: number;
+  /** Number of qualifying reports that contributed to this recipe's volume. */
+  reportCount: number;
+  quadrant:    MenuEngineeringQuadrant;
+}
+
+export interface MenuEngineeringResult {
+  hasData:     boolean;
+  stars:       MenuEngineeringEntry[];
+  plowhorses:  MenuEngineeringEntry[];
+  puzzles:     MenuEngineeringEntry[];
+  dogs:        MenuEngineeringEntry[];
+  /**
+   * Total recipes excluded. Broken down by reason:
+   *   excludedNoGp      — rrp or cogs missing / rrp ≤ 0
+   *   excludedLowData   — fewer than MINIMUM_QUALIFYING_REPORTS qualifying reports
+   */
+  excludedCount:    number;
+  excludedNoGp:     number;
+  excludedLowData:  number;
+  /** Venue-relative threshold used to split high vs low margin. */
+  medianGpPercent: number | null;
+  /** Venue-relative threshold used to split high vs low volume. */
+  medianQtySold:   number | null;
+}
+
+/**
+ * Stage 7 tool — classify CraftIt recipes into the four standard menu
+ * engineering quadrants.
+ *
+ * Tool description explicitly states the data-availability limitation, matching
+ * the pattern established by GP_TREND_TOOL for its own gap.
+ */
+export const MENU_ENGINEERING_TOOL = {
+  name: 'get_menu_engineering',
+  description:
+    'Classifies CraftIt recipes into the four standard menu engineering quadrants: ' +
+    'Stars (high margin + high volume), Plowhorses (low margin + high volume), ' +
+    'Puzzles (high margin + low volume), and Dogs (low margin + low volume). ' +
+    'Margin is GP% from recorded rrp/cogs — same source as get_worst_gp_recipes. ' +
+    'Volume is total qty sold, aggregated from tagged sales reports that overlap ' +
+    'completed stocktake cycles. ' +
+    'IMPORTANT LIMITATION: requires at least 2 non-superseded sales reports per ' +
+    'recipe that are each linked to a completed stocktake cycle; recipes without ' +
+    'sufficient tagged history are excluded and counted, not guessed at or scored ' +
+    'as zero. Thresholds are relative to this venue\'s own eligible recipe pool — ' +
+    'not absolute — so the quadrant boundary moves with the venue\'s own typical ' +
+    'margins and volumes. Returns hasData:false when too few recipes qualify.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      topN: {
+        type: 'number',
+        description: 'Maximum recipes to return per quadrant. Defaults to 5 if omitted.',
+      },
+    },
+    required: [],
+  },
+} as const;
+
+/**
+ * Minimum number of qualifying reports required before a recipe is eligible for
+ * quadrant placement.
+ *
+ * Reasoning: 1 report could be an unusual period (holiday, trial item, one-off
+ * event) — classifying from a single data point would misplace many recipes.
+ * 2 reports across distinct completed-cycle periods gives the minimum evidence of
+ * a repeating pattern. We don't require 3+ because that would exclude most venues
+ * that recently started uploading sales data, making the tool nearly useless on
+ * rollout. Each qualifying report must additionally be linked to at least one
+ * completed stocktake cycle (enforced in the resolver, not here), so "2 reports"
+ * implies "2 periods of anchored, real operational data" — not just 2 test uploads.
+ */
+const MINIMUM_QUALIFYING_REPORTS = 2;
+
+/**
+ * Classifies recipes into menu engineering quadrants.
+ *
+ * Pure function: all Firestore fetching and filtering is done by the resolver,
+ * which passes in pre-aggregated salesByRecipeId keyed by recipe Firestore doc ID.
+ * Only reports that are non-superseded AND linked to at least one completed
+ * stocktake cycle should be included in salesByRecipeId — the resolver enforces
+ * this; this function trusts the map it receives.
+ *
+ * @param recipes         Recipe list including id, name, rrp, cogs.
+ * @param salesByRecipeId Keyed by recipeId; values are pre-filtered totals.
+ * @param topN            Max entries per quadrant (default 5).
+ */
+export function aggregateMenuEngineering(
+  recipes:         MenuEngineeringRecipe[],
+  salesByRecipeId: Map<string, RecipeSalesData>,
+  topN = 5,
+): MenuEngineeringResult {
+  let excludedNoGp    = 0;
+  let excludedLowData = 0;
+
+  type Candidate = {
+    id:           string;
+    name:         string;
+    gpPercent:    number;
+    qtySoldTotal: number;
+    reportCount:  number;
+  };
+
+  const candidates: Candidate[] = [];
+
+  for (const r of recipes) {
+    // Must have calculable GP%.
+    if (r.rrp == null || r.cogs == null) { excludedNoGp++; continue; }
+    const gp = computeRecipeGpPct(r.rrp, r.cogs);
+    if (gp === null) { excludedNoGp++; continue; }
+
+    // Must meet the confidence bar.
+    const sales = salesByRecipeId.get(r.id);
+    if (!sales || sales.reportCount < MINIMUM_QUALIFYING_REPORTS) {
+      excludedLowData++;
+      continue;
+    }
+
+    candidates.push({
+      id:           r.id,
+      name:         r.name,
+      gpPercent:    gp,
+      qtySoldTotal: sales.qtySoldTotal,
+      reportCount:  sales.reportCount,
+    });
+  }
+
+  if (candidates.length === 0) {
+    return {
+      hasData:         false,
+      stars:           [],
+      plowhorses:      [],
+      puzzles:         [],
+      dogs:            [],
+      excludedCount:   excludedNoGp + excludedLowData,
+      excludedNoGp,
+      excludedLowData,
+      medianGpPercent: null,
+      medianQtySold:   null,
+    };
+  }
+
+  // Venue-relative medians — thresholds move with this venue's own distribution.
+  const sortedGp  = [...candidates.map(c => c.gpPercent)].sort((a, b) => a - b);
+  const sortedVol = [...candidates.map(c => c.qtySoldTotal)].sort((a, b) => a - b);
+  const medGp  = medianSorted(sortedGp);
+  const medVol = medianSorted(sortedVol);
+
+  // Classify.
+  const classify = (gpPct: number, vol: number): MenuEngineeringQuadrant => {
+    const highMargin = gpPct >= medGp;
+    const highVolume = vol  >= medVol;
+    if (highMargin && highVolume)  return 'star';
+    if (!highMargin && highVolume) return 'plowhorse';
+    if (highMargin && !highVolume) return 'puzzle';
+    return 'dog';
+  };
+
+  const byQuadrant: Record<MenuEngineeringQuadrant, MenuEngineeringEntry[]> = {
+    star: [], plowhorse: [], puzzle: [], dog: [],
+  };
+
+  for (const c of candidates) {
+    const q = classify(c.gpPercent, c.qtySoldTotal);
+    byQuadrant[q].push({
+      recipeId:    c.id,
+      recipeName:  c.name,
+      gpPercent:   c.gpPercent,
+      qtySoldTotal: c.qtySoldTotal,
+      reportCount:  c.reportCount,
+      quadrant:    q,
+    });
+  }
+
+  // Sort each quadrant by volume descending (highest sellers first), then limit.
+  const sortLimit = (arr: MenuEngineeringEntry[]) =>
+    arr.sort((a, b) => b.qtySoldTotal - a.qtySoldTotal).slice(0, topN);
+
+  return {
+    hasData:         true,
+    stars:           sortLimit(byQuadrant.star),
+    plowhorses:      sortLimit(byQuadrant.plowhorse),
+    puzzles:         sortLimit(byQuadrant.puzzle),
+    dogs:            sortLimit(byQuadrant.dog),
+    excludedCount:   excludedNoGp + excludedLowData,
+    excludedNoGp,
+    excludedLowData,
+    medianGpPercent: medGp,
+    medianQtySold:   medVol,
+  };
+}
+
 // ── runToolLoop ───────────────────────────────────────────────────────────────
 
 /** Callable passed in by the caller — wraps the actual Anthropic API fetch. */

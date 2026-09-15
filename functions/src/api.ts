@@ -19,6 +19,7 @@ import {
   SUPPLIER_COMPLIANCE_TOOL, aggregateSupplierCompliance, InvoiceHistoryRecord,
   BATCH_RATIO_TOOL, aggregateBatchRatioConsistency, BatchRecipe, BatchRecipeItem,
   GP_TREND_TOOL, aggregateGpTrend, GpAlertRecord,
+  MENU_ENGINEERING_TOOL, aggregateMenuEngineering, MenuEngineeringRecipe, RecipeSalesData,
 } from './suiteeTools';
 
 const app = express();
@@ -4770,7 +4771,7 @@ ${context}`;
           temperature: 0.3,
           system: systemPrompt,
           messages: msgs,
-          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL],
+          tools: [GP_ANALYSIS_TOOL, SUPPLIER_TREND_TOOL, WORST_GP_RECIPES_TOOL, SUPPLIER_COMPLIANCE_TOOL, BATCH_RATIO_TOOL, GP_TREND_TOOL, MENU_ENGINEERING_TOOL],
         }),
       });
       if (!resp.ok) {
@@ -4892,6 +4893,72 @@ ${context}`;
           };
         }).filter(r => r.recipeName !== '' && r.createdAtMs > 0);
         return aggregateGpTrend(keyword, records);
+      }
+      if (toolName === 'get_menu_engineering') {
+        const topN = (typeof input?.topN === 'number' && input.topN > 0)
+          ? Math.round(input.topN)
+          : 5;
+
+        // Fetch all recipe-match docs for this venue.
+        const recipeMatchSnap = await db
+          .collection(`venues/${venueId}/salesReportRecipeMatches`)
+          .get();
+
+        // Collect unique reportIds referenced by these docs.
+        const uniqueReportIds = new Set<string>();
+        recipeMatchSnap.docs.forEach((d: any) => {
+          const rid = d.data().reportId;
+          if (typeof rid === 'string' && rid) uniqueReportIds.add(rid);
+        });
+
+        // For each unique report: fetch status + overlappingCycles from the
+        // parent salesReport doc. A report qualifies only when:
+        //   status !== 'superseded'  AND  overlappingCycles.length > 0
+        // The second guard ensures the sales data is anchored to a completed
+        // stocktake cycle — not a floating upload with no period context.
+        const qualifyingReportIds = new Set<string>();
+        await Promise.all(
+          [...uniqueReportIds].map(async (rid) => {
+            try {
+              const rDoc = await db.doc(`venues/${venueId}/salesReports/${rid}`).get();
+              if (!rDoc.exists) return;
+              const rData = rDoc.data() as any;
+              if (rData.status === 'superseded') return;
+              const cycles = Array.isArray(rData.overlappingCycles) ? rData.overlappingCycles : [];
+              if (cycles.length === 0) return;
+              qualifyingReportIds.add(rid);
+            } catch (_) { /* non-fatal: treat as non-qualifying */ }
+          }),
+        );
+
+        // Aggregate qtySoldTotal and reportCount per recipeId from qualifying docs.
+        const salesByRecipeId = new Map<string, RecipeSalesData>();
+        recipeMatchSnap.docs.forEach((d: any) => {
+          const data    = d.data() as any;
+          const reportId = typeof data.reportId  === 'string' ? data.reportId  : null;
+          const recipeId = typeof data.recipeId  === 'string' ? data.recipeId  : null;
+          const qtySold  = typeof data.qtySoldTotal === 'number' ? data.qtySoldTotal : 0;
+          if (!reportId || !recipeId) return;
+          if (!qualifyingReportIds.has(reportId)) return;
+          const existing = salesByRecipeId.get(recipeId) ?? { reportCount: 0, qtySoldTotal: 0 };
+          existing.reportCount++;
+          existing.qtySoldTotal += qtySold;
+          salesByRecipeId.set(recipeId, existing);
+        });
+
+        // Build recipe list with doc IDs — extends recipesForTool with id field.
+        const recipesForMenuEng: MenuEngineeringRecipe[] = (recipesSnap?.docs ?? []).flatMap((r: any) => {
+          const d = r.data() as any;
+          if (typeof d.name !== 'string') return [];
+          return [{
+            id:   r.id,
+            name: d.name,
+            rrp:  typeof d.rrp  === 'number' ? d.rrp  : null,
+            cogs: typeof d.cogs === 'number' ? d.cogs : null,
+          }];
+        });
+
+        return aggregateMenuEngineering(recipesForMenuEng, salesByRecipeId, topN);
       }
       return { error: `Unknown tool: ${toolName}` };
     };

@@ -13,7 +13,7 @@ import {
   doc,
 } from 'firebase/firestore';
 import { NormalizedSalesReport } from './types';
-import { matchSalesToProducts } from './matchSalesToProducts';
+import { matchAndPersistSalesReport } from './matchAndPersist';
 
 export type OverlappingCycle = {
   departmentId: string;
@@ -210,13 +210,13 @@ export async function storeSalesReport(args: {
 
     // 2) Attempt matching (non-throwing)
     try {
-      await matchSalesToProducts({
-        venueId: args.venueId,
+      await matchAndPersistSalesReport({
+        venueId:  args.venueId,
         reportId: ref.id,
-        report: args.report,
+        report:   args.report,
       });
     } catch (e: any) {
-      if (__DEV__) console.log('[storeSalesReport] matchSalesToProducts failed', e?.message || e);
+      if (__DEV__) console.log('[storeSalesReport] matchAndPersistSalesReport failed', e?.message || e);
     }
 
     // 3) Tag overlapping cycles (requires both period dates; skip if either is absent)
