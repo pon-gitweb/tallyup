@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch, updateDoc, Timestamp,
+  addDoc, collection, doc, getDoc, getDocs, query, where, orderBy,
+  serverTimestamp, setDoc, writeBatch, updateDoc, Timestamp,
 } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import styles from './ImportPage.module.css'
@@ -148,6 +149,234 @@ function parseDateStringToTimestamp(s: string | null | undefined): Timestamp | n
     if (!isNaN(d.getTime())) return Timestamp.fromDate(d)
   } catch {}
   return null
+}
+
+// ─── Zone B utilities ────────────────────────────────────────────────────────
+
+/**
+ * Converts an OCR-detected date string to YYYY-MM-DD for <input type="date">.
+ * Reuses the existing NZ-aware parseDateStringToTimestamp parser.
+ */
+function toInputDate(raw: string | null | undefined): string {
+  if (!raw) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const ts = parseDateStringToTimestamp(raw)
+  if (!ts) return ''
+  const d = ts.toDate()
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
+}
+
+/** Formats a YYYY-MM-DD string for display (e.g. "15 Jan 2025"). */
+function fmtDisplayDate(s: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s + 'T12:00:00')
+  return isFinite(d.getTime()) ? d.toLocaleDateString('en-NZ', { day: '2-digit', month: 'short', year: 'numeric' }) : s
+}
+
+/**
+ * djb2 hash — mirrors mobile's deduplication.ts (content-duplicate check, NOT
+ * the same as the period-overlap check added below).
+ */
+function djb2(str: string): string {
+  let h = 5381
+  for (let i = 0; i < str.length; i++) h = Math.imul(h, 33) ^ str.charCodeAt(i)
+  return (h >>> 0).toString(36)
+}
+
+function daysBetweenDates(a: Date, b: Date): number {
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000))
+}
+
+type SalesConflictReport = {
+  id: string
+  periodStart: string | null
+  periodEnd: string | null
+  source: string
+  createdAt: Date | null
+  lineCount: number
+  totalRevenue: number | null
+}
+
+/**
+ * Returns active (non-superseded) salesReports whose stored period overlaps
+ * [newStart, newEnd].  Mirrors src/services/sales/checkPeriodOverlap.ts.
+ *
+ * Uses where('periodEnd','>=',startTs) to prune clearly non-overlapping docs,
+ * then checks existingStart <= newEnd in memory (Firestore single-field index,
+ * no composite needed).
+ */
+async function checkSalesPeriodOverlap(
+  venueId: string, newStart: string, newEnd: string,
+): Promise<SalesConflictReport[]> {
+  const startDate = new Date(newStart + 'T00:00:00')
+  const endDate   = new Date(newEnd   + 'T23:59:59')
+  if (!isFinite(startDate.getTime()) || !isFinite(endDate.getTime())) return []
+
+  const snap = await getDocs(query(
+    collection(db, 'venues', venueId, 'salesReports'),
+    where('periodEnd', '>=', Timestamp.fromDate(startDate)),
+  ))
+
+  function dToYMD(d: Date): string {
+    return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
+  }
+
+  const results: SalesConflictReport[] = []
+  for (const docSnap of snap.docs) {
+    const data = docSnap.data() as any
+    if (data.status === 'superseded') continue
+    const existingStart: Date | null = data.periodStart?.toDate?.() ?? null
+    if (existingStart && existingStart > endDate) continue
+    const existingEnd: Date | null = data.periodEnd?.toDate?.() ?? null
+    const createdAt: Date | null   = data.createdAt?.toDate?.() ?? null
+    const lines: any[] = data.lines || data.report?.lines || []
+    const totalRevenue = lines.reduce((sum: number, l: any) => {
+      const v = Number(l.gross ?? l.net ?? 0); return sum + (isFinite(v) ? v : 0)
+    }, 0)
+    results.push({
+      id: docSnap.id,
+      periodStart: existingStart ? dToYMD(existingStart) : null,
+      periodEnd:   existingEnd   ? dToYMD(existingEnd)   : null,
+      source:      data.source ?? 'csv',
+      createdAt,
+      lineCount:   lines.length,
+      totalRevenue: totalRevenue > 0 ? totalRevenue : null,
+    })
+  }
+  return results
+}
+
+/**
+ * After storing a salesReport, find every overlapping department snapshot and
+ * write back day-weighted per-cycle allocations.
+ *
+ * Mirrors mobile's tagOverlappingCycles in src/services/sales/storeSalesReport.ts
+ * exactly — same algorithm, same field names, same allocationMethod values.
+ */
+async function tagSalesOverlappingCycles(
+  venueId: string, reportDocId: string, periodStart: Date, periodEnd: Date,
+): Promise<{ zeroCycleWarning: boolean }> {
+  const deptsSnap = await getDocs(collection(db, 'venues', venueId, 'departments'))
+  type OC = { departmentId: string; cycleNumber: number; weight: number }
+  const overlapping: OC[] = []
+
+  for (const deptDoc of deptsSnap.docs) {
+    const snapsSnap = await getDocs(query(
+      collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+      where('cycleEnd', '>=', Timestamp.fromDate(periodStart)),
+      orderBy('cycleEnd', 'asc'),
+    ))
+    for (const snapDoc of snapsSnap.docs) {
+      const data = snapDoc.data() as any
+      if (!data.cycleStart?.toDate || !data.cycleEnd?.toDate) continue
+      const cycleStart: Date    = data.cycleStart.toDate()
+      const cycleEnd: Date      = data.cycleEnd.toDate()
+      const cycleNumber: number = data.cycleNumber ?? 0
+      if (!cycleNumber) continue
+      // Standard interval overlap — cycleEnd >= periodStart already guaranteed by query
+      if (periodEnd >= cycleStart) overlapping.push({ departmentId: deptDoc.id, cycleNumber, weight: 0 })
+    }
+  }
+
+  const allocationMethod =
+    overlapping.length === 1 ? 'exact_single_cycle' :
+    overlapping.length > 1  ? 'day_weighted_estimate' : 'none'
+
+  if (overlapping.length === 1) {
+    overlapping[0].weight = 1
+  } else if (overlapping.length > 1) {
+    // Re-query for cycle boundaries to compute day-weighted fractions
+    const boundaries = new Map<string, { cycleStart: Date; cycleEnd: Date }>()
+    for (const deptDoc of deptsSnap.docs) {
+      const snaps2 = await getDocs(query(
+        collection(db, 'venues', venueId, 'departments', deptDoc.id, 'snapshots'),
+        where('cycleEnd', '>=', Timestamp.fromDate(periodStart)),
+        orderBy('cycleEnd', 'asc'),
+      ))
+      for (const s of snaps2.docs) {
+        const d = s.data() as any
+        if (!d.cycleStart?.toDate || !d.cycleEnd?.toDate || !d.cycleNumber) continue
+        boundaries.set(`${deptDoc.id}:${d.cycleNumber}`, { cycleStart: d.cycleStart.toDate(), cycleEnd: d.cycleEnd.toDate() })
+      }
+    }
+    const overlapDays = overlapping.map(oc => {
+      const b = boundaries.get(`${oc.departmentId}:${oc.cycleNumber}`)
+      if (!b) return 0
+      const os = b.cycleStart > periodStart ? b.cycleStart : periodStart
+      const oe = b.cycleEnd   < periodEnd   ? b.cycleEnd   : periodEnd
+      return daysBetweenDates(os, oe)
+    })
+    const total = overlapDays.reduce((s, d) => s + d, 0)
+    if (total > 0) overlapping.forEach((oc, i) => { oc.weight = overlapDays[i] / total })
+    else { const eq = 1 / overlapping.length; overlapping.forEach(oc => { oc.weight = eq }) }
+  }
+
+  await updateDoc(doc(db, 'venues', venueId, 'salesReports', reportDocId), {
+    overlappingCycles: overlapping, allocationMethod,
+  })
+  return { zeroCycleWarning: overlapping.length === 0 }
+}
+
+/**
+ * Write a salesReport document that is structurally equivalent to what mobile's
+ * storeSalesReport.ts produces — identical field names, identical types, identical
+ * status value.  Both paths (PDF and CSV) use this single function.
+ *
+ * Field layout (matches mobile addDoc call exactly):
+ *   source, report, periodStart (Timestamp), periodEnd (Timestamp),
+ *   overlappingCycles ([]), allocationMethod ('none'), status ('active'), createdAt
+ *
+ * tagSalesOverlappingCycles then updates overlappingCycles and allocationMethod
+ * to their final values — same two-step write as mobile.
+ */
+async function storeSalesReportWeb(args: {
+  venueId: string
+  source: 'pdf' | 'csv'
+  lines: any[]
+  periodStart: string  // YYYY-MM-DD
+  periodEnd: string    // YYYY-MM-DD
+  idsToSupersede?: string[]
+}): Promise<{ id: string; zeroCycleWarning: boolean }> {
+  const startDate = new Date(args.periodStart + 'T00:00:00')
+  const endDate   = new Date(args.periodEnd   + 'T23:59:59')
+  const startTs   = isFinite(startDate.getTime()) ? Timestamp.fromDate(startDate) : null
+  const endTs     = isFinite(endDate.getTime())   ? Timestamp.fromDate(endDate)   : null
+
+  // ── Step 1: store report (field layout identical to mobile's storeSalesReport addDoc) ──
+  const ref = await addDoc(collection(db, 'venues', args.venueId, 'salesReports'), {
+    source:            args.source,
+    report:            { lines: args.lines, lineCount: args.lines.length, importedFrom: 'desktop' },
+    periodStart:       startTs,
+    periodEnd:         endTs,
+    overlappingCycles: [],
+    allocationMethod:  'none',
+    status:            'active',
+    createdAt:         serverTimestamp(),
+  })
+
+  // ── Step 2: tag overlapping cycles (non-throwing — mirrors mobile's try/catch) ──
+  let zeroCycleWarning = false
+  if (startTs && endTs) {
+    try {
+      const r = await tagSalesOverlappingCycles(args.venueId, ref.id, startDate, endDate)
+      zeroCycleWarning = r.zeroCycleWarning
+    } catch (e) {
+      console.warn('[ImportPage] tagSalesOverlappingCycles failed (non-fatal)', e)
+    }
+  }
+
+  // ── Step 3: soft-supersede replaced reports (field layout matches mobile's supersedeSalesReports) ──
+  if (args.idsToSupersede?.length) {
+    await Promise.all(args.idsToSupersede.map(id =>
+      updateDoc(doc(db, 'venues', args.venueId, 'salesReports', id), {
+        status:       'superseded',
+        supersededBy: ref.id,
+        supersededAt: serverTimestamp(),
+      }),
+    ))
+  }
+
+  return { id: ref.id, zeroCycleWarning }
 }
 
 // ─── DropZone component ───────────────────────────────────────────────────────
@@ -307,26 +536,143 @@ export default function ImportPage({ venueId }: { venueId: string }) {
   const [bRows, setBRows] = useState<BRow[]>([])
   const [bStatus, setBStatus] = useState<ImportStatus>('idle')
   const [bError, setBError] = useState<string | null>(null)
-  const [bPdfStatus, setBPdfStatus] = useState<'idle'|'uploading'|'processing'|'ready'|'done'>('idle')
+  const [bPdfStatus, setBPdfStatus] = useState<'idle'|'uploading'|'processing'|'ready'|'importing'|'done'>('idle')
   const [bPdfLines, setBPdfLines] = useState<any[]>([])
   const [bPdfError, setBPdfError] = useState<string|null>(null)
   const [bPdfPeriod, setBPdfPeriod] = useState<{start?:string|null;end?:string|null}>({})
+  // ── Period picker state — shared between PDF and CSV paths ──
+  const [bPeriodStart, setBPeriodStart] = useState('')  // YYYY-MM-DD; user must confirm before import
+  const [bPeriodEnd,   setBPeriodEnd]   = useState('')
+  const [bPeriodError, setBPeriodError] = useState<string|null>(null)
+  const [bSalesWarning, setBSalesWarning] = useState<string|null>(null)
+  // ── Period-overlap conflict ──
+  type BConflict = {
+    start: string; end: string; source: 'pdf'|'csv'
+    reports: SalesConflictReport[]
+  }
+  const [bConflict, setBConflict] = useState<BConflict|null>(null)
+  const [bConflictKeepBothConfirm, setBConflictKeepBothConfirm] = useState(false)
 
-  async function handleImportBPdf() {
-    if (!bPdfLines.length) return
-    setBPdfStatus('done') // optimistic — writes are fast
+  /**
+   * Called when the user clicks "Confirm period & import" on either the PDF or CSV path.
+   * Validates the period, runs the content-dedup check (CSV only), checks for period
+   * overlap with existing active reports, and either proceeds to write or shows the
+   * conflict screen.
+   */
+  async function handleSalesPeriodConfirm(source: 'pdf' | 'csv') {
+    // Period validation
+    if (!bPeriodStart || !bPeriodEnd) {
+      setBPeriodError('Please select both a start date and an end date.')
+      return
+    }
+    if (bPeriodEnd < bPeriodStart) {
+      setBPeriodError('End date must be on or after the start date.')
+      return
+    }
+    setBPeriodError(null)
+    setBSalesWarning(null)
+
+    // CSV: content-dedup check first (prevents re-uploading the identical file;
+    // this is a different concern from the period-overlap check below — keep both)
+    if (source === 'csv') {
+      setBStatus('importing')
+      const hashKey = djb2([
+        String(bRows.length),
+        bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
+      ].join('::'))
+      const dedupSnap = await getDoc(doc(db, 'venues', venueId, 'processedSalesReports', hashKey))
+      if (dedupSnap.exists()) {
+        const existing = dedupSnap.data() as any
+        const dateStr = existing.processedAt?.toDate?.()?.toLocaleDateString('en-NZ') || 'previously'
+        setBError(`This sales report was already imported on ${dateStr}.`)
+        setBStatus('error')
+        return
+      }
+      setBStatus('ready') // reset while we do the overlap check
+    }
+
+    // Period-overlap check
+    if (source === 'pdf') setBPdfStatus('importing')
+    else setBStatus('importing')
+
+    let overlapping: SalesConflictReport[]
     try {
-      await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
-        source: 'pdf',
-        importedAt: serverTimestamp(),
-        lineCount: bPdfLines.length,
-        period: bPdfPeriod,
-        lines: bPdfLines,
+      overlapping = await checkSalesPeriodOverlap(venueId, bPeriodStart, bPeriodEnd)
+    } catch (e: any) {
+      setBPeriodError('Could not check for existing reports: ' + String(e?.message || e))
+      if (source === 'pdf') setBPdfStatus('ready')
+      else setBStatus('ready')
+      return
+    }
+
+    if (overlapping.length > 0) {
+      // Show conflict screen — nothing written yet
+      setBConflict({ start: bPeriodStart, end: bPeriodEnd, source, reports: overlapping })
+      setBConflictKeepBothConfirm(false)
+      if (source === 'pdf') setBPdfStatus('ready')
+      else setBStatus('ready')
+      return
+    }
+
+    // No conflicts — proceed with write
+    await doSalesWrite({ source, start: bPeriodStart, end: bPeriodEnd, idsToSupersede: [] })
+  }
+
+  /**
+   * Performs the actual Firestore write.  Called directly when there are no
+   * conflicts, and called from the conflict screen for Replace or Keep Both.
+   */
+  async function doSalesWrite(args: { source: 'pdf'|'csv'; start: string; end: string; idsToSupersede: string[] }) {
+    const { source, start, end, idsToSupersede } = args
+    if (source === 'pdf') setBPdfStatus('importing')
+    else setBStatus('importing')
+
+    try {
+      // Normalize CSV rows to match the qtySold/gross field names hostiHealth expects
+      // (mobile's processSalesCsv already produces these; web CSV used qty/revenue)
+      const lines = source === 'pdf'
+        ? bPdfLines
+        : bRows.map(r => ({ name: r.name, qtySold: r.qty, gross: r.revenue }))
+
+      const { id, zeroCycleWarning } = await storeSalesReportWeb({
+        venueId, source, lines, periodStart: start, periodEnd: end, idsToSupersede,
       })
+
+      // CSV: write content-dedup fingerprint after successful save
+      if (source === 'csv') {
+        const hashKey = djb2([
+          String(bRows.length),
+          bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
+        ].join('::'))
+        await setDoc(doc(db, 'venues', venueId, 'processedSalesReports', hashKey), {
+          lineCount: bRows.length, reportId: id, processedAt: serverTimestamp(),
+        })
+        // Non-blocking: trigger product matching
+        auth.currentUser?.getIdToken().then(token =>
+          fetch('https://us-central1-tallyup-f1463.cloudfunctions.net/api/match-sales-report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ venueId, reportId: id }),
+          })
+        ).catch((e: any) => console.warn('[ImportPage] match-sales-report failed:', e?.message))
+      }
+
       await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
-    } catch {
-      setBPdfError('Import failed. Please try again.')
-      setBPdfStatus('idle')
+
+      if (zeroCycleWarning) {
+        setBSalesWarning(
+          `Note: this report (${start} – ${end}) doesn't overlap any completed stocktake cycle yet — it's saved, but won't factor into comparisons until a cycle covers this period.`
+        )
+      }
+
+      setBConflict(null)
+      setBConflictKeepBothConfirm(false)
+      if (source === 'pdf') setBPdfStatus('done')
+      else setBStatus('done')
+    } catch (e: any) {
+      console.error('[ImportPage] doSalesWrite failed', e?.message, e?.code, e)
+      if (source === 'pdf') { setBPdfError(e?.message || 'Import failed. Please try again.'); setBPdfStatus('idle') }
+      else { setBError(e?.message || 'Import failed. Please try again.'); setBStatus('error') }
     }
   }
 
@@ -368,6 +714,12 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         }
         setBPdfLines(ocrData.lines || [])
         setBPdfPeriod(ocrData.period || {})
+        // Pre-fill the period picker from OCR detection — user must still confirm before import
+        setBPeriodStart(toInputDate(ocrData.period?.start))
+        setBPeriodEnd(toInputDate(ocrData.period?.end))
+        setBPeriodError(null)
+        setBSalesWarning(null)
+        setBConflict(null)
         setBPdfStatus('ready')
       } catch (e: any) {
         setBPdfError(e?.message || 'PDF processing failed. Try a CSV export from your POS instead.')
@@ -397,71 +749,19 @@ export default function ImportPage({ venueId }: { venueId: string }) {
         .filter(r => r.name)
 
       setBRows(parsed)
+      // Reset period picker — CSV has no auto-detected dates; user must fill in
+      setBPeriodStart('')
+      setBPeriodEnd('')
+      setBPeriodError(null)
+      setBSalesWarning(null)
+      setBConflict(null)
       setBStatus('ready')
     } catch {
       setBError('Failed to read file.')
     }
   }
 
-  async function handleImportB() {
-    if (!venueId) { setBError('No venue selected.'); return; }
-    setBStatus('importing')
-    try {
-      // Dedup — prevent same sales report being imported twice
-      // Hash: line count + first 5 product names (mirrors mobile deduplication.ts)
-      function djb2(str: string): string {
-        let h = 5381;
-        for (let i = 0; i < str.length; i++) {
-          h = Math.imul(h, 33) ^ str.charCodeAt(i);
-        }
-        return (h >>> 0).toString(36);
-      }
-      const hashKey = djb2([
-        String(bRows.length),
-        bRows.slice(0, 5).map((l: any) => (l.name || '').toLowerCase().trim()).join('|'),
-      ].join('::'));
-
-      const dedupRef = doc(db, 'venues', venueId, 'processedSalesReports', hashKey);
-      const dedupSnap = await getDoc(dedupRef);
-      if (dedupSnap.exists()) {
-        const existing = dedupSnap.data() as any;
-        const dateStr = existing.processedAt?.toDate?.()?.toLocaleDateString('en-NZ') || 'previously';
-        setBError(`This sales report was already imported on ${dateStr}.`);
-        setBStatus('error');
-        return;
-      }
-
-      const ref = await addDoc(collection(db, 'venues', venueId, 'salesReports'), {
-        source: 'csv',
-        report: { lines: bRows, lineCount: bRows.length, importedFrom: 'desktop' },
-        createdAt: serverTimestamp(),
-      })
-
-      // Write dedup fingerprint
-      await setDoc(dedupRef, {
-        lineCount: bRows.length,
-        reportId: ref.id,
-        processedAt: serverTimestamp(),
-      });
-
-      await updateDoc(doc(db, 'venues', venueId), { onboardingHasSales: true })
-      setBStatus('done')
-
-      // Non-blocking — trigger product matching after import succeeds
-      const API = 'https://us-central1-tallyup-f1463.cloudfunctions.net/api'
-      auth.currentUser?.getIdToken().then(token =>
-        fetch(`${API}/match-sales-report`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ venueId, reportId: ref.id }),
-        })
-      ).catch((e: any) => console.warn('[ImportPage] match-sales-report failed:', e?.message))
-    } catch (e: any) {
-      console.error('[ImportPage] handleImportB failed:', e?.message, e?.code, e)
-      setBError('Import failed. Please try again.')
-      setBStatus('error')
-    }
-  }
+  // handleImportB removed — CSV imports now go through handleSalesPeriodConfirm('csv')
 
   function downloadSalesTemplate() {
     const csv = 'Name,Quantity,Revenue\n'
@@ -1020,14 +1320,76 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           </div>
         )}
         {bPdfError && <p className={styles.error}>{bPdfError}</p>}
-        {bPdfStatus === 'ready' && bPdfLines.length > 0 && (
+        {/* ── Conflict screen (PDF or CSV — shown when overlap detected, nothing written yet) ── */}
+        {bConflict && (
+          <div className={styles.preview}>
+            <div style={{ background: '#fef3c7', borderRadius: 8, border: '1.5px solid #fde68a', padding: 12, marginBottom: 12 }}>
+              <p style={{ fontWeight: 700, fontSize: 13, color: '#92400e', marginBottom: 4 }}>Period overlap detected</p>
+              <p style={{ fontSize: 12, color: '#78350f', lineHeight: 1.6 }}>
+                This upload covers{' '}
+                <strong>{fmtDisplayDate(bConflict.start)} – {fmtDisplayDate(bConflict.end)}</strong>
+                {', which overlaps with '}
+                {bConflict.reports.length === 1 ? 'an existing report' : `${bConflict.reports.length} existing reports`}
+                {'. Choose how to proceed.'}
+              </p>
+            </div>
+            {bConflict.reports.map(c => (
+              <div key={c.id} style={{ border: '1.5px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 8, background: '#f9fafb' }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: '#111827', marginBottom: 2 }}>
+                  {fmtDisplayDate(c.periodStart)} – {fmtDisplayDate(c.periodEnd)}
+                </p>
+                <p style={{ fontSize: 12, color: '#6b7280' }}>
+                  {(c.source || 'csv').toUpperCase()}
+                  {' · '}{c.lineCount} line{c.lineCount !== 1 ? 's' : ''}
+                  {c.totalRevenue != null ? ` · $${c.totalRevenue.toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} revenue` : ''}
+                </p>
+                <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                  Uploaded {c.createdAt ? c.createdAt.toLocaleDateString('en-NZ') : '—'}
+                </p>
+              </div>
+            ))}
+            {bConflictKeepBothConfirm ? (
+              <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: 12, marginTop: 8 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: '#991b1b', marginBottom: 6 }}>Are you sure?</p>
+                <p style={{ fontSize: 12, color: '#7f1d1d', lineHeight: 1.6, marginBottom: 10 }}>
+                  Keeping both reports will double-count sales for the overlapping period in Waste Control calculations. Only do this if the reports genuinely cover different items (e.g. different venue areas or POS terminals).
+                </p>
+                <div className={styles.actions}>
+                  <button className={styles.cancelBtn} onClick={() => setBConflictKeepBothConfirm(false)}>Go back</button>
+                  <button
+                    style={{ padding: '8px 16px', borderRadius: 8, background: '#dc2626', color: '#fff', fontWeight: 700, border: 'none', cursor: 'pointer', fontSize: 13 }}
+                    onClick={() => doSalesWrite({ source: bConflict.source, start: bConflict.start, end: bConflict.end, idsToSupersede: [] })}
+                  >
+                    Yes, keep both reports
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.actions}>
+                <button className={styles.cancelBtn} onClick={() => { setBConflict(null); setBConflictKeepBothConfirm(false) }}>
+                  ← Cancel upload
+                </button>
+                <button
+                  style={{ padding: '8px 16px', borderRadius: 8, background: '#fff', color: '#92400e', fontWeight: 700, border: '1.5px solid #f59e0b', cursor: 'pointer', fontSize: 13 }}
+                  onClick={() => setBConflictKeepBothConfirm(true)}
+                >
+                  Keep both (unusual — may double-count)
+                </button>
+                <button
+                  className={styles.confirmBtn}
+                  onClick={() => doSalesWrite({ source: bConflict.source, start: bConflict.start, end: bConflict.end, idsToSupersede: bConflict.reports.map(r => r.id) })}
+                >
+                  Replace existing report{bConflict.reports.length > 1 ? 's' : ''}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PDF ready: data preview + editable period picker ── */}
+        {(bPdfStatus === 'ready' || bPdfStatus === 'importing') && bPdfLines.length > 0 && !bConflict && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{bPdfLines.length} sales lines extracted from PDF</p>
-            {(bPdfPeriod.start || bPdfPeriod.end) && (
-              <p className={styles.deduplicateSummary}>
-                Period: {bPdfPeriod.start || '?'} → {bPdfPeriod.end || '?'}
-              </p>
-            )}
             <div className={styles.tableWrap} style={{ marginTop: 8 }}>
               <table className={styles.table}>
                 <thead><tr><th>Product</th><th>Qty Sold</th><th>Gross</th></tr></thead>
@@ -1042,20 +1404,45 @@ export default function ImportPage({ venueId }: { venueId: string }) {
                 </tbody>
               </table>
             </div>
+            {/* Period picker — required; pre-filled from OCR but always editable */}
+            <div style={{ marginTop: 12, padding: 12, background: '#eff6ff', borderRadius: 8, border: '1.5px solid #bfdbfe' }}>
+              <p style={{ fontWeight: 700, fontSize: 13, color: '#1d4ed8', marginBottom: 4 }}>Confirm report period (required)</p>
+              <p style={{ fontSize: 12, color: '#374151', lineHeight: 1.5, marginBottom: 10 }}>
+                {(bPdfPeriod.start || bPdfPeriod.end)
+                  ? 'Period was detected from the PDF — confirm or correct before importing.'
+                  : 'The PDF had no readable dates. Select the date range this report covers.'}
+              </p>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' as const }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                  Period start
+                  <input type="date" value={bPeriodStart} onChange={e => { setBPeriodStart(e.target.value); setBPeriodError(null) }}
+                    style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                  Period end
+                  <input type="date" value={bPeriodEnd} min={bPeriodStart} onChange={e => { setBPeriodEnd(e.target.value); setBPeriodError(null) }}
+                    style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                </label>
+              </div>
+              {bPeriodError && <p style={{ fontSize: 12, color: '#dc2626', marginTop: 6 }}>{bPeriodError}</p>}
+            </div>
             <div className={styles.actions}>
-              <button className={styles.confirmBtn} onClick={handleImportBPdf}>
-                Import {bPdfLines.length} sales lines
-              </button>
-              <button className={styles.cancelBtn} onClick={() => { setBPdfStatus('idle'); setBPdfLines([]); setBPdfError(null) }}>
-                Cancel
+              <button className={styles.cancelBtn} onClick={() => { setBPdfStatus('idle'); setBPdfLines([]); setBPdfError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}>Cancel</button>
+              <button className={styles.confirmBtn} onClick={() => handleSalesPeriodConfirm('pdf')} disabled={bPdfStatus === 'importing'}>
+                {bPdfStatus === 'importing' ? 'Importing…' : `Confirm period & import ${bPdfLines.length} lines`}
               </button>
             </div>
           </div>
         )}
         {bPdfStatus === 'done' && (
-          <p className={styles.success}>✓ Sales data imported from PDF. Suggested Orders will use this data.</p>
+          <div>
+            <p className={styles.success}>✓ Sales data imported from PDF. Analytics will use this data.</p>
+            {bSalesWarning && <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>{bSalesWarning}</p>}
+          </div>
         )}
-        {(bStatus === 'ready' || bStatus === 'importing') && (
+
+        {/* ── CSV ready: data preview + period picker ── */}
+        {(bStatus === 'ready' || bStatus === 'importing') && !bConflict && (
           <div className={styles.preview}>
             <p className={styles.previewTitle}>{bRows.length} sales lines found</p>
             <div className={styles.tableWrap}>
@@ -1079,19 +1466,39 @@ export default function ImportPage({ venueId }: { venueId: string }) {
                 Showing first 20 of {bRows.length}
               </p>
             )}
+            {/* Period picker — required; CSV has no auto-detected dates */}
+            <div style={{ marginTop: 12, padding: 12, background: '#eff6ff', borderRadius: 8, border: '1.5px solid #bfdbfe' }}>
+              <p style={{ fontWeight: 700, fontSize: 13, color: '#1d4ed8', marginBottom: 4 }}>Set report period (required)</p>
+              <p style={{ fontSize: 12, color: '#374151', lineHeight: 1.5, marginBottom: 10 }}>
+                Select the date range this CSV covers — needed to match it against stocktake cycles.
+              </p>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' as const }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                  Period start
+                  <input type="date" value={bPeriodStart} onChange={e => { setBPeriodStart(e.target.value); setBPeriodError(null) }}
+                    style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                  Period end
+                  <input type="date" value={bPeriodEnd} min={bPeriodStart} onChange={e => { setBPeriodEnd(e.target.value); setBPeriodError(null) }}
+                    style={{ display: 'block', marginTop: 4, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                </label>
+              </div>
+              {bPeriodError && <p style={{ fontSize: 12, color: '#dc2626', marginTop: 6 }}>{bPeriodError}</p>}
+            </div>
             <div className={styles.actions}>
               <button
                 className={styles.cancelBtn}
-                onClick={() => { setBRows([]); setBStatus('idle'); setBError(null) }}
+                onClick={() => { setBRows([]); setBStatus('idle'); setBError(null); setBPeriodStart(''); setBPeriodEnd(''); setBPeriodError(null) }}
               >
                 Cancel
               </button>
               <button
                 className={styles.confirmBtn}
-                onClick={handleImportB}
+                onClick={() => handleSalesPeriodConfirm('csv')}
                 disabled={bStatus === 'importing'}
               >
-                {bStatus === 'importing' ? 'Importing…' : `Import ${bRows.length} sales lines`}
+                {bStatus === 'importing' ? 'Importing…' : `Confirm period & import ${bRows.length} lines`}
               </button>
               <button className={styles.cancelBtn} onClick={downloadSalesTemplate}>
                 Download template
@@ -1100,9 +1507,10 @@ export default function ImportPage({ venueId }: { venueId: string }) {
           </div>
         )}
         {bStatus === 'done' && (
-          <p className={styles.success}>
-            ✓ Sales data imported. Suggested orders will use this to calibrate recommendations.
-          </p>
+          <div>
+            <p className={styles.success}>✓ Sales data imported. Analytics will use this data.</p>
+            {bSalesWarning && <p style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', borderRadius: 6, padding: '8px 12px', marginTop: 6 }}>{bSalesWarning}</p>}
+          </div>
         )}
       </DropZone>
 
