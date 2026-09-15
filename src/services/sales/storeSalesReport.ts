@@ -202,6 +202,9 @@ export async function storeSalesReport(args: {
       // set sentinels here so readers always find the field.
       overlappingCycles: [],
       allocationMethod: 'none',
+      // Lifecycle status — 'active' (default) or 'superseded' (soft-replaced by a newer upload).
+      // Superseded reports are kept for audit; excluded from health score calculations.
+      status: 'active',
       createdAt: serverTimestamp(),
     });
 
@@ -232,4 +235,33 @@ export async function storeSalesReport(args: {
     if (__DEV__) console.log('[storeSalesReport] error', e?.message || e);
     return { ok: false, error: String(e?.message || e) };
   }
+}
+
+// ─── Supersede helpers ────────────────────────────────────────────────────────
+
+/**
+ * Soft-replaces one or more sales reports with a newer one.
+ * The old reports are NOT deleted — they remain queryable for audit — but are
+ * excluded from active health-score calculations (hostiHealth filters them out).
+ *
+ * @param venueId       The venue that owns the reports.
+ * @param reportIds     IDs of the existing reports to supersede.
+ * @param newReportId   ID of the newly-uploaded report that replaces them.
+ */
+export async function supersedeSalesReports(
+  venueId: string,
+  reportIds: string[],
+  newReportId: string,
+): Promise<void> {
+  if (!reportIds.length) return;
+  const db = getFirestore(getApp());
+  await Promise.all(
+    reportIds.map(id =>
+      updateDoc(doc(db, 'venues', venueId, 'salesReports', id), {
+        status: 'superseded',
+        supersededBy: newReportId,
+        supersededAt: serverTimestamp(),
+      }),
+    ),
+  );
 }

@@ -5,9 +5,11 @@ import { useToast } from '../../components/common/Toast';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVenueId } from '../../context/VenueProvider';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
-import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import { storeSalesReport, supersedeSalesReports } from '../../services/sales/storeSalesReport';
+import { checkPeriodOverlap, OverlappingReport } from '../../services/sales/checkPeriodOverlap';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import SalesPeriodConfirmStep from '../../components/sales/SalesPeriodConfirmStep';
+import SalesConflictStep from '../../components/sales/SalesConflictStep';
 
 type PendingUpload = {
   report: any;
@@ -21,6 +23,11 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
   const venueId = useVenueId();
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingUpload | null>(null);
+  const [conflict, setConflict] = useState<{
+    start: string;
+    end: string;
+    reports: OverlappingReport[];
+  } | null>(null);
 
   // ── Step 1: pick + parse ──────────────────────────────────────────────────
 
@@ -75,9 +82,13 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
     }
   }, [venueId]);
 
-  // ── Step 2: period confirmed — upload ─────────────────────────────────────
+  // ── Step 2a: upload (shared by direct-confirm and conflict-resolve paths) ──
 
-  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+  const performUpload = useCallback(async (
+    confirmedStart: string,
+    confirmedEnd: string,
+    idsToSupersede?: string[],
+  ) => {
     if (!pending || !venueId) return;
     setBusy(true);
     try {
@@ -88,6 +99,11 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         confirmedPeriod: { start: confirmedStart, end: confirmedEnd },
       });
       if (!saved?.ok) throw new Error(saved?.error || 'Could not save sales report');
+
+      // Soft-supersede any reports the user chose to replace
+      if (idsToSupersede?.length && saved.id) {
+        await supersedeSalesReports(venueId, idsToSupersede, saved.id);
+      }
 
       // Non-blocking: recipe matching
       if (pending.report?.lines?.length > 0 && saved?.id) {
@@ -105,6 +121,7 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
         );
       }
 
+      setConflict(null);
       setPending(null);
       onClose();
     } catch(e: any) {
@@ -114,7 +131,64 @@ export default function SalesImportPanel({ onClose }:{ onClose: ()=>void }) {
     }
   }, [pending, venueId, onClose]);
 
+  // ── Step 2b: period confirmed — check for overlap, then upload or show conflict
+
+  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+    if (!pending || !venueId) return;
+    setBusy(true);
+    let overlapping: OverlappingReport[] = [];
+    try {
+      overlapping = await checkPeriodOverlap(venueId, confirmedStart, confirmedEnd);
+    } catch (e: any) {
+      showError('Could not check for existing reports: ' + String(e?.message || e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+
+    if (overlapping.length > 0) {
+      setConflict({ start: confirmedStart, end: confirmedEnd, reports: overlapping });
+      return;
+    }
+    await performUpload(confirmedStart, confirmedEnd);
+  }, [pending, venueId, performUpload]);
+
+  // ── Step 2c: conflict resolved ────────────────────────────────────────────
+
+  const handleConflictReplace = useCallback(async () => {
+    if (!conflict) return;
+    await performUpload(conflict.start, conflict.end, conflict.reports.map(r => r.id));
+  }, [conflict, performUpload]);
+
+  const handleConflictKeepBoth = useCallback(async () => {
+    if (!conflict) return;
+    await performUpload(conflict.start, conflict.end);
+  }, [conflict, performUpload]);
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  if (conflict) {
+    return (
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#fff' }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: '900', marginBottom: 12 }}>
+          Sales Report Import (CSV)
+        </Text>
+        <SalesConflictStep
+          newStart={conflict.start}
+          newEnd={conflict.end}
+          conflicts={conflict.reports}
+          onReplace={handleConflictReplace}
+          onKeepBoth={handleConflictKeepBoth}
+          onCancel={() => setConflict(null)}
+          busy={busy}
+        />
+      </ScrollView>
+    );
+  }
 
   if (pending) {
     return (

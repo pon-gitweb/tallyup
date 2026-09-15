@@ -8,12 +8,14 @@ import { getAuth } from 'firebase/auth';
 import { useVenueId } from '../../context/VenueProvider';
 import { useColours } from '../../context/ThemeContext';
 import { processSalesCsv } from '../../services/sales/processSalesCsv';
-import { storeSalesReport } from '../../services/sales/storeSalesReport';
+import { storeSalesReport, supersedeSalesReports } from '../../services/sales/storeSalesReport';
+import { checkPeriodOverlap, OverlappingReport } from '../../services/sales/checkPeriodOverlap';
 import { apiBase } from '../../services/apiBase';
 import { matchAndPersist } from '../../services/sales/matchSalesToRecipes';
 import { refreshAIContext } from '../../services/aiContext';
 import { salesFingerprint, checkProcessed, writeProcessed, confirmDuplicateImport } from '../../services/deduplication';
 import SalesPeriodConfirmStep from '../../components/sales/SalesPeriodConfirmStep';
+import SalesConflictStep from '../../components/sales/SalesConflictStep';
 
 const EXPECTED_HEADERS = [
   { col: 'name', desc: 'Product name', required: true },
@@ -47,6 +49,11 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
   const [busy, setBusy] = useState(false);
   const [showFormat, setShowFormat] = useState(false);
   const [pending, setPending] = useState<PendingUpload | null>(null);
+  const [conflict, setConflict] = useState<{
+    start: string;
+    end: string;
+    reports: OverlappingReport[];
+  } | null>(null);
 
   // ── Step 1: pick + parse the file ─────────────────────────────────────────
 
@@ -154,9 +161,13 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
     }
   }, [venueId]);
 
-  // ── Step 2: user confirmed the period — upload ────────────────────────────
+  // ── Step 2a: upload (shared by direct-confirm and conflict-resolve paths) ──
 
-  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+  const performUpload = useCallback(async (
+    confirmedStart: string,
+    confirmedEnd: string,
+    idsToSupersede?: string[],
+  ) => {
     if (!pending || !venueId) return;
     setBusy(true);
     try {
@@ -168,6 +179,11 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       });
 
       if (!saved?.ok) throw new Error(saved?.error || 'storeSalesReport failed');
+
+      // Soft-supersede any reports the user chose to replace
+      if (idsToSupersede?.length && saved.id) {
+        await supersedeSalesReports(venueId, idsToSupersede, saved.id);
+      }
 
       // Write deduplication fingerprint after successful save (CSV only)
       if (pending.salesHash) {
@@ -192,13 +208,13 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
       showSuccess(`${pending.lineCount} line${pending.lineCount === 1 ? '' : 's'} imported, ${matchable} matchable to products. Analytics will use this data automatically.`);
 
       if (saved.zeroCycleWarning) {
-        // Use showWarning if available, fall back to showInfo
         const warn = (showWarning ?? showInfo);
         warn(
           `This report (${confirmedStart} – ${confirmedEnd}) doesn't line up with any completed stocktake yet — it's saved, but won't factor into any comparison until a cycle covers this period.`,
         );
       }
 
+      setConflict(null);
       setPending(null);
       onClose();
     } catch (e: any) {
@@ -208,7 +224,67 @@ export default function SalesReportUploadPanel({ onClose }: { onClose: () => voi
     }
   }, [pending, venueId, onClose]);
 
+  // ── Step 2b: period confirmed — check for overlap, then upload or show conflict
+
+  const handlePeriodConfirm = useCallback(async (confirmedStart: string, confirmedEnd: string) => {
+    if (!pending || !venueId) return;
+    // Check for period overlap before writing anything.
+    setBusy(true);
+    let overlapping: OverlappingReport[] = [];
+    try {
+      overlapping = await checkPeriodOverlap(venueId, confirmedStart, confirmedEnd);
+    } catch (e: any) {
+      showError('Could not check for existing reports: ' + String(e?.message || e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+
+    if (overlapping.length > 0) {
+      // Show conflict screen — nothing written yet.
+      setConflict({ start: confirmedStart, end: confirmedEnd, reports: overlapping });
+      return;
+    }
+    // No conflicts — proceed directly to upload.
+    await performUpload(confirmedStart, confirmedEnd);
+  }, [pending, venueId, performUpload]);
+
+  // ── Step 2c: conflict resolved — Replace (supersede old) or Keep Both ──────
+
+  const handleConflictReplace = useCallback(async () => {
+    if (!conflict) return;
+    await performUpload(conflict.start, conflict.end, conflict.reports.map(r => r.id));
+  }, [conflict, performUpload]);
+
+  const handleConflictKeepBoth = useCallback(async () => {
+    if (!conflict) return;
+    await performUpload(conflict.start, conflict.end);
+  }, [conflict, performUpload]);
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  if (conflict) {
+    return (
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#fff' }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: '900', marginBottom: 12 }}>
+          Sales Reports (CSV Import)
+        </Text>
+        <SalesConflictStep
+          newStart={conflict.start}
+          newEnd={conflict.end}
+          conflicts={conflict.reports}
+          onReplace={handleConflictReplace}
+          onKeepBoth={handleConflictKeepBoth}
+          onCancel={() => setConflict(null)}
+          busy={busy}
+        />
+      </ScrollView>
+    );
+  }
 
   if (pending) {
     return (

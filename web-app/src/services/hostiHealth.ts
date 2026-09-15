@@ -545,6 +545,11 @@ async function calculateFullScore(
 
       for (const reportDoc of salesReportsSnap.docs) {
         const data = reportDoc.data() as any;
+
+        // Skip superseded reports — they have been replaced by a newer upload and
+        // must not be counted alongside their replacement (would double-count sales).
+        if (data.status === 'superseded') continue;
+
         const overlappingCycles: Array<{ departmentId: string; cycleNumber: number; weight?: number }> =
           data.overlappingCycles || [];
 
