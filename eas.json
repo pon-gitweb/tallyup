@@ -72,6 +72,12 @@
       "distribution": "internal",
       "environment": "development"
     },
+    "production-debug": {
+      "extends": "production",
+      "android": {
+        "buildType": "debug"
+      }
+    },
     "ios-store": {
       "extends": "base",
       "ios": {
