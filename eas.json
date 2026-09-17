@@ -75,7 +75,8 @@
     "production-debug": {
       "extends": "production",
       "android": {
-        "buildType": "debug"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
       }
     },
     "ios-store": {
