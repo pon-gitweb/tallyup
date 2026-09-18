@@ -20,7 +20,6 @@ import {
   Share,
   Linking,
   ActivityIndicator,
-  NativeModules,
 } from 'react-native';
 import { HintService } from '../../services/hints/HintService';
 import { useNavigation } from '@react-navigation/native';
@@ -197,25 +196,6 @@ export default function SettingsScreen() {
     Updates.readLogEntriesAsync()
       .then(entries => setOtaLog(entries))
       .catch(() => setOtaLog([]));
-  }, []);
-
-  // OTA header comparison — reads live config headers vs. stored DB headers to diagnose
-  // whether LauncherSelectionPolicyFilterAware is rejecting already-downloaded updates due
-  // to a requestHeaders mismatch (the likely cause of "download completes, never applies").
-  type OtaHeaderDiag = {
-    configHeaders: string;
-    storedHeaders: string;
-    storedCommitTime: string;
-    storedStatus: string;
-    storedRuntimeVersion: string;
-  };
-  const [otaHeaderDiag, setOtaHeaderDiag] = useState<OtaHeaderDiag | 'loading' | 'unavailable'>('loading');
-  useEffect(() => {
-    const mod = NativeModules.OtaDiagnostics;
-    if (!mod) { setOtaHeaderDiag('unavailable'); return; }
-    mod.getOtaDiagnostics()
-      .then((d: OtaHeaderDiag) => setOtaHeaderDiag(d))
-      .catch(() => setOtaHeaderDiag('unavailable'));
   }, []);
 
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -1383,45 +1363,6 @@ export default function SettingsScreen() {
               <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{value}</Text>
             </View>
           ))}
-
-          {/* ── requestHeaders comparison ─────────────────────────────────────────────
-               Reads the live UpdatesConfiguration.requestHeaders (what the app
-               uses to check/fetch) alongside the headers stored on the most recently
-               downloaded update row in updates.db. A visible difference between the
-               two values confirms that LauncherSelectionPolicyFilterAware is rejecting
-               an already-downloaded update — the likely root cause of "downloads
-               complete but never apply". */}
-          <View style={{ borderTopWidth: 1, borderTopColor: themeColours.border, marginTop: 8, paddingTop: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '800', color: themeColours.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>
-              Request Headers Comparison
-            </Text>
-            {otaHeaderDiag === 'loading' ? (
-              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>Loading…</Text>
-            ) : otaHeaderDiag === 'unavailable' ? (
-              <Text style={{ fontSize: 11, color: themeColours.textSecondary, fontFamily: 'monospace' }}>
-                Not available (Android only; run a native build)
-              </Text>
-            ) : (
-              <>
-                <Text style={{ fontSize: 10, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', marginBottom: 2 }}>
-                  LIVE CONFIG
-                </Text>
-                <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', marginBottom: 8 }}>
-                  {otaHeaderDiag.configHeaders}
-                </Text>
-                <Text style={{ fontSize: 10, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', marginBottom: 2 }}>
-                  STORED IN DB{otaHeaderDiag.storedStatus !== '—' ? `  (${otaHeaderDiag.storedStatus} · ${otaHeaderDiag.storedCommitTime})` : ''}
-                </Text>
-                <View style={{ flexDirection: 'row', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', minWidth: 130 }}>runtimeVersion</Text>
-                  <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{otaHeaderDiag.storedRuntimeVersion}</Text>
-                </View>
-                <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace' }}>
-                  {otaHeaderDiag.storedHeaders}
-                </Text>
-              </>
-            )}
-          </View>
 
           {/* OTA update log — expo-updates internal event log */}
           <View style={{ borderTopWidth: 1, borderTopColor: themeColours.border, marginTop: 8, paddingTop: 8 }}>

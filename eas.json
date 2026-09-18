@@ -72,13 +72,6 @@
       "distribution": "internal",
       "environment": "development"
     },
-    "production-debug": {
-      "extends": "production",
-      "android": {
-        "buildType": "apk",
-        "gradleCommand": ":app:assembleReleaseDiagnostic"
-      }
-    },
     "ios-store": {
       "extends": "base",
       "ios": {
