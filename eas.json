@@ -76,7 +76,7 @@
       "extends": "production",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleDebug"
+        "gradleCommand": ":app:assembleReleaseDiagnostic"
       }
     },
     "ios-store": {

@@ -117,6 +117,14 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
             crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
         }
+        releaseDiagnostic {
+            // Production-equivalent build that is debuggable for `adb run-as` inspection.
+            // Uses release sourceSets in all library deps (including expo-dev-launcher),
+            // so the dev-client launcher screen never appears.
+            initWith release
+            debuggable true
+            matchingFallbacks = ["release"]
+        }
     }
     packagingOptions {
         jniLibs {
