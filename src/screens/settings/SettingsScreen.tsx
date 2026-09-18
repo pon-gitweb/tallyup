@@ -207,6 +207,7 @@ export default function SettingsScreen() {
     storedHeaders: string;
     storedCommitTime: string;
     storedStatus: string;
+    storedRuntimeVersion: string;
   };
   const [otaHeaderDiag, setOtaHeaderDiag] = useState<OtaHeaderDiag | 'loading' | 'unavailable'>('loading');
   useEffect(() => {
@@ -1411,6 +1412,10 @@ export default function SettingsScreen() {
                 <Text style={{ fontSize: 10, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', marginBottom: 2 }}>
                   STORED IN DB{otaHeaderDiag.storedStatus !== '—' ? `  (${otaHeaderDiag.storedStatus} · ${otaHeaderDiag.storedCommitTime})` : ''}
                 </Text>
+                <View style={{ flexDirection: 'row', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: themeColours.textSecondary, fontFamily: 'monospace', minWidth: 130 }}>runtimeVersion</Text>
+                  <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace', flexShrink: 1 }}>{otaHeaderDiag.storedRuntimeVersion}</Text>
+                </View>
                 <Text style={{ fontSize: 11, color: themeColours.text, fontFamily: 'monospace' }}>
                   {otaHeaderDiag.storedHeaders}
                 </Text>

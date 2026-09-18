@@ -61,7 +61,7 @@ class OtaDiagnosticsModule(private val reactContext: ReactApplicationContext) :
                     ).use { db ->
                         db.rawQuery(
                             """
-                            SELECT headers, commit_time, status
+                            SELECT headers, commit_time, status, runtime_version
                             FROM updates
                             WHERE status != 5
                             ORDER BY last_accessed DESC
@@ -76,6 +76,9 @@ class OtaDiagnosticsModule(private val reactContext: ReactApplicationContext) :
                                     cursor.getLong(cursor.getColumnIndexOrThrow("commit_time"))
                                 val statusInt =
                                     cursor.getInt(cursor.getColumnIndexOrThrow("status"))
+                                val storedRuntimeVersion =
+                                    cursor.getString(cursor.getColumnIndexOrThrow("runtime_version"))
+                                        ?: "null"
 
                                 // headersRaw is a JSON string stored by Room's TypeConverter,
                                 // e.g. {"expo-channel-name":"production","expo-runtime-version":"1"}
@@ -109,10 +112,12 @@ class OtaDiagnosticsModule(private val reactContext: ReactApplicationContext) :
                                 result.putString("storedHeaders", headersText)
                                 result.putString("storedCommitTime", commitTimeStr)
                                 result.putString("storedStatus", statusLabel)
+                                result.putString("storedRuntimeVersion", storedRuntimeVersion)
                             } else {
                                 result.putString("storedHeaders", "(no downloaded update rows found)")
                                 result.putString("storedCommitTime", "—")
                                 result.putString("storedStatus", "—")
+                                result.putString("storedRuntimeVersion", "—")
                             }
                         }
                     }
@@ -120,6 +125,7 @@ class OtaDiagnosticsModule(private val reactContext: ReactApplicationContext) :
                     result.putString("storedHeaders", "error reading db: ${e.message}")
                     result.putString("storedCommitTime", "—")
                     result.putString("storedStatus", "—")
+                    result.putString("storedRuntimeVersion", "—")
                 }
 
                 promise.resolve(result)
