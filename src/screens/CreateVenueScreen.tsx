@@ -88,7 +88,7 @@ export default function CreateVenueScreen() {
 
       // (D) Add membership (owner)
       const mref = doc(db, 'venues', vref.id, 'members', uid);
-      await setDoc(mref, { role: 'owner', createdAt: serverTimestamp() }, { merge: true });
+      await setDoc(mref, { role: 'owner', createdAt: serverTimestamp(), email: auth.currentUser?.email ?? null }, { merge: true });
       console.log('[CreateVenue] members/{uid} upserted', JSON.stringify({ path: mref.path }));
 
       // (E) Seed departments/areas sequentially (non-fatal if denied—Setup can fill later)
