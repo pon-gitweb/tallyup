@@ -159,7 +159,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
   function handleRoleSelectChange(uid: string, displayName: string | null, email: string | null, newRole: Role) {
     if (myRole !== 'owner') return
     setConfirmRemoveUid(null)
-    setConfirmRoleChange({ uid, name: displayName || email || uid, newRole })
+    setConfirmRoleChange({ uid, name: displayName || email || 'Unnamed member', newRole })
   }
 
   async function confirmRoleChangeAction() {
@@ -266,7 +266,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
                     <Fragment key={member.uid}>
                       <tr className={styles.dataRow}>
                         <td className={styles.td}>
-                          {member.displayName || member.email || member.uid}
+                          {member.displayName || member.email || 'Unnamed member'}
                           {isSelf && <span className={styles.youBadge}>you</span>}
                         </td>
                         <td className={styles.td}>{member.email || '—'}</td>
@@ -333,7 +333,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
                         <tr className={styles.confirmRow}>
                           <td colSpan={canManage ? 5 : 4} className={styles.confirmCell}>
                             <span className={styles.confirmText}>
-                              Remove <strong>{member.displayName || member.email || member.uid}</strong> from this venue?
+                              Remove <strong>{member.displayName || member.email || 'Unnamed member'}</strong> from this venue?
                             </span>
                             <button type="button" className={styles.confirmYes} onClick={confirmRemoveAction}>
                               Remove

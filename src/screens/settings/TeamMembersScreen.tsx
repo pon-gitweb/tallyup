@@ -215,7 +215,7 @@ export default function TeamMembersScreen() {
     // TODO: replace with branded modal when role picker is redesigned
     Alert.alert(
       'Change role',
-      `Change role for ${member.displayName || member.email || member.uid}`,
+      `Change role for ${member.displayName || member.email || 'Unnamed member'}`,
       [
         ...ROLES.filter((r) => r !== member.role).map((r) => ({
           text: ROLE_LABELS[r],
@@ -243,7 +243,7 @@ export default function TeamMembersScreen() {
     }
     confirm({
       title: 'Remove member',
-      message: `Remove ${member.displayName || member.email || member.uid} from this venue?`,
+      message: `Remove ${member.displayName || member.email || 'Unnamed member'} from this venue?`,
       confirmLabel: 'Remove',
       cancelLabel: 'Keep',
       destructive: true,
@@ -261,7 +261,7 @@ export default function TeamMembersScreen() {
 
   const renderMember = ({ item }: { item: Member }) => {
     const isMe = item.uid === currentUid;
-    const name = item.displayName || item.email || item.uid;
+    const name = item.displayName || item.email || 'Unnamed member';
     const roleColour = item.role === 'owner' ? colours.danger : item.role === 'manager' ? colours.primary : colours.textSecondary;
     return (
       <TouchableOpacity
@@ -287,7 +287,7 @@ export default function TeamMembersScreen() {
   };
 
   const showMemberActions = (member: Member) => {
-    const name = member.displayName || member.email || member.uid;
+    const name = member.displayName || member.email || 'Unnamed member';
     // TODO: replace with branded modal when member actions are redesigned
     Alert.alert(name, ROLE_LABELS[member.role], [
       { text: 'Change role', onPress: () => changeRole(member) },
