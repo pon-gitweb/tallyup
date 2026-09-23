@@ -266,7 +266,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
                     <Fragment key={member.uid}>
                       <tr className={styles.dataRow}>
                         <td className={styles.td}>
-                          {member.displayName || '—'}
+                          {member.displayName || member.email || member.uid}
                           {isSelf && <span className={styles.youBadge}>you</span>}
                         </td>
                         <td className={styles.td}>{member.email || '—'}</td>
