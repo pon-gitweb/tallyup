@@ -201,7 +201,10 @@ export default function FestivalEventSetupScreen() {
   const [products,        setProducts]        = useState<any[]>([]);
 
   // ── Collapsible section state ────────────────────────────────────────────
-  const [expandedSection, setExpandedSection] = useState(1);
+  const [expandedSection,  setExpandedSection]  = useState(1);
+  const [expandedBar,      setExpandedBar]      = useState<string | null>(null);
+  const [expandedLocation, setExpandedLocation] = useState<string | null>(null);
+  const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
 
   // ── Contracts count (for Section 6 card) ─────────────────────────────────
   const [contractCount,        setContractCount]        = useState(0);
@@ -863,29 +866,38 @@ export default function FestivalEventSetupScreen() {
             <>
               {barForms.map((bar, i) => (
                 <View key={bar.id} style={S.subCard}>
-                  <Text style={S.subCardTitle}>Bar {i + 1}</Text>
+                  <SectionHeader
+                    n={String(i + 1)}
+                    title={bar.name.trim() || `Bar ${i + 1}`}
+                    complete={bar.name.trim() !== ''}
+                    expanded={expandedBar === bar.id}
+                    onPress={() => setExpandedBar(expandedBar === bar.id ? null : bar.id)}
+                  />
+                  {expandedBar === bar.id && (
+                    <>
+                      <Text style={S.label}>Bar name</Text>
+                      <TextInput value={bar.name} onChangeText={v => updateBar(bar.id, 'name', v)} placeholder="e.g. Main Stage Bar" placeholderTextColor="#9ca3af" style={S.input} />
 
-                  <Text style={S.label}>Bar name</Text>
-                  <TextInput value={bar.name} onChangeText={v => updateBar(bar.id, 'name', v)} placeholder="e.g. Main Stage Bar" placeholderTextColor="#9ca3af" style={S.input} />
+                      <Text style={S.label}>Location description</Text>
+                      <TextInput value={bar.location} onChangeText={v => updateBar(bar.id, 'location', v)} placeholder="e.g. North side, stage left" placeholderTextColor="#9ca3af" style={S.input} />
 
-                  <Text style={S.label}>Location description</Text>
-                  <TextInput value={bar.location} onChangeText={v => updateBar(bar.id, 'location', v)} placeholder="e.g. North side, stage left" placeholderTextColor="#9ca3af" style={S.input} />
+                      <Text style={S.label}>Fridge configuration</Text>
 
-                  <Text style={S.label}>Fridge configuration</Text>
+                      <Text style={S.subLabel}>Service fridge capacity (cases)</Text>
+                      <Text style={S.helper}>How many cases fit in your working fridge behind the bar?</Text>
+                      <TextInput value={bar.fridgeService} onChangeText={v => updateBar(bar.id, 'fridgeService', v)} placeholder="e.g. 6" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
 
-                  <Text style={S.subLabel}>Service fridge capacity (cases)</Text>
-                  <Text style={S.helper}>How many cases fit in your working fridge behind the bar?</Text>
-                  <TextInput value={bar.fridgeService} onChangeText={v => updateBar(bar.id, 'fridgeService', v)} placeholder="e.g. 6" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                      <Text style={S.subLabel}>Display fridge capacity (cases) — optional</Text>
+                      <TextInput value={bar.fridgeDisplay} onChangeText={v => updateBar(bar.id, 'fridgeDisplay', v)} placeholder="e.g. 4" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
 
-                  <Text style={S.subLabel}>Display fridge capacity (cases) — optional</Text>
-                  <TextInput value={bar.fridgeDisplay} onChangeText={v => updateBar(bar.id, 'fridgeDisplay', v)} placeholder="e.g. 4" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                      <Text style={S.subLabel}>Under-bar capacity (cases) — optional</Text>
+                      <TextInput value={bar.fridgeUnderBar} onChangeText={v => updateBar(bar.id, 'fridgeUnderBar', v)} placeholder="e.g. 2" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
 
-                  <Text style={S.subLabel}>Under-bar capacity (cases) — optional</Text>
-                  <TextInput value={bar.fridgeUnderBar} onChangeText={v => updateBar(bar.id, 'fridgeUnderBar', v)} placeholder="e.g. 2" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
-
-                  <View style={S.infoBox}>
-                    <Text style={S.infoText}>Primary storage space set up after adding storage spaces in Section 3.</Text>
-                  </View>
+                      <View style={S.infoBox}>
+                        <Text style={S.infoText}>Primary storage space set up after adding storage spaces in Section 3.</Text>
+                      </View>
+                    </>
+                  )}
                 </View>
               ))}
 
@@ -909,73 +921,82 @@ export default function FestivalEventSetupScreen() {
             <>
               {locationForms.map((loc, i) => (
                 <View key={loc.id} style={S.subCard}>
-                  <Text style={S.subCardTitle}>Location {i + 1}</Text>
+                  <SectionHeader
+                    n={String(i + 1)}
+                    title={loc.name.trim() || `Location ${i + 1}`}
+                    complete={loc.name.trim() !== ''}
+                    expanded={expandedLocation === loc.id}
+                    onPress={() => setExpandedLocation(expandedLocation === loc.id ? null : loc.id)}
+                  />
+                  {expandedLocation === loc.id && (
+                    <>
+                      <Text style={S.label}>Location name</Text>
+                      <TextInput value={loc.name} onChangeText={v => updateLocation(loc.id, 'name', v)} placeholder="e.g. Container 1" placeholderTextColor="#9ca3af" style={S.input} />
 
-                  <Text style={S.label}>Location name</Text>
-                  <TextInput value={loc.name} onChangeText={v => updateLocation(loc.id, 'name', v)} placeholder="e.g. Container 1" placeholderTextColor="#9ca3af" style={S.input} />
-
-                  <Text style={S.label}>Location type</Text>
-                  {LOCATION_TYPES.map(lt => (
-                    <RadioCard
-                      key={lt.id}
-                      label={lt.label}
-                      selected={loc.type === lt.id}
-                      onPress={() => {
-                        updateLocation(loc.id, 'type', lt.id);
-                        if (lt.l) {
-                          updateLocation(loc.id, 'dimensionL', lt.l);
-                          updateLocation(loc.id, 'dimensionW', lt.w);
-                          updateLocation(loc.id, 'dimensionH', lt.h);
-                        }
-                      }}
-                    />
-                  ))}
-
-                  <Text style={S.label}>Dimensions (metres)</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {[
-                      ['Length', 'dimensionL'],
-                      ['Width',  'dimensionW'],
-                      ['Height', 'dimensionH'],
-                    ].map(([lbl, field]) => (
-                      <View key={field} style={{ flex: 1 }}>
-                        <Text style={S.subLabel}>{lbl}</Text>
-                        <TextInput
-                          value={(loc as any)[field]}
-                          onChangeText={v => updateLocation(loc.id, field, v)}
-                          placeholder={lbl[0]}
-                          placeholderTextColor="#9ca3af"
-                          style={S.input}
-                          keyboardType="decimal-pad"
+                      <Text style={S.label}>Location type</Text>
+                      {LOCATION_TYPES.map(lt => (
+                        <RadioCard
+                          key={lt.id}
+                          label={lt.label}
+                          selected={loc.type === lt.id}
+                          onPress={() => {
+                            updateLocation(loc.id, 'type', lt.id);
+                            if (lt.l) {
+                              updateLocation(loc.id, 'dimensionL', lt.l);
+                              updateLocation(loc.id, 'dimensionW', lt.w);
+                              updateLocation(loc.id, 'dimensionH', lt.h);
+                            }
+                          }}
                         />
-                      </View>
-                    ))}
-                  </View>
+                      ))}
 
-                  <View style={S.toggleRow}>
-                    <Text style={S.label}>Aisle required?</Text>
-                    <Switch value={loc.hasAisle} onValueChange={v => updateLocation(loc.id, 'hasAisle', v)} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
-                  </View>
-                  {loc.hasAisle && (
-                    <>
-                      <Text style={S.subLabel}>Aisle width (mm)</Text>
-                      <TextInput value={loc.aisleWidth} onChangeText={v => updateLocation(loc.id, 'aisleWidth', v)} placeholder="800" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
-                    </>
-                  )}
-
-                  {barForms.length > 0 && (
-                    <>
-                      <Text style={S.label}>Serves which bars?</Text>
-                      <View style={S.chipRow}>
-                        {barForms.map((bar, bi) => (
-                          <Chip
-                            key={bar.id}
-                            label={bar.name.trim() || `Bar ${bi + 1}`}
-                            selected={loc.barsServed.includes(bar.id)}
-                            onPress={() => toggleLocationBar(loc.id, bar.id)}
-                          />
+                      <Text style={S.label}>Dimensions (metres)</Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        {[
+                          ['Length', 'dimensionL'],
+                          ['Width',  'dimensionW'],
+                          ['Height', 'dimensionH'],
+                        ].map(([lbl, field]) => (
+                          <View key={field} style={{ flex: 1 }}>
+                            <Text style={S.subLabel}>{lbl}</Text>
+                            <TextInput
+                              value={(loc as any)[field]}
+                              onChangeText={v => updateLocation(loc.id, field, v)}
+                              placeholder={lbl[0]}
+                              placeholderTextColor="#9ca3af"
+                              style={S.input}
+                              keyboardType="decimal-pad"
+                            />
+                          </View>
                         ))}
                       </View>
+
+                      <View style={S.toggleRow}>
+                        <Text style={S.label}>Aisle required?</Text>
+                        <Switch value={loc.hasAisle} onValueChange={v => updateLocation(loc.id, 'hasAisle', v)} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
+                      </View>
+                      {loc.hasAisle && (
+                        <>
+                          <Text style={S.subLabel}>Aisle width (mm)</Text>
+                          <TextInput value={loc.aisleWidth} onChangeText={v => updateLocation(loc.id, 'aisleWidth', v)} placeholder="800" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                        </>
+                      )}
+
+                      {barForms.length > 0 && (
+                        <>
+                          <Text style={S.label}>Serves which bars?</Text>
+                          <View style={S.chipRow}>
+                            {barForms.map((bar, bi) => (
+                              <Chip
+                                key={bar.id}
+                                label={bar.name.trim() || `Bar ${bi + 1}`}
+                                selected={loc.barsServed.includes(bar.id)}
+                                onPress={() => toggleLocationBar(loc.id, bar.id)}
+                              />
+                            ))}
+                          </View>
+                        </>
+                      )}
                     </>
                   )}
                 </View>
@@ -1010,78 +1031,89 @@ export default function FestivalEventSetupScreen() {
               <Text style={S.infoText}>No suppliers set up yet. Add suppliers in the app, then return here to configure delivery details.</Text>
             </View>
           ) : (
-            venueSuppliers.map(sup => {
+            venueSuppliers.map((sup, i) => {
               const cfg = supplierCfg[sup.id] || {};
               return (
                 <View key={sup.id} style={S.subCard}>
-                  <View style={S.toggleRow}>
-                    <Text style={S.subCardTitle}>{sup.name || sup.id}</Text>
-                    <Switch
-                      value={!!cfg.selected}
-                      onValueChange={v => updateSup(sup.id, 'selected', v)}
-                      trackColor={{ true: '#1b4f72', false: '#d1d5db' }}
-                    />
-                  </View>
-                  {cfg.selected && (
+                  <SectionHeader
+                    n={String(i + 1)}
+                    title={sup.name || sup.id}
+                    complete={!!cfg.selected}
+                    expanded={expandedSupplier === sup.id}
+                    onPress={() => setExpandedSupplier(expandedSupplier === sup.id ? null : sup.id)}
+                  />
+                  {expandedSupplier === sup.id && (
                     <>
-                      <Text style={S.label}>Delivery date</Text>
-                      <TouchableOpacity
-                        style={[S.input, { backgroundColor: c.surface, borderColor: c.border }]}
-                        onPress={() => setDeliveryPickerFor(sup.id)}
-                      >
-                        <Text style={{ fontSize: 14, color: cfg.deliveryDate ? c.navy : c.slateMid }}>
-                          {cfg.deliveryDate || 'Select date'}
-                        </Text>
-                      </TouchableOpacity>
-                      {deliveryPickerFor === sup.id && (
-                        <DateTimePicker
-                          value={ddmmyyyyToDate(cfg.deliveryDate || '') || new Date()}
-                          mode="date"
-                          display="default"
-                          onChange={(event: any, selectedDate?: Date) => {
-                            setDeliveryPickerFor(null);
-                            if (event?.type === 'dismissed' || !selectedDate) return;
-                            updateSup(sup.id, 'deliveryDate', dateToDdmmyyyy(selectedDate));
-                          }}
-                        />
-                      )}
-
-                      <Text style={S.label}>Return policy</Text>
-                      {RETURN_POLICIES.map(rp => (
-                        <RadioCard key={rp.id} label={rp.label} selected={(cfg.returnPolicy || 'sale_or_return') === rp.id} onPress={() => updateSup(sup.id, 'returnPolicy', rp.id)} />
-                      ))}
-
                       <View style={S.toggleRow}>
-                        <Text style={S.label}>CHEP pallets?</Text>
-                        <Switch value={!!cfg.chepEnabled} onValueChange={v => updateSup(sup.id, 'chepEnabled', v)} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
+                        <Text style={S.label}>Include this supplier?</Text>
+                        <Switch
+                          value={!!cfg.selected}
+                          onValueChange={v => updateSup(sup.id, 'selected', v)}
+                          trackColor={{ true: '#1b4f72', false: '#d1d5db' }}
+                        />
                       </View>
-                      {cfg.chepEnabled && (
+                      {cfg.selected && (
                         <>
-                          <Text style={S.subLabel}>Expected pallet count</Text>
-                          <TextInput value={cfg.chepPalletCount || ''} onChangeText={v => updateSup(sup.id, 'chepPalletCount', v)} placeholder="e.g. 12" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
-                          <Text style={S.subLabel}>CHEP account number</Text>
-                          <TextInput value={cfg.chepAccountNumber || ''} onChangeText={v => updateSup(sup.id, 'chepAccountNumber', v)} placeholder="e.g. 1234567" placeholderTextColor="#9ca3af" style={S.input} />
+                          <Text style={S.label}>Delivery date</Text>
+                          <TouchableOpacity
+                            style={[S.input, { backgroundColor: c.surface, borderColor: c.border }]}
+                            onPress={() => setDeliveryPickerFor(sup.id)}
+                          >
+                            <Text style={{ fontSize: 14, color: cfg.deliveryDate ? c.navy : c.slateMid }}>
+                              {cfg.deliveryDate || 'Select date'}
+                            </Text>
+                          </TouchableOpacity>
+                          {deliveryPickerFor === sup.id && (
+                            <DateTimePicker
+                              value={ddmmyyyyToDate(cfg.deliveryDate || '') || new Date()}
+                              mode="date"
+                              display="default"
+                              onChange={(event: any, selectedDate?: Date) => {
+                                setDeliveryPickerFor(null);
+                                if (event?.type === 'dismissed' || !selectedDate) return;
+                                updateSup(sup.id, 'deliveryDate', dateToDdmmyyyy(selectedDate));
+                              }}
+                            />
+                          )}
+
+                          <Text style={S.label}>Return policy</Text>
+                          {RETURN_POLICIES.map(rp => (
+                            <RadioCard key={rp.id} label={rp.label} selected={(cfg.returnPolicy || 'sale_or_return') === rp.id} onPress={() => updateSup(sup.id, 'returnPolicy', rp.id)} />
+                          ))}
+
+                          <View style={S.toggleRow}>
+                            <Text style={S.label}>CHEP pallets?</Text>
+                            <Switch value={!!cfg.chepEnabled} onValueChange={v => updateSup(sup.id, 'chepEnabled', v)} trackColor={{ true: '#1b4f72', false: '#d1d5db' }} />
+                          </View>
+                          {cfg.chepEnabled && (
+                            <>
+                              <Text style={S.subLabel}>Expected pallet count</Text>
+                              <TextInput value={cfg.chepPalletCount || ''} onChangeText={v => updateSup(sup.id, 'chepPalletCount', v)} placeholder="e.g. 12" placeholderTextColor="#9ca3af" style={S.input} keyboardType="numeric" />
+                              <Text style={S.subLabel}>CHEP account number</Text>
+                              <TextInput value={cfg.chepAccountNumber || ''} onChangeText={v => updateSup(sup.id, 'chepAccountNumber', v)} placeholder="e.g. 1234567" placeholderTextColor="#9ca3af" style={S.input} />
+                            </>
+                          )}
+
+                          <Text style={S.label}>Return allowance</Text>
+                          <Text style={S.helper}>Maximum % of ordered stock this supplier will accept back. Check your agreement — 5% is a conservative default.</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4, marginBottom: 2 }}>
+                            <TouchableOpacity
+                              onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.max(1, (cfg.returnAllowancePercent ?? 5) - 1))}
+                              style={S.stepperBtn}
+                            >
+                              <Text style={S.stepperBtnText}>−</Text>
+                            </TouchableOpacity>
+                            <Text style={S.stepperVal}>{cfg.returnAllowancePercent ?? 5}%</Text>
+                            <TouchableOpacity
+                              onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.min(20, (cfg.returnAllowancePercent ?? 5) + 1))}
+                              style={S.stepperBtn}
+                            >
+                              <Text style={S.stepperBtnText}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={S.helper}>Range: 1–20%. Some suppliers accept up to 10–20% — check your agreement first.</Text>
                         </>
                       )}
-
-                      <Text style={S.label}>Return allowance</Text>
-                      <Text style={S.helper}>Maximum % of ordered stock this supplier will accept back. Check your agreement — 5% is a conservative default.</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4, marginBottom: 2 }}>
-                        <TouchableOpacity
-                          onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.max(1, (cfg.returnAllowancePercent ?? 5) - 1))}
-                          style={S.stepperBtn}
-                        >
-                          <Text style={S.stepperBtnText}>−</Text>
-                        </TouchableOpacity>
-                        <Text style={S.stepperVal}>{cfg.returnAllowancePercent ?? 5}%</Text>
-                        <TouchableOpacity
-                          onPress={() => updateSup(sup.id, 'returnAllowancePercent', Math.min(20, (cfg.returnAllowancePercent ?? 5) + 1))}
-                          style={S.stepperBtn}
-                        >
-                          <Text style={S.stepperBtnText}>+</Text>
-                        </TouchableOpacity>
-                      </View>
-                      <Text style={S.helper}>Range: 1–20%. Some suppliers accept up to 10–20% — check your agreement first.</Text>
                     </>
                   )}
                 </View>

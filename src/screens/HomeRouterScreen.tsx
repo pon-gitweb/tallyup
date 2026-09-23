@@ -10,7 +10,7 @@ import { useVenue } from '../context/VenueProvider';
 /**
  * Invisible routing screen shown immediately after auth.
  * Reads venueType from the venue doc and resets the stack to
- * FestivalDashboard (festival) or MainTabs (all other types).
+ * MainTabs (for all venue types — MainTabs handles festival vs venue internally).
  * If no venue exists yet, sends the user to CreateVenueScreen.
  */
 export default function HomeRouterScreen() {
@@ -26,15 +26,11 @@ export default function HomeRouterScreen() {
     const timer = setTimeout(async () => {
       if (routed.current) return;
       routed.current = true;
-      let lastKnownType: string | null = null;
       let lastKnownVenueId: string | null = null;
       try {
-        [lastKnownType, lastKnownVenueId] = await Promise.all([
-          AsyncStorage.getItem('lastKnownVenueType'),
-          AsyncStorage.getItem('lastKnownVenueId'),
-        ]);
+        lastKnownVenueId = await AsyncStorage.getItem('lastKnownVenueId');
       } catch {}
-      console.warn('[HomeRouter] emergency fallback — routing to', lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs');
+      console.warn('[HomeRouter] emergency fallback — routing to MainTabs');
       // If we have a last known venueId, set it directly so the dashboard has context
       if (lastKnownVenueId) {
         try {
@@ -48,7 +44,7 @@ export default function HomeRouterScreen() {
           }
         } catch {}
       }
-      nav.reset({ index: 0, routes: [{ name: lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs' }] });
+      nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
     }, 5000);
     return () => clearTimeout(timer);
   }, []);
@@ -99,18 +95,13 @@ export default function HomeRouterScreen() {
       if (routed.current) return;
 
       if (!venueSnap || !venueSnap.exists()) {
-        let lastKnownType: string | null = null;
-        try { lastKnownType = await AsyncStorage.getItem('lastKnownVenueType'); } catch {}
         routed.current = true;
-        nav.reset({ index: 0, routes: [{ name: lastKnownType === 'festival' ? 'FestivalDashboard' : 'MainTabs' }] });
+        nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
         return;
       }
 
-      const vt = (venueSnap.data() as any)?.venueType;
-      // Festival ONLY when explicitly set. null/undefined/anything-else → venue app.
-      const destination = vt === 'festival' ? 'FestivalDashboard' : 'MainTabs';
       routed.current = true;
-      nav.reset({ index: 0, routes: [{ name: destination }] });
+      nav.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
     })().catch(() => {
       if (routed.current) return;
       routed.current = true;

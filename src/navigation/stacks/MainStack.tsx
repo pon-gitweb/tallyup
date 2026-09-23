@@ -97,7 +97,6 @@ import EmailVerificationScreen from '../../screens/auth/EmailVerificationScreen'
 import VenueListScreen from '../../screens/venues/VenueListScreen';
 
 // Festival
-import FestivalDashboardScreen from '../../screens/festival/FestivalDashboardScreen';
 import FestivalEventSetupScreen from '../../screens/festival/FestivalEventSetupScreen';
 import FestivalBarSelectionScreen from '../../screens/festival/FestivalBarSelectionScreen';
 import FestivalBarDashboardScreen from '../../screens/festival/FestivalBarDashboardScreen';
@@ -195,7 +194,7 @@ export default function MainStack() {
         ),
       }}
     >
-      {/* Routing screen — reads venueType and resets to MainTabs or FestivalDashboard */}
+      {/* Routing screen — reads venue doc and resets to MainTabs (handles all venue types) */}
       <Stack.Screen name="HomeRouter" component={HomeRouterScreen} options={{ headerShown: false }} />
       {/* Email verification — shown after registration before venue creation */}
       <Stack.Screen name="EmailVerification" component={EmailVerificationScreen} options={{ headerShown: false }} />
@@ -303,7 +302,6 @@ export default function MainStack() {
       <Stack.Screen name="DemoCount" component={DemoCountScreen} options={{ headerShown: false }} />
       <Stack.Screen name="DemoResult" component={DemoResultScreen} options={{ headerShown: false }} />
       <Stack.Screen name="SetupWizard" component={SetupWizardScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="FestivalDashboard" component={FestivalDashboardScreen} options={{ title: 'Festival Mode' }} />
       <Stack.Screen name="FestivalEventSetup" component={FestivalEventSetupScreen} options={{ title: 'Event Setup' }} />
       <Stack.Screen name="FestivalBarSelection" component={FestivalBarSelectionScreen} options={{ title: 'Bars' }} />
       <Stack.Screen name="FestivalBarDashboard" component={FestivalBarDashboardScreen} options={{ title: 'Bar' }} />

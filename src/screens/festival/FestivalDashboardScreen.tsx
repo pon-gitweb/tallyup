@@ -4,6 +4,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query } from 'firebase/firestore';
 import { writeWeeklySnapshot } from '../../services/festival/weeklySnapshot';
 import { apiBase } from '../../services/apiBase';
@@ -31,6 +32,7 @@ const SECTIONS = [
 
 export default function FestivalDashboardScreen() {
   const nav = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const venueId = useVenueId();
   const { venueIds } = useVenue();
   const hasMultipleProjects = (venueIds?.length || 0) > 1;
@@ -149,7 +151,7 @@ export default function FestivalDashboardScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.oat }}>
       {modal}
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 + insets.bottom }}>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <Text style={S.emoji}>🎪</Text>

@@ -156,10 +156,10 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
 
   // ── Role change ──────────────────────────────────────────────────────────────
 
-  function handleRoleSelectChange(uid: string, displayName: string | null, newRole: Role) {
+  function handleRoleSelectChange(uid: string, displayName: string | null, email: string | null, newRole: Role) {
     if (myRole !== 'owner') return
     setConfirmRemoveUid(null)
-    setConfirmRoleChange({ uid, name: displayName || uid, newRole })
+    setConfirmRoleChange({ uid, name: displayName || email || uid, newRole })
   }
 
   async function confirmRoleChangeAction() {
@@ -281,6 +281,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
                                 handleRoleSelectChange(
                                   member.uid,
                                   member.displayName,
+                                  member.email,
                                   e.target.value as Role,
                                 )
                               }
@@ -332,7 +333,7 @@ export default function TeamPage({ venueId, user }: { venueId: string; user: Use
                         <tr className={styles.confirmRow}>
                           <td colSpan={canManage ? 5 : 4} className={styles.confirmCell}>
                             <span className={styles.confirmText}>
-                              Remove <strong>{member.displayName || member.email}</strong> from this venue?
+                              Remove <strong>{member.displayName || member.email || member.uid}</strong> from this venue?
                             </span>
                             <button type="button" className={styles.confirmYes} onClick={confirmRemoveAction}>
                               Remove

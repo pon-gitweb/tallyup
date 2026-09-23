@@ -204,7 +204,7 @@ export default function FestivalEventCloseScreen() {
       await setDoc(doc(db, 'venues', venueId, 'eventHistory', eventId), closedPayload);
 
       showSuccess('Event closed and archived to history.');
-      nav.navigate('FestivalDashboard');
+      nav.navigate('MainTabs');
     } catch (e: any) {
       showError(e?.message || 'Could not close event.');
     } finally {

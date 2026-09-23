@@ -29,21 +29,7 @@ export default function SetupGuideBanner({ onNavigate }: Props) {
   const total = state.steps.length;
   const pct = Math.round((completed / total) * 100);
 
-  if (!nextStep) {
-    return (
-      <Animated.View style={{ opacity: fadeAnim, margin: 12, backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#BBF7D0' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '900', color: '#166534', fontSize: 15 }}>Setup complete!</Text>
-            <Text style={{ color: '#166534', fontSize: 13, marginTop: 2 }}>You are all set — Hosti is ready to go.</Text>
-          </View>
-          <TouchableOpacity onPress={onDismissAll} style={{ padding: 8 }}>
-            <Text style={{ color: '#166534', fontWeight: '700' }}>X</Text>
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
-    );
-  }
+  if (!nextStep) return null;
 
   return (
     <Animated.View style={{ opacity: fadeAnim, margin: 12, backgroundColor: '#EFF6FF', borderRadius: 14, borderWidth: 1, borderColor: '#BFDBFE' }}>
