@@ -524,8 +524,9 @@ export default function FestivalPurchasingPredictionScreen() {
       if (onHandSnapMaybe) {
         onHandSnapMaybe.docs.forEach(d => {
           const oh = d.data();
-          if (!oh.productId || !isFinite(oh.qtyUnits) || oh.qtyUnits < 0) return;
-          onHandByProduct[oh.productId] = (onHandByProduct[oh.productId] || 0) + oh.qtyUnits;
+          const q = Number(oh.qtyUnits);
+          if (!oh.productId || !Number.isFinite(q) || q < 0) return;
+          onHandByProduct[oh.productId] = (onHandByProduct[oh.productId] || 0) + q;
         });
       }
 
@@ -763,7 +764,7 @@ export default function FestivalPurchasingPredictionScreen() {
           const result = results.find(r => r.productName === a.productName);
           if (result) {
             const aiQty = getAiQtyForProduct(result, a, results);
-            if (aiQty != null && aiQty > 0) handleQtyChange(result.productId, aiQty);
+            if (aiQty != null && aiQty >= 0) handleQtyChange(result.productId, aiQty);
           }
         });
       } else {
@@ -801,7 +802,7 @@ export default function FestivalPurchasingPredictionScreen() {
     setUseAiSuggestion(prev => ({ ...prev, [productName]: newUseAI }));
     if (newUseAI && adj) {
       const aiQty = getAiQtyForProduct(result, adj, results);
-      if (aiQty != null && aiQty > 0) handleQtyChange(result.productId, aiQty);
+      if (aiQty != null && aiQty >= 0) handleQtyChange(result.productId, aiQty);
     } else {
       const gross = result.predictedQty + (result.riderQty || 0) + (result.activationQty || 0);
       const { net } = applyOnHand(gross, result.onHandQty || 0, result);
