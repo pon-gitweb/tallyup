@@ -67,11 +67,12 @@ export function SectionHeader({ n, title, complete, expanded, onPress, summary, 
   );
 }
 
-export function ItemRow({ name, summary, hint, expanded, onPress }) {
+export function ItemRow({ name, summary, hint, expanded, onPress, onLongPress = undefined }) {
   const c = useColours();
   return (
     <TouchableOpacity
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.7}
       accessibilityRole="button"
       accessibilityState={{ expanded: !!expanded }}

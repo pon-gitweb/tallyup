@@ -7,7 +7,7 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { doc, setDoc, getDoc, getDocs, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, onSnapshot, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
@@ -865,6 +865,21 @@ export default function FestivalEventSetupScreen() {
   function updateLocation(id: string, field: string, value: any) {
     setLocationForms(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   }
+  function deleteLocation(id: string, name: string) {
+    confirm({
+      title: 'Delete storage space?',
+      message: `Delete "${name.trim() || 'this location'}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: () => {
+        setLocationForms(prev => prev.filter(l => l.id !== id));
+        if (expandedLocation === id) setExpandedLocation(null);
+        if (venueId) {
+          deleteDoc(doc(db, 'venues', venueId, 'departments', 'hq', 'areas', id))
+            .catch(() => {});
+        }
+      },
+    });
+  }
   function toggleLocationBar(locId: string, barId: string) {
     setLocationForms(prev => prev.map(loc => {
       if (loc.id !== locId) return loc;
@@ -1195,6 +1210,7 @@ export default function FestivalEventSetupScreen() {
                     hint={getLocationHint(loc)}
                     expanded={expandedLocation === loc.id}
                     onPress={() => setExpandedLocation(expandedLocation === loc.id ? null : loc.id)}
+                    onLongPress={() => deleteLocation(loc.id, loc.name.trim() || `Location ${i + 1}`)}
                   />
                   {expandedLocation === loc.id && (
                     <>
@@ -1213,6 +1229,10 @@ export default function FestivalEventSetupScreen() {
                               updateLocation(loc.id, 'dimensionL', lt.l);
                               updateLocation(loc.id, 'dimensionW', lt.w);
                               updateLocation(loc.id, 'dimensionH', lt.h);
+                            } else {
+                              updateLocation(loc.id, 'dimensionL', '');
+                              updateLocation(loc.id, 'dimensionW', '');
+                              updateLocation(loc.id, 'dimensionH', '');
                             }
                           }}
                         />
