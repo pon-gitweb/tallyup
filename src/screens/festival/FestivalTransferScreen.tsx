@@ -1,13 +1,17 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, TextInput, Modal,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { collection, doc, getDocs, query, where, setDoc, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
+import NetInfo from '@react-native-community/netinfo';
+import { collection, doc, getDocs, query, where, serverTimestamp, runTransaction, increment } from 'firebase/firestore';
 import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
+import {
+  enqueueOperation, enqueuePayload, registerOperation,
+} from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useToast } from '../../components/common/Toast';
@@ -68,6 +72,29 @@ const PM = StyleSheet.create({
   rowSub:  { fontSize: 12, color: '#9ca3af', marginTop: 2 },
 });
 
+// ─── Outbox operation: bar-to-bar stock transfer ──────────────────────────────
+// runTransaction reads current stock before writing, so this must be an
+// operation entry (deferred-read pattern — fresh refs built inside at flush).
+
+registerOperation('stockTransfer', async (p: any) => {
+  const { venueId, fromBarId, fromBarLabel, toBarId, productId, productName, qty } = p;
+  const fromRef = doc(db, 'venues', venueId, 'departments', fromBarId, 'areas', 'back-of-house', 'items', productId);
+  const toRef   = doc(db, 'venues', venueId, 'departments', toBarId,   'areas', 'back-of-house', 'items', productId);
+  await runTransaction(db, async (txn) => {
+    const fromSnap = await txn.get(fromRef);
+    if (!fromSnap.exists()) throw new Error(`${fromBarLabel} has no stock record for ${productName}.`);
+    const current = fromSnap.data()?.lastCount ?? 0;
+    if (current < qty) throw new Error(`Insufficient stock: ${fromBarLabel} has ${current} units.`);
+    txn.update(fromRef, { lastCount: increment(-qty), updatedAt: serverTimestamp() });
+    const toSnap = await txn.get(toRef);
+    if (toSnap.exists()) {
+      txn.update(toRef, { lastCount: increment(qty), updatedAt: serverTimestamp() });
+    } else {
+      txn.set(toRef, { name: productName, lastCount: qty, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    }
+  });
+});
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FestivalTransferScreen() {
@@ -86,10 +113,21 @@ export default function FestivalTransferScreen() {
   const [qty,         setQty]         = useState('');
   const [loading,     setLoading]     = useState(FESTIVAL_BETA);
   const [saving,      setSaving]      = useState(false);
+  const [isOffline,   setIsOffline]   = useState(false);
   const [check,       setCheck]       = useState<CheckResult | null>(null);
+  // Ref guard: prevents double-tap submitting two transfers before React re-renders
+  // (doTransfer is async — setSaving(true) happens after isFestivalEventClosed await)
+  const submittingRef = useRef(false);
   const [showFromPicker, setShowFromPicker] = useState(false);
   const [showToPicker,   setShowToPicker]   = useState(false);
   const [showProdPicker, setShowProdPicker] = useState(false);
+
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener(state => {
+      setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
+    });
+    return unsub;
+  }, []);
 
   // Load bars from departments with isFestivalBar flag
   useEffect(() => {
@@ -153,49 +191,60 @@ export default function FestivalTransferScreen() {
 
   // ── Transfer logic ────────────────────────────────────────────────────────
   async function doTransfer(overrideReason: string | null = null) {
-    if (!venueId || !fromBar || !toBar || !product) return;
-    if (await isFestivalEventClosed(venueId)) {
-      showError('This event has been closed — no further changes can be recorded.');
-      return;
-    }
-    const q = parseFloat(qty);
-    if (!q || q <= 0) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSaving(true);
     try {
-      const uid  = auth.currentUser?.uid ?? 'unknown';
-      const name = auth.currentUser?.displayName ?? 'Unknown';
+      if (!venueId || !fromBar || !toBar || !product) return;
+      if (await isFestivalEventClosed(venueId)) {
+        showError('This event has been closed — no further changes can be recorded.');
+        return;
+      }
+      const q = parseFloat(qty);
+      if (!q || q <= 0) return;
+
+      const uid        = auth.currentUser?.uid ?? 'unknown';
+      const name       = auth.currentUser?.displayName ?? 'Unknown';
       const transferId = `xfr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      const result = check ?? velocityCheck(product.currentStock, product.velocity, q);
-      const fromRef = doc(db, 'venues', venueId, 'departments', fromBar.id, 'areas', 'back-of-house', 'items', product.id);
-      const toRef   = doc(db, 'venues', venueId, 'departments', toBar.id,   'areas', 'back-of-house', 'items', product.id);
-      await runTransaction(db, async (txn) => {
-        const fromSnap = await txn.get(fromRef);
-        if (!fromSnap.exists()) throw new Error(`${fromBar.label} has no stock record for ${product.label}.`);
-        const current = fromSnap.data()?.lastCount ?? 0;
-        if (current < q) throw new Error(`Insufficient stock: ${fromBar.label} has ${current} units.`);
-        txn.update(fromRef, { lastCount: increment(-q), updatedAt: serverTimestamp() });
-        const toSnap = await txn.get(toRef);
-        if (toSnap.exists()) {
-          txn.update(toRef, { lastCount: increment(q), updatedAt: serverTimestamp() });
-        } else {
-          txn.set(toRef, { name: product.label, lastCount: q, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        }
+      const result     = check ?? velocityCheck(product.currentStock, product.velocity, q);
+
+      // Stock transaction: deferred-read operation (txn.get inside the registered fn)
+      enqueueOperation('stockTransfer', {
+        venueId,
+        fromBarId:    fromBar.id,
+        fromBarLabel: fromBar.label,
+        toBarId:      toBar.id,
+        productId:    product.id,
+        productName:  product.label,
+        qty:          q,
       });
-      await setDoc(doc(db, 'venues', venueId, 'transfers', transferId), {
-        fromBarId: fromBar.id, fromBarName: fromBar.label,
-        toBarId: toBar.id,     toBarName:   toBar.label,
-        productId: product.id, productName: product.label,
-        quantity: q,
-        velocityCheckResult: result.level, hoursRemainingAfter: result.hoursAfter,
-        overrideReason, approvedBy: uid, approvedByName: name,
-        status: 'completed', createdAt: serverTimestamp(), completedAt: serverTimestamp(),
+
+      // Audit record: independent payload queued immediately after; FIFO ensures
+      // it only lands once the transaction above has committed.
+      enqueuePayload('setDoc', `venues/${venueId}/transfers/${transferId}`, {
+        fromBarId:            fromBar.id,   fromBarName:          fromBar.label,
+        toBarId:              toBar.id,     toBarName:            toBar.label,
+        productId:            product.id,   productName:          product.label,
+        quantity:             q,
+        velocityCheckResult:  result.level, hoursRemainingAfter:  result.hoursAfter,
+        overrideReason,
+        approvedBy:           uid,          approvedByName:       name,
+        status:               'completed',
+        createdAt:            serverTimestamp(),
+        completedAt:          serverTimestamp(),
       });
-      showSuccess(`✓ ${q} × ${product.label} moved from ${fromBar.label} to ${toBar.label}.`);
+
+      if (isOffline) {
+        showInfo('Transfer queued — will sync when back online');
+      } else {
+        showSuccess(`✓ ${q} × ${product.label} moved from ${fromBar.label} to ${toBar.label}.`);
+      }
       nav.goBack();
     } catch (e: any) {
       showError(e?.message || 'Transfer failed — please try again.');
     } finally {
       setSaving(false);
+      submittingRef.current = false;
     }
   }
 
@@ -259,6 +308,11 @@ export default function FestivalTransferScreen() {
       <ScrollView contentContainerStyle={T.scroll} keyboardShouldPersistTaps="handled">
 
         <Text style={T.screenTitle}>Transfer stock</Text>
+        {isOffline && (
+          <View style={T.offlineBanner}>
+            <Text style={T.offlineBannerText}>📶 Offline — changes will sync when you reconnect</Text>
+          </View>
+        )}
 
         {/* From bar */}
         <Text style={T.label}>From bar</Text>
@@ -374,6 +428,10 @@ const T = StyleSheet.create({
 
   scroll:      { padding: 16, paddingBottom: 40 },
   screenTitle: { fontSize: 22, fontWeight: '800', color: '#0B132B', marginBottom: 20 },
+
+  offlineBanner:     { backgroundColor: '#fef9c3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 12, borderWidth: 1, borderColor: '#fde68a' },
+  offlineBannerText: { fontSize: 13, color: '#92400e', fontWeight: '600' },
+
   label:       { fontSize: 13, fontWeight: '700', color: '#374151', marginTop: 12, marginBottom: 6 },
   stockHint:   { fontSize: 12, color: '#9ca3af', marginTop: 4, marginBottom: 2 },
 
