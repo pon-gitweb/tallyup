@@ -6,8 +6,11 @@ import NetInfo from '@react-native-community/netinfo';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import {
   collection, doc, getDocs, query, where, orderBy, limit,
-  setDoc, writeBatch, serverTimestamp,
+  writeBatch, serverTimestamp,
 } from 'firebase/firestore';
+import {
+  enqueuePayload, enqueueOperation, registerOperation,
+} from '../../services/offlineOutbox';
 import { isFestivalEventClosed } from '../../services/festival/eventStatus';
 import { db, auth } from '../../services/firebase';
 import { useVenueId } from '../../context/VenueProvider';
@@ -43,6 +46,25 @@ function calculateItemVelocity(productId: string, sessions: any[]): number | nul
   return totalUsage / totalHours; // units per hour
 }
 
+// ─── Outbox operation: velocity batch ────────────────────────────────────────
+// Registered once at module load so the outbox can replay it after an app
+// restart. Params are pre-computed at enqueue time so they're plain numbers —
+// no Firestore Timestamps or doc refs in the serialized payload.
+
+registerOperation('sessionVelocityUpdate', async (params: any) => {
+  const { venueId, barId, velocities } = params;
+  if (!venueId || !barId || !velocities?.length) return;
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+  for (const { itemId, velocity, confidence } of velocities) {
+    batch.update(
+      doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', itemId),
+      { velocity, velocityUpdatedAt: now, velocityConfidence: confidence },
+    );
+  }
+  await batch.commit();
+});
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FestivalSessionCountScreen() {
@@ -61,9 +83,12 @@ export default function FestivalSessionCountScreen() {
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
-    NetInfo.fetch().then(state => {
+    // Use a live subscriber so isOffline is current when the focus callback fires
+    // (the user may have gone offline while counting on AreaInventory).
+    const unsub = NetInfo.addEventListener(state => {
       setIsOffline(!(state.isConnected === true && state.isInternetReachable !== false));
     });
+    return unsub;
   }, []);
 
   // Navigate to AreaInventory once on mount (keep this screen in stack so we get focus back)
@@ -115,9 +140,10 @@ export default function FestivalSessionCountScreen() {
 
         const items = itemsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
 
-        // Write session document (feeds into velocity service)
-        const sessionRef = doc(collection(db, 'venues', venueId, 'sessions'));
-        await setDoc(sessionRef, {
+        // Queue session document (outbox flushes on next reconnect if offline).
+        // Client-side ID so the path is known before the write lands.
+        const sessionId = doc(collection(db, 'venues', venueId, 'sessions')).id;
+        enqueuePayload('setDoc', `venues/${venueId}/sessions/${sessionId}`, {
           barId,
           barName: barName || '',
           completedAt: serverTimestamp(),
@@ -135,53 +161,52 @@ export default function FestivalSessionCountScreen() {
           })),
         });
 
-        // Load recent sessions to calculate velocity (need ≥2 sessions)
-        const recentSessionsSnap = await getDocs(
-          query(
-            collection(db, 'venues', venueId, 'sessions'),
-            where('barId', '==', barId),
-            orderBy('completedAt', 'desc'),
-            limit(5),
-          )
-        );
+        // Velocity update is best-effort: read recent sessions, pre-compute
+        // velocities here, then queue the batch via the registered operation.
+        // If the sessions read fails (e.g. no cache offline), skip silently —
+        // the session doc is already queued above.
+        try {
+          const recentSessionsSnap = await getDocs(
+            query(
+              collection(db, 'venues', venueId, 'sessions'),
+              where('barId', '==', barId),
+              orderBy('completedAt', 'desc'),
+              limit(5),
+            )
+          );
 
-        if (recentSessionsSnap.docs.length >= 2) {
-          const sessionDocs = recentSessionsSnap.docs.map(d => d.data());
-          const confidence  = sessionDocs.length >= 3 ? 'medium' : 'low';
-          const vBatch = writeBatch(db);
+          if (recentSessionsSnap.docs.length >= 2) {
+            const sessionDocs = recentSessionsSnap.docs.map(d => d.data());
+            const confidence  = sessionDocs.length >= 3 ? 'medium' : 'low';
+            const velocities  = items
+              .map(item => {
+                const velocity = calculateItemVelocity(item.id, sessionDocs);
+                return (velocity !== null && velocity >= 0)
+                  ? { itemId: item.id, velocity, confidence }
+                  : null;
+              })
+              .filter(Boolean);
 
-          for (const item of items) {
-            const velocity = calculateItemVelocity(item.id, sessionDocs);
-            if (velocity !== null && velocity >= 0) {
-              vBatch.update(
-                doc(db, 'venues', venueId, 'departments', barId, 'areas', 'back-of-house', 'items', item.id),
-                { velocity, velocityUpdatedAt: serverTimestamp(), velocityConfidence: confidence },
-              );
+            if (velocities.length > 0) {
+              enqueueOperation('sessionVelocityUpdate', { venueId, barId, velocities });
             }
           }
-
-          await vBatch.commit();
+        } catch {
+          // velocity update skipped — session doc is already queued
         }
 
-        // Check connectivity to give appropriate feedback
-        const netState = await NetInfo.fetch();
-        const isOnline = netState.isConnected === true && netState.isInternetReachable !== false;
-
-        if (isOnline) {
-          showSuccess(`${barName || 'Bar'} session saved ✓`);
+        // isOffline is kept current by the NetInfo subscriber above, so this
+        // reflects the actual connectivity at the moment the user finishes
+        // counting — no extra await needed.
+        if (isOffline) {
+          showInfo(`Session queued — will sync when you're back online`);
         } else {
-          showInfo(`Session saved locally — will sync when you're back online`);
+          showSuccess(`${barName || 'Bar'} session saved ✓`);
         }
         nav.goBack();
       } catch (e: any) {
-        console.error('[FestivalSessionCount] post-count write failed:', e?.message);
-        const msg = e?.message || '';
-        if (msg.includes('unavailable') || msg.includes('offline') || msg.includes('failed to get')) {
-          // Firestore offline queue — data is safe
-          showInfo(`Session saved locally — will sync when you're back online`);
-        } else {
-          showError('Could not save session. Please try again.');
-        }
+        console.error('[FestivalSessionCount] post-count error:', e?.message);
+        showError('Could not save session. Please try again.');
         nav.goBack();
       }
     })();

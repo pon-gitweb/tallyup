@@ -6,8 +6,10 @@ import { VenueProvider } from './src/context/VenueProvider';
 import { ToastProvider } from './src/components/common/Toast';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
 import { initCrashReporting } from './src/services/crashReporting';
+import { initOutbox } from './src/services/offlineOutbox';
 
 initCrashReporting();
+initOutbox();
 
 function App() {
   console.log('[TallyUp App] mount');
