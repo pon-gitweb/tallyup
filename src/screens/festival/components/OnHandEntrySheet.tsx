@@ -5,10 +5,10 @@ import {
   ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import {
-  collection, doc, getDocs, serverTimestamp, setDoc,
-  updateDoc, deleteDoc,
+  collection, doc, getDocs, serverTimestamp,
 } from 'firebase/firestore';
 import { db, auth } from '../../../services/firebase';
+import { enqueuePayload } from '../../../services/offlineOutbox';
 import { useVenueId } from '../../../context/VenueProvider';
 import { useColours } from '../../../context/ThemeContext';
 import { useToast } from '../../../components/common/Toast';
@@ -241,7 +241,7 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
     const statusVal = source === 'venue_transfer' ? status : 'on_hand';
     if (isEdit || overrideId) {
       const docId = overrideId ?? editItem.id;
-      updateDoc(doc(db, 'venues', venueId, 'onHand', docId), {
+      enqueuePayload('updateDoc', `venues/${venueId}/onHand/${docId}`, {
         productId: selectedProduct.id,
         productName: selectedProduct.name,
         packSize: selectedProduct.packSize || 1,
@@ -253,10 +253,10 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
         updatedBy: uid,
         updatedByName: name_,
         updatedAt: serverTimestamp(),
-      }).catch(e => showError(e.message));
+      });
     } else {
       const ref = doc(collection(db, 'venues', venueId, 'onHand'));
-      setDoc(ref, {
+      enqueuePayload('setDoc', `venues/${venueId}/onHand/${ref.id}`, {
         productId: selectedProduct.id,
         productName: selectedProduct.name,
         packSize: selectedProduct.packSize || 1,
@@ -271,7 +271,7 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
         updatedBy: uid,
         updatedByName: name_,
         updatedAt: serverTimestamp(),
-      }).catch(e => showError(e.message));
+      });
     }
   }
 
@@ -320,7 +320,7 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
       confirmLabel: 'Remove',
       destructive: true,
       onConfirm: () => {
-        deleteDoc(doc(db, 'venues', venueId, 'onHand', editItem.id)).catch(e => showError(e.message));
+        enqueuePayload('deleteDoc', `venues/${venueId}/onHand/${editItem.id}`);
         onClose();
       },
     });
@@ -331,8 +331,9 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
     const ps = parseInt(newProdCaseSize, 10) || 1;
     const ref = doc(collection(db, 'venues', venueId, 'products'));
     const newProd = { id: ref.id, name: newProdName.trim(), packSize: ps, caseSize: ps, active: true };
-    setDoc(ref, { ...newProd, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
-      .catch(e => showError(e.message));
+    enqueuePayload('setDoc', `venues/${venueId}/products/${ref.id}`, {
+      ...newProd, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
     setAllProducts(prev => [...prev, newProd]);
     pickProduct(newProd);
     setNewProdName('');
@@ -534,15 +535,15 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
                     const uid = auth.currentUser?.uid;
                     const name_ = byName();
                     const locationName = locationId != null ? (locations.find(l => l.id === locationId)?.name ?? null) : null;
-                    updateDoc(doc(db, 'venues', venueId, 'onHand', dupPanel.existing.id), {
+                    enqueuePayload('updateDoc', `venues/${venueId}/onHand/${dupPanel.existing.id}`, {
                       qtyUnits: newQty,
                       updatedBy: uid,
                       updatedByName: name_,
                       locationName,
                       updatedAt: serverTimestamp(),
-                    }).catch(e => showError(e.message));
+                    });
                     if (isEdit && editItem?.id) {
-                      deleteDoc(doc(db, 'venues', venueId, 'onHand', editItem.id)).catch(e => showError(e.message));
+                      enqueuePayload('deleteDoc', `venues/${venueId}/onHand/${editItem.id}`);
                     }
                     setDupPanel(null);
                     onClose();
@@ -555,7 +556,7 @@ export function StockEntrySheet({ visible, editItem, locations, onHandItems, onC
                   onPress={() => {
                     doWrite(pendingQty, dupPanel.existing.id);
                     if (isEdit && editItem?.id) {
-                      deleteDoc(doc(db, 'venues', venueId, 'onHand', editItem.id)).catch(e => showError(e.message));
+                      enqueuePayload('deleteDoc', `venues/${venueId}/onHand/${editItem.id}`);
                     }
                     setDupPanel(null);
                     onClose();
@@ -685,10 +686,12 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
     };
     const docId = overrideId ?? (isEdit ? editItem.id : null);
     if (docId) {
-      updateDoc(doc(db, 'venues', venueId, 'equipment', docId), data).catch(e => showError(e.message));
+      enqueuePayload('updateDoc', `venues/${venueId}/equipment/${docId}`, data);
     } else {
       const ref = doc(collection(db, 'venues', venueId, 'equipment'));
-      setDoc(ref, { ...data, createdBy: uid, createdByName: name_, createdAt: serverTimestamp() }).catch(e => showError(e.message));
+      enqueuePayload('setDoc', `venues/${venueId}/equipment/${ref.id}`, {
+        ...data, createdBy: uid, createdByName: name_, createdAt: serverTimestamp(),
+      });
     }
   }
 
@@ -731,7 +734,7 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
       confirmLabel: 'Remove',
       destructive: true,
       onConfirm: () => {
-        deleteDoc(doc(db, 'venues', venueId, 'equipment', editItem.id)).catch(e => showError(e.message));
+        enqueuePayload('deleteDoc', `venues/${venueId}/equipment/${editItem.id}`);
         onClose();
       },
     });
@@ -871,7 +874,7 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
                     const mergedNeed = Math.max(dupPanel.existing.need || 0, needNumVal);
                     doWrite(mergedQty, mergedNeed, dupPanel.existing.id);
                     if (isEdit && editItem?.id) {
-                      deleteDoc(doc(db, 'venues', venueId, 'equipment', editItem.id)).catch(e => showError(e.message));
+                      enqueuePayload('deleteDoc', `venues/${venueId}/equipment/${editItem.id}`);
                     }
                     setDupPanel(null);
                     onClose();
@@ -884,7 +887,7 @@ export function EquipEntrySheet({ visible, editItem, locations, equipItems, onCl
                   onPress={() => {
                     doWrite(qtyNumVal, needNumVal, dupPanel.existing.id);
                     if (isEdit && editItem?.id) {
-                      deleteDoc(doc(db, 'venues', venueId, 'equipment', editItem.id)).catch(e => showError(e.message));
+                      enqueuePayload('deleteDoc', `venues/${venueId}/equipment/${editItem.id}`);
                     }
                     setDupPanel(null);
                     onClose();

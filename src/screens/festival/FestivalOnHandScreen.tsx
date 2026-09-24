@@ -9,6 +9,7 @@ import {
   collection, doc, getDocs, onSnapshot, query, where,
 } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
+import { useOutboxCount } from '../../services/offlineOutbox';
 import { useVenueId } from '../../context/VenueProvider';
 import { FESTIVAL_BETA } from '../../config/festivalBeta';
 import { useColours } from '../../context/ThemeContext';
@@ -78,6 +79,7 @@ export default function FestivalOnHandScreen() {
   const venueId = useVenueId();
   const c = useColours();
   const uid = auth.currentUser?.uid;
+  const pendingCount = useOutboxCount();
 
   const [tab, setTab] = useState<'stock' | 'equipment'>('stock');
   const [role, setRole] = useState<string | null>(null);
@@ -251,6 +253,18 @@ export default function FestivalOnHandScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Outbox pending banner — covers the offline-queued window where
+          hasPendingWrites is silent (write is in AsyncStorage, not yet
+          handed to Firestore). Per-item Syncing tags still reflect the
+          Firestore acknowledgement cycle once online. */}
+      {pendingCount > 0 && (
+        <View style={{ backgroundColor: c.amber + '22', borderBottomWidth: 1, borderBottomColor: c.amber + '55', paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Text style={{ fontSize: 13, color: c.amber, fontWeight: '600' }}>
+            {pendingCount} change{pendingCount !== 1 ? 's' : ''} queued — will sync when you reconnect
+          </Text>
+        </View>
+      )}
 
       {/* Stock tab */}
       {tab === 'stock' && (
